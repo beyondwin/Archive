@@ -17,6 +17,7 @@ from .contracts import (
     ChildResult,
     InputDocument,
     canonical_json,
+    normalize_relative_path,
     validate_document_map,
     validate_program_map,
     validate_task_brief,
@@ -28,6 +29,10 @@ from .worktree import Worktree
 
 _GENERATION_ID = "generation-0001"
 _GENERATION_ROOT = f"maps/{_GENERATION_ID}"
+_INVESTIGATION_RECOVERY_METHODS = (
+    "root_cause_reanalysis",
+    "architecture_synthesis",
+)
 
 
 def _sha256(data: bytes) -> str:
@@ -1161,6 +1166,234 @@ class QueueEngine:
         }
         return tuple(sorted(values))
 
+    @staticmethod
+    def _investigation_prefix(task_id: str) -> str:
+        return f"reports/{QueueEngine._task_slug(task_id)}/investigations"
+
+    @staticmethod
+    def _investigation_record_path(
+        task_id: str, sequence: int, record_type: str
+    ) -> str:
+        if record_type not in {"launch", "outcome"}:
+            raise ValueError("investigation record type is invalid")
+        return (
+            f"{QueueEngine._investigation_prefix(task_id)}/"
+            f"investigation-{sequence:04d}-{record_type}.json"
+        )
+
+    @staticmethod
+    def _validate_investigation_launch(
+        payload: object, *, task_id: str, expected_sequence: int
+    ) -> dict[str, object]:
+        fields = frozenset(
+            {
+                "schema_version",
+                "investigation_id",
+                "task_id",
+                "sequence",
+                "recovery_method",
+                "previous_strategy",
+                "dispatch_evidence_sha256",
+                "attempted_strategies",
+                "report_path",
+            }
+        )
+        if not isinstance(payload, Mapping) or frozenset(payload) != fields:
+            raise ValueError("investigation launch fields are invalid")
+        value = dict(payload)
+        sequence = value["sequence"]
+        if (
+            value["schema_version"] != 1
+            or sequence != expected_sequence
+            or isinstance(sequence, bool)
+            or not isinstance(sequence, int)
+            or sequence < 1
+        ):
+            raise ValueError("investigation launch sequence is invalid")
+        expected_id = (
+            f"{QueueEngine._task_slug(task_id)}-investigation-{sequence:04d}"
+        )
+        if value["task_id"] != task_id or value["investigation_id"] != expected_id:
+            raise ValueError("investigation launch identity is invalid")
+        if value["recovery_method"] not in _INVESTIGATION_RECOVERY_METHODS:
+            raise ValueError("investigation recovery method is invalid")
+        for field in ("previous_strategy", "dispatch_evidence_sha256", "report_path"):
+            if not isinstance(value[field], str) or not value[field]:
+                raise ValueError(f"investigation launch {field} is invalid")
+        digest = str(value["dispatch_evidence_sha256"])
+        if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+            raise ValueError("investigation launch evidence digest is invalid")
+        strategies = value["attempted_strategies"]
+        if (
+            not isinstance(strategies, list)
+            or len(strategies) > 4096
+            or not all(isinstance(item, str) and item for item in strategies)
+            or strategies != sorted(set(strategies))
+        ):
+            raise ValueError("investigation attempted strategies are invalid")
+        report_path = normalize_relative_path(str(value["report_path"]))
+        expected_report = (
+            f"reports/{QueueEngine._task_slug(task_id)}/"
+            f"investigation-{sequence}.md"
+        )
+        if report_path != expected_report:
+            raise ValueError("investigation report path is invalid")
+        value["report_path"] = report_path
+        return value
+
+    @staticmethod
+    def _validate_investigation_outcome(
+        payload: object,
+        *,
+        task_id: str,
+        expected_sequence: int,
+        launch: Mapping[str, object],
+    ) -> dict[str, object]:
+        fields = frozenset(
+            {
+                "schema_version",
+                "investigation_id",
+                "task_id",
+                "sequence",
+                "recovery_method",
+                "status",
+                "strategy_key",
+                "selection",
+                "result_sha256",
+                "artifact_paths",
+            }
+        )
+        if not isinstance(payload, Mapping) or frozenset(payload) != fields:
+            raise ValueError("investigation outcome fields are invalid")
+        value = dict(payload)
+        if (
+            value["schema_version"] != 1
+            or value["sequence"] != expected_sequence
+            or value["investigation_id"] != launch["investigation_id"]
+            or value["task_id"] != task_id
+            or value["recovery_method"] != launch["recovery_method"]
+        ):
+            raise ValueError("investigation outcome identity is invalid")
+        if value["selection"] not in {
+            "accepted",
+            "rejected_historical",
+            "unusable",
+        }:
+            raise ValueError("investigation outcome selection is invalid")
+        for field in ("status", "result_sha256"):
+            if not isinstance(value[field], str) or not value[field]:
+                raise ValueError(f"investigation outcome {field} is invalid")
+        strategy_key = value["strategy_key"]
+        if strategy_key is not None and (
+            not isinstance(strategy_key, str) or not strategy_key
+        ):
+            raise ValueError("investigation outcome strategy_key is invalid")
+        if value["selection"] != "unusable" and strategy_key is None:
+            raise ValueError("usable investigation outcome requires a strategy_key")
+        digest = str(value["result_sha256"])
+        if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+            raise ValueError("investigation outcome digest is invalid")
+        artifact_paths = value["artifact_paths"]
+        if (
+            not isinstance(artifact_paths, list)
+            or not artifact_paths
+            or len(artifact_paths) > 256
+        ):
+            raise ValueError("investigation outcome artifact paths are invalid")
+        normalized_paths = [
+            normalize_relative_path(str(path)) for path in artifact_paths
+        ]
+        if len(set(normalized_paths)) != len(normalized_paths):
+            raise ValueError("investigation outcome artifact paths must be unique")
+        if str(launch["report_path"]) not in normalized_paths:
+            raise ValueError("investigation outcome omits its report artifact")
+        value["artifact_paths"] = normalized_paths
+        return value
+
+    def _investigation_records(
+        self, task_id: str
+    ) -> tuple[tuple[dict[str, object], dict[str, object] | None], ...]:
+        prefix = self._investigation_prefix(task_id)
+        paths = self.store.artifact_paths(prefix=prefix)
+        launch_paths = sorted(path for path in paths if path.endswith("-launch.json"))
+        outcome_paths = {
+            path for path in paths if path.endswith("-outcome.json")
+        }
+        records: list[tuple[dict[str, object], dict[str, object] | None]] = []
+        expected_outcomes: set[str] = set()
+        for sequence, path in enumerate(launch_paths, 1):
+            expected_launch_path = self._investigation_record_path(
+                task_id, sequence, "launch"
+            )
+            if path != expected_launch_path:
+                raise ValueError("investigation launch history is not contiguous")
+            launch = self._validate_investigation_launch(
+                _load_json(self.store.read_artifact(path), "investigation launch"),
+                task_id=task_id,
+                expected_sequence=sequence,
+            )
+            outcome_path = self._investigation_record_path(
+                task_id, sequence, "outcome"
+            )
+            expected_outcomes.add(outcome_path)
+            outcome = None
+            if outcome_path in outcome_paths:
+                outcome = self._validate_investigation_outcome(
+                    _load_json(
+                        self.store.read_artifact(outcome_path),
+                        "investigation outcome",
+                    ),
+                    task_id=task_id,
+                    expected_sequence=sequence,
+                    launch=launch,
+                )
+            records.append((launch, outcome))
+        if outcome_paths - expected_outcomes:
+            raise ValueError("investigation outcome has no durable launch")
+        return tuple(records)
+
+    def _investigation_history(self, task_id: str) -> tuple[dict[str, object], ...]:
+        return tuple(
+            outcome
+            for _, outcome in self._investigation_records(task_id)
+            if outcome is not None
+        )
+
+    def _record_investigation_launch(self, record: Mapping[str, object]) -> None:
+        task_id = str(record.get("task_id", ""))
+        sequence = record.get("sequence")
+        if not isinstance(sequence, int) or isinstance(sequence, bool):
+            raise ValueError("investigation launch sequence is invalid")
+        validated = self._validate_investigation_launch(
+            record, task_id=task_id, expected_sequence=sequence
+        )
+        self.store.put_artifact(
+            self._investigation_record_path(task_id, sequence, "launch"),
+            canonical_json(validated),
+        )
+
+    def _record_investigation_outcome(self, record: Mapping[str, object]) -> None:
+        task_id = str(record.get("task_id", ""))
+        sequence = record.get("sequence")
+        if not isinstance(sequence, int) or isinstance(sequence, bool):
+            raise ValueError("investigation outcome sequence is invalid")
+        records = self._investigation_records(task_id)
+        if sequence < 1 or sequence > len(records):
+            raise ValueError("investigation outcome has no durable launch")
+        launch, existing = records[sequence - 1]
+        if existing is not None:
+            raise ValueError("investigation outcome was already recorded")
+        validated = self._validate_investigation_outcome(
+            record,
+            task_id=task_id,
+            expected_sequence=sequence,
+            launch=launch,
+        )
+        self.store.put_artifact(
+            self._investigation_record_path(task_id, sequence, "outcome"),
+            canonical_json(validated),
+        )
+
     def _append_task_started(
         self,
         *,
@@ -1586,14 +1819,6 @@ class QueueEngine:
     ) -> tuple[str, tuple[str, ...]]:
         task_id = str(task["task_id"])
         state = self.store.replay()
-        first_investigation_number = len(
-            [
-                event
-                for event in self.store.validate_event_chain()
-                if event["event_type"] == "autonomy.recorded"
-                and task_id in event["payload"].get("task_ids", [])
-            ]
-        ) + 1
         _, selected = self._program_context()
         inputs = [
             selected[str(task["brief_path"])],
@@ -1603,13 +1828,46 @@ class QueueEngine:
                 for path in self._dependency_report_paths(task, state)
             ),
         ]
-        attempted_history = (
-            self._attempted_strategies(task_id, dispatch_evidence_sha256)
+        selection_evidence = (
+            dispatch_evidence_sha256
             if dispatch_evidence_sha256 is not None
-            else ()
+            else self._artifact_evidence_digest(evidence_paths)
         )
-        for selection in range(8):
-            investigation_number = first_investigation_number + selection
+        records = self._investigation_records(task_id)
+        evidence_records = tuple(
+            (launch, outcome)
+            for launch, outcome in records
+            if launch["dispatch_evidence_sha256"] == selection_evidence
+        )
+        attempted_history = set(
+            self._attempted_strategies(task_id, selection_evidence)
+        )
+        attempted_history.update(
+            str(outcome["strategy_key"])
+            for _, outcome in evidence_records
+            if outcome is not None and outcome["strategy_key"] is not None
+        )
+
+        recovery_method = _INVESTIGATION_RECOVERY_METHODS[0]
+        if evidence_records:
+            latest_launch, latest_outcome = evidence_records[-1]
+            latest_method = str(latest_launch["recovery_method"])
+            if latest_outcome is not None and latest_outcome["selection"] == "accepted":
+                return (
+                    str(latest_outcome["strategy_key"]),
+                    tuple(str(path) for path in latest_outcome["artifact_paths"]),
+                )
+            try:
+                recovery_index = _INVESTIGATION_RECOVERY_METHODS.index(latest_method)
+            except ValueError as error:
+                raise ValueError("investigation recovery history is invalid") from error
+            if recovery_index + 1 >= len(_INVESTIGATION_RECOVERY_METHODS):
+                self._record_interrupted("investigator_recovery_methods_exhausted")
+                raise ValueError("investigator recovery methods exhausted")
+            recovery_method = _INVESTIGATION_RECOVERY_METHODS[recovery_index + 1]
+
+        while True:
+            investigation_number = len(records) + 1
             investigation_id = (
                 f"{self._task_slug(task_id)}-investigation-"
                 f"{investigation_number:04d}"
@@ -1618,13 +1876,27 @@ class QueueEngine:
                 f"reports/{self._task_slug(task_id)}/"
                 f"investigation-{investigation_number}.md"
             )
+            launch = {
+                "schema_version": 1,
+                "investigation_id": investigation_id,
+                "task_id": task_id,
+                "sequence": investigation_number,
+                "recovery_method": recovery_method,
+                "previous_strategy": previous_strategy,
+                "dispatch_evidence_sha256": selection_evidence,
+                "attempted_strategies": sorted(attempted_history),
+                "report_path": report_path,
+            }
+            self._record_investigation_launch(launch)
             outcome = self._launch_role(
                 role="investigator",
                 item_id=task_id,
                 goal=(
                     "Reproduce the failure, identify the root cause, and select a "
-                    "materially changed recovery strategy. Previously attempted "
-                    f"strategies for this evidence: {json.dumps(attempted_history)}"
+                    "materially changed recovery strategy. "
+                    f"Recovery method: {recovery_method}. Previously attempted "
+                    "strategies for this evidence: "
+                    f"{json.dumps(sorted(attempted_history))}"
                 ),
                 input_paths=inputs,
                 report_path=report_path,
@@ -1633,10 +1905,6 @@ class QueueEngine:
                 attempt_id=investigation_id,
             )
             result = outcome.result
-            if result.status != "completed" or not result.strategy_key:
-                raise ValueError("investigator did not return a usable changed strategy")
-            if result.strategy_key == previous_strategy:
-                raise ValueError("unchanged strategy_key cannot be redispatched")
             candidate_evidence = (
                 dispatch_evidence_sha256
                 if dispatch_evidence_sha256 is not None
@@ -1645,24 +1913,56 @@ class QueueEngine:
                 )
             )
             attempted = self._attempted_strategies(task_id, candidate_evidence)
-            if result.strategy_key in attempted:
-                attempted_history = attempted
-                continue
-            self.store.append_autonomy_decision(
-                issue="focused test or child evidence failed under the previous strategy",
-                alternatives=["repeat patch", "fresh root-cause investigation"],
-                selected="fresh root-cause investigation",
-                strategy_key=result.strategy_key,
-                rationale="same strategy and evidence made no progress",
-                evidence_paths=list(
-                    dict.fromkeys([*evidence_paths, *result.artifact_paths])
-                ),
-                affected_tasks=[task_id],
-                reversible=True,
-            )
-            self.store.reconcile_autonomy_events()
-            return result.strategy_key, result.artifact_paths
-        raise ValueError("investigator exhausted novel bounded strategy selections")
+            if result.status != "completed" or not result.strategy_key:
+                selection = "unusable"
+            elif result.strategy_key == previous_strategy:
+                selection = "unusable"
+            elif result.strategy_key in attempted:
+                selection = "rejected_historical"
+            else:
+                selection = "accepted"
+            durable_outcome = {
+                "schema_version": 1,
+                "investigation_id": investigation_id,
+                "task_id": task_id,
+                "sequence": investigation_number,
+                "recovery_method": recovery_method,
+                "status": result.status,
+                "strategy_key": result.strategy_key,
+                "selection": selection,
+                "result_sha256": self._result_digest(result, self.store),
+                "artifact_paths": list(result.artifact_paths),
+            }
+            self._record_investigation_outcome(durable_outcome)
+            records = (*records, (launch, durable_outcome))
+
+            if selection == "unusable" and result.strategy_key == previous_strategy:
+                self._record_interrupted("investigator_unchanged_strategy")
+                raise ValueError("unchanged strategy_key cannot be redispatched")
+            if selection == "accepted":
+                assert result.strategy_key is not None
+                self.store.append_autonomy_decision(
+                    issue="focused test or child evidence failed under the previous strategy",
+                    alternatives=["repeat patch", "fresh root-cause investigation"],
+                    selected="fresh root-cause investigation",
+                    strategy_key=result.strategy_key,
+                    rationale="same strategy and evidence made no progress",
+                    evidence_paths=list(
+                        dict.fromkeys([*evidence_paths, *result.artifact_paths])
+                    ),
+                    affected_tasks=[task_id],
+                    reversible=True,
+                )
+                self.store.reconcile_autonomy_events()
+                return result.strategy_key, result.artifact_paths
+
+            if result.strategy_key:
+                attempted_history.add(result.strategy_key)
+            recovery_index = _INVESTIGATION_RECOVERY_METHODS.index(recovery_method)
+            if recovery_index + 1 >= len(_INVESTIGATION_RECOVERY_METHODS):
+                self._record_interrupted("investigator_recovery_methods_exhausted")
+                raise ValueError("investigator recovery methods exhausted")
+            recovery_method = _INVESTIGATION_RECOVERY_METHODS[recovery_index + 1]
 
     def _handle_child_failure(self, result: ChildResult, task_id: str) -> str | None:
         if result.status == "waiting_authority":

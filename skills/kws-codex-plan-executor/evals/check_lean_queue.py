@@ -12,6 +12,7 @@ import tempfile
 import threading
 import time
 import unittest
+from collections.abc import Mapping
 from pathlib import Path
 
 
@@ -687,6 +688,136 @@ class LeanQueueTest(unittest.TestCase):
             if event["event_type"] == "task.started"
         ]
         self.assertEqual(starts[-1]["strategy_key"], "strategy-C")
+
+        next_evidence_path = "reports/plan-01-T1/next-cycle-evidence.json"
+        store.put_artifact(next_evidence_path, b'{"failure":"new evidence"}')
+        next_strategy, next_paths = engine._run_investigation(
+            engine._task_by_id(task_id),
+            [next_evidence_path],
+            previous_strategy="strategy-C",
+            dispatch_evidence_sha256=engine._artifact_evidence_digest(
+                [next_evidence_path]
+            ),
+        )
+        self.assertEqual(next_strategy, "strategy-D-3")
+        self.assertNotEqual(investigation_paths[0], next_paths[0])
+        self.assertTrue(next_paths[0].endswith("investigation-3.md"))
+
+    def test_rejected_investigation_history_survives_interruption_and_reopen(
+        self,
+    ) -> None:
+        store, engine = self.create_engine("queue_historical_strategy")
+        task_id = "plan-01:T1"
+        evidence_path = "reports/plan-01-T1/interrupted-selection.json"
+        store.put_artifact(evidence_path, b'{"failure":"same evidence"}')
+        evidence_sha256 = engine._artifact_evidence_digest([evidence_path])
+        baseline = engine.worktree.head()
+        for number, strategy in enumerate(("strategy-A", "strategy-B"), 1):
+            attempt_id = f"plan-01-T1-attempt-{number:04d}"
+            engine._append_task_started(
+                task_id=task_id,
+                attempt_id=attempt_id,
+                role="fix_agent",
+                strategy_key=strategy,
+                baseline_commit=baseline,
+                evidence_sha256=evidence_sha256,
+            )
+            store.append_event(
+                "task.reported",
+                {
+                    "task_id": task_id,
+                    "attempt_id": attempt_id,
+                    "status": "failed",
+                    "strategy_key": strategy,
+                    "artifact_paths": [evidence_path],
+                },
+            )
+
+        original_record = engine._record_investigation_outcome
+        interrupted = False
+
+        def interrupt_after_rejected(record: Mapping[str, object]) -> None:
+            nonlocal interrupted
+            original_record(record)
+            if record["selection"] == "rejected_historical" and not interrupted:
+                interrupted = True
+                raise RuntimeError("interrupt after rejected investigation")
+
+        engine._record_investigation_outcome = interrupt_after_rejected  # type: ignore[method-assign]
+        with self.assertRaisesRegex(RuntimeError, "after rejected investigation"):
+            engine._run_investigation(
+                engine._task_by_id(task_id),
+                [evidence_path],
+                previous_strategy="strategy-B",
+                dispatch_evidence_sha256=evidence_sha256,
+            )
+
+        reopened = RunStore.open(codex_home=self.home, run_id=store.run_id)
+        resumed = QueueEngine(reopened, engine.worktree, engine.launcher)
+        strategy, paths = resumed._run_investigation(
+            resumed._task_by_id(task_id),
+            [evidence_path],
+            previous_strategy="strategy-B",
+            dispatch_evidence_sha256=evidence_sha256,
+        )
+        self.assertEqual(strategy, "strategy-C")
+        self.assertTrue(paths[0].endswith("investigation-2.md"))
+        history = resumed._investigation_history(task_id)
+        self.assertEqual([item["selection"] for item in history], [
+            "rejected_historical",
+            "accepted",
+        ])
+
+    def test_repeated_unusable_investigations_exhaust_named_recovery_methods(
+        self,
+    ) -> None:
+        store, engine = self.create_engine("queue_repeated_unusable_strategy")
+        task_id = "plan-01:T1"
+        evidence_path = "reports/plan-01-T1/repeated-unusable.json"
+        store.put_artifact(evidence_path, b'{"failure":"same evidence"}')
+        evidence_sha256 = engine._artifact_evidence_digest([evidence_path])
+        attempt_id = "plan-01-T1-attempt-0001"
+        engine._append_task_started(
+            task_id=task_id,
+            attempt_id=attempt_id,
+            role="fix_agent",
+            strategy_key="strategy-A",
+            baseline_commit=engine.worktree.head(),
+            evidence_sha256=evidence_sha256,
+        )
+        store.append_event(
+            "task.reported",
+            {
+                "task_id": task_id,
+                "attempt_id": attempt_id,
+                "status": "failed",
+                "strategy_key": "strategy-A",
+                "artifact_paths": [evidence_path],
+            },
+        )
+
+        with self.assertRaisesRegex(ValueError, "recovery methods exhausted"):
+            engine._run_investigation(
+                engine._task_by_id(task_id),
+                [evidence_path],
+                previous_strategy="initial",
+                dispatch_evidence_sha256=evidence_sha256,
+            )
+        investigator_roles = [
+            item
+            for item in self.invocations()
+            if item["role"] == "investigator"
+        ]
+        self.assertEqual(len(investigator_roles), 2)
+        interrupted_events = [
+            event
+            for event in store.validate_event_chain()
+            if event["event_type"] == "run.interrupted"
+        ]
+        self.assertEqual(
+            interrupted_events[-1]["payload"]["failure_code"],
+            "investigator_recovery_methods_exhausted",
+        )
 
     def test_invalid_authority_handoff_becomes_ordinary_recovery(self) -> None:
         store, engine = self.create_engine("queue_invalid_authority")

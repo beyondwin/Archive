@@ -1489,6 +1489,19 @@ class RunStore:
             raise ValueError("artifact has no durable digest record")
         return self._read_indexed_artifact(normalized, record)
 
+    def artifact_paths(self, *, prefix: str) -> tuple[str, ...]:
+        """Return validated immutable artifact paths below one normalized prefix."""
+
+        normalized = normalize_relative_path(prefix)
+        boundary = f"{normalized}/"
+        return tuple(
+            sorted(
+                str(record["relative_path"])
+                for record in self._validate_artifacts()
+                if str(record["relative_path"]).startswith(boundary)
+            )
+        )
+
     def allocate_outbox(self, attempt_id: str) -> Path:
         normalized = normalize_relative_path(attempt_id)
         if "/" in normalized:
