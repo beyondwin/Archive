@@ -34,6 +34,30 @@ to an isolated oracle. The oracle may compute expectations but may not call the
 production scheduler, validator, projector, or repair implementation. A green
 deterministic run must not be described as paid live-model evidence.
 
+## vNext Plan 1 Cost-Free Checkpoint
+
+Plan 1 registers `check_release_trust_vnext.py` and
+`check_release_closure_vnext.py` as explicitly deterministic maintained checks.
+The inventory binds each check to reachable production entrypoints and concrete
+mutation assertions; the harness rejects either check's omission, a non-
+deterministic classification, unreachable declarations, and duplicate or
+missing paths.
+
+The current Plan 1 cost-free evidence closes R1: the fixed policy and dogfood
+contract are loaded from exact Git objects, one immutable `TrustRoot` is bound
+through release compilation, ledger, dogfood, terminal generation, and public
+validation, and worktree, index, object, lineage, and checkpoint mutations fail
+closed. The same checkpoint also verifies the six closure phases, exact four
+review lanes, semantic artifact replay, deterministic invariant reduction, and
+the one-wave repair ceiling.
+
+This is not the Program Final Gate. R2 credentialed critical-path live proof and
+the final R3 four-lane verdict remain pending until the post-Plan-3 checkpoint
+is frozen and separately authorized. The checkpoint's exact commit, tree, Plan
+1 hash, approved-spec hash, and upstream approved-design checkpoint are kept in
+the durable Plan 1 execution report after commit; tracked docs intentionally do
+not fabricate a self-referential checkpoint hash.
+
 Version 3.1.0 publishes `deterministic-ready; paid-live-verified` with
 `release_ready=true`. The reviewed live matrix completed its four treatments
 and eight cases: exactly 25 credentialed calls and seven expected Terra policy

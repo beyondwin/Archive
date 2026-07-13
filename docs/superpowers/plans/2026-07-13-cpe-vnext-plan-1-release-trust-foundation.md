@@ -279,6 +279,8 @@ task_type: documentation
 dependencies: ["T3"]
 spec_refs: ["S1.8", "S1.13.4", "S1.14"]
 file_claims:
+  - docs/superpowers/plans/2026-07-13-cpe-vnext-plan-1-release-trust-foundation.md
+  - skills/kws-codex-plan-executor/evals/check_eval_harness.py
   - skills/kws-codex-plan-executor/evals/maintained-checks.json
   - skills/kws-codex-plan-executor/docs/evals-and-verification.md
   - skills/kws-codex-plan-executor/docs/risks-limitations-deferrals.md
@@ -290,7 +292,11 @@ acceptance:
 operator_reviewed: true
 ```
 
-**Files:** Modify exactly the paths declared in this task YAML `file_claims`; do not touch undeclared paths.
+**Files:** Modify exactly the eight paths declared in this task YAML
+`file_claims`; do not touch undeclared paths. The operator explicitly approved
+adding this plan source and `check_eval_harness.py` after preflight proved the
+original six-file claim could not register new maintained checks while passing
+the full harness.
 
 **Interfaces:** Produces the Plan 1 verified checkpoint consumed by Plan 2. It closes R1 but records R2 and final R3 as Program Final Gate work.
 
@@ -300,6 +306,8 @@ hash, and the upstream approved-design checkpoint.
 - [ ] **Step 1: Register both focused checks**
 
 Add `check_release_trust_vnext.py` and `check_release_closure_vnext.py` to `evals/maintained-checks.json` with explicit `deterministic` classification.
+Update `check_eval_harness.py` so those two declared checks are required and its
+inventory mutation assertions prove their omission is rejected.
 
 - [ ] **Step 2: Run the complete cost-free CPE gate**
 
@@ -322,6 +330,6 @@ Expected: `fresh=true` with no errors.
 - [ ] **Step 5: Commit the Plan 1 checkpoint**
 
 ```bash
-git add skills/kws-codex-plan-executor/evals/maintained-checks.json skills/kws-codex-plan-executor/docs/evals-and-verification.md skills/kws-codex-plan-executor/docs/risks-limitations-deferrals.md skills/kws-codex-plan-executor/docs/verification-log.md graphify-out/GRAPH_REPORT.md graphify-out/graph.json
+git add docs/superpowers/plans/2026-07-13-cpe-vnext-plan-1-release-trust-foundation.md skills/kws-codex-plan-executor/evals/check_eval_harness.py skills/kws-codex-plan-executor/evals/maintained-checks.json skills/kws-codex-plan-executor/docs/evals-and-verification.md skills/kws-codex-plan-executor/docs/risks-limitations-deferrals.md skills/kws-codex-plan-executor/docs/verification-log.md graphify-out/GRAPH_REPORT.md graphify-out/graph.json
 git commit -m "docs(cpe): record vnext trust foundation checkpoint"
 ```

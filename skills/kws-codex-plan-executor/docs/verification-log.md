@@ -1,5 +1,51 @@
 # Verification Log
 
+## 2026-07-13 Asia/Seoul - vNext Plan 1 trust foundation checkpoint
+
+- Branch: `codex/cpe-vnext-quality-first-workflow`; Task 4 implementation base
+  `0d8e2f178b35b4b3a620da4fdac6bfb64de51795`. The checkpoint commit and tree
+  are recorded after commit in the durable Task 4 report rather than embedded
+  self-referentially in this tracked entry.
+- Scope: registered the two focused vNext checks with deterministic
+  classification, reachable production entrypoints, and concrete mutation
+  assertions; expanded the harness's required inventory and its omission and
+  classification mutation checks; recorded Plan 1 R1 closure and retained R2
+  plus final R3 as Program Final Gate work.
+- Harness TDD: before the harness change, inventory-only validation exited `1`
+  with exactly `unexpected maintained check` for
+  `check_release_trust_vnext.py` and `check_release_closure_vnext.py`. After the
+  change, inventory-only and full harness checks exited `0`; both new omission
+  mutations and the deterministic-classification mutation were rejected.
+- Deferred Task 1 evidence: commits `0d8822d..73ebb8a`; exact Git-object policy
+  and contract reads, canonical object delta, immutable `TrustRoot`, dirty,
+  staged, alternate-path, replacement-object, index-flag, configuration, and
+  contract-digest mutations passed 24 focused checks. The full CPE gate passed
+  with paid execution skipped.
+- Deferred Task 2 evidence: commits `73ebb8a..301c6cc`; one TrustRoot binding
+  propagated through manifest, slot, ledger, dogfood, terminal generation, and
+  public validation. The focused trust/evidence suite passed 42 checks; legacy
+  v4 projection objects and canonical bytes remained unchanged. The full CPE
+  gate passed with paid execution skipped.
+- Deferred Task 3 evidence: commits `301c6cc..0d8e2f1`; six phases, exact four
+  lanes, semantic serialized-artifact replay, canonical invariant reduction,
+  safety-ranked dispositions, and one repair wave passed the focused closure
+  suite with `failures=[]`. Strict Ajv schema validation and the full CPE gate
+  passed with paid execution skipped.
+- Task 4 cost-free CPE gate: `./evals/run.sh` exited `0`; all 38 recorded checks
+  passed, including both newly maintained vNext checks and `eval_harness`, and
+  `paid_execution=skipped_not_approved`.
+- `bun run check`: exit `0`; 820 passed, 10 skipped, 0 failed across 149 files.
+- `git diff --check`: exit `0` before Graphify refresh.
+- `graphify update .`: exit `0`; canonical graph and report outputs refreshed.
+  The dated four-file backup was removed; freshness returned `fresh=true` with
+  no errors or warnings.
+- Provider, network, model, credentialed, authentication, billing, remote-write,
+  push, protected-branch, and live-proof calls: zero. The subscription action
+  inside the cost-free harness was dry-run only.
+- Risk decision: R1 is closed by current cost-free evidence. R2 and the final
+  R3 verdict remain pending at the Program Final Gate; no vNext release status,
+  version, or `release_ready` claim changed.
+
 ## 2026-07-13 Asia/Seoul - vNext pre-task review fixes
 
 - Branch: `codex/cpe-vnext-quality-first-workflow`; reviewed base `6777f9c`;

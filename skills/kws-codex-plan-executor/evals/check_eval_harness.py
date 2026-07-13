@@ -34,7 +34,13 @@ REQUIRED_MAINTAINED = frozenset({
     "check_quality_matrix_v4.py",
     "check_release_transaction_v4.py",
     "check_cpe_v4_e2e.py",
+    "check_release_trust_vnext.py",
+    "check_release_closure_vnext.py",
 })
+REQUIRED_CLASSIFICATIONS = {
+    "check_release_trust_vnext.py": "deterministic",
+    "check_release_closure_vnext.py": "deterministic",
+}
 
 
 def _inventory_paths(path: Path) -> tuple[list[str], list[str]]:
@@ -57,6 +63,12 @@ def _inventory_paths(path: Path) -> tuple[list[str], list[str]]:
             continue
         if not entry.get("production_entrypoint") or not entry.get("mutation_assertion"):
             failures.append(f"maintained inventory metadata is incomplete: {relative}")
+        required_classification = REQUIRED_CLASSIFICATIONS.get(relative)
+        if required_classification and entry.get("classification") != required_classification:
+            failures.append(
+                f"maintained inventory classification mismatch: "
+                f"{relative}:{required_classification}"
+            )
         target = EVAL_DIR / relative
         declaration = entry.get("production_entrypoint")
         if target.is_file() and isinstance(declaration, str):
@@ -595,6 +607,34 @@ def _inventory_mutation_checks(payload: dict[str, object]) -> dict[str, bool]:
         "required_inventory_omission_rejected": {
             **payload,
             "checks": [entry for entry in entries if entry.get("path") != "check_scheduler_v4.py"],
+        },
+        "release_trust_inventory_omission_rejected": {
+            **payload,
+            "checks": [
+                entry for entry in entries
+                if entry.get("path") != "check_release_trust_vnext.py"
+            ],
+        },
+        "release_closure_inventory_omission_rejected": {
+            **payload,
+            "checks": [
+                entry for entry in entries
+                if entry.get("path") != "check_release_closure_vnext.py"
+            ],
+        },
+        "required_classification_mutation_rejected": {
+            **payload,
+            "checks": [
+                {
+                    **entry,
+                    **(
+                        {"classification": "credentialed"}
+                        if entry.get("path") in REQUIRED_CLASSIFICATIONS
+                        else {}
+                    ),
+                }
+                for entry in entries
+            ],
         },
         "declared_production_entrypoint_mismatch_rejected": {
             **payload,

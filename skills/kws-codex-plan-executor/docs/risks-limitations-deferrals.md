@@ -6,6 +6,27 @@ work are tracked in
 The v3 statements below remain historical release context unless explicitly
 marked as v4.
 
+## vNext Program Risk Status
+
+- **R1 - closed by current cost-free Plan 1 evidence.** Fixed production paths
+  load the release policy and dogfood contract from exact Git objects, and the
+  resulting immutable `TrustRoot` is checked across manifest, ledger, dogfood,
+  terminal generation, lineage, and public validation. The exact checkpoint
+  identity is recorded in the durable Task 4 report after the checkpoint commit
+  to avoid a self-referential tracked document.
+- **R2 - Program Final Gate pending.** No credentialed critical-path live proof
+  was authorized or run in Plan 1. It may run only against the frozen final
+  vNext checkpoint after the complete cost-free gate and a fresh explicit
+  authority decision.
+- **R3 - Program Final Gate pending.** Plan 1 supplies the exact four-lane
+  schemas, reducer, checkpoint binding, disposition ordering, and one repair-
+  wave ceiling, but it does not issue the final integrated verdict. That verdict
+  must cover the exact post-Plan-3 checkpoint before R2.
+
+R1 closure is therefore an implementation and deterministic-evidence result,
+not a vNext release-readiness claim. Existing v3 publication status remains
+historical context and does not satisfy vNext R2 or R3.
+
 - Published evidence state is **deterministic-ready; paid-live-verified**.
   Audited deterministic integrity gaps are closed by the current cost-free
   suite, and the reviewed four-treatment, eight-case subscription matrix passed
