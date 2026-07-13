@@ -55,6 +55,7 @@ SCENARIOS = frozenset(
         "queue_unchanged_strategy",
         "queue_historical_strategy",
         "queue_invalid_authority",
+        "queue_repeated_unusable_strategy",
         "writer_hold",
     }
 )
@@ -900,7 +901,10 @@ def main() -> int:
             pass
         elif role in WRITE_ROLES:
             commit = _commit_change(worktree, item_id)
-    elif scenario == "queue_historical_strategy":
+    elif scenario in {
+        "queue_historical_strategy",
+        "queue_repeated_unusable_strategy",
+    }:
         if role == "investigator":
             pass
         elif role in WRITE_ROLES:
@@ -959,9 +963,15 @@ def main() -> int:
                 "queue_invalid_authority",
             }
             else (
-                "strategy-A" if queue_number == 1 else "strategy-C"
+                "strategy-A"
+                if scenario == "queue_repeated_unusable_strategy"
+                else {1: "strategy-A", 2: "strategy-C"}.get(
+                    queue_number, f"strategy-D-{queue_number}"
+                )
             )
-            if role == "investigator" and scenario == "queue_historical_strategy"
+            if role == "investigator"
+            and scenario
+            in {"queue_historical_strategy", "queue_repeated_unusable_strategy"}
             else _prompt_strategy(prompt)
         ),
         "affected_document_ids": (
