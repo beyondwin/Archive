@@ -284,27 +284,46 @@ def validate_manifest(manifest: dict) -> list[str]:
                     ):
                         predecessors[edge[1]].append(edge[0])
             dependency_mismatch = False
+            task_contract_invalid = False
+            from .task_contracts import TaskContractVNext, contract_from_body
+
             for task in manifest.get("task_graph", []):
                 if not isinstance(task, dict) or not isinstance(task.get("id"), str):
                     dependency_mismatch = True
                     continue
                 task_id = task["id"]
                 dependencies = task.get("dependencies")
-                expected_dependencies = predecessors.get(task_id)
+                raw_expected_dependencies = predecessors.get(task_id)
+                expected_dependencies = (
+                    sorted(raw_expected_dependencies)
+                    if raw_expected_dependencies is not None
+                    else None
+                )
                 contract = task.get("task_contract")
+                contract_sha256 = task.get("task_contract_sha256")
+                try:
+                    parsed_contract = contract_from_body(
+                        contract,
+                        contract_sha256,
+                        plan_graph=graph,
+                    )
+                    if (
+                        not isinstance(parsed_contract, TaskContractVNext)
+                        or parsed_contract.qualified_task_id != task_id
+                        or list(parsed_contract.dependencies) != dependencies
+                    ):
+                        task_contract_invalid = True
+                except (TypeError, ValueError):
+                    task_contract_invalid = True
                 if (
                     not isinstance(dependencies, list)
                     or any(not isinstance(item, str) for item in dependencies)
+                    or dependencies != sorted(set(dependencies))
                     or expected_dependencies is None
                     or dependencies != expected_dependencies
-                    or (
-                        contract is not None
-                        and (
-                            not isinstance(contract, dict)
-                            or contract.get("qualified_task_id") != task_id
-                            or contract.get("dependencies") != dependencies
-                        )
-                    )
+                    or not isinstance(contract, dict)
+                    or contract.get("qualified_task_id") != task_id
+                    or contract.get("dependencies") != dependencies
                 ):
                     dependency_mismatch = True
             if (
@@ -316,6 +335,8 @@ def validate_manifest(manifest: dict) -> list[str]:
                 errors.append("plan_graph_digest_mismatch")
             if dependency_mismatch:
                 errors.append("plan_graph_dependency_mismatch")
+            if task_contract_invalid:
+                errors.append("plan_graph_task_contract_invalid")
     attempt_limit = manifest.get("attempt_budget_limit", 40)
     if type(attempt_limit) is not int or not 1 <= attempt_limit <= 40:
         errors.append("attempt_budget_limit_invalid")

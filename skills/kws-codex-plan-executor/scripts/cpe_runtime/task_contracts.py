@@ -311,17 +311,53 @@ def _validate_authoritative_graph(
         or document_hashes.get(document_id) != contract.document_sha256
     ):
         raise ValueError("task_document_binding_mismatch")
+    authoritative_claims = task.get("file_claims")
+    authoritative_refs = task.get("spec_refs")
+    if (
+        not isinstance(authoritative_claims, list)
+        or not isinstance(authoritative_refs, list)
+        or any(type(item) is not str for item in authoritative_claims)
+        or any(type(item) is not str for item in authoritative_refs)
+        or tuple(sorted(authoritative_claims))
+        != contract.file_claims
+        or tuple(sorted(authoritative_refs))
+        != tuple(section["id"] for section in contract.spec_sections)
+    ):
+        raise ValueError("task_contract_graph_scope_mismatch")
+    if task.get("task_source_sha256") != contract.task_source_sha256:
+        raise ValueError("task_contract_source_mismatch")
+    coverage = record.get("spec_coverage")
+    spec_section_hashes = record.get("spec_section_hashes")
+    if not isinstance(coverage, dict) or not isinstance(spec_section_hashes, dict):
+        raise ValueError("task_contract_graph_scope_mismatch")
+    covered_sections = tuple(
+        sorted(
+            str(section_id)
+            for section_id, owners in coverage.items()
+            if isinstance(owners, list) and contract.qualified_task_id in owners
+        )
+    )
+    if covered_sections != tuple(section["id"] for section in contract.spec_sections):
+        raise ValueError("task_contract_graph_scope_mismatch")
+    for section in contract.spec_sections:
+        owners = coverage.get(section["id"])
+        if (
+            not isinstance(owners, list)
+            or contract.qualified_task_id not in owners
+            or spec_section_hashes.get(section["id"]) != section["sha256"]
+        ):
+            raise ValueError("task_contract_graph_scope_mismatch")
     edges = record.get("edges")
     if not isinstance(edges, list):
         raise ValueError("task_contract_graph_dependency_mismatch")
-    predecessors = [
+    predecessors = sorted(
         edge[0]
         for edge in edges
         if isinstance(edge, list)
         and len(edge) == 2
         and all(isinstance(item, str) for item in edge)
         and edge[1] == contract.qualified_task_id
-    ]
+    )
     if (
         tuple(predecessors) != contract.dependencies
         or any(dependency not in tasks for dependency in contract.dependencies)
@@ -358,8 +394,17 @@ def _validated_vnext_contract(
     if (
         len(contract.dependencies) != len(set(contract.dependencies))
         or contract.qualified_task_id in contract.dependencies
+        or contract.dependencies != tuple(sorted(contract.dependencies))
     ):
         raise ValueError("qualified_dependency_invalid")
+    if (
+        len(contract.file_claims) != len(set(contract.file_claims))
+        or contract.file_claims != tuple(sorted(contract.file_claims))
+    ):
+        raise ValueError("task_contract_graph_scope_mismatch")
+    section_ids = tuple(section["id"] for section in contract.spec_sections)
+    if len(section_ids) != len(set(section_ids)) or section_ids != tuple(sorted(section_ids)):
+        raise ValueError("task_contract_graph_scope_mismatch")
     if not contract.title or not contract.task_source or not contract.acceptance_commands:
         raise ValueError("task_contract_incomplete")
     if sha256_bytes(contract.task_source.encode("utf-8")) != contract.task_source_sha256:
@@ -369,6 +414,8 @@ def _validated_vnext_contract(
         raise ValueError("source_hashes_invalid")
     if contract.source_hashes.get("plan") != contract.document_sha256:
         raise ValueError("task_document_binding_mismatch")
+    if set(source_spec_hashes) != set(section_ids):
+        raise ValueError("task_contract_graph_scope_mismatch")
     for section in contract.spec_sections:
         section_id = section["id"]
         actual = sha256_bytes(section["text"].encode("utf-8"))
@@ -580,6 +627,16 @@ def compile_task_contract_vnext(
     if not required_evidence and task_type == "tdd_implementation":
         required_evidence = ("red", "green")
     source_hashes_value = _source_hashes(source_hashes or task.get("source_hashes") or {})
+    dependencies = _strings(task.get("dependencies")) or _strings(task.get("depends_on"))
+    if len(dependencies) != len(set(dependencies)):
+        raise ValueError("qualified_dependency_invalid")
+    file_claims = _strings(task.get("file_claims")) or _strings(task.get("files"))
+    if len(file_claims) != len(set(file_claims)):
+        raise ValueError("task_contract_graph_scope_mismatch")
+    spec_sections_value = _spec_sections(spec_sections)
+    section_ids = tuple(section["id"] for section in spec_sections_value)
+    if len(section_ids) != len(set(section_ids)):
+        raise ValueError("task_contract_graph_scope_mismatch")
     contract = TaskContractVNext(
         schema_version=TASK_CONTRACT_VNEXT_SCHEMA_VERSION,
         plan_id=plan_id,
@@ -590,11 +647,11 @@ def compile_task_contract_vnext(
         title=str(task.get("title") or task_id),
         task_type=task_type,
         risk_class=str(task.get("risk_class") or "high"),
-        dependencies=_strings(task.get("dependencies")) or _strings(task.get("depends_on")),
+        dependencies=tuple(sorted(dependencies)),
         task_source=task_source,
         task_source_sha256=sha256_bytes(task_source.encode("utf-8")),
-        spec_sections=_spec_sections(spec_sections),
-        file_claims=_strings(task.get("file_claims")) or _strings(task.get("files")),
+        spec_sections=tuple(sorted(spec_sections_value, key=lambda section: section["id"])),
+        file_claims=tuple(sorted(file_claims)),
         forbidden_paths=forbidden_paths,
         acceptance_commands=_acceptance_commands(task),
         required_methods=required_methods,
