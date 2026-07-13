@@ -13,6 +13,10 @@ from pathlib import Path
 
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
+if sys.version_info < (3, 10):
+    pinned_python = SKILL_ROOT / ".venv" / "bin" / "python3"
+    if pinned_python.is_file() and Path(sys.executable).resolve() != pinned_python.resolve():
+        os.execv(str(pinned_python), [str(pinned_python), str(Path(__file__).resolve())])
 sys.path.insert(0, str(SKILL_ROOT / "scripts"))
 
 from cpe_runtime.git_objects import (
@@ -27,6 +31,19 @@ from cpe_runtime.release_policy_vnext import (
     load_trust_root,
     validate_policy_bytes,
 )
+from cpe_runtime.public_result import validate_release_evidence_root
+from cpe import run_v4_dogfood_fixture
+from live_migration.compiler import compile_vnext_manifest
+from live_migration.contracts import CREDENTIALLED_CALL
+from live_migration.ledger import (
+    append_event,
+    create_run,
+    register_release_run,
+    replay_release_lineage,
+    terminal_release_generation,
+)
+from live_migration.release_transaction import finalize_v4_release
+from live_migration.runner import LiveRunnerError, execute_v4_slots, install_v4_sealed_artifacts
 
 
 def git(repository: Path, *args: str) -> str:
@@ -474,6 +491,269 @@ def main() -> int:
         checks["contract_digest_mismatch_rejected"] = expect_value_error(
             lambda: load_trust_root(repo, mismatched_commit),
             "release_policy_vnext_contract_mismatch",
+        )
+
+    repository = SKILL_ROOT.parents[1]
+    reviewed_commit = git(repository, "rev-parse", "HEAD")
+    trust_root = load_trust_root(repository, reviewed_commit)
+    manifest = compile_vnext_manifest(
+        reviewed_commit,
+        "release-trust-vnext",
+        trust_root=trust_root,
+        eval_dir=SKILL_ROOT / "evals",
+        proof_profile="critical_path_live",
+    )
+    checks["manifest_cross_binding"] = (
+        manifest["trust_root"] == trust_root.body()
+        and manifest["trust_root_sha256"] == trust_root.trust_root_sha256
+        and all(
+            slot.get("trust_root_sha256") == trust_root.trust_root_sha256
+            for slot in manifest["slots"]
+        )
+    )
+    with tempfile.TemporaryDirectory(prefix="cpe-release-trust-cli-") as raw:
+        output = Path(raw) / "dry-run.json"
+        cli = subprocess.run(
+            [
+                sys.executable,
+                str(SKILL_ROOT / "evals" / "live_model_runner.py"),
+                "dry-run",
+                "--matrix",
+                "vnext",
+                "--proof-profile",
+                "critical_path_live",
+                "--billing-mode",
+                "chatgpt_subscription",
+                "--output",
+                str(output),
+            ],
+            cwd=repository,
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+        cli_payload = json.loads(output.read_text(encoding="utf-8"))
+        checks["guarded_cli_vnext_binding"] = (
+            cli.returncode == 0
+            and cli_payload["trust_root"] == trust_root.body()
+            and cli_payload["trust_root_sha256"]
+            == trust_root.trust_root_sha256
+        )
+
+    with tempfile.TemporaryDirectory(prefix="cpe-release-trust-ledger-") as raw:
+        release_root = Path(raw)
+        register_release_run(release_root, manifest, expected_trust_root=trust_root)
+        ledger_state = replay_release_lineage(release_root)
+        checks["ledger_cross_binding"] = (
+            ledger_state["trust_root_sha256"] == trust_root.trust_root_sha256
+            and ledger_state["runs"][0]["trust_root_sha256"]
+            == trust_root.trust_root_sha256
+        )
+
+        run = create_run(release_root / str(manifest["run_id"]), manifest)
+        install_v4_sealed_artifacts(run)
+        provider_invocations = 0
+
+        def fake_provider(slot: dict[str, object]):
+            nonlocal provider_invocations
+            provider_invocations += 1
+            blocked = slot["case_id"] == "security/migration block"
+            return {"fake-provider.json": canonical_json({"fake": True})}, {
+                "schema_version": "cpe-quality-result.v4",
+                "run_id": manifest["run_id"],
+                "treatment_id": slot["treatment_id"],
+                "case_id": slot["case_id"],
+                "outcome_kind": CREDENTIALLED_CALL,
+                "expected_policy_failure": False,
+                "task_completed": True,
+                "first_pass_success": True,
+                "worker_status": "blocked" if blocked else "completed",
+                "review_accurate": True,
+                "evidence_complete": True,
+                "critical_regression": False,
+                "model_attested": True,
+                "worktree_isolated": True,
+                "drift_free": True,
+            }
+
+        execute_v4_slots(run, fake_provider, sentinel_only=True, expected_trust_root=trust_root)
+        checks["trusted_fake_provider_invoked_once"] = provider_invocations == 1
+
+        mutation_calls = 0
+
+        def mutation_provider(_slot: dict[str, object]):
+            nonlocal mutation_calls
+            mutation_calls += 1
+            raise AssertionError("trust mutation reached provider")
+
+        mutation_cases = {
+            "digest": lambda payload: payload.update(
+                {"trust_root_sha256": "0" * 64}
+            ),
+            "body": lambda payload: payload["trust_root"].update(
+                {"reviewed_tree": "0" * 40}
+            ),
+            "slot": lambda payload: payload["slots"][0].update(
+                {"trust_root_sha256": "0" * 64}
+            ),
+        }
+        rejected_mutations = 0
+        for name, mutate in mutation_cases.items():
+            mutated = json.loads(json.dumps(manifest))
+            mutate(mutated)
+            mutated_body = {
+                key: value
+                for key, value in mutated.items()
+                if key != "manifest_sha256"
+            }
+            mutated["manifest_sha256"] = sha256_bytes(canonical_json(mutated_body))
+            mutated_run = create_run(release_root / f"mutated-{name}", mutated)
+            try:
+                execute_v4_slots(
+                    mutated_run,
+                    mutation_provider,
+                    sentinel_only=True,
+                    expected_trust_root=trust_root,
+                )
+            except LiveRunnerError as exc:
+                rejected_mutations += exc.code == "release_trust_root_mismatch"
+        checks["trust_mutations_rejected_before_provider"] = (
+            rejected_mutations == len(mutation_cases) and mutation_calls == 0
+        )
+
+        append_event(
+            run,
+            "run_blocked",
+            {"code": "test_terminal", "message": "cost-free trust binding check"},
+        )
+        generation_payloads = {
+            name: canonical_json({"name": name, "trust_root_sha256": trust_root.trust_root_sha256})
+            for name in (
+                "checkpoint.json",
+                "manifest.json",
+                "result.json",
+                "privacy-audit.json",
+                "dogfood-result.json",
+            )
+        }
+        from live_migration.ledger import finalize_release_generation
+
+        finalize_release_generation(
+            release_root,
+            run_id=str(manifest["run_id"]),
+            payload_bytes=generation_payloads,
+            child_manifest_sha256=str(manifest["manifest_sha256"]),
+            aggregate_sha256="1" * 64,
+            dogfood_sha256=sha256_bytes(generation_payloads["dogfood-result.json"]),
+            checkpoint_sha256=sha256_bytes(generation_payloads["checkpoint.json"]),
+            privacy_sha256=sha256_bytes(generation_payloads["privacy-audit.json"]),
+            proof_profile="critical_path_live",
+            trust_root=trust_root,
+        )
+        generation, _generation_path = terminal_release_generation(release_root)
+        checks["terminal_generation_cross_binding"] = (
+            generation["trust_root_sha256"] == trust_root.trust_root_sha256
+        )
+        checks["validator_rejects_synthetic_generation"] = (
+            validate_release_evidence_root(
+                release_root,
+                reviewed_commit,
+                repository,
+                expected_trust_root=trust_root,
+            )["passed"]
+            is False
+        )
+
+    with tempfile.TemporaryDirectory(prefix="cpe-release-trust-terminal-") as raw:
+        release_root = Path(raw) / "evidence"
+        release_root.mkdir()
+        terminal_manifest = compile_vnext_manifest(
+            reviewed_commit,
+            "release-trust-vnext-terminal",
+            trust_root=trust_root,
+            eval_dir=SKILL_ROOT / "evals",
+            proof_profile="critical_path_live",
+        )
+        terminal_manifest["model_catalog_sha256"] = "c" * 64
+        terminal_body = {
+            key: value
+            for key, value in terminal_manifest.items()
+            if key != "manifest_sha256"
+        }
+        terminal_manifest["manifest_sha256"] = sha256_bytes(
+            canonical_json(terminal_body)
+        )
+        register_release_run(
+            release_root,
+            terminal_manifest,
+            expected_trust_root=trust_root,
+        )
+        terminal_run = create_run(
+            release_root / str(terminal_manifest["run_id"]), terminal_manifest
+        )
+        install_v4_sealed_artifacts(terminal_run)
+        terminal_calls = 0
+
+        def terminal_provider(slot: dict[str, object]):
+            nonlocal terminal_calls
+            terminal_calls += 1
+            blocked = slot["case_id"] == "security/migration block"
+            return {"fake-provider.json": canonical_json({"fake": True})}, {
+                "schema_version": "cpe-quality-result.v4",
+                "run_id": terminal_manifest["run_id"],
+                "treatment_id": slot["treatment_id"],
+                "case_id": slot["case_id"],
+                "outcome_kind": CREDENTIALLED_CALL,
+                "expected_policy_failure": False,
+                "task_completed": True,
+                "first_pass_success": True,
+                "worker_status": "blocked" if blocked else "completed",
+                "review_accurate": True,
+                "evidence_complete": True,
+                "critical_regression": False,
+                "model_attested": True,
+                "worktree_isolated": True,
+                "drift_free": True,
+            }
+
+        executed = execute_v4_slots(
+            terminal_run,
+            terminal_provider,
+            expected_trust_root=trust_root,
+        )
+        append_event(terminal_run, "run_completed", {"completed_slots": 9})
+        with git_environment(
+            CPE_SUPERPOWERS_ROOT=str(
+                SKILL_ROOT / "evals" / "fixtures" / "superpowers-capabilities"
+            )
+        ):
+            dogfood = run_v4_dogfood_fixture(
+                SKILL_ROOT
+                / "evals"
+                / "parser-fixtures"
+                / "22-v4-dogfood-plan.md",
+                Path(raw) / "dogfood-run",
+            )
+        finalized = finalize_v4_release(
+            evidence_root=release_root,
+            run_dir=terminal_run.run_dir,
+            dogfood_run_dir=Path(dogfood["run_dir"]),
+            repository=repository,
+        )
+        generation, _generation_path = terminal_release_generation(release_root)
+        validation = validate_release_evidence_root(
+            release_root,
+            reviewed_commit,
+            repository,
+            expected_trust_root=trust_root,
+        )
+        checks["terminal_release_cross_binding"] = (
+            executed["provider_invocations"] == 2
+            and terminal_calls == 2
+            and finalized["generation_sha256"] == generation["generation_sha256"]
+            and generation["trust_root_sha256"] == trust_root.trust_root_sha256
+            and validation["trust_root_sha256"] == trust_root.trust_root_sha256
+            and validation["passed"] is True
         )
 
     failures = [name for name, passed in checks.items() if not passed]

@@ -11,7 +11,7 @@ import base64
 import hashlib
 from numbers import Real
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from .contracts import (
     CHATGPT_SUBSCRIPTION,
@@ -42,6 +42,7 @@ from cpe_runtime.release_policy_v4 import (
     load_release_policy,
     validate_release_checkpoint,
 )
+from cpe_runtime.git_objects import TrustRoot
 from cpe_runtime.quality_v4 import canonical_v4_envelope_map
 
 
@@ -54,6 +55,28 @@ QUALIFIED_SENTINEL = {
     "case_id": "security/migration block",
 }
 PROOF_PROFILES = frozenset({"critical_path_live", "full_paid_matrix"})
+
+
+def bind_trust_root(
+    payload: dict[str, object], trust_root: TrustRoot
+) -> dict[str, object]:
+    """Return one payload bound to the canonical Git-object trust root."""
+
+    return {
+        **payload,
+        "trust_root": trust_root.body(),
+        "trust_root_sha256": trust_root.trust_root_sha256,
+    }
+
+
+def require_trust_root(payload: Mapping[str, object], expected: TrustRoot) -> None:
+    """Reject any payload that does not carry the exact expected trust root."""
+
+    if (
+        payload.get("trust_root") != expected.body()
+        or payload.get("trust_root_sha256") != expected.trust_root_sha256
+    ):
+        raise ValueError("release_trust_root_mismatch")
 
 
 def _skill_root() -> Path:
@@ -461,6 +484,57 @@ def compile_v4_manifest(
         )
     canonical_v4_envelope_map(body)
     return {**body, "manifest_sha256": sha256_bytes(canonical_json(body))}
+
+
+def compile_vnext_manifest(
+    commit: str,
+    run_id: str,
+    *,
+    trust_root: TrustRoot,
+    eval_dir: Path | None = None,
+    created_at: str = _DEFAULT_CREATED_AT,
+    proof_profile: str = "full_paid_matrix",
+) -> dict[str, object]:
+    """Compile the v4-compatible quality matrix under one vNext trust root."""
+
+    if commit != trust_root.reviewed_commit:
+        raise LiveMigrationContractError("release trust root commit differs from manifest")
+    manifest = compile_v4_manifest(
+        commit,
+        run_id,
+        eval_dir=eval_dir,
+        created_at=created_at,
+        proof_profile=proof_profile,
+    )
+    slots = [
+        {**slot, "trust_root_sha256": trust_root.trust_root_sha256}
+        for slot in manifest["slots"]
+    ]
+    body = {
+        key: value
+        for key, value in manifest.items()
+        if key != "manifest_sha256"
+    }
+    body.update(
+        {
+            "implementation_base_commit": trust_root.trusted_base_commit,
+            "implementation_tree": trust_root.reviewed_tree,
+            "implementation_patch_sha256": trust_root.patch_sha256,
+            "release_policy_sha256": trust_root.policy.sha256,
+            "dogfood_task_contract_sha256": trust_root.dogfood_contract.sha256,
+            "critical_matrix_attempt_limit": trust_root.attempt_ceilings[
+                "critical_matrix"
+            ],
+            "dogfood_attempt_limit": trust_root.attempt_ceilings["dogfood"],
+            "combined_attempt_limit": trust_root.attempt_ceilings["combined"],
+            "slots": slots,
+        }
+    )
+    bound = bind_trust_root(body, trust_root)
+    return {
+        **bound,
+        "manifest_sha256": sha256_bytes(canonical_json(bound)),
+    }
 
 
 def _prompt_source_bytes(eval_dir: Path, prompt_ref: str) -> bytes:

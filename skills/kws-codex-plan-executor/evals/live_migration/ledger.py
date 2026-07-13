@@ -18,6 +18,7 @@ from typing import Any, Iterator
 from urllib.parse import quote
 
 from .contracts import SlotKey, canonical_json, sha256_bytes
+from .compiler import require_trust_root
 
 
 EVENT_SCHEMA = "cpe-live-event.v1"
@@ -437,9 +438,17 @@ def _release_projection(
 ) -> dict[str, object]:
     runs: list[dict[str, object]] = []
     by_id: dict[str, dict[str, object]] = {}
+    trust_root_sha256: str | None = None
     for event in events:
         payload = event["payload"]
         assert isinstance(payload, dict)
+        event_trust = payload.get("trust_root_sha256")
+        if event_trust is not None:
+            if not isinstance(event_trust, str) or _SHA256.fullmatch(event_trust) is None:
+                raise LedgerError("release trust root binding is invalid")
+            if trust_root_sha256 is not None and event_trust != trust_root_sha256:
+                raise LedgerError("release trust root binding changed")
+            trust_root_sha256 = event_trust
         if event["type"] == _PREDECESSOR_EVENT:
             if runs or event["sequence"] != 1:
                 raise LedgerError("predecessor attestation must be the first release event")
@@ -464,6 +473,11 @@ def _release_projection(
                 "run_id": payload["run_id"],
                 "manifest_sha256": payload["manifest_sha256"],
                 "checkpoint": payload["checkpoint"],
+                **(
+                    {"trust_root_sha256": event_trust}
+                    if event_trust is not None
+                    else {}
+                ),
                 "terminal": False,
                 "passed": None,
                 "aggregate_sha256": None,
@@ -501,6 +515,11 @@ def _release_projection(
                     "proof_profile": payload["proof_profile"],
                     "dogfood_sha256": payload["dogfood_sha256"],
                     "checkpoint_sha256": payload["checkpoint_sha256"],
+                    **(
+                        {"trust_root_sha256": event_trust}
+                        if event_trust is not None
+                        else {}
+                    ),
                 }
             )
         else:
@@ -510,6 +529,7 @@ def _release_projection(
         "schema_version": "cpe-quality-release-lineage.v4",
         "event_count": len(events),
         "last_event_sha256": events[-1]["event_sha256"] if events else None,
+        "trust_root_sha256": trust_root_sha256,
         "runs": runs,
         "terminal_full_runs": sum(bool(record["terminal"]) for record in runs),
         "terminal_full_failures": failures,
@@ -531,8 +551,9 @@ def _validate_release_generation(root: Path, payload: dict[str, object]) -> Path
         "file_sha256",
     }
     file_sha256 = payload.get("file_sha256")
+    allowed = (required, required | {"trust_root_sha256"})
     if (
-        set(payload) != required
+        set(payload) not in allowed
         or payload.get("proof_profile") not in {"critical_path_live", "full_paid_matrix"}
         or not isinstance(file_sha256, dict)
         or set(file_sha256) != set(_GENERATION_FILES)
@@ -540,6 +561,10 @@ def _validate_release_generation(root: Path, payload: dict[str, object]) -> Path
         or any(not isinstance(payload.get(field), str) or _SHA256.fullmatch(str(payload[field])) is None for field in (
             "generation_sha256", "child_manifest_sha256", "aggregate_sha256", "dogfood_sha256", "checkpoint_sha256", "privacy_sha256"
         ))
+        or (
+            "trust_root_sha256" in payload
+            and _SHA256.fullmatch(str(payload["trust_root_sha256"])) is None
+        )
     ):
         raise LedgerError("release finalization payload is invalid")
     expected_generation = sha256_bytes(
@@ -626,6 +651,7 @@ def finalize_release_generation(
     checkpoint_sha256: str,
     privacy_sha256: str,
     proof_profile: str,
+    trust_root=None,
     crash_at: str | None = None,
 ) -> dict[str, object]:
     """Publish one fsynced generation, then one terminal lineage event and state."""
@@ -654,6 +680,8 @@ def finalize_release_generation(
         "proof_profile": proof_profile,
         "file_sha256": file_sha256,
     }
+    if trust_root is not None:
+        payload["trust_root_sha256"] = trust_root.trust_root_sha256
     with _locked_run(release_root):
         generation_root = release_root / _GENERATION_DIR
         generation_root.mkdir(mode=0o700, exist_ok=True)
@@ -815,12 +843,18 @@ def register_release_run(
     root: Path,
     manifest: dict[str, object],
     *,
+    expected_trust_root=None,
     append_event_fn=None,
 ) -> dict[str, object]:
     """Reserve one immutable release attempt before any provider execution."""
 
     if not isinstance(manifest, dict) or manifest.get("schema_version") != "cpe-quality-manifest.v4":
         raise LedgerError("release lineage requires a v4 manifest")
+    if expected_trust_root is not None:
+        try:
+            require_trust_root(manifest, expected_trust_root)
+        except ValueError as exc:
+            raise LedgerError("release_trust_root_mismatch") from exc
     run_id = manifest.get("run_id")
     manifest_sha256 = manifest.get("manifest_sha256")
     checkpoint = manifest.get("implementation_patch_sha256") or manifest.get(
@@ -892,6 +926,11 @@ def register_release_run(
                 "run_id": run_id,
                 "manifest_sha256": manifest_sha256,
                 "checkpoint": checkpoint,
+                **(
+                    {"trust_root_sha256": manifest["trust_root_sha256"]}
+                    if "trust_root_sha256" in manifest
+                    else {}
+                ),
             },
         )
         _atomic_json(
@@ -963,6 +1002,11 @@ def recover_orphan_release_registration(
                 "run_id": run_id,
                 "manifest_sha256": digest,
                 "checkpoint": checkpoint,
+                **(
+                    {"trust_root_sha256": manifest["trust_root_sha256"]}
+                    if "trust_root_sha256" in manifest
+                    else {}
+                ),
             },
         )
         _atomic_json(

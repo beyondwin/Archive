@@ -8,12 +8,14 @@ from pathlib import Path
 from cpe_runtime.dogfood_v4 import retain_v4_dogfood_run, verify_v4_dogfood_run
 from cpe_runtime.manifest import load_verified_manifest
 from cpe_runtime.release_policy_v4 import load_release_policy, validate_release_checkpoint
+from cpe_runtime.release_policy_vnext import load_trust_root
 from cpe_runtime.quality_v4 import (
     RELEASE_EVIDENCE_FILENAMES,
     build_v4_release_evidence_payloads,
 )
 
 from .contracts import canonical_json, sha256_bytes
+from .compiler import require_trust_root
 from .ledger import (
     LedgerError,
     finalize_release_generation,
@@ -21,11 +23,24 @@ from .ledger import (
 )
 
 
-def _verify_implementation(manifest: dict[str, object], repository: Path) -> None:
+def _verify_implementation(manifest: dict[str, object], repository: Path):
     commit = str(manifest.get("implementation_commit") or "")
     base = str(manifest.get("implementation_base_commit") or "")
     tree = str(manifest.get("implementation_tree") or "")
     patch = str(manifest.get("implementation_patch_sha256") or "")
+    if "trust_root_sha256" in manifest:
+        try:
+            trust_root = load_trust_root(repository, commit)
+            require_trust_root(manifest, trust_root)
+            if (
+                base != trust_root.trusted_base_commit
+                or tree != trust_root.reviewed_tree
+                or patch != trust_root.patch_sha256
+            ):
+                raise ValueError("release trust root checkpoint differs")
+            return trust_root
+        except ValueError as exc:
+            raise LedgerError("release_trust_root_mismatch") from exc
     try:
         policy = load_release_policy()
         if base != policy["trusted_base_commit"]:
@@ -41,6 +56,7 @@ def _verify_implementation(manifest: dict[str, object], repository: Path) -> Non
             raise ValueError("release policy digest differs")
     except ValueError as exc:
         raise LedgerError("release implementation checkpoint violates tracked policy") from exc
+    return None
 
 
 def finalize_v4_release(
@@ -66,8 +82,8 @@ def finalize_v4_release(
     registered = load_registered_release_manifest(root, str(manifest.get("run_id") or ""))
     if registered is None or canonical_json(registered) != canonical_json(manifest):
         raise LedgerError("release child manifest differs from registration")
-    _verify_implementation(manifest, repo)
-    policy = load_release_policy()
+    trust_root = _verify_implementation(manifest, repo)
+    policy = load_release_policy() if trust_root is None else None
     aggregate = aggregate_run(child)
     profile = manifest.get("proof_profile", "full_paid_matrix")
     exact = (2, 7) if profile == "critical_path_live" else (17, 7)
@@ -89,7 +105,11 @@ def finalize_v4_release(
     tasks = dogfood_manifest.get("task_graph")
     if not isinstance(tasks, list) or len(tasks) != 1:
         raise LedgerError("release dogfood task contract is invalid")
-    task_contract_sha256 = str(policy["dogfood_task_contract_sha256"])
+    task_contract_sha256 = (
+        str(policy["dogfood_task_contract_sha256"])
+        if policy is not None
+        else trust_root.dogfood_contract.sha256
+    )
     if tasks[0].get("task_contract_sha256") != task_contract_sha256:
         raise LedgerError("release dogfood task contract is invalid")
     dogfood = verify_v4_dogfood_run(
@@ -97,13 +117,31 @@ def finalize_v4_release(
         expected_implementation_commit=str(manifest["implementation_commit"]),
         expected_implementation_tree=str(manifest["implementation_tree"]),
         expected_task_contract_sha256=task_contract_sha256,
+        expected_trust_root_sha256=(
+            trust_root.trust_root_sha256 if trust_root is not None else None
+        ),
     )
-    if int(dogfood.get("model_attempts") or 0) > int(policy["dogfood_attempt_limit"]):
+    dogfood_limit = (
+        int(policy["dogfood_attempt_limit"])
+        if policy is not None
+        else int(trust_root.attempt_ceilings["dogfood"])
+    )
+    if int(dogfood.get("model_attempts") or 0) > dogfood_limit:
         raise LedgerError("release dogfood attempt budget exceeded")
     if profile == "critical_path_live":
-        if int(aggregate.get("credentialed_call_count") or 0) > int(policy["critical_matrix_attempt_limit"]):
+        critical_limit = (
+            int(policy["critical_matrix_attempt_limit"])
+            if policy is not None
+            else int(trust_root.attempt_ceilings["critical_matrix"])
+        )
+        combined_limit = (
+            int(policy["combined_attempt_limit"])
+            if policy is not None
+            else int(trust_root.attempt_ceilings["combined"])
+        )
+        if int(aggregate.get("credentialed_call_count") or 0) > critical_limit:
             raise LedgerError("release critical matrix attempt budget exceeded")
-        if int(aggregate.get("credentialed_call_count") or 0) + int(dogfood.get("model_attempts") or 0) > int(policy["combined_attempt_limit"]):
+        if int(aggregate.get("credentialed_call_count") or 0) + int(dogfood.get("model_attempts") or 0) > combined_limit:
             raise LedgerError("release combined attempt budget exceeded")
     retained = root / "dogfood" / str(dogfood_manifest["run_id"])
     retained_checkpoint = retain_v4_dogfood_run(
@@ -112,14 +150,40 @@ def finalize_v4_release(
         expected_implementation_commit=str(manifest["implementation_commit"]),
         expected_implementation_tree=str(manifest["implementation_tree"]),
         expected_task_contract_sha256=task_contract_sha256,
-        task_contract_path=Path(str(policy["dogfood_task_contract_absolute_path"])),
+        task_contract_path=(
+            Path(str(policy["dogfood_task_contract_absolute_path"]))
+            if policy is not None
+            else repo / trust_root.dogfood_contract.path
+        ),
+        expected_trust_root_sha256=(
+            trust_root.trust_root_sha256 if trust_root is not None else None
+        ),
     )
     dogfood = {
         **dogfood,
         "retained_run_id": str(dogfood_manifest["run_id"]),
         "retained_checkpoint_sha256": sha256_bytes(canonical_json(retained_checkpoint)),
     }
-    payloads = build_v4_release_evidence_payloads(manifest, aggregate, dogfood)
+    dogfood_for_builder = {
+        key: value for key, value in dogfood.items() if key != "trust_root_sha256"
+    }
+    payloads = build_v4_release_evidence_payloads(
+        manifest, aggregate, dogfood_for_builder
+    )
+    if trust_root is not None:
+        for name in ("manifest.json", "result.json", "dogfood-result.json"):
+            payloads[name]["trust_root_sha256"] = trust_root.trust_root_sha256
+        payloads["result.json"]["manifest_sha256"] = sha256_bytes(
+            canonical_json(payloads["manifest.json"])
+        )
+        for key, name in (
+            ("manifest_sha256", "manifest.json"),
+            ("result_sha256", "result.json"),
+            ("dogfood_sha256", "dogfood-result.json"),
+        ):
+            payloads["checkpoint.json"][key] = sha256_bytes(
+                canonical_json(payloads[name])
+            )
     payload_bytes = {
         name: canonical_json(payloads[name]) for name in RELEASE_EVIDENCE_FILENAMES
     }
@@ -133,6 +197,7 @@ def finalize_v4_release(
         checkpoint_sha256=sha256_bytes(payload_bytes["checkpoint.json"]),
         privacy_sha256=sha256_bytes(payload_bytes["privacy-audit.json"]),
         proof_profile=str(profile),
+        trust_root=trust_root,
         crash_at=crash_at,
     )
     generation_sha256 = event["payload"]["generation_sha256"]

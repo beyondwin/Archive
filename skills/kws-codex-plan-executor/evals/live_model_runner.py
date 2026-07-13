@@ -16,7 +16,12 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
-from live_migration.compiler import compile_manifest, compile_v4_manifest
+from live_migration.compiler import (
+    compile_manifest,
+    compile_v4_manifest,
+    compile_vnext_manifest,
+    require_trust_root,
+)
 from live_migration.contracts import (
     CHATGPT_SUBSCRIPTION,
     SlotKey,
@@ -49,6 +54,7 @@ from live_migration.runner import (
     verify_v4_manifest_sealed_artifacts,
 )
 from cpe_runtime.release_policy_v4 import load_release_policy, validate_release_checkpoint
+from cpe_runtime.release_policy_vnext import load_trust_root
 
 
 ROOT = Path(__file__).resolve().parent
@@ -76,7 +82,7 @@ def _parser() -> argparse.ArgumentParser:
     dry.add_argument("--billing-mode", default=CHATGPT_SUBSCRIPTION)
     dry.add_argument("--output", type=Path, required=True)
     dry.add_argument("--run-id", default="cpe-v3-subscription-dry-run")
-    dry.add_argument("--matrix", choices=("v4",))
+    dry.add_argument("--matrix", choices=("v4", "vnext"))
     dry.add_argument(
         "--proof-profile",
         choices=("critical_path_live", "full_paid_matrix"),
@@ -91,7 +97,7 @@ def _parser() -> argparse.ArgumentParser:
     start.add_argument("--codex-bin", type=Path, default=DEFAULT_CODEX_BINARY)
     start.add_argument("--run-id")
     start.add_argument("--slot-timeout-seconds", type=int, default=900)
-    start.add_argument("--matrix", choices=("v4",))
+    start.add_argument("--matrix", choices=("v4", "vnext"))
     start.add_argument(
         "--proof-profile",
         choices=("critical_path_live", "full_paid_matrix"),
@@ -260,24 +266,58 @@ def _compile(
     matrix: str | None = None,
     proof_profile: str = "full_paid_matrix",
 ) -> dict[str, object]:
-    if matrix == "v4":
+    if matrix in {"v4", "vnext"}:
         if billing_mode != CHATGPT_SUBSCRIPTION:
             raise LiveRunnerError(
                 "unsupported_billing_mode", "v4 requires ChatGPT subscription billing"
             )
-        manifest = compile_v4_manifest(
-            binding["implementation_commit"],
-            run_id,
-            eval_dir=ROOT,
-            created_at=_created_at(),
-            proof_profile=proof_profile,
-            implementation_base_commit=binding["implementation_base_commit"],
-        )
+        if matrix == "vnext":
+            trust_root = load_trust_root(
+                REPOSITORY_ROOT, binding["implementation_commit"]
+            )
+            manifest = compile_vnext_manifest(
+                binding["implementation_commit"],
+                run_id,
+                trust_root=trust_root,
+                eval_dir=ROOT,
+                created_at=_created_at(),
+                proof_profile=proof_profile,
+            )
+        else:
+            manifest = compile_v4_manifest(
+                binding["implementation_commit"],
+                run_id,
+                eval_dir=ROOT,
+                created_at=_created_at(),
+                proof_profile=proof_profile,
+                implementation_base_commit=binding["implementation_base_commit"],
+            )
     else:
         manifest = compile_manifest(
             ROOT, billing_mode, binding["implementation_commit"], _created_at(), run_id
         )
     return _bind_manifest(manifest, binding)
+
+
+def _require_manifest_trust_root(manifest: dict[str, object]):
+    if "trust_root_sha256" not in manifest:
+        return None
+    try:
+        trust_root = load_trust_root(
+            REPOSITORY_ROOT, str(manifest.get("implementation_commit") or "")
+        )
+        require_trust_root(manifest, trust_root)
+        if any(
+            not isinstance(slot, dict)
+            or slot.get("trust_root_sha256") != trust_root.trust_root_sha256
+            for slot in manifest.get("slots", ())
+        ):
+            raise ValueError("release_trust_root_mismatch")
+    except ValueError as exc:
+        raise LiveRunnerError(
+            "release_trust_root_mismatch", "release evidence changed trust root"
+        ) from exc
+    return trust_root
 
 
 def _is_within(path: Path, parent: Path) -> bool:
@@ -323,6 +363,14 @@ def _dry_run(args: argparse.Namespace) -> dict[str, object]:
         "implementation_patch_sha256": manifest["implementation_patch_sha256"],
         "invocation_policy_sha256": manifest["invocation_policy_sha256"],
         "manifest_sha256": manifest["manifest_sha256"],
+        **(
+            {
+                "trust_root": manifest["trust_root"],
+                "trust_root_sha256": manifest["trust_root_sha256"],
+            }
+            if "trust_root_sha256" in manifest
+            else {}
+        ),
         "slots": manifest["slots"],
         "next_action": (
             "review and commit the plan, then run start with the reviewed "
@@ -657,7 +705,11 @@ def _register_and_create_v4_run(
 ) -> LiveRun:
     """Idempotently reserve the release attempt, then create its child ledger."""
 
-    register_release_run(run_dir.parent, manifest)
+    register_release_run(
+        run_dir.parent,
+        manifest,
+        expected_trust_root=_require_manifest_trust_root(manifest),
+    )
     return create(run_dir, manifest)
 
 
@@ -689,6 +741,7 @@ def _start(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict[st
             proof_profile=args.proof_profile,
         )
     if manifest.get("schema_version") == "cpe-quality-manifest.v4":
+        _require_manifest_trust_root(manifest)
         verify_v4_manifest_sealed_artifacts(manifest)
     recovered_run = None
     if run_dir.exists():
@@ -798,6 +851,7 @@ def _resume(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict[s
         _assert_execution_checkpoint(binding)
         run = LiveRun(run_dir, manifest, str(manifest["manifest_sha256"]))
         if manifest.get("schema_version") == "cpe-quality-manifest.v4":
+            _require_manifest_trust_root(manifest)
             verify_v4_manifest_sealed_artifacts(manifest)
             install_v4_sealed_artifacts(run)
         state = replay_run(run_dir)

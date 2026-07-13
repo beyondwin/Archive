@@ -9,6 +9,7 @@ from pathlib import Path
 from .privacy import audit_sanitized_payload
 from .dogfood_v4 import verify_retained_v4_dogfood_run
 from .release_policy_v4 import load_release_policy, validate_release_checkpoint
+from .release_policy_vnext import load_trust_root
 from .quality_v4 import (
     canonical_v4_envelope_map,
     validate_v4_release_payloads,
@@ -68,7 +69,11 @@ def trusted_release_repository_root(validator_path: Path) -> Path:
 
 
 def validate_release_evidence_root(
-    root: Path, implementation_commit: str, workspace: Path
+    root: Path,
+    implementation_commit: str,
+    workspace: Path,
+    *,
+    expected_trust_root=None,
 ) -> dict[str, object]:
     """Validate the immutable Task 10 evidence against its reviewed checkpoint."""
 
@@ -147,8 +152,37 @@ def validate_release_evidence_root(
         errors.append("release_root_file_set_invalid")
 
     privacy_reaudit = audit_sanitized_payload(release_payloads)
+    trust_root = None
+    trust_digest = manifest.get("trust_root_sha256")
+    if trust_digest is not None:
+        try:
+            trust_root = load_trust_root(
+                workspace.expanduser().resolve(), implementation_commit
+            )
+            if expected_trust_root is not None and (
+                expected_trust_root.trust_root_sha256
+                != trust_root.trust_root_sha256
+            ):
+                raise ValueError("release_trust_root_mismatch")
+            if any(
+                payload.get("trust_root_sha256") != trust_root.trust_root_sha256
+                for payload in (manifest, result, dogfood)
+            ):
+                raise ValueError("release_trust_root_mismatch")
+        except ValueError:
+            errors.append("release_trust_root_mismatch")
+    elif expected_trust_root is not None:
+        errors.append("release_trust_root_mismatch")
+    schema_payloads = {
+        name: {
+            key: value
+            for key, value in payload.items()
+            if key != "trust_root_sha256"
+        }
+        for name, payload in release_payloads.items()
+    }
     try:
-        validate_v4_release_payloads(release_payloads)
+        validate_v4_release_payloads(schema_payloads)
     except ValueError:
         errors.append("release_evidence_schema_invalid")
     if privacy_reaudit.get("passed") is not True:
@@ -212,16 +246,26 @@ def validate_release_evidence_root(
         errors.append("reviewed_checkpoint_binding_invalid")
     if reviewed_tree is not None:
         try:
-            policy = load_release_policy()
-            validate_release_checkpoint(
-                workspace.expanduser().resolve(),
-                implementation_commit,
-                implementation_tree=reviewed_tree,
-                implementation_patch_sha256=str(manifest.get("implementation_patch_sha256") or ""),
-                policy=policy,
-            )
-            if manifest.get("implementation_base_commit") != policy["trusted_base_commit"]:
-                errors.append("implementation_patch_invalid")
+            if trust_root is not None:
+                if (
+                    manifest.get("implementation_base_commit")
+                    != trust_root.trusted_base_commit
+                    or reviewed_tree != trust_root.reviewed_tree
+                    or manifest.get("implementation_patch_sha256")
+                    != trust_root.patch_sha256
+                ):
+                    errors.append("implementation_patch_invalid")
+            else:
+                policy = load_release_policy()
+                validate_release_checkpoint(
+                    workspace.expanduser().resolve(),
+                    implementation_commit,
+                    implementation_tree=reviewed_tree,
+                    implementation_patch_sha256=str(manifest.get("implementation_patch_sha256") or ""),
+                    policy=policy,
+                )
+                if manifest.get("implementation_base_commit") != policy["trusted_base_commit"]:
+                    errors.append("implementation_patch_invalid")
         except ValueError:
             errors.append("implementation_patch_invalid")
     bindings = {
@@ -292,23 +336,46 @@ def validate_release_evidence_root(
     )
     dogfood_valid = dogfood_valid and len(dogfood.get("verified_checkpoints", [])) == 1
     try:
-        policy = load_release_policy()
+        policy = load_release_policy() if trust_root is None else None
         retained = verify_retained_v4_dogfood_run(
             root / "dogfood" / retained_run_id,
             expected_implementation_commit=implementation_commit,
             expected_implementation_tree=str(checkpoint.get("tree") or ""),
-            expected_task_contract_sha256=str(policy["dogfood_task_contract_sha256"]),
+            expected_task_contract_sha256=(
+                str(policy["dogfood_task_contract_sha256"])
+                if policy is not None
+                else trust_root.dogfood_contract.sha256
+            ),
+            expected_trust_root_sha256=(
+                trust_root.trust_root_sha256 if trust_root is not None else None
+            ),
         )
         retained_checkpoint = root / "dogfood" / retained_run_id / "checkpoint.json"
         if (
             not retained_run_id
             or dogfood.get("retained_checkpoint_sha256") != hashlib.sha256(retained_checkpoint.read_bytes()).hexdigest()
-            or int(retained.get("model_attempts") or 0) > int(policy["dogfood_attempt_limit"])
+            or int(retained.get("model_attempts") or 0)
+            > (
+                int(policy["dogfood_attempt_limit"])
+                if policy is not None
+                else int(trust_root.attempt_ceilings["dogfood"])
+            )
             or (
                 manifest.get("proof_profile") == "critical_path_live"
                 and (
-                    int(manifest.get("credentialed_call_count") or 0) > int(policy["critical_matrix_attempt_limit"])
-                    or int(manifest.get("credentialed_call_count") or 0) + int(retained.get("model_attempts") or 0) > int(policy["combined_attempt_limit"])
+                    int(manifest.get("credentialed_call_count") or 0)
+                    > (
+                        int(policy["critical_matrix_attempt_limit"])
+                        if policy is not None
+                        else int(trust_root.attempt_ceilings["critical_matrix"])
+                    )
+                    or int(manifest.get("credentialed_call_count") or 0)
+                    + int(retained.get("model_attempts") or 0)
+                    > (
+                        int(policy["combined_attempt_limit"])
+                        if policy is not None
+                        else int(trust_root.attempt_ceilings["combined"])
+                    )
                 )
             )
         ):
@@ -341,6 +408,11 @@ def validate_release_evidence_root(
         "dogfood_sha256": hashlib.sha256((generation / "dogfood-result.json").read_bytes()).hexdigest(),
         "child_manifest_sha256": manifest.get("ledger_manifest_sha256"),
         "proof_profile": manifest.get("proof_profile"),
+        **(
+            {"trust_root_sha256": trust_root.trust_root_sha256}
+            if trust_root is not None
+            else {}
+        ),
     }
     if any(terminal.get(key) != value for key, value in event_bindings.items()):
         errors.append("release_terminal_binding_invalid")
@@ -351,6 +423,7 @@ def validate_release_evidence_root(
         "tree": checkpoint.get("tree"),
         "credentialed_call_count": manifest.get("credentialed_call_count"),
         "policy_outcome_count": manifest.get("policy_outcome_count"),
+        "trust_root_sha256": trust_digest,
     }
 
 
