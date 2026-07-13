@@ -322,8 +322,15 @@ class ChildLauncher:
                         pass
 
     def launch(
-        self, request: ChildRequest, *, worktree: Worktree, store: RunStore
+        self,
+        request: ChildRequest,
+        *,
+        worktree: Worktree,
+        store: RunStore,
+        ingest_artifacts: bool = True,
     ) -> LaunchOutcome:
+        if not isinstance(ingest_artifacts, bool):
+            raise ValueError("ingest_artifacts must be a boolean")
         input_paths, outbox, report_path = self._validate_request(request, worktree, store)
         before_head = worktree.head()
         before_status = worktree.status()
@@ -413,8 +420,9 @@ class ChildLauncher:
         else:
             worktree.verify_read_only_handoff(before_head, before_status)
 
-        attempt_id = outbox.name
-        ingested = store.ingest_outbox(attempt_id, result.artifact_paths)
-        if ingested != result.artifact_paths:
-            raise ValueError("ingested artifacts differ from the child result")
+        if ingest_artifacts:
+            attempt_id = outbox.name
+            ingested = store.ingest_outbox(attempt_id, result.artifact_paths)
+            if ingested != result.artifact_paths:
+                raise ValueError("ingested artifacts differ from the child result")
         return LaunchOutcome(result=result, event_digest=event_digest, elapsed_ms=elapsed_ms)
