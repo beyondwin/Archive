@@ -43,6 +43,7 @@ SCENARIOS = frozenset(
         "mapping_brief_substitutes_requirement",
         "mapping_split_brief_substitutes_requirement",
         "mapping_success_retry_variant",
+        "mapping_many_tasks",
     }
 )
 
@@ -225,7 +226,14 @@ def _mapping_document_result(
             }
         )
     elif role == "plan":
-        task_numbers = (1, 2) if item_id == "plan-01" else (1,)
+        task_numbers = (
+            range(1, 61)
+            if item_id == "plan-02"
+            and os.environ.get("CPE_FAKE_SCENARIO") == "mapping_many_tasks"
+            else (1, 2)
+            if item_id == "plan-01"
+            else (1,)
+        )
         for task_number in task_numbers:
             task_id = f"{item_id}:T{task_number}"
             dependency = []
@@ -454,6 +462,17 @@ def _mapping_program_result(
         ("plan-01:T2", ["plan-01:T1"], ["plan-01", "spec-02"], ["spec-02:R1"], "plan-01:T2"),
         ("plan-02:T1", ["plan-01:T2"], ["plan-02", "program-plan"], [], "plan-02:T1"),
     ]
+    if scenario == "mapping_many_tasks":
+        task_specs.extend(
+            (
+                f"plan-02:T{task_number}",
+                [],
+                ["plan-02"],
+                [],
+                f"plan-02:T{task_number}",
+            )
+            for task_number in range(2, 61)
+        )
     task_splits: list[dict[str, object]] = []
     if scenario in {
         "mapping_lossy_split",

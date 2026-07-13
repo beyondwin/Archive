@@ -1032,7 +1032,6 @@ class QueueEngine:
         generation_payload = {
             "generation_id": _GENERATION_ID,
             "map_sha256": _sha256(program_bytes),
-            "artifact_paths": list(artifact_paths),
             "publication_manifest_path": selected_manifest_path,
             "publication_manifest_sha256": selected_manifest_sha256,
             "authority_ids": authority_ids,

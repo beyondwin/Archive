@@ -141,11 +141,19 @@ _EVENT_PAYLOAD_SCHEMAS = {
         },
     ),
     "map.generation_created": (
-        frozenset({"generation_id"}),
+        frozenset(
+            {
+                "generation_id",
+                "map_sha256",
+                "publication_manifest_path",
+                "publication_manifest_sha256",
+                "authority_ids",
+                "task_ids",
+            }
+        ),
         {
             "generation_id": "id",
             "map_sha256": "hash",
-            "artifact_paths": "paths",
             "publication_manifest_path": "path",
             "publication_manifest_sha256": "hash",
             "authority_ids": "ids",
