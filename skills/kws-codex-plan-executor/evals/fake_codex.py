@@ -57,6 +57,7 @@ SCENARIOS = frozenset(
         "queue_invalid_authority",
         "queue_repeated_unusable_strategy",
         "final_success",
+        "refresh_success",
         "final_auditor_blocked",
         "final_stale_commit",
         "final_failed_terminal",
@@ -418,7 +419,7 @@ def _mapping_document_result(
     snapshots = [
         Path(value)
         for value in input_paths
-        if Path(value).parent.name == "inputs" and Path(value).name != "document-set.json"
+        if "inputs" in Path(value).parts and Path(value).name != "document-set.json"
     ]
     if len(snapshots) != 1:
         raise SystemExit("document mapper must receive exactly one immutable snapshot")
@@ -651,8 +652,14 @@ def _mapping_document_result(
 
 
 def _mapping_program_result(
-    *, scenario: str, input_paths: list[str], outbox: Path, report_path: str
+    *,
+    scenario: str,
+    input_paths: list[str],
+    outbox: Path,
+    report_path: str,
+    generation_id: str,
 ) -> tuple[list[str], list[str]]:
+    generation = int(generation_id.removeprefix("generation-"))
     map_paths = [
         Path(value)
         for value in input_paths
@@ -739,8 +746,9 @@ def _mapping_program_result(
                 "reason": "bounded context split along an interface boundary",
             }
         ]
-    tasks = [
-        {
+    tasks = []
+    for task_id, dependencies, document_ids, requirement_ids, source_task_id in task_specs:
+        task = {
             "task_id": task_id,
             "title": candidates[source_task_id]["title"],
             "dependencies": dependencies,
@@ -768,10 +776,15 @@ def _mapping_program_result(
             "upstream_interface_commitments": candidates[source_task_id][
                 "upstream_interface_commitments"
             ],
-            "brief_path": f"briefs/{task_id.replace(':', '-')}.json",
+            "brief_path": (
+                f"briefs/{task_id.replace(':', '-')}.json"
+                if generation == 1
+                else f"briefs/{generation_id}/{task_id.replace(':', '-')}.json"
+            ),
         }
-        for task_id, dependencies, document_ids, requirement_ids, source_task_id in task_specs
-    ]
+        if generation > 1:
+            task["predecessor_task_id"] = task_id
+        tasks.append(task)
     if scenario == "mapping_brief_omits_requirement":
         tasks[0]["document_ids"] = ["plan-01"]
     coverage = {
@@ -832,7 +845,7 @@ def _mapping_program_result(
             )
     program = {
         "schema_version": 1,
-        "generation": 1,
+        "generation": generation,
         "document_map_sha256s": map_hashes,
         "tasks": tasks,
         "coverage": coverage,
@@ -854,8 +867,8 @@ def _mapping_program_result(
     program_sha256 = hashlib.sha256(program_bytes).hexdigest()
     _write_json(outbox, report_path, program)
     artifact_paths = [report_path]
-    coverage_path = "maps/generation-0001/coverage.json"
-    authority_path = "maps/generation-0001/authority-queue.json"
+    coverage_path = f"maps/{generation_id}/coverage.json"
+    authority_path = f"maps/{generation_id}/authority-queue.json"
     _write_json(
         outbox,
         coverage_path,
@@ -1007,10 +1020,14 @@ def main() -> int:
     if scenario == "queue_review_crash" and role == "reviewer":
         raise SystemExit("deterministic reviewer process interruption")
 
-    if scenario.startswith("mapping_"):
+    if scenario.startswith("mapping_") or scenario == "refresh_success" and role in {
+        "document_mapper",
+        "program_mapper",
+    }:
+        mapping_scenario = "mapping_success" if scenario == "refresh_success" else scenario
         input_paths = _prompt_inputs(prompt)
         if role == "document_mapper":
-            if scenario == "mapping_partial_failure" and item_id == "plan-02":
+            if mapping_scenario == "mapping_partial_failure" and item_id == "plan-02":
                 raise SystemExit("deterministic interrupted document mapper")
             artifact_paths = _mapping_document_result(
                 item_id=item_id,
@@ -1021,10 +1038,11 @@ def main() -> int:
             affected_document_ids = [item_id]
         elif role == "program_mapper":
             artifact_paths, affected_document_ids = _mapping_program_result(
-                scenario=scenario,
+                scenario=mapping_scenario,
                 input_paths=input_paths,
                 outbox=outbox,
                 report_path=report_path,
+                generation_id=item_id,
             )
         else:
             raise SystemExit("mapping scenario requires a mapper role")
@@ -1032,7 +1050,7 @@ def main() -> int:
             "role": role,
             "status": (
                 "interrupted"
-                if scenario == "mapping_noncompleted_result"
+                if mapping_scenario == "mapping_noncompleted_result"
                 and role == "document_mapper"
                 and item_id == "spec-01"
                 else "completed"
@@ -1045,7 +1063,7 @@ def main() -> int:
             "strategy_key": "initial",
             "affected_document_ids": affected_document_ids,
             "artifact_paths": artifact_paths,
-            "summary": f"deterministic {scenario} result",
+            "summary": f"deterministic {mapping_scenario} result",
         }
         last_message.write_text(json.dumps(result, sort_keys=True) + "\n", encoding="utf-8")
         print(json.dumps({"type": "thread.started"}, sort_keys=True), flush=True)
@@ -1066,25 +1084,25 @@ def main() -> int:
         else 1
     )
 
-    if scenario.startswith("final_") and role == "document_auditor":
+    if (scenario.startswith("final_") or scenario == "refresh_success") and role == "document_auditor":
         commit, verdict, artifact_paths = _final_audit_result(
-            scenario=scenario,
+            scenario="final_success" if scenario == "refresh_success" else scenario,
             item_id=item_id,
             input_paths=_prompt_inputs(prompt),
             worktree=worktree,
             outbox=outbox,
             report_path=report_path,
         )
-    elif scenario.startswith("final_") and role == "program_final_integrator":
+    elif (scenario.startswith("final_") or scenario == "refresh_success") and role == "program_final_integrator":
         commit, status, verdict, artifact_paths = _final_integration_result(
-            scenario=scenario,
+            scenario="final_success" if scenario == "refresh_success" else scenario,
             queue_number=queue_number,
             input_paths=_prompt_inputs(prompt),
             worktree=worktree,
             outbox=outbox,
             report_path=report_path,
         )
-    elif scenario.startswith("final_") and role in WRITE_ROLES:
+    elif (scenario.startswith("final_") or scenario == "refresh_success") and role in WRITE_ROLES:
         commit = _commit_change(worktree, item_id)
     elif scenario in {"success", "queue_success", "queue_review_crash"} and role in WRITE_ROLES:
         commit = _commit_change(worktree, item_id)

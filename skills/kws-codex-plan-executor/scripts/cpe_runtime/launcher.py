@@ -31,6 +31,18 @@ from .store import RunStore
 from .worktree import Worktree
 
 
+class ChildInterruption(Exception):
+    """Marker for child-process termination before a durable handoff."""
+
+
+class ChildProcessInterrupted(ChildInterruption, ValueError):
+    """A child process ended before publishing a valid durable handoff."""
+
+
+class ChildTimeoutInterrupted(ChildInterruption, TimeoutError):
+    """A child process exceeded its bounded launch timeout."""
+
+
 _SECRET_ENV = frozenset(
     {
         "OPENAI_API_KEY",
@@ -621,7 +633,7 @@ class ChildLauncher:
             stdout, stderr = process.communicate(prompt, timeout=self.timeout_seconds)
         except subprocess.TimeoutExpired as exc:
             self._terminate_process_group(process, pgid)
-            raise TimeoutError(
+            raise ChildTimeoutInterrupted(
                 f"Codex child timed out after {self.timeout_seconds:g} seconds"
             ) from exc
 
@@ -629,7 +641,7 @@ class ChildLauncher:
         event_digest = self._event_digest(stdout)
         if process.returncode != 0:
             detail = stderr.strip()[-2000:]
-            raise ValueError(
+            raise ChildProcessInterrupted(
                 f"Codex child exited with {process.returncode}: {detail or 'no stderr'}"
             )
         try:

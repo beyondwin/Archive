@@ -1,63 +1,77 @@
+"""Export-only schema-4 prompt and handoff rendering."""
+
 from __future__ import annotations
 
 import hashlib
-import re
 import shlex
 from pathlib import Path
-
-from .model_policy import CORE_ROUTE, launcher_argv
-
-
-def heredoc_delimiter(payload: str) -> str:
-    base = "CPE_" + hashlib.sha256(payload.encode()).hexdigest()[:16].upper()
-    candidate = base
-    counter = 0
-    lines = set(payload.splitlines())
-    while candidate in lines:
-        counter += 1
-        candidate = f"{base}_{counter}"
-    return candidate
+from typing import Sequence
 
 
-def outer_fence(payload: str) -> str:
-    longest = max((len(run) for run in re.findall(r"`+", payload)), default=2)
-    return "`" * max(3, longest + 1)
+def _document_line(role: str, path: Path) -> str:
+    expanded = path.expanduser()
+    if expanded.is_symlink():
+        raise ValueError(f"{role} input must be a regular file")
+    resolved = expanded.resolve(strict=True)
+    if not resolved.is_file():
+        raise ValueError(f"{role} input must be a regular file")
+    digest = hashlib.sha256(resolved.read_bytes()).hexdigest()
+    return f"- {role}: {resolved}\n  sha256: {digest}"
 
 
-def _render_refs(template: str, refs: dict[str, object]) -> str:
-    rendered = template
-    replacements = {
-        "WORKSPACE": refs.get("workspace", ""),
-        "PLAN": refs.get("plan", ""),
-        "PLAN_SHA256": refs.get("plan_sha256", ""),
-        "SPEC": refs.get("spec", "none"),
-        "SPEC_SHA256": refs.get("spec_sha256", "none"),
-        "DOCS": refs.get("docs", "none"),
-        "MODE": refs.get("mode", "prompt"),
-        "HEADLESS_SANDBOX": refs.get("headless_sandbox", "workspace-write"),
-        "HANDOFF_SECTION": refs.get("handoff_section", ""),
-    }
-    for key, value in replacements.items():
-        rendered = rendered.replace("{{" + key + "}}", str(value))
-    return rendered
-
-
-def render_export_bundle(
-    template: str,
-    refs: dict[str, object] | Path,
-    workspace: Path | None = None,
+def render_export(
+    *,
+    workspace: Path,
+    specs: Sequence[Path],
+    plans: Sequence[Path],
+    program_plan: Path | None,
+    mode: str,
 ) -> str:
-    """Render one collision-safe block; the two-argument form is kept for callers."""
+    """Hash source documents directly and return an execution-free bundle."""
 
-    if workspace is None:
-        workspace = Path(refs)
-        payload = template.rstrip()
-    else:
-        if not isinstance(refs, dict):
-            raise TypeError("export refs must be a mapping")
-        payload = _render_refs(template, refs).rstrip()
-    command = shlex.join(launcher_argv(CORE_ROUTE, workspace, sandbox="workspace-write"))
-    delimiter = heredoc_delimiter(payload)
-    block = f"{command} <<'{delimiter}'\n{payload}\n{delimiter}"
-    fence = outer_fence(block)
-    return f"{fence}text\n{block}\n{fence}\n"
+    if mode not in {"prompt", "handoff"}:
+        raise ValueError("export mode must be prompt or handoff")
+    if not plans:
+        raise ValueError("at least one plan is required")
+    expanded_workspace = workspace.expanduser()
+    if expanded_workspace.is_symlink():
+        raise ValueError("workspace must be a real directory")
+    resolved_workspace = expanded_workspace.resolve(strict=True)
+    if not resolved_workspace.is_dir():
+        raise ValueError("workspace must be a real directory")
+    documents = [
+        *(_document_line("spec", path) for path in specs),
+        *(_document_line("plan", path) for path in plans),
+    ]
+    if program_plan is not None:
+        documents.append(_document_line("program-plan", program_plan))
+    lines = [
+        "# CPE schema-4 export",
+        "",
+        f"Workspace: {resolved_workspace}",
+        "",
+        "Ordered documents:",
+        *documents,
+        "",
+        "Use Superpowers inside each bounded task, review, and final role.",
+        "No CPE run started; this export created no run, artifact, or worktree state.",
+    ]
+    if mode == "handoff":
+        command = ["python3", "scripts/cpe.py", "run"]
+        for path in specs:
+            command.extend(("--spec", str(path.expanduser().resolve(strict=True))))
+        for path in plans:
+            command.extend(("--plan", str(path.expanduser().resolve(strict=True))))
+        if program_plan is not None:
+            command.extend(
+                ("--program-plan", str(program_plan.expanduser().resolve(strict=True)))
+            )
+        command.extend(("--workspace", str(resolved_workspace)))
+        lines.extend(("", "Schema-4 handoff command:", shlex.join(command)))
+    return "\n".join(lines) + "\n"
+
+
+def render_export_bundle(*args: object, **kwargs: object) -> str:
+    """Reject the removed v3 template interface with a stable error."""
+
+    raise ValueError("legacy prompt export interface is unavailable")
