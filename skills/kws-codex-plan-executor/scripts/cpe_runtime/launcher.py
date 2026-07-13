@@ -73,8 +73,11 @@ def _bounded_text(value: object, name: str, limit: int = 4000) -> str:
 def _resolved_directory(path: Path, name: str) -> Path:
     if not isinstance(path, Path):
         raise ValueError(f"{name} must be a pathlib.Path")
+    declared = path.expanduser()
+    if declared.is_symlink():
+        raise ValueError(f"{name} must be a real directory, not a symlink")
     try:
-        resolved = path.expanduser().resolve(strict=True)
+        resolved = declared.resolve(strict=True)
     except OSError as exc:
         raise ValueError(f"{name} is unavailable") from exc
     if not resolved.is_dir() or resolved.is_symlink():
@@ -163,7 +166,13 @@ class ChildLauncher:
 
     @staticmethod
     def _prompt(
-        request: ChildRequest, *, input_paths: tuple[Path, ...], report_path: str
+        request: ChildRequest,
+        *,
+        input_paths: tuple[Path, ...],
+        repository: Path,
+        worktree: Path,
+        outbox: Path,
+        report_path: str,
     ) -> str:
         skills = list(request.applicable_skills)
         if request.role in _FIX_ROLES:
@@ -187,8 +196,8 @@ class ChildLauncher:
             [
                 "",
                 "Repository and isolated worktree:",
-                f"- repository: {request.repository}",
-                f"- worktree: {request.worktree}",
+                f"- repository: {repository}",
+                f"- worktree: {worktree}",
                 "",
                 "Write boundary:",
                 (
@@ -198,7 +207,7 @@ class ChildLauncher:
                     else "- Read-only role: do not change Git HEAD, the index, tracked files, "
                     "or untracked files; write only handoff artifacts below the attempt outbox."
                 ),
-                f"- attempt outbox: {request.outbox}",
+                f"- attempt outbox: {outbox}",
                 f"OUTBOX_REPORT_PATH: {report_path}",
                 "",
                 "Applicable Superpowers skills:",
@@ -269,6 +278,49 @@ class ChildLauncher:
                 raise ValueError("Codex child event must be a JSON object")
         return hashlib.sha256(stdout.encode("utf-8")).hexdigest()
 
+    @staticmethod
+    def _process_group_exists(pgid: int) -> bool:
+        try:
+            os.killpg(pgid, 0)
+        except ProcessLookupError:
+            return False
+        return True
+
+    def _terminate_process_group(
+        self, process: subprocess.Popen[str], pgid: int
+    ) -> None:
+        try:
+            os.killpg(pgid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+
+        try:
+            process.wait(timeout=self.terminate_grace_seconds)
+        except subprocess.TimeoutExpired:
+            pass
+
+        if self._process_group_exists(pgid):
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+        try:
+            process.wait(timeout=self.terminate_grace_seconds)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            try:
+                process.wait(timeout=self.terminate_grace_seconds)
+            except subprocess.TimeoutExpired as reap_exc:
+                raise RuntimeError("could not reap timed-out Codex child") from reap_exc
+        finally:
+            for stream in (process.stdin, process.stdout, process.stderr):
+                if stream is not None:
+                    try:
+                        stream.close()
+                    except OSError:
+                        pass
+
     def launch(
         self, request: ChildRequest, *, worktree: Worktree, store: RunStore
     ) -> LaunchOutcome:
@@ -293,16 +345,23 @@ class ChildLauncher:
             "--sandbox",
             "workspace-write" if request.role in WRITE_ROLES else "read-only",
             "-C",
-            str(request.worktree),
+            str(worktree.root),
             "--add-dir",
-            str(request.outbox),
+            str(outbox),
             "--output-schema",
             str(self.schema_path),
             "--output-last-message",
             str(last_message),
             "-",
         ]
-        prompt = self._prompt(request, input_paths=input_paths, report_path=report_path)
+        prompt = self._prompt(
+            request,
+            input_paths=input_paths,
+            repository=worktree.source,
+            worktree=worktree.root,
+            outbox=outbox,
+            report_path=report_path,
+        )
         started = time.monotonic()
         process = subprocess.Popen(
             argv,
@@ -315,21 +374,11 @@ class ChildLauncher:
             env=environment,
             start_new_session=True,
         )
+        pgid = process.pid
         try:
             stdout, stderr = process.communicate(prompt, timeout=self.timeout_seconds)
         except subprocess.TimeoutExpired as exc:
-            try:
-                os.killpg(process.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-            try:
-                process.communicate(timeout=self.terminate_grace_seconds)
-            except subprocess.TimeoutExpired:
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                process.communicate()
+            self._terminate_process_group(process, pgid)
             raise TimeoutError(
                 f"Codex child timed out after {self.timeout_seconds:g} seconds"
             ) from exc

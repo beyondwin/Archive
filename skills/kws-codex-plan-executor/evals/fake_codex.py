@@ -23,6 +23,7 @@ SCENARIOS = frozenset(
         "ordinary_failure",
         "authority",
         "timeout",
+        "timeout_leader_exits_descendant_survives",
         "dirty_handoff",
         "wrong_commit",
         "tampered_artifact_path",
@@ -119,9 +120,16 @@ def main() -> int:
     if any(flag in argv for flag in ("--model", "--profile", "--config")):
         raise SystemExit("fake codex rejected forbidden policy argument")
 
-    if scenario == "timeout":
+    if scenario in {"timeout", "timeout_leader_exits_descendant_survives"}:
+        child_code = "import time; time.sleep(60)"
+        if scenario == "timeout_leader_exits_descendant_survives":
+            child_code = (
+                "import signal, time; "
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                "time.sleep(60)"
+            )
         descendant = subprocess.Popen(
-            [sys.executable, "-c", "import time; time.sleep(60)"],
+            [sys.executable, "-c", child_code],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )

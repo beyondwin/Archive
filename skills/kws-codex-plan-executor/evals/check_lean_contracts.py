@@ -7,12 +7,14 @@ import hashlib
 import json
 import os
 import shutil
+import signal
 import stat
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 
@@ -629,11 +631,42 @@ class LeanContractsTest(unittest.TestCase):
         ):
             self.assertNotIn(key, invocation["env"])
         argv = invocation["argv"]
-        self.assertEqual(argv[:3], ["exec", "--ignore-user-config", "--json"])
-        self.assertEqual(argv[argv.index("--sandbox") + 1], "read-only")
-        self.assertEqual(argv[argv.index("--add-dir") + 1], str(request.outbox))
-        self.assertNotIn("--model", argv)
-        self.assertNotIn("--profile", argv)
+        self.assertEqual(
+            argv,
+            [
+                "exec",
+                "--ignore-user-config",
+                "--json",
+                "--sandbox",
+                "read-only",
+                "-C",
+                str(worktree.root),
+                "--add-dir",
+                str(request.outbox.resolve(strict=True)),
+                "--output-schema",
+                str((SKILL_ROOT / "templates" / "child-result-schema.json").resolve()),
+                "--output-last-message",
+                str(request.outbox.resolve(strict=True) / ".child-result.json"),
+                "-",
+            ],
+        )
+        prohibited_policy_args = {
+            "--model",
+            "-m",
+            "--profile",
+            "-p",
+            "--pricing",
+            "--pricing-mode",
+            "--billing-mode",
+            "--release",
+            "--release-status",
+            "--proof-profile",
+            "--compatibility",
+            "--compatibility-policy",
+            "--config",
+            "-c",
+        }
+        self.assertTrue(prohibited_policy_args.isdisjoint(argv))
 
         write_request = self.make_child_request(
             store=store,
@@ -649,8 +682,134 @@ class LeanContractsTest(unittest.TestCase):
         )
         second_argv = second_invocation["argv"]
         self.assertEqual(
-            second_argv[second_argv.index("--sandbox") + 1], "workspace-write"
+            second_argv,
+            [
+                "exec",
+                "--ignore-user-config",
+                "--json",
+                "--sandbox",
+                "workspace-write",
+                "-C",
+                str(worktree.root),
+                "--add-dir",
+                str(write_request.outbox.resolve(strict=True)),
+                "--output-schema",
+                str((SKILL_ROOT / "templates" / "child-result-schema.json").resolve()),
+                "--output-last-message",
+                str(write_request.outbox.resolve(strict=True) / ".child-result.json"),
+                "-",
+            ],
         )
+        self.assertTrue(prohibited_policy_args.isdisjoint(second_argv))
+
+    def test_launcher_rejects_original_worktree_and_outbox_symlinks(self) -> None:
+        store = self.create_store()
+        worktree = Worktree.create(
+            source=self.repo,
+            root=self.root / "symlink-worktree",
+            run_id="symlink-inputs",
+        )
+        bin_dir, _ = self.create_fake_codex_bin()
+        launcher = ChildLauncher(
+            schema_path=SKILL_ROOT / "templates" / "child-result-schema.json",
+            timeout_seconds=5,
+            environ={
+                **os.environ,
+                "PATH": str(bin_dir),
+                "CODEX_HOME": str(self.home),
+                "CPE_FAKE_SCENARIO": "success",
+            },
+        )
+
+        worktree_alias = self.root / "worktree-alias"
+        worktree_alias.symlink_to(worktree.root, target_is_directory=True)
+        worktree_request = self.make_child_request(
+            store=store,
+            worktree=worktree,
+            attempt_id="symlink-worktree-attempt",
+            role="reviewer",
+            item_id="review-symlink-worktree",
+        )
+        with self.assertRaisesRegex(ValueError, "worktree.*real directory"):
+            launcher.launch(
+                replace(worktree_request, worktree=worktree_alias),
+                worktree=worktree,
+                store=store,
+            )
+
+        outbox_request = self.make_child_request(
+            store=store,
+            worktree=worktree,
+            attempt_id="symlink-outbox-attempt",
+            role="reviewer",
+            item_id="review-symlink-outbox",
+        )
+        outbox_alias = self.root / "outbox-alias"
+        outbox_alias.symlink_to(outbox_request.outbox, target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, "outbox.*real directory"):
+            launcher.launch(
+                replace(outbox_request, outbox=outbox_alias),
+                worktree=worktree,
+                store=store,
+            )
+
+    def test_launcher_uses_validated_canonical_paths_at_every_child_boundary(self) -> None:
+        store = self.create_store()
+        worktree = Worktree.create(
+            source=self.repo,
+            root=self.root / "canonical-worktree",
+            run_id="canonical-paths",
+        )
+        bin_dir, _ = self.create_fake_codex_bin()
+        invocation_log = self.root / "canonical-invocation.jsonl"
+        launcher = ChildLauncher(
+            schema_path=SKILL_ROOT / "templates" / "child-result-schema.json",
+            timeout_seconds=5,
+            environ={
+                **os.environ,
+                "PATH": str(bin_dir),
+                "CODEX_HOME": str(self.home),
+                "CPE_FAKE_SCENARIO": "success",
+                "CPE_FAKE_INVOCATION_LOG": str(invocation_log),
+            },
+        )
+        request = self.make_child_request(
+            store=store,
+            worktree=worktree,
+            attempt_id="canonical-attempt",
+            role="reviewer",
+            item_id="review-canonical-paths",
+        )
+        (worktree.root / "path-spelling").mkdir()
+        (request.outbox / "path-spelling").mkdir()
+        spelled_worktree = worktree.root / "path-spelling" / ".."
+        spelled_outbox = request.outbox / "path-spelling" / ".."
+
+        outcome = launcher.launch(
+            replace(request, worktree=spelled_worktree, outbox=spelled_outbox),
+            worktree=worktree,
+            store=store,
+        )
+
+        self.assertEqual(outcome.result.status, "completed")
+        invocation = json.loads(invocation_log.read_text(encoding="utf-8"))
+        argv = invocation["argv"]
+        self.assertEqual(argv[argv.index("-C") + 1], str(worktree.root))
+        self.assertEqual(
+            argv[argv.index("--add-dir") + 1], str(request.outbox.resolve(strict=True))
+        )
+        self.assertEqual(
+            argv[argv.index("--output-last-message") + 1],
+            str(request.outbox.resolve(strict=True) / ".child-result.json"),
+        )
+        self.assertIn(f"- repository: {worktree.source}", invocation["prompt"])
+        self.assertIn(f"- worktree: {worktree.root}", invocation["prompt"])
+        self.assertIn(
+            f"- attempt outbox: {request.outbox.resolve(strict=True)}",
+            invocation["prompt"],
+        )
+        self.assertNotIn(str(spelled_worktree), invocation["prompt"])
+        self.assertNotIn(str(spelled_outbox), invocation["prompt"])
 
     def test_launcher_rejects_read_only_git_changes_and_artifact_traversal(self) -> None:
         store = self.create_store()
@@ -750,6 +909,56 @@ class LeanContractsTest(unittest.TestCase):
             time.sleep(0.025)
         else:
             self.fail(f"timeout descendant still alive: {descendant_pid}")
+
+    def test_launcher_timeout_kills_group_after_leader_exits_and_closes_pipes(self) -> None:
+        store = self.create_store()
+        worktree = Worktree.create(
+            source=self.repo,
+            root=self.root / "timeout-leader-exit-worktree",
+            run_id="timeout-leader-exit",
+        )
+        bin_dir, _ = self.create_fake_codex_bin()
+        descendant_pid_path = self.root / "surviving-descendant.pid"
+        launcher = ChildLauncher(
+            schema_path=SKILL_ROOT / "templates" / "child-result-schema.json",
+            timeout_seconds=0.5,
+            terminate_grace_seconds=0.2,
+            environ={
+                **os.environ,
+                "PATH": str(bin_dir),
+                "CODEX_HOME": str(self.home),
+                "CPE_FAKE_SCENARIO": "timeout_leader_exits_descendant_survives",
+                "CPE_FAKE_DESCENDANT_PID": str(descendant_pid_path),
+            },
+        )
+        request = self.make_child_request(
+            store=store,
+            worktree=worktree,
+            attempt_id="attempt-timeout-leader-exit",
+            role="reviewer",
+            item_id="review-timeout-leader-exit",
+        )
+        with self.assertRaises(TimeoutError):
+            launcher.launch(request, worktree=worktree, store=store)
+        self.assertTrue(descendant_pid_path.is_file())
+        descendant_pid = int(descendant_pid_path.read_text(encoding="utf-8"))
+        try:
+            for _ in range(40):
+                try:
+                    os.kill(descendant_pid, 0)
+                except ProcessLookupError:
+                    break
+                time.sleep(0.025)
+            else:
+                self.fail(
+                    "timeout descendant survived after leader exited and closed pipes: "
+                    f"{descendant_pid}"
+                )
+        finally:
+            try:
+                os.kill(descendant_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
 
 
 if __name__ == "__main__":
