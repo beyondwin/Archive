@@ -27,6 +27,7 @@ from cpe_runtime.release_closure import (  # noqa: E402
     ReviewLaneReport,
     consolidate_review_lanes,
     next_closure_phase,
+    validate_serialized_review_artifact,
 )
 
 
@@ -40,7 +41,7 @@ def _finding(
     invariant_id: str = "trust.git_object_binding",
     severity: str = "P1",
     evidence: tuple[str, ...] = ("evidence/trust.json",),
-    disposition: str = "repair_before_freeze",
+    disposition: str = "repair",
 ) -> ReviewFinding:
     return ReviewFinding(
         invariant_id=invariant_id,
@@ -154,9 +155,19 @@ def main() -> None:
 
     duplicate_reports = _reports(
         lane_findings={
-            "trust_privacy": (_finding(severity="P1", evidence=("evidence/trust.json",)),),
+            "trust_privacy": (
+                _finding(
+                    severity="P0",
+                    evidence=("evidence/trust.json",),
+                    disposition="repair",
+                ),
+            ),
             "release_lineage": (
-                _finding(severity="P0", evidence=("evidence/lineage.json",)),
+                _finding(
+                    severity="P0",
+                    evidence=("evidence/lineage.json",),
+                    disposition="return_to_design",
+                ),
             ),
         }
     )
@@ -171,6 +182,22 @@ def main() -> None:
         and finding.evidence == ("evidence/lineage.json", "evidence/trust.json")
         and finding.source_lanes == ("trust_privacy", "release_lineage")
     )
+    checks["equal_severity_disposition_uses_conservative_precedence"] = (
+        finding.recommended_disposition == "return_to_design"
+        and finding.dispositions == ("return_to_design", "repair")
+    )
+    _expect_error(
+        "review_disposition_invalid",
+        lambda: consolidate_review_lanes(
+            _reports(
+                lane_findings={
+                    "state_crash": (_finding(disposition="unranked_action"),)
+                }
+            ),
+            checkpoint_sha256=CHECKPOINT,
+        ),
+    )
+    checks["unranked_disposition_rejected"] = True
     checks["finding_overrides_conflicting_pass_verdicts"] = review.verdict == "changes_requested"
     checks["one_repair_wave_contract"] = (
         review.repair_wave == 0 and review.repair_waves_allowed == 1
@@ -224,6 +251,155 @@ def main() -> None:
     )
     checks["second_repair_wave_rejected"] = True
 
+    permutation_reports = _reports(
+        lane_verdicts={
+            "state_crash": "changes_requested",
+            "trust_privacy": "inconclusive",
+        },
+        lane_findings={
+            "state_crash": (
+                _finding(
+                    invariant_id="state.zeta",
+                    severity="P2",
+                    evidence=("evidence/z-2.json", "evidence/z-1.json"),
+                    disposition="no_action",
+                ),
+                _finding(
+                    invariant_id="state.alpha",
+                    severity="P1",
+                    evidence=("evidence/a-2.json", "evidence/a-1.json"),
+                    disposition="repair",
+                ),
+            ),
+        },
+        lane_missing_evidence={
+            "trust_privacy": ("evidence/missing-z.json", "evidence/missing-a.json")
+        },
+    )
+    permuted_reports = tuple(
+        replace(
+            report,
+            findings=tuple(
+                replace(finding, evidence=tuple(reversed(finding.evidence)))
+                for finding in reversed(report.findings)
+            ),
+            missing_evidence=tuple(reversed(report.missing_evidence)),
+        )
+        for report in reversed(permutation_reports)
+    )
+    canonical_bytes = json.dumps(
+        consolidate_review_lanes(
+            permutation_reports, checkpoint_sha256=CHECKPOINT
+        ).to_dict(),
+        separators=(",", ":"),
+    ).encode()
+    permuted_bytes = json.dumps(
+        consolidate_review_lanes(
+            permuted_reports, checkpoint_sha256=CHECKPOINT
+        ).to_dict(),
+        separators=(",", ":"),
+    ).encode()
+    checks["all_set_like_collections_serialize_canonically"] = (
+        canonical_bytes == permuted_bytes
+    )
+    duplicate_lane_reports = (
+        replace(
+            permutation_reports[0],
+            findings=permutation_reports[0].findings
+            + (permutation_reports[0].findings[0],),
+        ),
+    ) + permutation_reports[1:]
+    duplicate_lane_bytes = json.dumps(
+        consolidate_review_lanes(
+            duplicate_lane_reports, checkpoint_sha256=CHECKPOINT
+        ).to_dict(),
+        separators=(",", ":"),
+    ).encode()
+    checks["exact_duplicate_lane_findings_do_not_change_serialization"] = (
+        canonical_bytes == duplicate_lane_bytes
+    )
+
+    passed_payload = consolidate_review_lanes(
+        _reports(), checkpoint_sha256=CHECKPOINT
+    ).to_dict()
+    validate_serialized_review_artifact(passed_payload)
+    checks["serialized_artifact_semantic_validator_accepts_canonical_payload"] = True
+
+    semantic_mutations: tuple[tuple[str, str, Callable[[dict[str, object]], None]], ...] = (
+        (
+            "lane_checkpoint",
+            "review_artifact_lane_checkpoint_mismatch",
+            lambda item: item["lanes"][0].__setitem__("checkpoint_sha256", "c" * 64),
+        ),
+        (
+            "lane_wave",
+            "review_artifact_lane_repair_wave_mismatch",
+            lambda item: item["lanes"][0].__setitem__("repair_wave", 1),
+        ),
+        (
+            "top_level_passed",
+            "review_artifact_passed_mismatch",
+            lambda item: item.__setitem__("passed", False),
+        ),
+        (
+            "top_level_verdict",
+            "review_artifact_verdict_mismatch",
+            lambda item: item.__setitem__("verdict", "changes_requested"),
+        ),
+        (
+            "raw_finding",
+            "review_artifact_verdict_mismatch",
+            lambda item: item["lanes"][0]["findings"].append(
+                {
+                    "invariant_id": "state.injected",
+                    "severity": "P1",
+                    "affected_revision": REVISION,
+                    "evidence": ["evidence/injected.json"],
+                    "recommended_disposition": "repair",
+                }
+            ),
+        ),
+        (
+            "missing_evidence",
+            "review_artifact_verdict_mismatch",
+            lambda item: item["lanes"][0]["missing_evidence"].append(
+                "evidence/missing.json"
+            ),
+        ),
+        (
+            "lane_verdict",
+            "review_artifact_verdict_mismatch",
+            lambda item: (
+                item["lanes"][0].__setitem__("verdict", "blocked"),
+                item["lanes"][0]["missing_evidence"].append("evidence/blocked.json"),
+            ),
+        ),
+        (
+            "raw_source_lanes",
+            "review_artifact_raw_finding_sources_forbidden",
+            lambda item: (
+                item["lanes"][0]["findings"].append(
+                    {
+                        "invariant_id": "state.injected",
+                        "severity": "P1",
+                        "affected_revision": REVISION,
+                        "evidence": ["evidence/injected.json"],
+                        "recommended_disposition": "repair",
+                        "source_lanes": ["state_crash"],
+                    }
+                )
+            ),
+        ),
+    )
+    for name, code, mutate in semantic_mutations:
+        mutated = copy.deepcopy(passed_payload)
+        mutate(mutated)
+        _expect_error(
+            code,
+            lambda mutated=mutated: validate_serialized_review_artifact(mutated),
+        )
+        checks[f"semantic_mutation_{name}_rejected"] = True
+
     payload = review.to_dict()
     checks["contract_does_not_claim_release_or_live_proof"] = (
         payload["contract_scope"] == "review_consolidation_only"
@@ -236,16 +412,28 @@ def main() -> None:
     extra_lane["lanes"].append(copy.deepcopy(payload["lanes"][-1]))
     duplicate_lane = copy.deepcopy(payload)
     duplicate_lane["lanes"][-1]["lane"] = "trust_privacy"
-    expected_schema_results = [True, False, False, False]
+    raw_sources = copy.deepcopy(payload)
+    raw_sources["lanes"][1]["findings"][0]["source_lanes"] = ["trust_privacy"]
+    raw_dispositions = copy.deepcopy(payload)
+    raw_dispositions["lanes"][1]["findings"][0]["dispositions"] = ["repair"]
+    missing_consolidated_sources = copy.deepcopy(payload)
+    del missing_consolidated_sources["findings"][0]["source_lanes"]
+    missing_consolidated_dispositions = copy.deepcopy(payload)
+    del missing_consolidated_dispositions["findings"][0]["dispositions"]
+    expected_schema_results = [True, False, False, False, False, False, False, False]
     actual_schema_results = _schema_results(
         [
             (True, payload),
             (False, missing_lane),
             (False, extra_lane),
             (False, duplicate_lane),
+            (False, raw_sources),
+            (False, raw_dispositions),
+            (False, missing_consolidated_sources),
+            (False, missing_consolidated_dispositions),
         ]
     )
-    checks["draft_2020_12_schema_compiles_and_enforces_lanes"] = (
+    checks["draft_2020_12_schema_compiles_and_enforces_artifact_roles"] = (
         actual_schema_results == expected_schema_results
     )
 
