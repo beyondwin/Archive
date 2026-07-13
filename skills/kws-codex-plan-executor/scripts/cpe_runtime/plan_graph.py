@@ -77,6 +77,7 @@ class PlanGraph:
     edges: tuple[tuple[str, str], ...]
     spec_coverage: Mapping[str, tuple[str, ...]]
     file_ownership: Mapping[str, tuple[str, ...]]
+    ownership_authority: Mapping[str, Mapping[str, object]]
     file_ownership_patterns: Mapping[str, str]
     file_interface_writers: Mapping[str, tuple[str, ...]]
     plan_checkpoints: Mapping[str, tuple[str, ...]]
@@ -1148,6 +1149,7 @@ def compile_plan_graph(document_set: DocumentSet) -> PlanGraph:
                 writers=claimed[path],
             )
     ownership: dict[str, tuple[str, ...]] = {}
+    ownership_authority: dict[str, dict[str, object]] = {}
     for path, writers in claimed.items():
         writer_plans = {str(task_records[writer]["plan_id"]) for writer in writers}
         raw_owners = declared_ownership.get(path)
@@ -1181,13 +1183,12 @@ def compile_plan_graph(document_set: DocumentSet) -> PlanGraph:
         required_transfers = {(path, first, second) for first, second in zip(owners, owners[1:])}
         declared_transfers = {transfer for transfer in transfers if transfer[0] == path}
         if path in shared_interfaces:
-            unexpected = declared_transfers - required_transfers
-            if unexpected:
+            if declared_transfers:
                 _blocked(
                     "ambiguous_file_ownership",
-                    "shared-interface transfer does not follow writer order",
+                    "a path cannot declare both shared-interface and transfer authority",
                     path=path,
-                    transfers=[list(item[1:]) for item in sorted(unexpected)],
+                    transfers=[list(item[1:]) for item in sorted(declared_transfers)],
                 )
         elif len(writer_plans) > 1 and declared_transfers != required_transfers:
             _blocked(
@@ -1206,6 +1207,26 @@ def compile_plan_graph(document_set: DocumentSet) -> PlanGraph:
             )
         edges.update((first, second) for first, second in zip(owners, owners[1:]))
         ownership[path] = owners
+        if path in shared_interfaces:
+            ownership_authority[path] = {
+                "mode": "shared_interface",
+                "writers": owners,
+                "interface_writers": interface_writers.get(path, ()),
+            }
+        elif declared_transfers:
+            ownership_authority[path] = {
+                "mode": "ownership_transfer",
+                "writers": owners,
+                "transfers": tuple(
+                    {"from": first, "to": second}
+                    for first, second in zip(owners, owners[1:])
+                ),
+            }
+        else:
+            ownership_authority[path] = {
+                "mode": "ordered_writers",
+                "writers": owners,
+            }
 
     if len(plan_order) > 1 and program_contract is not None:
         raw_gate = program_contract.get("global_integration_gate")
@@ -1264,6 +1285,7 @@ def compile_plan_graph(document_set: DocumentSet) -> PlanGraph:
         "edges": sorted(edges),
         "spec_coverage": coverage,
         "file_ownership": ownership,
+        "ownership_authority": ownership_authority,
         "file_ownership_patterns": ownership_patterns,
         "file_interface_writers": interface_writers,
         "plan_checkpoints": checkpoints,
@@ -1284,6 +1306,7 @@ def compile_plan_graph(document_set: DocumentSet) -> PlanGraph:
         edges=tuple(sorted(edges)),
         spec_coverage=_freeze(coverage),
         file_ownership=_freeze(ownership),
+        ownership_authority=_freeze(ownership_authority),
         file_ownership_patterns=_freeze(ownership_patterns),
         file_interface_writers=_freeze(interface_writers),
         plan_checkpoints=_freeze(checkpoints),
@@ -1313,6 +1336,14 @@ def invalidated_nodes(old: PlanGraph, new: PlanGraph) -> tuple[str, ...]:
     for path in set(old.file_ownership) | set(new.file_ownership):
         if old.file_ownership.get(path) != new.file_ownership.get(path):
             seeds.update(new.file_ownership.get(path, ()))
+    for path in set(old.ownership_authority) | set(new.ownership_authority):
+        if old.ownership_authority.get(path) != new.ownership_authority.get(path):
+            seeds.update(
+                task_id
+                for graph in (old, new)
+                for task_id in graph.file_ownership.get(path, ())
+                if task_id in new.tasks
+            )
     changed_patterns = {
         pattern
         for pattern in set(old.file_ownership_patterns) | set(new.file_ownership_patterns)

@@ -609,9 +609,23 @@ file_claims:
         shared = copy.deepcopy(ownership)
         shared["program"]["contract"]["ownership_transfers"] = []
         shared["program"]["contract"]["shared_interfaces"] = ["shared/api.py"]
+        shared_graph = _compile_bundle(shared, root / "shared-interface")
         checks["validated_shared_interface_allows_ordered_writers"] = (
-            _compile_bundle(shared, root / "shared-interface").file_ownership["shared/api.py"]
-            == tuple(owners)
+            shared_graph.file_ownership["shared/api.py"] == tuple(owners)
+        )
+        dual_authority = copy.deepcopy(ownership)
+        dual_authority["program"]["contract"]["shared_interfaces"] = ["shared/api.py"]
+        checks["dual_transfer_and_shared_authority_blocks"] = _blocked(
+            "ambiguous_file_ownership", dual_authority, root / "dual-authority"
+        )
+        checks["authority_mode_change_invalidates_writers_and_downstream"] = (
+            transferred.file_ownership == shared_graph.file_ownership
+            and transferred.edges == shared_graph.edges
+            and invalidated_nodes(transferred, shared_graph) == tuple(shared_graph.tasks)
+            and transferred.ownership_authority["shared/api.py"]["mode"]
+            == "ownership_transfer"
+            and shared_graph.ownership_authority["shared/api.py"]["mode"]
+            == "shared_interface"
         )
 
         canonical_authority = copy.deepcopy(shared)
