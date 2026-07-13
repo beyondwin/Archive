@@ -346,6 +346,9 @@ assert snapshot_tree(v4_run) == before
 assert EvidenceResolver(run_dir).resolve(ref).task_id == "plan-a::T1"
 assert validate_completion(vnext_run).passed is True
 assert load_control_snapshot().sha256 == tracked_control_digest
+assert every_required_quality_invariant_has_exactly_one_owner()
+assert all_decomposed_quality_suites_are_maintained_checks()
+assert check_quality_matrix_v4_is_rejection_only()
 ```
 
 - [ ] **Step 2: Run RED**
@@ -376,14 +379,60 @@ tests pass. Convert `check_cpe_v4_e2e.py` into the old-artifact rejection
 oracle: it must prove old artifacts stay untouched and must not execute or
 accept a successful v4 run.
 
+- [ ] **Step 3a: Decompose the quality suite inside Task 5**
+
+This step is part of Task 5; it is not a new implementation task. Move each
+vNext invariant out of the monolithic v4 quality matrix into exactly one of
+these maintained focused suites:
+
+- `check_manifest_prompt_vnext.py`: canonical manifest, task-packet, prompt,
+  schema, and no-worker-authority binding.
+- `check_sentinel_resume_vnext.py`: sentinel-first qualification, bounded
+  attempts, resume/idempotency, and deterministic no-call outcomes.
+- `check_ledger_crash_vnext.py`: evidence/event/projection/checkpoint ordering,
+  generated crash points, replay, and recovery.
+- `check_release_lineage_vnext.py`: trusted-base and control-snapshot binding,
+  upstream plan checkpoints, release lineage, and terminal generation.
+- `check_privacy_oracle_vnext.py`: hidden-oracle separation, privacy scanning,
+  digest binding, and leak/tamper rejection.
+- `check_authentic_e2e_vnext.py`: provider-free public-CLI multi-plan execution,
+  dogfood, completion, and unsupported historical artifact behavior.
+- `check_fixed_route_vnext.py`: exact Sol/high core and Terra/high bounded
+  read-only route preservation, with override/fallback rejection.
+
+`check_quality_matrix_v4.py` may retain only historical v4 rejection/control
+coverage needed for the immutable snapshot; it must not remain a second owner
+of vNext scenarios. Update `maintained-checks.json` so every focused suite is
+listed exactly once with a production entrypoint and mutation assertion. Add
+acceptance assertions proving every required quality invariant has exactly one owning suite,
+every declared suite is registered and executed, and no vNext
+scenario implementation remains in the v4 matrix or historical E2E oracle.
+
 - [ ] **Step 4: Run focused and authentic multi-plan E2E**
 
-Run: `cd skills/kws-codex-plan-executor && python3 evals/check_vnext_cutover.py && python3 evals/check_validation_profiles_vnext.py && python3 evals/check_authentic_e2e_vnext.py && python3 evals/check_fixed_route_vnext.py && python3 evals/check_cpe_v4_e2e.py`
+Run:
+
+```bash
+cd skills/kws-codex-plan-executor
+python3 evals/check_vnext_cutover.py
+python3 evals/check_validation_profiles_vnext.py
+python3 evals/check_manifest_prompt_vnext.py
+python3 evals/check_sentinel_resume_vnext.py
+python3 evals/check_ledger_crash_vnext.py
+python3 evals/check_release_lineage_vnext.py
+python3 evals/check_privacy_oracle_vnext.py
+python3 evals/check_authentic_e2e_vnext.py
+python3 evals/check_fixed_route_vnext.py
+python3 evals/check_cpe_v4_e2e.py
+```
 
 Expected: the three validation profiles and authentic vNext E2E pass; the
 fixed route remains exactly Sol/high for core work and Terra/high for bounded
 read-only scouting; the historical check is retained only as a rejection
-oracle and cannot execute an old run.
+oracle and cannot execute an old run. The decomposition assertions prove every
+required quality invariant has exactly one owning suite, all seven suites are
+registered and executed, and the v4 matrix contains no duplicate vNext
+scenario implementation.
 
 - [ ] **Step 5: Run the verified-checkpoint gate and commit Plan 2**
 
