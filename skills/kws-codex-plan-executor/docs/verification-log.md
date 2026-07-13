@@ -1228,3 +1228,30 @@ canonical digest validation; real dogfood may later replace the closed
 - Provider/network/model calls: zero. Residual risk is intentionally unchanged:
   v4 cannot claim `critical-path-live verified` until the Git-object trust
   anchor is repaired, freshly reviewed, and the bounded live proof completes.
+
+## 2026-07-13 Asia/Seoul - vNext partial implementation handoff
+
+- Program base: `144c80b7c326d8979cdea13f32ee177d7934ffdf`.
+- Partial implementation head before this documentation commit:
+  `dcf8c76134bdc44391fb02fa47374fd201d7f08b`.
+- Scope: pre-task alignment, Plan 1 Tasks 1-4, and Plan 2 Tasks 1-4. Plan 2
+  Task 5 and Plan 3 are incomplete.
+- Status: partial major runtime rewrite, not a vNext completion, cutover, or
+  release claim. Task 4 still has a review-blocking durable-authority gap.
+- Preserved WIP: locate the stash named
+  `wip: authoritative transition kernel integration paused by user`; inspect
+  and selectively apply it rather than assuming it is verified.
+- Canonical continuation and risk register:
+  `docs/superpowers/plans/2026-07-13-cpe-vnext-partial-implementation-handoff.md`.
+- Credentialed/provider/network/model calls: zero.
+- `python3 evals/check_docs_contract.py`: passed.
+- `python3 evals/check_graphify_freshness.py --update-ran`: passed.
+- `graphify update .`: completed with 12,289 nodes and 21,095 edges; canonical
+  `GRAPH_REPORT.md` and `graph.json` were retained and the dated backup was not
+  committed.
+- Fresh `./evals/run.sh` was started and observed passing preflight, docs,
+  scheduler, quality, release-transaction, and v4 E2E checks, then was stopped
+  at the user's request before the suite completed (exit 130). It is not a
+  complete merge-gate pass.
+- Repository `bun run check` and post-merge verification were not run because
+  the user requested an immediate merge.
