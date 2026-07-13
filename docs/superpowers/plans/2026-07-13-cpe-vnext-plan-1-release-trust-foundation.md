@@ -44,7 +44,7 @@ operator_reviewed: true
 operator_decision: Approved local trust-boundary implementation; provider calls, billing changes, remote writes, and live proof remain forbidden in Plan 1.
 ```
 
-**Files:** Create the three files listed above.
+**Files:** Create the four files listed above.
 
 **Interfaces:** Produces `GitObjectSource.read_blob(commit: str, path: str) -> GitBlob`, `TrustRoot`, `load_trust_root(repository: Path, reviewed_commit: str) -> TrustRoot`, and `TrustRoot.body() -> dict[str, str]`.
 
@@ -55,6 +55,9 @@ root = load_trust_root(repo, reviewed_commit)
 assert root.policy.path == "skills/kws-codex-plan-executor/evals/live-migration/release-policy-vnext.json"
 assert root.policy.blob_oid == git(repo, "rev-parse", f"{reviewed_commit}:{root.policy.path}")
 assert root.policy.sha256 == hashlib.sha256(git_bytes(repo, "show", f"{reviewed_commit}:{root.policy.path}")).hexdigest()
+assert root.dogfood_contract.path == DOGFOOD_CONTRACT_PATH
+assert root.repository_identity == canonical_repository_identity(repo)
+assert root.patch_sha256 == committed_patch_digest(repo, root.trusted_base_commit, reviewed_commit)
 assert root.trust_root_sha256 == sha256_bytes(canonical_json(root.body()))
 ```
 
@@ -76,23 +79,29 @@ class GitBlob:
 
 @dataclass(frozen=True)
 class TrustRoot:
+    repository_identity: str
     reviewed_commit: str
     reviewed_tree: str
+    trusted_base_commit: str
+    patch_sha256: str
     policy: GitBlob
     dogfood_contract: GitBlob
+    release_labels: tuple[str, ...]
+    attempt_ceilings: Mapping[str, int]
     trust_root_sha256: str
 
 def load_trust_root(repository: Path, reviewed_commit: str) -> TrustRoot:
     source = GitObjectSource(repository)
     policy = source.read_blob(reviewed_commit, POLICY_PATH)
     payload = validate_policy_bytes(policy.content)
-    contract = source.read_blob(reviewed_commit, str(payload["dogfood_task_contract_path"]))
-    return TrustRoot.build(reviewed_commit, source.tree(reviewed_commit), policy, contract)
+    contract = source.read_blob(reviewed_commit, DOGFOOD_CONTRACT_PATH)
+    return TrustRoot.build(repository, reviewed_commit, source.tree(reviewed_commit), policy, contract, payload)
 ```
 
-`POLICY_PATH` is the fixed repository-relative vNext policy path above. The
-tracked JSON keeps the reviewed dogfood contract path, `2/4/6` ceilings, and
-exact release labels.
+`POLICY_PATH` and `DOGFOOD_CONTRACT_PATH` are fixed repository-relative code
+constants. The tracked JSON keeps only reviewed policy values such as the
+trusted base, `2/4/6` ceilings, and exact release labels; it may not choose a
+trusted path.
 
 - [ ] **Step 4: Run GREEN and mutation cases**
 
@@ -167,7 +176,7 @@ Expected: all pass; fake-provider invocation count remains zero for every trust 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add skills/kws-codex-plan-executor/evals/live_migration skills/kws-codex-plan-executor/evals/live_model_runner.py skills/kws-codex-plan-executor/scripts/cpe_runtime/dogfood_v4.py skills/kws-codex-plan-executor/scripts/cpe_runtime/public_result.py skills/kws-codex-plan-executor/evals/check_release_trust_vnext.py
+git add skills/kws-codex-plan-executor/evals/live_migration/compiler.py skills/kws-codex-plan-executor/evals/live_migration/ledger.py skills/kws-codex-plan-executor/evals/live_migration/runner.py skills/kws-codex-plan-executor/evals/live_migration/release_transaction.py skills/kws-codex-plan-executor/evals/live_model_runner.py skills/kws-codex-plan-executor/scripts/cpe_runtime/dogfood_v4.py skills/kws-codex-plan-executor/scripts/cpe_runtime/public_result.py skills/kws-codex-plan-executor/evals/check_release_trust_vnext.py
 git commit -m "feat(cpe): propagate vnext trust root through release evidence"
 ```
 
@@ -193,7 +202,7 @@ operator_reviewed: true
 - [ ] **Step 1: Write failing transition and deduplication checks**
 
 ```python
-assert next_closure_phase("trust_ready", "runtime_frozen") == "review_pending"
+assert next_closure_phase("trust_repair", "trust_repaired") == "integration_review"
 review = consolidate_review_lanes(reports, checkpoint_sha256=checkpoint)
 assert [finding.invariant_id for finding in review.findings] == ["trust.git_object_binding"]
 assert review.repair_waves_allowed == 1
@@ -209,11 +218,11 @@ Expected: FAIL because `release_closure.py` does not exist.
 
 ```python
 PHASES = {
-    ("trust_ready", "runtime_frozen"): "review_pending",
-    ("review_pending", "review_passed"): "cost_free_pending",
-    ("cost_free_pending", "cost_free_passed"): "live_proof_pending",
-    ("live_proof_pending", "live_proved"): "closeout_pending",
-    ("closeout_pending", "metadata_verified"): "closed",
+    ("trust_repair", "trust_repaired"): "integration_review",
+    ("integration_review", "review_passed"): "frozen",
+    ("frozen", "cost_free_passed"): "cost_free_passed",
+    ("cost_free_passed", "live_proved"): "live_proved",
+    ("live_proved", "metadata_verified"): "closed",
 }
 
 def consolidate_review_lanes(reports, *, checkpoint_sha256: str) -> ConsolidatedReview:
@@ -256,6 +265,9 @@ operator_reviewed: true
 
 **Interfaces:** Produces the Plan 1 verified checkpoint consumed by Plan 2. It closes R1 but records R2 and final R3 as Program Final Gate work.
 
+The checkpoint record contains commit, tree, this plan hash, the approved spec
+hash, and the upstream approved-design checkpoint.
+
 - [ ] **Step 1: Register both focused checks**
 
 Add `check_release_trust_vnext.py` and `check_release_closure_vnext.py` to `evals/maintained-checks.json` with explicit `deterministic` classification.
@@ -281,6 +293,6 @@ Expected: `fresh=true` with no errors.
 - [ ] **Step 5: Commit the Plan 1 checkpoint**
 
 ```bash
-git add skills/kws-codex-plan-executor/evals/maintained-checks.json skills/kws-codex-plan-executor/docs graphify-out/GRAPH_REPORT.md graphify-out/graph.json
+git add skills/kws-codex-plan-executor/evals/maintained-checks.json skills/kws-codex-plan-executor/docs/evals-and-verification.md skills/kws-codex-plan-executor/docs/risks-limitations-deferrals.md skills/kws-codex-plan-executor/docs/verification-log.md graphify-out/GRAPH_REPORT.md graphify-out/graph.json
 git commit -m "docs(cpe): record vnext trust foundation checkpoint"
 ```

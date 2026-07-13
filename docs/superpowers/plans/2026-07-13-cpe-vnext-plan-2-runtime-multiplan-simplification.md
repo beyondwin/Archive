@@ -102,6 +102,7 @@ file_claims:
   - skills/kws-codex-plan-executor/scripts/cpe_runtime/plan_graph.py
   - skills/kws-codex-plan-executor/evals/check_plan_graph_vnext.py
   - skills/kws-codex-plan-executor/evals/fixtures/canvas-program-6d41fb9/**
+  - skills/kws-codex-plan-executor/evals/fixtures/cpe-vnext-self-dogfood.json
 acceptance:
   - python3 skills/kws-codex-plan-executor/evals/check_plan_graph_vnext.py
 operator_reviewed: true
@@ -119,6 +120,9 @@ assert graph.plan_count == 12
 assert graph.global_integration_gate.plan_id.endswith("wave-6-integration-evidence")
 assert all("::" in task_id for task_id in graph.tasks)
 assert invalidated_nodes(graph, changed_wave_b2) == graph.downstream_of("wave-b2")
+self_graph = compile_tracked_self_dogfood("evals/fixtures/cpe-vnext-self-dogfood.json")
+assert self_graph.plan_count == 3
+assert self_graph.program_document_id is not None
 ```
 
 - [ ] **Step 2: Run RED**
@@ -147,12 +151,14 @@ Reject cycles, orphan tasks, missing required coverage, ambiguous ownership, dup
 
 Run: `python3 skills/kws-codex-plan-executor/evals/check_plan_graph_vnext.py`
 
-Expected: PASS for single plan, ordered multi-plan fallback, Canvas program, ownership transfer, and downstream-only invalidation.
+Expected: PASS for single plan, ordered multi-plan fallback, Canvas program,
+the tracked program-plus-three-plans self-dogfood fixture, ownership transfer,
+and downstream-only invalidation.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add skills/kws-codex-plan-executor/scripts/cpe_runtime/plan_graph.py skills/kws-codex-plan-executor/evals/check_plan_graph_vnext.py skills/kws-codex-plan-executor/evals/fixtures/canvas-program-6d41fb9
+git add skills/kws-codex-plan-executor/scripts/cpe_runtime/plan_graph.py skills/kws-codex-plan-executor/evals/check_plan_graph_vnext.py skills/kws-codex-plan-executor/evals/fixtures/canvas-program-6d41fb9 skills/kws-codex-plan-executor/evals/fixtures/cpe-vnext-self-dogfood.json
 git commit -m "feat(cpe): compile vnext multi-plan graphs"
 ```
 
@@ -175,7 +181,7 @@ operator_reviewed: true
 
 **Files:** Create or modify exactly the paths declared in this task YAML `file_claims`; do not touch undeclared paths.
 
-**Interfaces:** `TaskContractVNext` includes `plan_id`, `qualified_task_id`, `document_sha256`, and `upstream_graph_sha256`; `PlanCheckpoint` binds plan and upstream hashes.
+**Interfaces:** `TaskContractVNext` includes `plan_id`, `qualified_task_id`, `document_sha256`, and `upstream_graph_sha256`; every `PlanCheckpoint` binds commit, tree, plan hash, spec hash, and upstream checkpoint.
 
 - [ ] **Step 1: Add failing qualified-identity assertions**
 
@@ -183,6 +189,8 @@ operator_reviewed: true
 assert contract.qualified_task_id == f"{contract.plan_id}::{contract.task_id}"
 assert manifest["plan_graph"]["graph_sha256"] == graph.graph_sha256
 assert checkpoint.upstream_graph_sha256 == graph.upstream_digest(plan_id)
+assert checkpoint.spec_sha256 == document_set.spec.sha256
+assert checkpoint.upstream_checkpoint == previous_plan_checkpoint.identity()
 ```
 
 - [ ] **Step 2: Run RED**
@@ -200,6 +208,8 @@ class PlanCheckpoint:
     commit: str
     tree: str
     plan_sha256: str
+    spec_sha256: str
+    upstream_checkpoint: str | None
     upstream_graph_sha256: str
     evidence_refs: tuple[dict[str, str], ...]
 ```
@@ -226,6 +236,7 @@ spec_refs: ["S1.9.1", "S1.9.2", "S1.9.3", "S1.9.7", "S1.12"]
 file_claims:
   - skills/kws-codex-plan-executor/scripts/cpe_runtime/transition_kernel.py
   - skills/kws-codex-plan-executor/scripts/cpe_runtime/phase_executor.py
+  - skills/kws-codex-plan-executor/scripts/cpe_runtime/evidence_store.py
   - skills/kws-codex-plan-executor/scripts/cpe_runtime/kernel.py
   - skills/kws-codex-plan-executor/scripts/cpe_runtime/projector.py
   - skills/kws-codex-plan-executor/scripts/cpe_runtime/scheduler.py
@@ -237,7 +248,7 @@ operator_reviewed: true
 
 **Files:** Create or modify exactly the paths declared in this task YAML `file_claims`; do not touch undeclared paths.
 
-**Interfaces:** Produces `KernelCommand`, `TypedOutcome`, `decide(state, outcome) -> KernelCommand`, and `PhaseExecutor.execute(command) -> TypedOutcome`.
+**Interfaces:** Produces `KernelCommand`, `TypedOutcome`, `EvidenceStore`, `decide(state, outcome) -> KernelCommand`, and `PhaseExecutor.execute(command) -> TypedOutcome`. `EvidenceStore` is the only content-addressed evidence writer and the kernel remains the only event writer.
 
 - [ ] **Step 1: Write the transition-table RED**
 
@@ -272,12 +283,15 @@ class PhaseExecutor:
 
 Run: `python3 skills/kws-codex-plan-executor/evals/check_transition_kernel_vnext.py`
 
-Expected: PASS for every legal transition, illegal transitions, wait/resume, structural redesign routing, and generated crash points.
+Expected: PASS for every legal transition, illegal transitions, wait/resume,
+structural redesign routing, evidence byte verification, and generated crash
+points before/after evidence persistence, event append, projection replacement,
+plan-checkpoint publication, external-call registration, and global completion.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add skills/kws-codex-plan-executor/scripts/cpe_runtime/{transition_kernel,phase_executor,kernel,projector,scheduler}.py skills/kws-codex-plan-executor/evals/check_transition_kernel_vnext.py
+git add skills/kws-codex-plan-executor/scripts/cpe_runtime/{transition_kernel,phase_executor,evidence_store,kernel,projector,scheduler}.py skills/kws-codex-plan-executor/evals/check_transition_kernel_vnext.py
 git commit -m "feat(cpe): cut over to one vnext transition kernel"
 ```
 
@@ -300,6 +314,20 @@ file_claims:
   - skills/kws-codex-plan-executor/scripts/cpe.py
   - skills/kws-codex-plan-executor/evals/check_vnext_cutover.py
   - skills/kws-codex-plan-executor/evals/check_quality_matrix_v4.py
+  - skills/kws-codex-plan-executor/evals/check_cpe_v4_e2e.py
+  - skills/kws-codex-plan-executor/evals/check_validation_profiles_vnext.py
+  - skills/kws-codex-plan-executor/evals/check_manifest_prompt_vnext.py
+  - skills/kws-codex-plan-executor/evals/check_sentinel_resume_vnext.py
+  - skills/kws-codex-plan-executor/evals/check_ledger_crash_vnext.py
+  - skills/kws-codex-plan-executor/evals/check_release_lineage_vnext.py
+  - skills/kws-codex-plan-executor/evals/check_privacy_oracle_vnext.py
+  - skills/kws-codex-plan-executor/evals/check_authentic_e2e_vnext.py
+  - skills/kws-codex-plan-executor/evals/check_fixed_route_vnext.py
+  - skills/kws-codex-plan-executor/evals/fixtures/v4-control-snapshot.json
+  - skills/kws-codex-plan-executor/evals/maintained-checks.json
+  - skills/kws-codex-plan-executor/docs/verification-log.md
+  - graphify-out/GRAPH_REPORT.md
+  - graphify-out/graph.json
 acceptance:
   - python3 skills/kws-codex-plan-executor/evals/check_vnext_cutover.py
 operator_reviewed: true
@@ -308,7 +336,7 @@ operator_decision: Approved clean-cut removal of v3 and v4 execution compatibili
 
 **Files:** Create or modify exactly the paths declared in this task YAML `file_claims`; do not touch undeclared paths.
 
-**Interfaces:** Produces `EvidenceResolver`, keeps `validate_integrity()` and `validate_completion()`, and returns `unsupported_version` without opening historical artifact graphs.
+**Interfaces:** Produces `EvidenceResolver`, keeps `validate_integrity()` and `validate_completion()`, and returns `unsupported_version` without opening historical artifact graphs. Validation has exactly three profiles: event/projection/artifact integrity; task/plan-checkpoint/current-revision completion; and release trust/proof binding.
 
 - [ ] **Step 1: Write cutover and evidence-resolution RED cases**
 
@@ -317,6 +345,7 @@ assert inspect_old_run(v4_run).classification == "unsupported_version"
 assert snapshot_tree(v4_run) == before
 assert EvidenceResolver(run_dir).resolve(ref).task_id == "plan-a::T1"
 assert validate_completion(vnext_run).passed is True
+assert load_control_snapshot().sha256 == tracked_control_digest
 ```
 
 - [ ] **Step 2: Run RED**
@@ -335,21 +364,46 @@ def inspect_version_header(run_dir: Path) -> str:
     return marker
 ```
 
-Move retained dogfood and quality behavior into `dogfood_vnext.py` and
+Before deleting any successful v4 implementation or fixture, write the
+immutable cost-free representative control to
+`evals/fixtures/v4-control-snapshot.json`, bind its canonical digest in the
+comparison check, and prove that it contains no executable route, provider
+input, credential, or mutable path. Move retained dogfood and quality behavior into `dogfood_vnext.py` and
 `quality_vnext.py`. Remove `run_task_cycle`, `run_task_cycle_v4`, old resume
 selectors, compatibility projections, `dogfood_v4.py`, `quality_v4.py`,
 `release_policy_v4.py`, and their successful old-run fixtures after vNext
-tests pass. Keep rejection fixtures that prove old artifacts are untouched.
+tests pass. Convert `check_cpe_v4_e2e.py` into the old-artifact rejection
+oracle: it must prove old artifacts stay untouched and must not execute or
+accept a successful v4 run.
 
 - [ ] **Step 4: Run focused and authentic multi-plan E2E**
 
-Run: `cd skills/kws-codex-plan-executor && python3 evals/check_vnext_cutover.py && python3 evals/check_cpe_v4_e2e.py`
+Run: `cd skills/kws-codex-plan-executor && python3 evals/check_vnext_cutover.py && python3 evals/check_validation_profiles_vnext.py && python3 evals/check_authentic_e2e_vnext.py && python3 evals/check_fixed_route_vnext.py && python3 evals/check_cpe_v4_e2e.py`
 
-Expected: vNext E2E passes; the historical check is retained only as a rejection oracle and cannot execute an old run.
+Expected: the three validation profiles and authentic vNext E2E pass; the
+fixed route remains exactly Sol/high for core work and Terra/high for bounded
+read-only scouting; the historical check is retained only as a rejection
+oracle and cannot execute an old run.
 
-- [ ] **Step 5: Commit the Plan 2 checkpoint**
+- [ ] **Step 5: Run the verified-checkpoint gate and commit Plan 2**
+
+Run the focused cutover checks above, then:
 
 ```bash
-git add skills/kws-codex-plan-executor/scripts skills/kws-codex-plan-executor/evals
+cd skills/kws-codex-plan-executor
+./evals/run.sh
+cd ../..
+bun run check
+git diff --check
+graphify update .
+python3 skills/kws-codex-plan-executor/scripts/check_graphify_freshness.py --repo-root . --update-ran
+```
+
+Expected: every command exits 0, Graphify reports `fresh=true`, and the
+checkpoint record contains commit, tree, Plan 2 hash, spec hash, and the Plan 1
+upstream checkpoint.
+
+```bash
+git add skills/kws-codex-plan-executor/scripts/cpe_runtime/evidence_resolver.py skills/kws-codex-plan-executor/scripts/cpe_runtime/validation.py skills/kws-codex-plan-executor/scripts/cpe_runtime/reconciliation.py skills/kws-codex-plan-executor/scripts/cpe_runtime/repair.py skills/kws-codex-plan-executor/scripts/cpe_runtime/dogfood_vnext.py skills/kws-codex-plan-executor/scripts/cpe_runtime/quality_vnext.py skills/kws-codex-plan-executor/scripts/cpe_runtime/dogfood_v4.py skills/kws-codex-plan-executor/scripts/cpe_runtime/quality_v4.py skills/kws-codex-plan-executor/scripts/cpe_runtime/release_policy_v4.py skills/kws-codex-plan-executor/scripts/cpe.py skills/kws-codex-plan-executor/evals/check_vnext_cutover.py skills/kws-codex-plan-executor/evals/check_quality_matrix_v4.py skills/kws-codex-plan-executor/evals/check_cpe_v4_e2e.py skills/kws-codex-plan-executor/evals/check_validation_profiles_vnext.py skills/kws-codex-plan-executor/evals/check_manifest_prompt_vnext.py skills/kws-codex-plan-executor/evals/check_sentinel_resume_vnext.py skills/kws-codex-plan-executor/evals/check_ledger_crash_vnext.py skills/kws-codex-plan-executor/evals/check_release_lineage_vnext.py skills/kws-codex-plan-executor/evals/check_privacy_oracle_vnext.py skills/kws-codex-plan-executor/evals/check_authentic_e2e_vnext.py skills/kws-codex-plan-executor/evals/check_fixed_route_vnext.py skills/kws-codex-plan-executor/evals/fixtures/v4-control-snapshot.json skills/kws-codex-plan-executor/evals/maintained-checks.json skills/kws-codex-plan-executor/docs/verification-log.md graphify-out/GRAPH_REPORT.md graphify-out/graph.json
 git commit -m "feat(cpe): complete vnext runtime and multi-plan cutover"
 ```

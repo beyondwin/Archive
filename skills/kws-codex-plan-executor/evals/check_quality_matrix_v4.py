@@ -961,6 +961,7 @@ def check_authentic_production_release_e2e() -> None:
         env = {
             **os.environ,
             "CODEX_HOME": str(auth_home),
+            "CPE_SUPERPOWERS_ROOT": str(skill / "evals" / "fixtures" / "superpowers-capabilities"),
             "CPE_FAKE_LOGIN": "chatgpt",
             "CPE_FAKE_MODELS": json.dumps([
                 {"model": model, "reasoning_efforts": ["high"]}

@@ -47,6 +47,15 @@ require their original checkout if an operator later chooses to inspect them.
    boundaries justify it.
 7. Preserve single-plan input as a vNext feature, not as compatibility code.
    Add multi-plan input directly to the vNext contract.
+8. Fixed production constants, not policy data, own the trusted policy and
+   dogfood-contract paths. Policy data may provide release labels and attempt
+   ceilings but may not redirect either trust anchor.
+9. Before deleting successful v4 execution paths, commit one immutable,
+   cost-free JSON control snapshot for vNext quality comparison. The snapshot
+   is evidence only and must never remain an executable v4 success route.
+10. Implementation-review metadata records that local work is approved; it
+    never grants credentialed live-call authority. Live proof always requires
+    a fresh explicit authority decision at the Program Final Gate.
 
 ## 3. Evidence And Root Causes
 
@@ -297,7 +306,8 @@ input contracts and file claims are independent.
   integration gate.
 
 The entire program uses one run ID, isolated worktree, event ledger, evidence
-store, and final public result.
+store, and final public result. Every plan checkpoint records commit, tree,
+plan hash, spec hash, and upstream checkpoint identity.
 
 ## 8. Plan 1 - Release Trust Foundation And Closure Machinery
 
@@ -336,6 +346,10 @@ The loader returns one immutable `TrustRoot` binding:
 - fixed dogfood contract path, blob OID, and SHA-256;
 - trusted base commit and patch digest;
 - release labels and attempt ceilings.
+
+The dogfood contract path is a code constant alongside the policy path. The
+policy blob may contain labels and ceilings, but a path-like value in policy
+data is rejected and cannot select a trusted filesystem or Git-object path.
 
 The manifest, ledger, launch envelope, dogfood record, terminal generation,
 and public validation all bind the same `TrustRoot` digest.
@@ -431,6 +445,11 @@ Remove:
 - v3/v4 resume, validation, reconciliation, and repair paths;
 - migration helpers and compatibility projections;
 - fixtures whose only purpose is successful old-version execution.
+
+Before removal, serialize the representative v4 control results into one
+tracked, canonical, content-digest-bound JSON snapshot. Plan 3 reads only that
+snapshot; it never imports a v4 runtime module, invokes a provider, or keeps a
+successful v4 execution fixture alive.
 
 For an old run, the public boundary reads only enough manifest header data to
 return `unsupported_version`. It does not open, rewrite, validate, or migrate
@@ -744,7 +763,9 @@ ownership, checkpoints, and the Program Final Gate. That gate runs the final
 R3 review, consolidated repair if needed, cost-free verification, R2 staged
 proof, and metadata-only closeout after Plans 1 through 3. Each implementation
 plan will own executable task detail. This artifact set also dogfoods the
-vNext multi-plan input shape.
+vNext multi-plan input shape through a tracked acceptance fixture that compiles
+the program plan plus all three implementation plans as one `DocumentSet` and
+one `PlanGraph`.
 
 Behavior and documentation changes remain in the same implementation commits.
 The existing risk register must be updated as R1 through R3 close and must keep

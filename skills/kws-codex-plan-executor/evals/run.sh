@@ -6,6 +6,7 @@ umask 077
 
 EVAL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 SKILL_DIR="$(dirname "$EVAL_DIR")"
+export CPE_SUPERPOWERS_ROOT="$EVAL_DIR/fixtures/superpowers-capabilities"
 
 # Acceptance workers may inherit a minimal PATH whose python3 cannot import the
 # pinned eval dependencies even when a compatible host interpreter exists.

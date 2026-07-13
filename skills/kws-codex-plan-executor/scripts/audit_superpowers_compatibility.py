@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import re
 from pathlib import Path
@@ -234,7 +235,9 @@ def assert_superpowers_compatible(plan: Path, workspace: Path) -> None:
             {"plan": str(plan), "workspace": str(workspace), "markers": plan_markers},
         )
 
-    superpowers_root = Path.home() / ".codex" / "skills"
+    superpowers_root = Path(
+        os.environ.get("CPE_SUPERPOWERS_ROOT", Path.home() / ".codex" / "skills")
+    ).expanduser().resolve()
     skill_root = Path(__file__).resolve().parents[1]
     payload = build_payload(superpowers_root, skill_root)
     if not payload["passed"]:

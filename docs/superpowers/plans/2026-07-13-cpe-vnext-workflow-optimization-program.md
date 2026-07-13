@@ -20,6 +20,8 @@
 - The 50 percent efficiency reduction is measured and reported; it is not a release gate.
 - P0/P1 detection, false-success, privacy, state, evidence, duplicate-call, and release-truth requirements are hard gates.
 - Work in an isolated worktree during execution; preserve unrelated user changes and stage exact task files.
+- `operator_reviewed` and other implementation-review metadata authorize only the declared local task; they never authorize a credentialed provider or model call.
+- The program contains exactly 14 implementation tasks: Plan 1 has 4, Plan 2 has 5, and Plan 3 has 5.
 
 ## Authoritative Execution Order
 
@@ -38,7 +40,7 @@ No stage may use a credentialed call before Stage 4. A Stage 4 finding that chan
 | --- | --- |
 | S1.8 release trust and closure machinery | Plan 1 |
 | S1.7 DocumentSet and PlanGraph | Plan 2 Tasks 1-3 |
-| S1.9 runtime, validation, test simplification | Plan 2 Tasks 4-6 |
+| S1.9 runtime, validation, test simplification | Plan 2 Tasks 4-5 |
 | S1.10 quality deduplication and measurement | Plan 3 Tasks 1-4 |
 | S1.11 hard quality gates | Plan 3 Tasks 4-5 and Program Final Gate |
 | S1.12 error and recovery policy | Plans 1-3 typed outcomes |
@@ -49,14 +51,15 @@ No stage may use a credentialed call before Stage 4. A Stage 4 finding that chan
 ## File Ownership Map
 
 - Plan 1 owns release policy/object loading, release transaction state, release review schemas, and their focused evals.
-- Plan 2 owns plan/spec compilation, manifest/task identities, kernel/projector/scheduler/validation cutover, old-path removal, and multi-plan evals.
+- Plan 2 owns plan/spec compilation, manifest/task identities, `EvidenceStore`/`EvidenceResolver`, the three validation profiles, kernel/projector/scheduler/validation cutover, quality-suite decomposition, authentic E2E and crash-point coverage, old-path removal, and multi-plan evals.
 - Plan 3 owns invariant review, verification planning, prompt deduplication, metrics, representative comparison, and final-gate orchestration.
 - Shared files such as `scripts/cpe.py`, `evals/maintained-checks.json`, active docs, and Graphify transfer ownership in stage order. A later plan may change them only for its declared interface.
 
 ## Checkpoint Contract
 
 - Each implementation plan ends with a real verified Git checkpoint and records its commit, tree, plan hash, spec hash, and upstream checkpoint.
-- Plan 2 compiles these documents into one `PlanGraph` dogfood fixture.
+- Plan 2 compiles this program plan plus all three implementation plans into
+  one tracked `DocumentSet`/`PlanGraph` self-dogfood fixture.
 - Plan 3 freezes the final runtime checkpoint before R3.
 - Program success requires all three plan checkpoints, one global integration gate, one terminal release generation, and one metadata-only closeout descendant.
 
