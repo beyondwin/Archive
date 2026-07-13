@@ -456,7 +456,9 @@ class RunStore:
         return store
 
     @classmethod
-    def open(cls, *, codex_home: Path, run_id: str) -> "RunStore":
+    def open(
+        cls, *, codex_home: Path, run_id: str, read_only: bool = False
+    ) -> "RunStore":
         if normalize_relative_path(run_id) != run_id or "/" in run_id:
             raise ValueError("run_id must be one normalized path component")
         home = codex_home.expanduser()
@@ -468,9 +470,19 @@ class RunStore:
         store.document_set()
         store.validate_event_chain()
         store.autonomy_decisions()
-        store.reconcile_autonomy_events()
-        store._reconcile_content_addressed_publication_manifests()
+        if not read_only:
+            store.reconcile_autonomy_events()
+            store._reconcile_content_addressed_publication_manifests()
         store._validate_artifacts()
+        for event in store.validate_event_chain():
+            if (
+                event["event_type"] == "map.generation_created"
+                and event["payload"]["generation_id"] != "generation-0001"
+            ):
+                store.document_set_for_generation(
+                    str(event["payload"]["generation_id"])
+                )
+        store.pending_input_revision()
         return store
 
     def _load_manifest(self) -> dict[str, object]:
@@ -601,6 +613,241 @@ class RunStore:
                 ):
                     raise ValueError("input document relationship target is invalid")
         return tuple(documents)
+
+    def document_set_for_generation(
+        self, generation_id: str
+    ) -> tuple[InputDocument, ...]:
+        """Return the immutable document revision selected for one map generation."""
+
+        if generation_id == "generation-0001":
+            return self.document_set()
+        if (
+            len(generation_id) != len("generation-0001")
+            or not generation_id.startswith("generation-")
+            or not generation_id.removeprefix("generation-").isdigit()
+            or int(generation_id.removeprefix("generation-")) < 2
+        ):
+            raise ValueError("input revision generation ID is invalid")
+        path = self.paths.inputs / generation_id / "document-set.json"
+        try:
+            raw = path.read_bytes()
+            payload = json.loads(raw.decode("utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError("input revision document set is unreadable") from exc
+        if raw != canonical_json(payload):
+            raise ValueError("input revision document set is not canonical JSON")
+        if not isinstance(payload, dict) or frozenset(payload) != _DOCUMENT_SET_KEYS:
+            raise ValueError("input revision document set has unexpected fields")
+        if payload.get("schema_version") != SCHEMA_VERSION:
+            raise ValueError("input revision document set is not schema 4")
+        values = payload.get("documents")
+        if not isinstance(values, list):
+            raise ValueError("input revision documents must be an array")
+        documents: list[InputDocument] = []
+        for expected_order, value in enumerate(values):
+            if not isinstance(value, dict) or frozenset(value) != _DOCUMENT_KEYS:
+                raise ValueError("input revision document fields are invalid")
+            relationship_values = value.get("relationships")
+            if not isinstance(relationship_values, list):
+                raise ValueError("input revision relationships must be an array")
+            relationships: list[DocumentRelationship] = []
+            for item in relationship_values:
+                if not isinstance(item, dict) or frozenset(item) != {
+                    "relationship_type",
+                    "target_document_id",
+                }:
+                    raise ValueError("input revision relationship fields are invalid")
+                relationship = DocumentRelationship(
+                    str(item["relationship_type"]), str(item["target_document_id"])
+                )
+                if relationship in relationships:
+                    raise ValueError("input revision relationships must be unique")
+                relationships.append(relationship)
+            if relationships != sorted(relationships):
+                raise ValueError("input revision relationships are not canonical")
+            try:
+                document = InputDocument(
+                    **{
+                        key: item
+                        for key, item in value.items()
+                        if key != "relationships"
+                    },
+                    relationships=tuple(relationships),
+                )
+            except TypeError as exc:
+                raise ValueError("input revision field types are invalid") from exc
+            if (
+                document.input_order != expected_order
+                or document.role not in {"spec", "plan", "program_plan"}
+                or not isinstance(document.byte_length, int)
+                or isinstance(document.byte_length, bool)
+                or document.byte_length < 0
+                or not isinstance(document.sha256, str)
+                or len(document.sha256) != 64
+            ):
+                raise ValueError("input revision field values are invalid")
+            snapshot_path = normalize_relative_path(document.snapshot_path)
+            if not snapshot_path.startswith("inputs/"):
+                raise ValueError("input revision snapshot must remain below inputs")
+            snapshot = self.paths.root / snapshot_path
+            try:
+                metadata = snapshot.lstat()
+                data = snapshot.read_bytes()
+            except OSError as exc:
+                raise ValueError("input revision snapshot is unreadable") from exc
+            if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+                raise ValueError("input revision snapshot must be a regular file")
+            if len(data) != document.byte_length or _sha256(data) != document.sha256:
+                raise ValueError("input revision snapshot digest does not match")
+            documents.append(document)
+        if [item.document_id for item in documents] != [
+            item.document_id for item in self.document_set()
+        ]:
+            raise ValueError("input revision changes stable document IDs")
+        matching_snapshots = [
+            event
+            for event in self.validate_event_chain()
+            if event["event_type"] == "documents.snapshotted"
+            and event["payload"]["document_set_sha256"] == _sha256(raw)
+            and event["payload"]["document_ids"]
+            == [document.document_id for document in documents]
+            and event["payload"]["snapshot_sha256s"]
+            == [document.sha256 for document in documents]
+        ]
+        if len(matching_snapshots) != 1:
+            raise ValueError("input revision lacks a unique snapshot event")
+        return tuple(documents)
+
+    def refresh_inputs(
+        self,
+    ) -> tuple[str, tuple[InputDocument, ...], tuple[str, ...]]:
+        """Snapshot explicitly changed original sources into one new revision."""
+
+        generation_events = [
+            event
+            for event in self.validate_event_chain()
+            if event["event_type"] == "map.generation_created"
+        ]
+        if not generation_events:
+            raise ValueError("input_refresh_requires_accepted_generation")
+        if self.pending_input_revision() is not None:
+            raise ValueError("input_refresh_already_pending")
+        current_id = (
+            str(generation_events[-1]["payload"]["generation_id"])
+            if generation_events
+            else "generation-0001"
+        )
+        current = self.document_set_for_generation(current_id)
+        generation_number = int(current_id.removeprefix("generation-")) + 1
+        generation_id = f"generation-{generation_number:04d}"
+        revision_root = self.paths.inputs / generation_id
+        if revision_root.exists() or revision_root.is_symlink():
+            raise ValueError("input revision already exists")
+        _mkdir_private(revision_root)
+        revised: list[InputDocument] = []
+        changed: list[str] = []
+        try:
+            for document in current:
+                source = Path(document.original_path)
+                if source.is_symlink():
+                    raise ValueError("input source must not become a symlink")
+                resolved = source.resolve(strict=True)
+                data = resolved.read_bytes()
+                data.decode("utf-8")
+                digest = _sha256(data)
+                if digest == document.sha256:
+                    revised.append(document)
+                    continue
+                changed.append(document.document_id)
+                snapshot_path = f"inputs/{generation_id}/{document.document_id}.md"
+                _atomic_write_new(self.paths.root / snapshot_path, data)
+                revised.append(
+                    InputDocument(
+                        document_id=document.document_id,
+                        role=document.role,
+                        original_path=str(resolved),
+                        snapshot_path=snapshot_path,
+                        sha256=digest,
+                        byte_length=len(data),
+                        input_order=document.input_order,
+                        relationships=document.relationships,
+                    )
+                )
+            if not changed:
+                raise ValueError("input_refresh_has_no_changes")
+            document_set = {
+                "schema_version": SCHEMA_VERSION,
+                "documents": [document.to_json() for document in revised],
+            }
+            raw = canonical_json(document_set)
+            _atomic_write_new(revision_root / "document-set.json", raw)
+        except BaseException:
+            if revision_root.exists():
+                shutil.rmtree(revision_root)
+            raise
+        try:
+            self.append_event(
+                "documents.snapshotted",
+                {
+                    "document_set_sha256": _sha256(raw),
+                    "document_ids": [document.document_id for document in revised],
+                    "snapshot_sha256s": [document.sha256 for document in revised],
+                },
+            )
+        except BaseException:
+            try:
+                pending = self.pending_input_revision()
+                published = pending is not None and pending[0] == generation_id
+            except (OSError, RuntimeError, ValueError):
+                published = False
+            if not published and revision_root.exists():
+                shutil.rmtree(revision_root)
+            raise
+        return generation_id, tuple(revised), tuple(changed)
+
+    def pending_input_revision(
+        self,
+    ) -> tuple[str, tuple[InputDocument, ...]] | None:
+        """Return the sole snapshotted revision not yet bound to a map event."""
+
+        events = self.validate_event_chain()
+        generation_events = [
+            event for event in events if event["event_type"] == "map.generation_created"
+        ]
+        accepted_ids = {
+            str(event["payload"]["generation_id"]) for event in generation_events
+        }
+        revision_ids: list[str] = []
+        for entry in self.paths.inputs.iterdir():
+            if not entry.is_dir() and not entry.is_symlink():
+                continue
+            name = entry.name
+            if (
+                entry.is_symlink()
+                or len(name) != len("generation-0001")
+                or not name.startswith("generation-")
+                or not name.removeprefix("generation-").isdigit()
+                or int(name.removeprefix("generation-")) < 2
+            ):
+                raise ValueError("input revision directory is invalid")
+            revision_ids.append(name)
+        pending_ids = sorted(set(revision_ids) - accepted_ids)
+        if not pending_ids:
+            return None
+        latest_number = (
+            int(
+                str(generation_events[-1]["payload"]["generation_id"]).removeprefix(
+                    "generation-"
+                )
+            )
+            if generation_events
+            else 1
+        )
+        expected_id = f"generation-{latest_number + 1:04d}"
+        if pending_ids != [expected_id]:
+            raise ValueError("pending input revision sequence is invalid")
+        documents = self.document_set_for_generation(expected_id)
+        return expected_id, documents
 
     @staticmethod
     def _parse_events(raw: bytes) -> tuple[dict[str, object], ...]:
@@ -1411,15 +1658,33 @@ class RunStore:
     def read_artifact(self, relative_path: str) -> bytes:
         normalized, target = self._artifact_target(relative_path, for_write=False)
         if normalized.startswith("inputs/"):
+            document_sets = [self.document_set()]
+            revision_ids = sorted(
+                path.name
+                for path in self.paths.inputs.glob("generation-*")
+                if path.is_dir() and not path.is_symlink()
+            )
+            if len(revision_ids) > 9999:
+                raise ValueError("input revision count exceeds the bounded limit")
+            document_sets.extend(
+                self.document_set_for_generation(generation_id)
+                for generation_id in revision_ids
+            )
             documents = {
-                document.snapshot_path: document for document in self.document_set()
+                document.snapshot_path: document
+                for document_set in document_sets
+                for document in document_set
             }
             if normalized not in documents:
                 raise ValueError("input path is not an immutable document snapshot")
             try:
-                return target.read_bytes()
+                data = target.read_bytes()
             except OSError as exc:
                 raise ValueError("input snapshot is unreadable") from exc
+            document = documents[normalized]
+            if len(data) != document.byte_length or _sha256(data) != document.sha256:
+                raise ValueError("input snapshot digest does not match its contract")
+            return data
         records = {
             str(record["relative_path"]): record
             for record in self._artifact_records()
@@ -1586,11 +1851,16 @@ class RunStore:
             event_type = event["event_type"]
             payload = event["payload"]
             if event_type == "map.generation_created":
+                for authority in authorities.values():
+                    if authority.get("status") == "waiting_authority":
+                        authority["status"] = "superseded"
                 status = (
                     "waiting_authority"
                     if event["payload"].get("authority_ids")
                     else "running"
                 )
+                for task_id in event["payload"].get("invalidated_task_ids", []):
+                    tasks.pop(str(task_id), None)
             elif event_type == "authority.opened":
                 status = "waiting_authority"
                 authorities[str(payload["authority_id"])] = {
@@ -1600,9 +1870,16 @@ class RunStore:
                     "artifact_paths": list(payload["artifact_paths"]),
                 }
             elif event_type == "authority.resolved":
-                status = "running"
                 authority = authorities.setdefault(str(payload["authority_id"]), {})
                 authority["status"] = "resolved"
+                status = (
+                    "waiting_authority"
+                    if any(
+                        item.get("status") == "waiting_authority"
+                        for item in authorities.values()
+                    )
+                    else "running"
+                )
             elif event_type == "task.started":
                 task = tasks.setdefault(
                     str(payload["task_id"]),

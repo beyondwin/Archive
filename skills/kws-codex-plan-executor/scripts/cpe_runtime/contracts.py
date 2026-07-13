@@ -158,6 +158,7 @@ _EVENT_PAYLOAD_SCHEMAS = {
             "publication_manifest_sha256": "hash",
             "authority_ids": "ids",
             "task_ids": "ids",
+            "invalidated_task_ids": "ids",
         },
     ),
     "task.started": (
@@ -1150,7 +1151,10 @@ def validate_document_map(
 
 
 def validate_program_map(
-    payload: object, *, document_hashes: Mapping[str, str]
+    payload: object,
+    *,
+    document_hashes: Mapping[str, str],
+    expected_generation: int = 1,
 ) -> dict[str, object]:
     """Validate a global task graph and honest requirement dispositions."""
 
@@ -1175,8 +1179,14 @@ def validate_program_map(
     if keys not in {required_fields, required_fields | {"task_splits"}}:
         raise ValueError("program map fields are invalid")
     value = dict(payload)
-    if value["schema_version"] != MAP_SCHEMA_VERSION or value["generation"] != 1:
-        raise ValueError("program map must be schema 1 generation 1")
+    if (
+        not isinstance(expected_generation, int)
+        or isinstance(expected_generation, bool)
+        or expected_generation < 1
+        or value["schema_version"] != MAP_SCHEMA_VERSION
+        or value["generation"] != expected_generation
+    ):
+        raise ValueError("program map generation differs from the requested generation")
     if not isinstance(document_hashes, Mapping) or not document_hashes:
         raise ValueError("document_hashes must be a non-empty mapping")
     normalized_document_hashes = {
@@ -1208,6 +1218,8 @@ def validate_program_map(
             "brief_path",
         }
     )
+    if expected_generation > 1:
+        task_fields |= {"predecessor_task_id"}
     tasks_value = value["tasks"]
     if not isinstance(tasks_value, list) or not tasks_value or len(tasks_value) > 4096:
         raise ValueError("program map tasks must be a bounded non-empty array")
@@ -1251,35 +1263,39 @@ def validate_program_map(
         if brief_path in brief_paths:
             raise ValueError("task brief paths must be unique")
         brief_paths.add(brief_path)
-        tasks.append(
-            {
-                "task_id": task_id,
-                "title": _map_text(task["title"], "program task title", 1024),
-                "dependencies": dependencies,
-                "dependency_edges": dependency_edges,
-                "document_ids": task_document_ids,
-                "requirement_ids": requirement_ids,
-                "acceptance": _validate_bindings(
-                    task["acceptance"],
-                    document_hashes=normalized_document_hashes,
-                    text_field="command",
-                    name="program task acceptance",
-                ),
-                "global_constraints": _validate_bindings(
-                    task["global_constraints"],
-                    document_hashes=normalized_document_hashes,
-                    text_field="statement",
-                    name="program task global_constraints",
-                ),
-                "upstream_interface_commitments": _validate_bindings(
-                    task["upstream_interface_commitments"],
-                    document_hashes=normalized_document_hashes,
-                    text_field="statement",
-                    name="program task upstream interface commitments",
-                ),
-                "brief_path": brief_path,
-            }
-        )
+        parsed_task = {
+            "task_id": task_id,
+            "title": _map_text(task["title"], "program task title", 1024),
+            "dependencies": dependencies,
+            "dependency_edges": dependency_edges,
+            "document_ids": task_document_ids,
+            "requirement_ids": requirement_ids,
+            "acceptance": _validate_bindings(
+                task["acceptance"],
+                document_hashes=normalized_document_hashes,
+                text_field="command",
+                name="program task acceptance",
+            ),
+            "global_constraints": _validate_bindings(
+                task["global_constraints"],
+                document_hashes=normalized_document_hashes,
+                text_field="statement",
+                name="program task global_constraints",
+            ),
+            "upstream_interface_commitments": _validate_bindings(
+                task["upstream_interface_commitments"],
+                document_hashes=normalized_document_hashes,
+                text_field="statement",
+                name="program task upstream interface commitments",
+            ),
+            "brief_path": brief_path,
+        }
+        if expected_generation > 1:
+            predecessor = task["predecessor_task_id"]
+            if predecessor is not None:
+                predecessor = _map_id(predecessor, "program predecessor_task_id")
+            parsed_task["predecessor_task_id"] = predecessor
+        tasks.append(parsed_task)
 
     by_id = {str(task["task_id"]): task for task in tasks}
     for task in tasks:
@@ -1520,7 +1536,7 @@ def validate_program_map(
             )
     return {
         "schema_version": MAP_SCHEMA_VERSION,
-        "generation": 1,
+        "generation": expected_generation,
         "document_map_sha256s": document_map_sha256s,
         "tasks": tasks,
         "coverage": coverage,

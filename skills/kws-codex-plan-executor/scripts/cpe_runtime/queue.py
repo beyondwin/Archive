@@ -24,17 +24,26 @@ from .contracts import (
     validate_task_brief,
     validate_terminal_artifact,
 )
-from .launcher import ChildLauncher, ChildRequest, LaunchOutcome
+from .launcher import (
+    ChildInterruption,
+    ChildLauncher,
+    ChildProcessInterrupted,
+    ChildRequest,
+    LaunchOutcome,
+)
 from .store import RunStore
 from .worktree import Worktree
 
 
-_GENERATION_ID = "generation-0001"
-_GENERATION_ROOT = f"maps/{_GENERATION_ID}"
+_INITIAL_GENERATION_ID = "generation-0001"
 _INVESTIGATION_RECOVERY_METHODS = (
     "root_cause_reanalysis",
     "architecture_synthesis",
 )
+
+
+class RunInterrupted(ValueError):
+    """The durable queue is valid but needs a later resume."""
 
 
 def _sha256(data: bytes) -> str:
@@ -63,7 +72,13 @@ class QueueEngine:
     """Own mapping launches, ordered ingestion, validation, and one map event."""
 
     def __init__(
-        self, store: RunStore, worktree: Worktree, launcher: ChildLauncher
+        self,
+        store: RunStore,
+        worktree: Worktree,
+        launcher: ChildLauncher,
+        *,
+        generation_id: str | None = None,
+        documents: Sequence[InputDocument] | None = None,
     ) -> None:
         if not isinstance(store, RunStore):
             raise ValueError("queue store must be a RunStore")
@@ -75,6 +90,40 @@ class QueueEngine:
         self.store = store
         self.worktree = worktree
         self.launcher = launcher
+        generation_events = [
+            event
+            for event in store.validate_event_chain()
+            if event["event_type"] == "map.generation_created"
+        ]
+        pending = store.pending_input_revision() if generation_id is None else None
+        selected_generation = generation_id or (
+            pending[0]
+            if pending is not None
+            else (
+                str(generation_events[-1]["payload"]["generation_id"])
+                if generation_events
+                else _INITIAL_GENERATION_ID
+            )
+        )
+        if (
+            len(selected_generation) != len("generation-0001")
+            or not selected_generation.startswith("generation-")
+            or not selected_generation.removeprefix("generation-").isdigit()
+            or int(selected_generation.removeprefix("generation-")) < 1
+        ):
+            raise ValueError("queue generation ID is invalid")
+        self._generation_id = selected_generation
+        self._generation_number = int(selected_generation.removeprefix("generation-"))
+        self._generation_root = f"maps/{selected_generation}"
+        self._documents = tuple(
+            documents
+            if documents is not None
+            else (
+                pending[1]
+                if pending is not None
+                else store.document_set_for_generation(selected_generation)
+            )
+        )
 
     @staticmethod
     def _instruction_file(path: Path) -> Path | None:
@@ -108,15 +157,14 @@ class QueueEngine:
 
     def _repository_instructions(self) -> tuple[Path, ...]:
         result: list[Path] = []
-        for document in self.store.document_set():
+        for document in self._documents:
             for instruction in self._document_instructions(document):
                 if instruction not in result:
                     result.append(instruction)
         return tuple(result)
 
-    @staticmethod
-    def _document_map_path(document: InputDocument) -> str:
-        return f"{_GENERATION_ROOT}/documents/{document.document_id}.json"
+    def _document_map_path(self, document: InputDocument) -> str:
+        return f"{self._generation_root}/documents/{document.document_id}.json"
 
     def _allocate_attempt(self, base_attempt_id: str) -> tuple[str, Path]:
         attempt_id = base_attempt_id
@@ -289,13 +337,27 @@ class QueueEngine:
     def map_documents(self) -> tuple[str, ...]:
         """Launch one fresh mapper per missing immutable input, then ingest in order."""
 
-        documents = self.store.document_set()
+        documents = self._documents
         paths = tuple(self._document_map_path(document) for document in documents)
         pending: list[tuple[InputDocument, str, str]] = []
         for document, relative_path in zip(documents, paths, strict=True):
             target = self.store.paths.root / relative_path
             if target.exists() or target.is_symlink():
                 self._read_document_map(document, relative_path)
+                continue
+            if (
+                self._generation_number > 1
+                and not document.snapshot_path.startswith(
+                    f"inputs/{self._generation_id}/"
+                )
+            ):
+                previous_id = f"generation-{self._generation_number - 1:04d}"
+                previous_path = (
+                    f"maps/{previous_id}/documents/{document.document_id}.json"
+                )
+                previous_bytes = self.store.read_artifact(previous_path)
+                self._validate_document_map_bytes(document, previous_bytes)
+                self.store.put_artifact(relative_path, previous_bytes)
                 continue
             attempt_id, _ = self._allocate_attempt(
                 f"map-document-{document.input_order + 1:04d}"
@@ -356,17 +418,33 @@ class QueueEngine:
                 self.store.discard_outbox(item.attempt_id)
         for item in noncompleted:
             self.store.discard_outbox(item.attempt_id)
-            validation_failures.append(
-                ValueError(
-                    f"document mapper {item.document.document_id} did not complete"
+            if item.outcome.result.status == "interrupted":
+                self._record_interrupted("document_mapper_interrupted")
+                validation_failures.append(
+                    RunInterrupted(
+                        f"document mapper {item.document.document_id} did not complete"
+                    )
                 )
-            )
+            else:
+                validation_failures.append(
+                    ValueError(
+                        f"document mapper {item.document.document_id} did not complete"
+                    )
+                )
         successful_attempts = {item.attempt_id for item in completed}
         for _, attempt_id, _ in pending:
             if attempt_id not in successful_attempts:
                 self.store.discard_outbox(attempt_id)
         failures.extend(validation_failures)
         if failures:
+            interruptions = [
+                item
+                for item in failures
+                if isinstance(item, (ChildInterruption, RunInterrupted))
+            ]
+            if interruptions:
+                self._record_interrupted("document_mapper_process_interrupted")
+                raise RunInterrupted(str(interruptions[0]))
             raise failures[0]
         return paths
 
@@ -376,7 +454,7 @@ class QueueEngine:
         tuple[InputDocument, dict[str, object], bytes, str], ...
     ]:
         values: list[tuple[InputDocument, dict[str, object], bytes, str]] = []
-        for document in self.store.document_set():
+        for document in self._documents:
             relative_path = self._document_map_path(document)
             payload, data = self._read_document_map(document, relative_path)
             values.append((document, payload, data, relative_path))
@@ -398,7 +476,7 @@ class QueueEngine:
     ) -> tuple[dict[str, object], str, str]:
         publication_id = self._publication_id(artifacts)
         prefix = (
-            f"{_GENERATION_ROOT}/attempts/{publication_id}/artifacts"
+            f"{self._generation_root}/attempts/{publication_id}/artifacts"
         )
         records: dict[str, dict[str, object]] = {}
         for logical_path, data in sorted(artifacts.items()):
@@ -411,14 +489,14 @@ class QueueEngine:
             }
         manifest = {
             "schema_version": 1,
-            "generation_id": _GENERATION_ID,
+            "generation_id": self._generation_id,
             "publication_id": publication_id,
             "program_map_sha256": _sha256(artifacts[program_path]),
             "artifacts": records,
         }
         manifest_bytes = canonical_json(manifest)
         manifest_path = (
-            f"{_GENERATION_ROOT}/attempts/{publication_id}/accepted.json"
+            f"{self._generation_root}/attempts/{publication_id}/accepted.json"
         )
         self.store.put_artifact(manifest_path, manifest_bytes)
         return manifest, manifest_path, _sha256(manifest_bytes)
@@ -445,7 +523,7 @@ class QueueEngine:
             }
         ) or manifest.get("schema_version") != 1 or manifest.get(
             "generation_id"
-        ) != _GENERATION_ID:
+        ) != self._generation_id:
             raise ValueError("accepted program publication has invalid fields")
         publication_id = manifest.get("publication_id")
         records = manifest.get("artifacts")
@@ -456,7 +534,7 @@ class QueueEngine:
             or not records
         ):
             raise ValueError("accepted program publication identity is invalid")
-        prefix = f"{_GENERATION_ROOT}/attempts/{publication_id}/artifacts/"
+        prefix = f"{self._generation_root}/attempts/{publication_id}/artifacts/"
         for logical_path, raw_record in records.items():
             if not isinstance(logical_path, str) or not isinstance(raw_record, Mapping):
                 raise ValueError("accepted program publication record is invalid")
@@ -467,7 +545,7 @@ class QueueEngine:
                 raise ValueError("accepted program publication path is invalid")
         if self._publication_id(artifacts) != publication_id:
             raise ValueError("accepted program publication commitment does not match")
-        program_path = f"{_GENERATION_ROOT}/program-map.json"
+        program_path = f"{self._generation_root}/program-map.json"
         if manifest.get("program_map_sha256") != _sha256(artifacts[program_path]):
             raise ValueError("accepted program map digest does not match")
         return artifacts
@@ -481,7 +559,7 @@ class QueueEngine:
         reader: Callable[[str], bytes] | None = None,
     ) -> tuple[dict[str, object], bytes, tuple[str, ...]]:
         read = self.store.read_artifact if reader is None else reader
-        program_path = f"{_GENERATION_ROOT}/program-map.json"
+        program_path = f"{self._generation_root}/program-map.json"
         program_bytes = read(program_path)
         document_hashes = {
             document.document_id: document.sha256
@@ -490,6 +568,7 @@ class QueueEngine:
         program = validate_program_map(
             _load_json(program_bytes, "program map"),
             document_hashes=document_hashes,
+            expected_generation=self._generation_number,
         )
         if canonical_json(program) != program_bytes:
             raise ValueError("program map is not in its canonical validated shape")
@@ -746,8 +825,8 @@ class QueueEngine:
         self._verify_nested_source_references(program, sources=document_sources)
         artifact_paths = [
             program_path,
-            f"{_GENERATION_ROOT}/coverage.json",
-            f"{_GENERATION_ROOT}/authority-queue.json",
+            f"{self._generation_root}/coverage.json",
+            f"{self._generation_root}/authority-queue.json",
         ]
         coverage = _load_json(
             read(artifact_paths[1]), "coverage companion"
@@ -864,26 +943,43 @@ class QueueEngine:
                 or not all(isinstance(task_id, str) and task_id for task_id in task_ids)
             ):
                 raise ValueError("program authority item is not event-safe")
-            if authority_id not in existing:
+            event_authority_id = self._authority_event_id(authority_id)
+            if event_authority_id not in existing:
+                event_artifact_path = authority_path
+                if self._generation_number > 1:
+                    event_artifact_path = (
+                        f"maps/{self._generation_id}/authority-"
+                        f"{_sha256(event_authority_id.encode('utf-8'))[:16]}.json"
+                    )
+                    self.store.put_artifact(
+                        event_artifact_path,
+                        canonical_json({**item, "authority_id": event_authority_id}),
+                    )
                 self.store.append_event(
                     "authority.opened",
                     {
-                        "authority_id": authority_id,
+                        "authority_id": event_authority_id,
                         "authority_code": authority_code,
                         "status": "waiting_authority",
                         "task_ids": task_ids,
-                        "artifact_paths": [authority_path],
+                        "artifact_paths": [event_artifact_path],
                     },
                 )
 
-    @staticmethod
+    def _authority_event_id(self, authority_id: str) -> str:
+        if self._generation_number == 1:
+            return authority_id
+        return f"G{self._generation_number:04d}-{_sha256(authority_id.encode('utf-8'))[:16]}"
+
     def _generation_authority_state(
-        program: Mapping[str, object]
+        self, program: Mapping[str, object]
     ) -> tuple[list[str], list[str]]:
         items = program.get("authority_items")
         if not isinstance(items, list):
             raise ValueError("program authority items are not event-safe")
-        authority_ids = sorted(str(item["authority_id"]) for item in items)
+        authority_ids = sorted(
+            self._authority_event_id(str(item["authority_id"])) for item in items
+        )
         task_ids = sorted(
             {
                 str(task_id)
@@ -895,18 +991,121 @@ class QueueEngine:
             raise ValueError("program authority state exceeds bounded generation event")
         return authority_ids, task_ids
 
+    def _invalidated_generation_tasks(
+        self,
+        program: Mapping[str, object],
+        published_bytes: Mapping[str, bytes],
+    ) -> list[str]:
+        if self._generation_number == 1:
+            return []
+        previous_events = [
+            event
+            for event in self.store.validate_event_chain()
+            if event["event_type"] == "map.generation_created"
+            and event["payload"]["generation_id"] != self._generation_id
+        ]
+        if not previous_events:
+            raise ValueError("refreshed generation has no predecessor")
+        previous_payload = previous_events[-1]["payload"]
+        expected_previous = f"generation-{self._generation_number - 1:04d}"
+        if previous_payload["generation_id"] != expected_previous:
+            raise ValueError("map generations are not contiguous")
+        _, previous_artifacts = self.store.read_accepted_publication(
+            str(previous_payload["publication_manifest_path"]),
+            str(previous_payload["publication_manifest_sha256"]),
+        )
+        previous_program_paths = [
+            path for path in previous_artifacts if path.endswith("/program-map.json")
+        ]
+        if len(previous_program_paths) != 1:
+            raise ValueError("predecessor generation has no unique program map")
+        previous_program = _load_json(
+            previous_artifacts[previous_program_paths[0]],
+            "predecessor program map",
+        )
+        previous_tasks = {
+            str(task["task_id"]): task
+            for task in previous_program.get("tasks", [])
+            if isinstance(task, Mapping)
+        }
+        tasks = program.get("tasks")
+        if not isinstance(tasks, list):
+            raise ValueError("refreshed program tasks are invalid")
+        current_task_ids = {
+            str(task["task_id"])
+            for task in tasks
+            if isinstance(task, Mapping) and isinstance(task.get("task_id"), str)
+        }
+        if len(current_task_ids) != len(tasks):
+            raise ValueError("refreshed program tasks are invalid")
+        removed_task_ids = [
+            str(task["task_id"])
+            for task in previous_program.get("tasks", [])
+            if isinstance(task, Mapping)
+            and str(task.get("task_id")) not in current_task_ids
+        ]
+        invalidated: set[str] = set(removed_task_ids)
+        for task in tasks:
+            if not isinstance(task, Mapping):
+                raise ValueError("refreshed program task is invalid")
+            task_id = str(task["task_id"])
+            predecessor_id = task.get("predecessor_task_id")
+            predecessor = previous_tasks.get(str(predecessor_id))
+            if predecessor is None or predecessor_id != task_id:
+                invalidated.add(task_id)
+                continue
+            old_path = str(predecessor["brief_path"])
+            new_path = str(task["brief_path"])
+            if (
+                old_path not in previous_artifacts
+                or new_path not in published_bytes
+                or self._retention_brief_sha(previous_artifacts[old_path])
+                != self._retention_brief_sha(published_bytes[new_path])
+            ):
+                invalidated.add(task_id)
+        changed = True
+        while changed:
+            changed = False
+            for task in tasks:
+                task_id = str(task["task_id"])
+                if task_id in invalidated:
+                    continue
+                dependencies = task.get("dependencies", [])
+                if isinstance(dependencies, list) and invalidated & set(dependencies):
+                    invalidated.add(task_id)
+                    changed = True
+        return [
+            *removed_task_ids,
+            *[
+            str(task["task_id"])
+            for task in tasks
+            if str(task["task_id"]) in invalidated
+            ],
+        ]
+
+    @staticmethod
+    def _retention_brief_sha(data: bytes) -> str:
+        """Hash the task-local contract without its generation-wide map digest."""
+
+        payload = _load_json(data, "retained task brief")
+        if not isinstance(payload, dict) or "program_map_sha256" not in payload:
+            raise ValueError("retained task brief lacks its program binding")
+        structural = dict(payload)
+        structural.pop("program_map_sha256")
+        return _sha256(canonical_json(structural))
+
     def map_program(self) -> str:
         """Compose validated document maps into one immutable global program map."""
 
         self.map_documents()
         document_maps = self._validated_document_maps()
-        program_path = f"{_GENERATION_ROOT}/program-map.json"
+        program_path = f"{self._generation_root}/program-map.json"
         events = self.store.validate_event_chain()
         generation_events = [
             event
             for event in events
             if event["event_type"] == "map.generation_created"
-            and event["payload"]["generation_id"] == _GENERATION_ID
+            and event["payload"]["generation_id"] == self._generation_id
         ]
         if len(generation_events) > 1:
             raise ValueError("map generation was accepted more than once")
@@ -928,7 +1127,7 @@ class QueueEngine:
             attempt_id, outbox = self._allocate_attempt("map-program-0001")
             request = ChildRequest(
                 role="program_mapper",
-                item_id=_GENERATION_ID,
+                item_id=self._generation_id,
                 goal=(
                     "Compose validated document maps into a topological task graph, honest "
                     "coverage, lossless task briefs, and bounded authority records."
@@ -948,13 +1147,20 @@ class QueueEngine:
                 ),
             )
             try:
-                outcome = self.launcher.launch(
-                    request,
-                    worktree=self.worktree,
-                    store=self.store,
-                    ingest_artifacts=False,
-                )
+                try:
+                    outcome = self.launcher.launch(
+                        request,
+                        worktree=self.worktree,
+                        store=self.store,
+                        ingest_artifacts=False,
+                    )
+                except ChildInterruption as exc:
+                    self._record_interrupted("program_mapper_process_interrupted")
+                    raise RunInterrupted(str(exc)) from exc
                 if outcome.result.status != "completed":
+                    if outcome.result.status == "interrupted":
+                        self._record_interrupted("program_mapper_interrupted")
+                        raise RunInterrupted("program mapper was interrupted")
                     raise ValueError("program mapper did not complete")
                 reported_artifact_paths = outcome.result.artifact_paths
                 untrusted_program_bytes = self._read_outbox_file(outbox, program_path)
@@ -964,11 +1170,12 @@ class QueueEngine:
                         document.document_id: document.sha256
                         for document, _, _, _ in document_maps
                     },
+                    expected_generation=self._generation_number,
                 )
                 expected_reported_paths = {
                     program_path,
-                    f"{_GENERATION_ROOT}/coverage.json",
-                    f"{_GENERATION_ROOT}/authority-queue.json",
+                    f"{self._generation_root}/coverage.json",
+                    f"{self._generation_root}/authority-queue.json",
                     *(str(task["brief_path"]) for task in untrusted_program["tasks"]),
                 }
                 actual_paths = set(self._outbox_artifact_paths(outbox))
@@ -1034,14 +1241,19 @@ class QueueEngine:
             raise ValueError(f"blocking coverage dispositions: {blocking}")
 
         authority_ids, authority_task_ids = self._generation_authority_state(program)
+        invalidated_task_ids = self._invalidated_generation_tasks(
+            program, published_bytes
+        )
         generation_payload = {
-            "generation_id": _GENERATION_ID,
+            "generation_id": self._generation_id,
             "map_sha256": _sha256(program_bytes),
             "publication_manifest_path": selected_manifest_path,
             "publication_manifest_sha256": selected_manifest_sha256,
             "authority_ids": authority_ids,
             "task_ids": authority_task_ids,
         }
+        if self._generation_number > 1:
+            generation_payload["invalidated_task_ids"] = invalidated_task_ids
         if generation_events:
             event_payload = generation_events[0]["payload"]
             if event_payload != generation_payload:
@@ -1051,7 +1263,7 @@ class QueueEngine:
                 "map.generation_created",
                 generation_payload,
             )
-        authority_path = f"{_GENERATION_ROOT}/authority-queue.json"
+        authority_path = f"{self._generation_root}/authority-queue.json"
         self._append_authority_events(program, authority_path)
         return program_path
 
@@ -1066,7 +1278,7 @@ class QueueEngine:
             event
             for event in self.store.validate_event_chain()
             if event["event_type"] == "map.generation_created"
-            and event["payload"]["generation_id"] == _GENERATION_ID
+            and event["payload"]["generation_id"] == self._generation_id
         ]
         if len(generation_events) != 1:
             raise ValueError("task queue requires one accepted map generation")
@@ -1595,10 +1807,14 @@ class QueueEngine:
         ) + 1
 
     def _review_number(self, task_id: str) -> int:
-        state = self.store.replay()
-        task = state["tasks"].get(task_id, {})
-        reviews = task.get("reviews", []) if isinstance(task, Mapping) else []
-        return len(reviews) + 1
+        return len(
+            [
+                event
+                for event in self.store.validate_event_chain()
+                if event["event_type"] == "review.reported"
+                and event["payload"]["task_id"] == task_id
+            ]
+        ) + 1
 
     def _launch_role(
         self,
@@ -1626,11 +1842,19 @@ class QueueEngine:
             done_when=done_when,
         )
         try:
-            return self.launcher.launch(
-                request,
-                worktree=self.worktree,
-                store=self.store,
-            )
+            try:
+                outcome = self.launcher.launch(
+                    request,
+                    worktree=self.worktree,
+                    store=self.store,
+                )
+            except ChildInterruption:
+                self._record_interrupted(f"{role}_process_interrupted")
+                raise
+            if outcome.result.status == "interrupted":
+                self._record_interrupted(f"{role}_interrupted")
+                raise RunInterrupted(f"{role} child was interrupted")
+            return outcome
         finally:
             self.store.discard_outbox(outbox.name)
 
@@ -1661,7 +1885,7 @@ class QueueEngine:
         if result.status != "waiting_authority" or result.authority_id not in AUTHORITY_CODES:
             raise ValueError("non-authority child result cannot open authority")
         known_documents = {
-            document.document_id for document in self.store.document_set()
+            document.document_id for document in self._documents
         }
         affected_documents = set(result.affected_document_ids)
         unknown = affected_documents - known_documents
@@ -1687,6 +1911,35 @@ class QueueEngine:
             if event["event_type"] == "authority.opened"
         ]
         authority_id = f"A{len(existing) + 1:04d}"
+        options_by_code = {
+            "credential_required": ["credential_available", "credential_unavailable"],
+            "external_side_effect": ["authorize", "decline"],
+            "destructive_outside_worktree": ["authorize", "decline"],
+            "authoritative_document_conflict": [
+                "first_authority",
+                "second_authority",
+            ],
+            "material_scope_expansion": ["expand_scope", "keep_scope"],
+            "legal_security_policy_authority": ["authorize", "decline"],
+        }
+        options = options_by_code[result.authority_id]
+        packet_path = f"reports/authority/{authority_id}-request.json"
+        self.store.put_artifact(
+            packet_path,
+            canonical_json(
+                {
+                    "schema_version": 1,
+                    "authority_id": authority_id,
+                    "authority_code": result.authority_id,
+                    "affected_tasks": affected_tasks,
+                    "affected_document_ids": sorted(affected_documents),
+                    "question": result.summary.strip() or f"Resolve {result.authority_id}.",
+                    "options": options,
+                    "recommended": options[-1],
+                    "artifact_paths": list(result.artifact_paths),
+                }
+            ),
+        )
         self.store.append_event(
             "authority.opened",
             {
@@ -1694,7 +1947,7 @@ class QueueEngine:
                 "authority_code": result.authority_id,
                 "status": "waiting_authority",
                 "task_ids": affected_tasks,
-                "artifact_paths": list(result.artifact_paths),
+                "artifact_paths": [packet_path],
             },
         )
 
@@ -2331,9 +2584,10 @@ class QueueEngine:
             end_commit = recovered
         self._run_review(task, start_commit, end_commit)
 
-    @staticmethod
-    def _final_root(revision: str) -> str:
-        return f"verification/final/{revision}"
+    def _final_root(self, revision: str) -> str:
+        if self._generation_number == 1:
+            return f"verification/final/{revision}"
+        return f"verification/final/{self._generation_id}/{revision}"
 
     def _audit_path(self, revision: str, document_id: str) -> str:
         return f"{self._final_root(revision)}/audits/{document_id}.json"
@@ -2426,7 +2680,7 @@ class QueueEngine:
     def _current_document_audits(
         self, revision: str
     ) -> dict[str, tuple[str, str]]:
-        documents = {item.document_id: item for item in self.store.document_set()}
+        documents = {item.document_id: item for item in self._documents}
         result: dict[str, tuple[str, str]] = {}
         for event in self.store.validate_event_chain():
             if event["event_type"] != "audit.reported":
@@ -2442,6 +2696,8 @@ class QueueEngine:
                 for document in documents.values()
                 if paths[0] == self._audit_path(revision, document.document_id)
             ]
+            if not matched:
+                continue
             if len(matched) != 1 or matched[0].document_id in result:
                 raise ValueError("document audit events are ambiguous")
             document = matched[0]
@@ -2541,7 +2797,7 @@ class QueueEngine:
         audits = self._current_document_audits(revision)
         program, selected = self._program_context()
         state = self.store.replay()
-        for document in self.store.document_set():
+        for document in self._documents:
             if document.document_id in audits:
                 continue
             report_path = self._audit_path(revision, document.document_id)
@@ -2967,7 +3223,7 @@ class QueueEngine:
             _load_json(report, "terminal artifact"),
             revision=revision,
             auditor_document_ids=tuple(
-                document.document_id for document in self.store.document_set()
+                document.document_id for document in self._documents
             ),
             verification_commands=tuple(program["final_verification_commands"]),
         )
@@ -2983,7 +3239,7 @@ class QueueEngine:
         auditor_verdicts = validated["auditor_verdicts"]
         if any(
             auditor_verdicts[document.document_id] != "pass"
-            for document in self.store.document_set()
+            for document in self._documents
         ):
             raise ValueError("terminal artifact contains a non-passing auditor verdict")
         for record in validated["verification"]:
@@ -3000,7 +3256,7 @@ class QueueEngine:
             raise ValueError("passing final integration reported extra artifacts")
         if set(audit_paths) != {
             self._audit_path(revision, document.document_id)
-            for document in self.store.document_set()
+            for document in self._documents
         }:
             raise ValueError("terminal integration audit evidence is incomplete")
         return payload
@@ -3018,6 +3274,10 @@ class QueueEngine:
             for event in self.store.validate_event_chain()
             if event["event_type"] == "integration.reported"
             and event["payload"].get("commit") == revision
+            and any(
+                str(path).startswith(f"{self._final_root(revision)}/")
+                for path in event["payload"].get("artifact_paths", [])
+            )
         ]
         if len(matches) > 1:
             raise ValueError("final integration events are ambiguous")
@@ -3115,7 +3375,7 @@ class QueueEngine:
         whole_diff_path: str,
     ) -> Mapping[str, object]:
         audit_paths = tuple(
-            audits[document.document_id][0] for document in self.store.document_set()
+            audits[document.document_id][0] for document in self._documents
         )
         existing = self._current_integration(
             revision=revision,
@@ -3145,11 +3405,11 @@ class QueueEngine:
             }
             self.store.put_artifact(retry_path, canonical_json(retry_record))
         inputs = [
-            selected[f"{_GENERATION_ROOT}/program-map.json"],
-            selected[f"{_GENERATION_ROOT}/coverage.json"],
+            selected[f"{self._generation_root}/program-map.json"],
+            selected[f"{self._generation_root}/coverage.json"],
             *(self._artifact_input(path, selected) for path in audit_paths),
             self.store.paths.autonomy_decisions.resolve(strict=True),
-            selected[f"{_GENERATION_ROOT}/authority-queue.json"],
+            selected[f"{self._generation_root}/authority-queue.json"],
             self._artifact_input(authority_state_path, selected),
             self._artifact_input(whole_diff_path, selected),
             self._artifact_input(launch_path, selected),
@@ -3255,7 +3515,7 @@ class QueueEngine:
         attempt_id = f"program-integration-attempt-{attempt_number:04d}"
         report_path = f"reports/program-integration/attempt-{attempt_number}.md"
         inputs = [
-            selected[f"{_GENERATION_ROOT}/program-map.json"],
+            selected[f"{self._generation_root}/program-map.json"],
             *(self._artifact_input(path, selected) for path in finding_paths),
         ]
         evidence_sha256 = self._artifact_evidence_digest(finding_paths)
@@ -3358,8 +3618,14 @@ class QueueEngine:
             event
             for event in self.store.validate_event_chain()
             if event["event_type"] == "run.completed"
+            and any(
+                str(path).startswith(f"{self._final_root(revision)}/")
+                for path in event["payload"].get("artifact_paths", [])
+            )
         ]
-        expected_paths = ["result.json", *integration["artifact_paths"]]
+        expected_paths = [*integration["artifact_paths"]]
+        if self._generation_number == 1:
+            expected_paths.insert(0, "result.json")
         if completed:
             if len(completed) != 1 or completed[0]["payload"] != {
                 "status": "completed",
@@ -3373,7 +3639,8 @@ class QueueEngine:
             return
         if self.worktree.head() != revision or self.worktree.status():
             raise ValueError("run completion revision is not the clean worktree HEAD")
-        self.store.put_artifact("result.json", terminal)
+        if self._generation_number == 1:
+            self.store.put_artifact("result.json", terminal)
         self.store.append_event(
             "run.completed",
             {
@@ -3393,7 +3660,7 @@ class QueueEngine:
             program, selected = self._program_context()
             audits = self._run_document_audits(revision)
             if set(audits) != {
-                document.document_id for document in self.store.document_set()
+                document.document_id for document in self._documents
             }:
                 raise ValueError("final document audit set is incomplete")
             if any(verdict != "pass" for _, verdict in audits.values()):
