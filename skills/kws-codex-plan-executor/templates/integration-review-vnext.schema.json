@@ -1,0 +1,150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://waygent.local/schemas/cpe-integration-review-vnext.json",
+  "title": "CPE vNext integration review consolidation contract",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "contract_scope",
+    "checkpoint_sha256",
+    "repair_wave",
+    "repair_waves_allowed",
+    "verdict",
+    "lanes",
+    "findings"
+  ],
+  "properties": {
+    "schema_version": {"const": "cpe.integration-review.vnext"},
+    "contract_scope": {"const": "review_consolidation_only"},
+    "checkpoint_sha256": {"$ref": "#/$defs/sha256"},
+    "repair_wave": {"type": "integer", "minimum": 0, "maximum": 1},
+    "repair_waves_allowed": {"const": 1},
+    "verdict": {"$ref": "#/$defs/verdict"},
+    "lanes": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "prefixItems": [
+        {"$ref": "#/$defs/state_crash_report"},
+        {"$ref": "#/$defs/trust_privacy_report"},
+        {"$ref": "#/$defs/cli_dataflow_report"},
+        {"$ref": "#/$defs/release_lineage_report"}
+      ],
+      "items": false
+    },
+    "findings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/consolidated_finding"}
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "revision": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "lane": {
+      "enum": ["state_crash", "trust_privacy", "cli_dataflow", "release_lineage"]
+    },
+    "verdict": {
+      "enum": ["passed", "changes_requested", "blocked", "inconclusive"]
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "invariant_id",
+        "severity",
+        "affected_revision",
+        "evidence",
+        "recommended_disposition"
+      ],
+      "properties": {
+        "invariant_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)+$"
+        },
+        "severity": {"enum": ["P0", "P1", "P2", "P3"]},
+        "affected_revision": {"$ref": "#/$defs/revision"},
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "recommended_disposition": {"type": "string", "minLength": 1},
+        "source_lanes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/lane"}
+        }
+      }
+    },
+    "consolidated_finding": {
+      "allOf": [
+        {"$ref": "#/$defs/finding"},
+        {
+          "type": "object",
+          "required": ["source_lanes"],
+          "properties": {"source_lanes": {}}
+        }
+      ]
+    },
+    "report": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "lane",
+        "checkpoint_sha256",
+        "repair_wave",
+        "verdict",
+        "findings",
+        "missing_evidence"
+      ],
+      "properties": {
+        "lane": {"$ref": "#/$defs/lane"},
+        "checkpoint_sha256": {"$ref": "#/$defs/sha256"},
+        "repair_wave": {"type": "integer", "minimum": 0, "maximum": 1},
+        "verdict": {"$ref": "#/$defs/verdict"},
+        "findings": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/finding"}
+        },
+        "missing_evidence": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "state_crash_report": {
+      "allOf": [
+        {"$ref": "#/$defs/report"},
+        {"type": "object", "properties": {"lane": {"const": "state_crash"}}}
+      ]
+    },
+    "trust_privacy_report": {
+      "allOf": [
+        {"$ref": "#/$defs/report"},
+        {"type": "object", "properties": {"lane": {"const": "trust_privacy"}}}
+      ]
+    },
+    "cli_dataflow_report": {
+      "allOf": [
+        {"$ref": "#/$defs/report"},
+        {"type": "object", "properties": {"lane": {"const": "cli_dataflow"}}}
+      ]
+    },
+    "release_lineage_report": {
+      "allOf": [
+        {"$ref": "#/$defs/report"},
+        {"type": "object", "properties": {"lane": {"const": "release_lineage"}}}
+      ]
+    }
+  }
+}
