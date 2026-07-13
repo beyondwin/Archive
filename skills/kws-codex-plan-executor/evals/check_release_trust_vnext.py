@@ -692,10 +692,34 @@ def main() -> int:
         legacy_root = Path(raw)
         register_release_run(legacy_root, legacy_manifest)
         legacy_state = replay_release_lineage(legacy_root)
-        checks["legacy_v4_projection_omits_new_trust_root_key"] = (
-            "trust_root" not in legacy_state
-            and "trust_root_sha256" in legacy_state
-            and legacy_state["trust_root_sha256"] is None
+        legacy_event = json.loads(
+            (legacy_root / "quality-release-events.jsonl").read_text().splitlines()[0]
+        )
+        expected_legacy_state = {
+            "schema_version": "cpe-quality-release-lineage.v4",
+            "event_count": 1,
+            "last_event_sha256": legacy_event["event_sha256"],
+            "runs": [
+                {
+                    "run_id": legacy_manifest["run_id"],
+                    "manifest_sha256": legacy_manifest["manifest_sha256"],
+                    "checkpoint": legacy_manifest["implementation_patch_sha256"],
+                    "terminal": False,
+                    "passed": None,
+                    "aggregate_sha256": None,
+                    "privacy_sha256": None,
+                    "terminal_manifest_sha256": None,
+                }
+            ],
+            "terminal_full_runs": 0,
+            "terminal_full_failures": 0,
+            "release_passed": False,
+            "release_blocked": False,
+        }
+        checks["legacy_v4_projection_matches_base_object_and_bytes"] = (
+            legacy_state == expected_legacy_state
+            and (legacy_root / "quality-release-state.json").read_bytes()
+            == canonical_json(expected_legacy_state)
         )
     with tempfile.TemporaryDirectory(prefix="cpe-release-trust-cli-") as raw:
         output = Path(raw) / "dry-run.json"

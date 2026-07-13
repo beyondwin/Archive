@@ -541,8 +541,14 @@ def _release_projection(
         "schema_version": "cpe-quality-release-lineage.v4",
         "event_count": len(events),
         "last_event_sha256": events[-1]["event_sha256"] if events else None,
-        "trust_root_sha256": trust_root_sha256,
-        **({"trust_root": trust_root} if trust_root is not None else {}),
+        **(
+            {
+                "trust_root": trust_root,
+                "trust_root_sha256": trust_root_sha256,
+            }
+            if trust_root is not None
+            else {}
+        ),
         "runs": runs,
         "terminal_full_runs": sum(bool(record["terminal"]) for record in runs),
         "terminal_full_failures": failures,
