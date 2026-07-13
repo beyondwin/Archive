@@ -6,7 +6,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-from .task_contracts import contract_from_body
+from .task_contracts import canonical_contract_bytes, contract_from_body
 
 
 PACKET_MEDIA_TYPE = "application/json"
@@ -117,7 +117,11 @@ def build_packet(compiled: object, task: dict) -> PacketDraft:
     if task_contract is not None or task_contract_sha256 is not None:
         if not isinstance(task_contract, dict) or not isinstance(task_contract_sha256, str):
             raise ValueError("task_contract_invalid")
-        contract = contract_from_body(task_contract, task_contract_sha256)
+        contract = contract_from_body(
+            task_contract,
+            task_contract_sha256,
+            plan_graph=_compiled_value(compiled, "plan_graph", None),
+        )
         is_vnext = contract.schema_version == "cpe.task-contract.vnext"
         packet_task_id = (
             contract.qualified_task_id if is_vnext else contract.task_id
@@ -248,7 +252,17 @@ def verify_packet(run_dir: Path, manifest: dict, task_id: str) -> PacketDraft:
         task_contract_sha256 = payload.get("task_contract_sha256")
         if not isinstance(task_contract_sha256, str):
             raise ValueError("task_contract_invalid")
-        contract = contract_from_body(task_contract, task_contract_sha256)
+        contract = contract_from_body(
+            task_contract,
+            task_contract_sha256,
+            plan_graph=manifest.get("plan_graph"),
+        )
+        if (
+            task_contract != contract.body()
+            or hashlib.sha256(canonical_contract_bytes(task_contract)).hexdigest()
+            != task_contract_sha256
+        ):
+            raise ValueError("task_contract_digest_mismatch")
         contract_task_id = (
             contract.qualified_task_id
             if contract.schema_version == "cpe.task-contract.vnext"

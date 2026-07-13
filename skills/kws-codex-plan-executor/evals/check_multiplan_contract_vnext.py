@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 import tempfile
@@ -20,9 +21,17 @@ from cpe_runtime.checkpoints import (  # noqa: E402
 )
 from cpe_runtime.document_set import compile_document_set  # noqa: E402
 from cpe_runtime.manifest import create_manifest, validate_manifest  # noqa: E402
-from cpe_runtime.packets import build_packet, verify_packet  # noqa: E402
+from cpe_runtime.packets import (  # noqa: E402
+    build_packet,
+    canonical_packet_bytes,
+    verify_packet,
+)
 from cpe_runtime.plan_graph import compile_plan_graph  # noqa: E402
-from cpe_runtime.task_contracts import compile_task_contract_vnext  # noqa: E402
+from cpe_runtime.task_contracts import (  # noqa: E402
+    canonical_contract_bytes,
+    compile_task_contract_vnext,
+    contract_from_body,
+)
 
 
 def _write(path: Path, title: str, contract_tag: str, contract: dict[str, object]) -> Path:
@@ -97,6 +106,24 @@ def _assert_rejected(expected: str, operation) -> None:
         raise AssertionError(f"expected ValueError: {expected}")
 
 
+def _assert_packet_rejected(
+    root: Path,
+    manifest: dict[str, object],
+    payload: dict[str, object],
+    task_id: str,
+    expected: str,
+) -> None:
+    content = canonical_packet_bytes(payload)
+    packet_manifest = json.loads(json.dumps(manifest))
+    packet_manifest["task_packets"][0]["sha256"] = hashlib.sha256(content).hexdigest()
+    path = root / packet_manifest["task_packets"][0]["path"]
+    path.write_bytes(content)
+    _assert_rejected(
+        expected,
+        lambda: verify_packet(root, packet_manifest, task_id),
+    )
+
+
 def main() -> int:
     with tempfile.TemporaryDirectory(prefix="cpe-vnext-multiplan-") as raw:
         root = Path(raw)
@@ -108,6 +135,27 @@ def main() -> int:
             if item.kind == "plan" and item.path == Path("second.md")
         )
         upstream = upstream_graph_sha256(graph, "second")
+        first_document = next(
+            item
+            for item in documents.documents
+            if item.kind == "plan" and item.path == Path("first.md")
+        )
+        first_contract = compile_task_contract_vnext(
+            {
+                "id": "build",
+                "title": "Build first plan",
+                "task_type": "tdd_implementation",
+                "task_source": "### Task: build\n",
+                "dependencies": [],
+                "file_claims": ["first.py"],
+                "acceptance_commands": ["python3 verify.py"],
+            },
+            plan_id="first",
+            document_sha256=first_document.sha256,
+            upstream_graph_sha256=upstream_graph_sha256(graph, "first"),
+            source_hashes={"plan": first_document.sha256, "spec_sections": {}},
+            plan_graph=graph,
+        )
         contract = compile_task_contract_vnext(
             {
                 "id": "integrate",
@@ -122,6 +170,7 @@ def main() -> int:
             document_sha256=second_document.sha256,
             upstream_graph_sha256=upstream,
             source_hashes={"plan": second_document.sha256, "spec_sections": {}},
+            plan_graph=graph,
         )
         assert contract.qualified_task_id == "second::integrate"
         assert contract.dependencies == ("first::build",)
@@ -137,7 +186,20 @@ def main() -> int:
             root,
             second,
             spec,
-            [{"id": task_id} for task_id in graph.tasks],
+            [
+                {
+                    "id": first_contract.qualified_task_id,
+                    "dependencies": list(first_contract.dependencies),
+                    "task_contract": first_contract.body(),
+                    "task_contract_sha256": first_contract.contract_sha256,
+                },
+                {
+                    "id": contract.qualified_task_id,
+                    "dependencies": list(contract.dependencies),
+                    "task_contract": contract.body(),
+                    "task_contract_sha256": contract.contract_sha256,
+                },
+            ],
             pricing,
             source_head="a" * 40,
             plan_graph=graph,
@@ -148,13 +210,16 @@ def main() -> int:
         graph_tamper = json.loads(json.dumps(manifest))
         graph_tamper["plan_graph"]["tasks"].pop("first::build")
         assert "plan_graph_digest_mismatch" in validate_manifest(graph_tamper)
+        dependency_tamper = json.loads(json.dumps(manifest))
+        dependency_tamper["task_graph"][1]["dependencies"] = []
+        assert "plan_graph_dependency_mismatch" in validate_manifest(dependency_tamper)
 
         task = {
             "id": contract.qualified_task_id,
             "task_contract": contract.body(),
             "task_contract_sha256": contract.contract_sha256,
         }
-        draft = build_packet(SimpleNamespace(), task)
+        draft = build_packet(SimpleNamespace(plan_graph=graph), task)
         payload = json.loads(draft.content)
         assert payload["task_contract_sha256"] == contract.contract_sha256
         assert payload["task_contract"]["dependencies"] == ["first::build"]
@@ -162,6 +227,7 @@ def main() -> int:
         packet_path.parent.mkdir(parents=True)
         packet_path.write_bytes(draft.content)
         packet_manifest = {
+            "plan_graph": manifest["plan_graph"],
             "task_packets": [
                 {
                     "task_id": draft.task_id,
@@ -172,6 +238,49 @@ def main() -> int:
             ]
         }
         assert verify_packet(root, packet_manifest, contract.qualified_task_id) == draft
+        integer_plan = contract.body()
+        integer_plan["plan_id"] = 7
+        integer_plan["qualified_task_id"] = "7::integrate"
+        integer_digest = hashlib.sha256(
+            canonical_contract_bytes(integer_plan)
+        ).hexdigest()
+        _assert_rejected(
+            "task_contract_invalid",
+            lambda: contract_from_body(integer_plan, integer_digest, plan_graph=graph),
+        )
+        integer_dependency = contract.body()
+        integer_dependency["dependencies"] = [123]
+        integer_dependency_digest = hashlib.sha256(
+            canonical_contract_bytes(integer_dependency)
+        ).hexdigest()
+        _assert_rejected(
+            "task_contract_invalid",
+            lambda: contract_from_body(
+                integer_dependency,
+                integer_dependency_digest,
+                plan_graph=graph,
+            ),
+        )
+        integer_packet = json.loads(json.dumps(payload))
+        integer_packet["task_contract"] = integer_plan
+        integer_packet["task_contract_sha256"] = integer_digest
+        _assert_packet_rejected(
+            root,
+            packet_manifest,
+            integer_packet,
+            contract.qualified_task_id,
+            "task_contract_invalid",
+        )
+        list_packet = json.loads(json.dumps(payload))
+        list_packet["task_contract"] = integer_dependency
+        list_packet["task_contract_sha256"] = integer_dependency_digest
+        _assert_packet_rejected(
+            root,
+            packet_manifest,
+            list_packet,
+            contract.qualified_task_id,
+            "task_contract_invalid",
+        )
         _assert_rejected(
             "qualified_dependency_invalid",
             lambda: compile_task_contract_vnext(
@@ -188,8 +297,46 @@ def main() -> int:
                 document_sha256=second_document.sha256,
                 upstream_graph_sha256=upstream,
                 source_hashes={"plan": second_document.sha256, "spec_sections": {}},
+                plan_graph=graph,
             ),
         )
+        for dependencies in (["missing::task"], []):
+            _assert_rejected(
+                "task_contract_graph_dependency_mismatch",
+                lambda dependencies=dependencies: compile_task_contract_vnext(
+                    {
+                        "id": "integrate",
+                        "title": "Divergent dependency",
+                        "task_type": "tdd_implementation",
+                        "task_source": "### Task: integrate\n",
+                        "dependencies": dependencies,
+                        "file_claims": ["second.py"],
+                        "acceptance_commands": ["python3 verify.py"],
+                    },
+                    plan_id="second",
+                    document_sha256=second_document.sha256,
+                    upstream_graph_sha256=upstream,
+                    source_hashes={"plan": second_document.sha256, "spec_sections": {}},
+                    plan_graph=graph,
+                ),
+            )
+        for tampered_graph in (
+            replace(graph, graph_sha256="f" * 64),
+            replace(
+                graph,
+                global_integration_gate=replace(
+                    graph.global_integration_gate,
+                    task_id="build",
+                ),
+            ),
+            replace(graph, ownership_authority={}),
+        ):
+            _assert_rejected(
+                "plan_graph_digest_mismatch",
+                lambda tampered_graph=tampered_graph: upstream_graph_sha256(
+                    tampered_graph, "second"
+                ),
+            )
 
         first_checkpoint = create_plan_checkpoint(
             plan_id="first",
@@ -266,8 +413,11 @@ def main() -> int:
                 "passed": True,
                 "checks": [
                     "qualified_task_identity",
+                    "strict_wire_type_and_packet_parity",
                     "manifest_graph_binding",
+                    "complete_graph_identity_validation",
                     "packet_digest_and_cross_plan_dependency",
+                    "authoritative_graph_dependencies",
                     "immutable_plan_checkpoint",
                     "checkpoint_promotion",
                     "stale_upstream_fail_closed",

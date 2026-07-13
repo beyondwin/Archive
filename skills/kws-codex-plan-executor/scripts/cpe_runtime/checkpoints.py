@@ -8,7 +8,6 @@ import os
 import subprocess
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from collections.abc import Mapping
 from typing import Iterable
 
 from .git_delta import (
@@ -17,6 +16,7 @@ from .git_delta import (
     working_tree_changed_files,
 )
 from .kernel import Transition
+from .manifest import upstream_plan_graph_sha256
 from .task_contracts import TaskContractV4
 from .verification_workspace import (
     AcceptanceResult,
@@ -114,75 +114,9 @@ class PlanCheckpoint:
         return hashlib.sha256(b"CPE-PLAN-CHECKPOINT-VNEXT\0" + raw).hexdigest()
 
 
-def _plain(value: object) -> object:
-    if isinstance(value, Mapping):
-        return {str(key): _plain(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_plain(item) for item in value]
-    return value
-
-
-def _graph_value(graph: object, name: str) -> object:
-    if isinstance(graph, Mapping):
-        return graph.get(name)
-    return getattr(graph, name)
-
-
 def upstream_graph_sha256(graph: object, plan_id: str) -> str:
     """Digest only the graph prefix that can affect ``plan_id``."""
-
-    plan_ids = tuple(str(item) for item in (_graph_value(graph, "plan_ids") or ()))
-    if plan_id not in plan_ids:
-        raise ValueError("plan_checkpoint_plan_unknown")
-    included_plans = plan_ids[: plan_ids.index(plan_id) + 1]
-    included_set = set(included_plans)
-    tasks = {
-        str(task_id): _plain(task)
-        for task_id, task in (_graph_value(graph, "tasks") or {}).items()
-        if isinstance(task, Mapping) and str(task.get("plan_id")) in included_set
-    }
-    task_ids = set(tasks)
-    plan_documents = tuple(_graph_value(graph, "plan_documents") or ())
-    included_documents = plan_documents[: len(included_plans)]
-    document_ids = {
-        str(item)
-        for item in (
-            _graph_value(graph, "spec_document_id"),
-            _graph_value(graph, "program_document_id"),
-            *included_documents,
-        )
-        if item is not None
-    }
-    document_hashes = {
-        str(document_id): str(digest)
-        for document_id, digest in (_graph_value(graph, "document_hashes") or {}).items()
-        if str(document_id) in document_ids
-    }
-    edges = [
-        [str(start), str(end)]
-        for start, end in (_graph_value(graph, "edges") or ())
-        if str(start) in task_ids and str(end) in task_ids
-    ]
-    coverage = {
-        str(section): [str(task) for task in owners if str(task) in task_ids]
-        for section, owners in (_graph_value(graph, "spec_coverage") or {}).items()
-        if any(str(task) in task_ids for task in owners)
-    }
-    payload = {
-        "schema_version": "cpe.upstream-plan-graph.vnext",
-        "source_graph_schema_version": _graph_value(graph, "schema_version"),
-        "spec_document_id": _graph_value(graph, "spec_document_id"),
-        "program_document_id": _graph_value(graph, "program_document_id"),
-        "plan_ids": list(included_plans),
-        "plan_documents": list(included_documents),
-        "document_hashes": document_hashes,
-        "spec_section_hashes": _plain(_graph_value(graph, "spec_section_hashes") or {}),
-        "tasks": tasks,
-        "edges": sorted(edges),
-        "spec_coverage": coverage,
-    }
-    raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-    return hashlib.sha256(b"CPE-UPSTREAM-PLAN-GRAPH-VNEXT\0" + raw).hexdigest()
+    return upstream_plan_graph_sha256(graph, plan_id)
 
 
 def create_plan_checkpoint(
