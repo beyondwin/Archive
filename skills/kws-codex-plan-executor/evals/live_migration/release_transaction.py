@@ -120,6 +120,8 @@ def finalize_v4_release(
         expected_trust_root_sha256=(
             trust_root.trust_root_sha256 if trust_root is not None else None
         ),
+        expected_trust_root=trust_root,
+        trust_repository=repo if trust_root is not None else None,
     )
     dogfood_limit = (
         int(policy["dogfood_attempt_limit"])
@@ -158,6 +160,8 @@ def finalize_v4_release(
         expected_trust_root_sha256=(
             trust_root.trust_root_sha256 if trust_root is not None else None
         ),
+        expected_trust_root=trust_root,
+        trust_repository=repo if trust_root is not None else None,
     )
     dogfood = {
         **dogfood,
@@ -165,7 +169,9 @@ def finalize_v4_release(
         "retained_checkpoint_sha256": sha256_bytes(canonical_json(retained_checkpoint)),
     }
     dogfood_for_builder = {
-        key: value for key, value in dogfood.items() if key != "trust_root_sha256"
+        key: value
+        for key, value in dogfood.items()
+        if key not in {"trust_root", "trust_root_sha256"}
     }
     payloads = build_v4_release_evidence_payloads(
         manifest, aggregate, dogfood_for_builder

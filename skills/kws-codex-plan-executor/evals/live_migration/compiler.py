@@ -72,11 +72,43 @@ def bind_trust_root(
 def require_trust_root(payload: Mapping[str, object], expected: TrustRoot) -> None:
     """Reject any payload that does not carry the exact expected trust root."""
 
+    require_manifest_trust_root(payload, expected=expected, required=True)
+
+
+def require_manifest_trust_root(
+    payload: Mapping[str, object],
+    *,
+    expected: TrustRoot | None = None,
+    required: bool = False,
+) -> str | None:
+    """Validate a manifest's canonical body, digest, and every slot binding."""
+
+    body = payload.get("trust_root")
+    claimed = payload.get("trust_root_sha256")
+    present = body is not None or claimed is not None
+    if not present and not required:
+        return None
+    slots = payload.get("slots")
     if (
-        payload.get("trust_root") != expected.body()
-        or payload.get("trust_root_sha256") != expected.trust_root_sha256
+        not isinstance(body, dict)
+        or not isinstance(claimed, str)
+        or claimed != sha256_bytes(canonical_json(body))
+        or not isinstance(slots, list)
+        or any(
+            not isinstance(slot, dict)
+            or slot.get("trust_root_sha256") != claimed
+            for slot in slots
+        )
+        or (
+            expected is not None
+            and (
+                body != expected.body()
+                or claimed != expected.trust_root_sha256
+            )
+        )
     ):
         raise ValueError("release_trust_root_mismatch")
+    return claimed
 
 
 def _skill_root() -> Path:

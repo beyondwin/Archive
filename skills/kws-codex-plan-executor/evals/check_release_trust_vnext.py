@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -32,12 +33,16 @@ from cpe_runtime.release_policy_vnext import (
     validate_policy_bytes,
 )
 from cpe_runtime.public_result import validate_release_evidence_root
+from cpe_runtime.dogfood_v4 import verify_v4_dogfood_run
 from cpe import run_v4_dogfood_fixture
 from live_migration.compiler import compile_vnext_manifest
 from live_migration.contracts import CREDENTIALLED_CALL
 from live_migration.ledger import (
+    LedgerError,
     append_event,
     create_run,
+    finalize_release_generation,
+    recover_orphan_release_registration,
     register_release_run,
     replay_release_lineage,
     terminal_release_generation,
@@ -167,6 +172,74 @@ def expect_value_error(call, expected: str) -> bool:
     except ValueError as exc:
         return str(exc) == expected
     return False
+
+
+def expect_ledger_error(call, expected: str) -> bool:
+    try:
+        call()
+    except LedgerError as exc:
+        return str(exc) == expected
+    return False
+
+
+def release_durable_snapshot(root: Path) -> tuple[bytes | None, bytes | None, int]:
+    events = root / "quality-release-events.jsonl"
+    state = root / "quality-release-state.json"
+    generations = root / "release-generations"
+    return (
+        events.read_bytes() if events.is_file() else None,
+        state.read_bytes() if state.is_file() else None,
+        len(tuple(generations.iterdir())) if generations.is_dir() else 0,
+    )
+
+
+def strip_generated_trust_and_rebind(root: Path) -> None:
+    events_path = root / "quality-release-events.jsonl"
+    events = [json.loads(line) for line in events_path.read_text().splitlines()]
+    terminal = events[-1]
+    payload = terminal["payload"]
+    old_generation = root / "release-generations" / payload["generation_sha256"]
+    objects = {
+        path.name: json.loads(path.read_text(encoding="utf-8"))
+        for path in old_generation.iterdir()
+    }
+    for name in ("manifest.json", "result.json", "dogfood-result.json"):
+        objects[name].pop("trust_root", None)
+        objects[name].pop("trust_root_sha256", None)
+    objects["result.json"]["manifest_sha256"] = sha256_bytes(
+        canonical_json(objects["manifest.json"])
+    )
+    for key, name in (
+        ("manifest_sha256", "manifest.json"),
+        ("result_sha256", "result.json"),
+        ("dogfood_sha256", "dogfood-result.json"),
+    ):
+        objects["checkpoint.json"][key] = sha256_bytes(canonical_json(objects[name]))
+    raw = {name: canonical_json(value) for name, value in objects.items()}
+    file_sha256 = {name: sha256_bytes(raw[name]) for name in raw}
+    generation_sha256 = sha256_bytes(
+        canonical_json(
+            {"schema_version": "cpe.release-generation.v4", "file_sha256": file_sha256}
+        )
+    )
+    new_generation = root / "release-generations" / generation_sha256
+    new_generation.mkdir()
+    for name, content in raw.items():
+        (new_generation / name).write_bytes(content)
+    shutil.rmtree(old_generation)
+    payload.update(
+        {
+            "generation_sha256": generation_sha256,
+            "file_sha256": file_sha256,
+            "checkpoint_sha256": file_sha256["checkpoint.json"],
+            "dogfood_sha256": file_sha256["dogfood-result.json"],
+            "privacy_sha256": file_sha256["privacy-audit.json"],
+        }
+    )
+    body = {key: terminal[key] for key in terminal if key != "event_sha256"}
+    terminal["event_sha256"] = sha256_bytes(canonical_json(body))
+    events_path.write_bytes(b"".join(canonical_json(event) for event in events))
+    replay_release_lineage(root)
 
 
 def fixture(repository: Path) -> tuple[str, str, bytes]:
@@ -511,6 +584,119 @@ def main() -> int:
             for slot in manifest["slots"]
         )
     )
+
+    with tempfile.TemporaryDirectory(prefix="cpe-release-trust-register-negative-") as raw:
+        registration_root = Path(raw)
+        mutated = json.loads(json.dumps(manifest))
+        mutated["slots"][0]["trust_root_sha256"] = "0" * 64
+        mutated["manifest_sha256"] = sha256_bytes(
+            canonical_json(
+                {key: value for key, value in mutated.items() if key != "manifest_sha256"}
+            )
+        )
+        before = release_durable_snapshot(registration_root)
+        rejected = expect_ledger_error(
+            lambda: register_release_run(
+                registration_root, mutated, expected_trust_root=trust_root
+            ),
+            "release_trust_root_mismatch",
+        )
+        checks["registration_rejects_slot_trust_before_durable_write"] = (
+            rejected
+            and release_durable_snapshot(registration_root) == before
+            and not (registration_root / "quality-release-manifests").exists()
+        )
+
+    orphan_mutations_rejected = 0
+    for mutation in ("body", "slot", "stripped"):
+        with tempfile.TemporaryDirectory(
+            prefix=f"cpe-release-trust-orphan-{mutation}-"
+        ) as raw:
+            orphan_root = Path(raw)
+            orphan = json.loads(json.dumps(manifest))
+            orphan["run_id"] = f"orphan-{mutation}"
+            orphan["manifest_sha256"] = sha256_bytes(
+                canonical_json(
+                    {key: value for key, value in orphan.items() if key != "manifest_sha256"}
+                )
+            )
+
+            def crash_before_registration(*_args, **_kwargs):
+                raise LedgerError("injected_registration_crash")
+
+            expect_ledger_error(
+                lambda: register_release_run(
+                    orphan_root,
+                    orphan,
+                    expected_trust_root=trust_root,
+                    append_event_fn=crash_before_registration,
+                ),
+                "injected_registration_crash",
+            )
+            artifact = next((orphan_root / "quality-release-manifests").iterdir())
+            stored = json.loads(artifact.read_text(encoding="utf-8"))
+            if mutation == "body":
+                stored["trust_root"]["reviewed_tree"] = "0" * 40
+                stored["trust_root_sha256"] = sha256_bytes(
+                    canonical_json(stored["trust_root"])
+                )
+                for slot in stored["slots"]:
+                    slot["trust_root_sha256"] = stored["trust_root_sha256"]
+            else:
+                stored["slots"][0]["trust_root_sha256"] = "0" * 64
+            if mutation == "stripped":
+                stored.pop("trust_root", None)
+                stored.pop("trust_root_sha256", None)
+                for slot in stored["slots"]:
+                    slot.pop("trust_root_sha256", None)
+            stored["manifest_sha256"] = sha256_bytes(
+                canonical_json(
+                    {key: value for key, value in stored.items() if key != "manifest_sha256"}
+                )
+            )
+            artifact.write_bytes(canonical_json(stored))
+            before = release_durable_snapshot(orphan_root)
+            if expect_ledger_error(
+                lambda: recover_orphan_release_registration(
+                    orphan_root,
+                    str(stored["run_id"]),
+                    **(
+                        {"repository": repository}
+                        if mutation == "stripped"
+                        else {"expected_trust_root": trust_root}
+                    ),
+                ),
+                "release_trust_root_mismatch",
+            ) and release_durable_snapshot(orphan_root) == before:
+                orphan_mutations_rejected += 1
+    checks["orphan_trust_mutations_rejected_without_durable_append"] = (
+        orphan_mutations_rejected == 3
+    )
+
+    with tempfile.TemporaryDirectory(prefix="cpe-release-trust-v4-state-") as raw:
+        legacy_manifest = json.loads(json.dumps(manifest))
+        legacy_manifest["run_id"] = "legacy-state-shape"
+        legacy_manifest.pop("trust_root", None)
+        legacy_manifest.pop("trust_root_sha256", None)
+        for slot in legacy_manifest["slots"]:
+            slot.pop("trust_root_sha256", None)
+        legacy_manifest["manifest_sha256"] = sha256_bytes(
+            canonical_json(
+                {
+                    key: value
+                    for key, value in legacy_manifest.items()
+                    if key != "manifest_sha256"
+                }
+            )
+        )
+        legacy_root = Path(raw)
+        register_release_run(legacy_root, legacy_manifest)
+        legacy_state = replay_release_lineage(legacy_root)
+        checks["legacy_v4_projection_omits_new_trust_root_key"] = (
+            "trust_root" not in legacy_state
+            and "trust_root_sha256" in legacy_state
+            and legacy_state["trust_root_sha256"] is None
+        )
     with tempfile.TemporaryDirectory(prefix="cpe-release-trust-cli-") as raw:
         output = Path(raw) / "dry-run.json"
         cli = subprocess.run(
@@ -538,6 +724,22 @@ def main() -> int:
             and cli_payload["trust_root"] == trust_root.body()
             and cli_payload["trust_root_sha256"]
             == trust_root.trust_root_sha256
+        )
+        help_text = subprocess.run(
+            [
+                sys.executable,
+                str(SKILL_ROOT / "evals" / "live_model_runner.py"),
+                "start",
+                "--help",
+            ],
+            cwd=repository,
+            text=True,
+            capture_output=True,
+            check=True,
+        ).stdout
+        checks["sentinel_help_names_v4_and_vnext"] = (
+            "--sentinel-only" in help_text
+            and "--matrix v4 or vnext" in " ".join(help_text.split())
         )
 
     with tempfile.TemporaryDirectory(prefix="cpe-release-trust-ledger-") as raw:
@@ -627,7 +829,19 @@ def main() -> int:
             {"code": "test_terminal", "message": "cost-free trust binding check"},
         )
         generation_payloads = {
-            name: canonical_json({"name": name, "trust_root_sha256": trust_root.trust_root_sha256})
+            name: canonical_json(
+                {
+                    "name": name,
+                    **(
+                        {
+                            "trust_root_sha256": trust_root.trust_root_sha256,
+                        }
+                        if name
+                        in {"manifest.json", "result.json", "dogfood-result.json"}
+                        else {}
+                    ),
+                }
+            )
             for name in (
                 "checkpoint.json",
                 "manifest.json",
@@ -636,7 +850,54 @@ def main() -> int:
                 "dogfood-result.json",
             )
         }
-        from live_migration.ledger import finalize_release_generation
+
+        terminal_before = release_durable_snapshot(release_root)
+        missing_rejected = expect_ledger_error(
+            lambda: finalize_release_generation(
+                release_root,
+                run_id=str(manifest["run_id"]),
+                payload_bytes=generation_payloads,
+                child_manifest_sha256=str(manifest["manifest_sha256"]),
+                aggregate_sha256="1" * 64,
+                dogfood_sha256=sha256_bytes(
+                    generation_payloads["dogfood-result.json"]
+                ),
+                checkpoint_sha256=sha256_bytes(
+                    generation_payloads["checkpoint.json"]
+                ),
+                privacy_sha256=sha256_bytes(
+                    generation_payloads["privacy-audit.json"]
+                ),
+                proof_profile="critical_path_live",
+            ),
+            "release_trust_root_mismatch",
+        )
+        mismatched_rejected = expect_ledger_error(
+            lambda: finalize_release_generation(
+                release_root,
+                run_id=str(manifest["run_id"]),
+                payload_bytes=generation_payloads,
+                child_manifest_sha256=str(manifest["manifest_sha256"]),
+                aggregate_sha256="1" * 64,
+                dogfood_sha256=sha256_bytes(
+                    generation_payloads["dogfood-result.json"]
+                ),
+                checkpoint_sha256=sha256_bytes(
+                    generation_payloads["checkpoint.json"]
+                ),
+                privacy_sha256=sha256_bytes(
+                    generation_payloads["privacy-audit.json"]
+                ),
+                proof_profile="critical_path_live",
+                trust_root=replace(trust_root, trust_root_sha256="0" * 64),
+            ),
+            "release_trust_root_mismatch",
+        )
+        checks["terminal_missing_or_mismatched_trust_has_no_durable_mutation"] = (
+            missing_rejected
+            and mismatched_rejected
+            and release_durable_snapshot(release_root) == terminal_before
+        )
 
         finalize_release_generation(
             release_root,
@@ -734,6 +995,25 @@ def main() -> int:
                 / "22-v4-dogfood-plan.md",
                 Path(raw) / "dogfood-run",
             )
+        dogfood_manifest = json.loads(
+            (Path(dogfood["run_dir"]) / "run_manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        dogfood_clone = Path(str(dogfood_manifest["workspace_ref"]))
+        clone_root = load_trust_root(dogfood_clone, reviewed_commit)
+        checks["dogfood_rejects_clone_repository_identity_relabel"] = expect_value_error(
+            lambda: verify_v4_dogfood_run(
+                Path(dogfood["run_dir"]),
+                expected_implementation_commit=reviewed_commit,
+                expected_implementation_tree=str(terminal_manifest["implementation_tree"]),
+                expected_task_contract_sha256=trust_root.dogfood_contract.sha256,
+                expected_trust_root_sha256=clone_root.trust_root_sha256,
+                expected_trust_root=clone_root,
+                trust_repository=dogfood_clone,
+            ),
+            "dogfood_trust_root_invalid",
+        )
         finalized = finalize_v4_release(
             evidence_root=release_root,
             run_dir=terminal_run.run_dir,
@@ -747,12 +1027,73 @@ def main() -> int:
             repository,
             expected_trust_root=trust_root,
         )
+        generation_manifest = json.loads(
+            (_generation_path / "manifest.json").read_text(encoding="utf-8")
+        )
+        generation_dogfood = json.loads(
+            (_generation_path / "dogfood-result.json").read_text(encoding="utf-8")
+        )
+        retained_checkpoint = json.loads(
+            (
+                release_root
+                / "dogfood"
+                / str(generation_dogfood["retained_run_id"])
+                / "checkpoint.json"
+            ).read_text(encoding="utf-8")
+        )
+        checks["dogfood_retains_reconstructed_trust_body_and_digest"] = (
+            generation_manifest.get("trust_root_sha256")
+            == trust_root.trust_root_sha256
+            and generation_dogfood.get("trust_root_sha256")
+            == trust_root.trust_root_sha256
+            and retained_checkpoint.get("trust_root") == trust_root.body()
+            and retained_checkpoint.get("trust_root_sha256")
+            == trust_root.trust_root_sha256
+            and retained_checkpoint.get("result", {}).get("trust_root")
+            == trust_root.body()
+        )
+
+        registered_path = (
+            release_root
+            / "quality-release-manifests"
+            / f"{terminal_manifest['run_id']}.json"
+        )
+        public_mutations_rejected = 0
+        for target_path in (registered_path, terminal_run.run_dir / "manifest.json"):
+            original = target_path.read_bytes()
+            mutated = json.loads(original)
+            mutated["trust_root"]["reviewed_tree"] = "0" * 40
+            target_path.write_bytes(canonical_json(mutated))
+            try:
+                rejected = validate_release_evidence_root(
+                    release_root,
+                    reviewed_commit,
+                    repository,
+                    expected_trust_root=trust_root,
+                )["passed"] is False
+            finally:
+                target_path.write_bytes(original)
+            public_mutations_rejected += rejected
+        checks["public_validator_rejects_registered_and_child_body_rewrite"] = (
+            public_mutations_rejected == 2
+        )
+        downgraded_root = Path(raw) / "downgraded-evidence"
+        shutil.copytree(release_root, downgraded_root)
+        strip_generated_trust_and_rebind(downgraded_root)
+        checks["public_validator_rejects_generated_trust_downgrade"] = (
+            validate_release_evidence_root(
+                downgraded_root,
+                reviewed_commit,
+                repository,
+            )["passed"]
+            is False
+        )
         checks["terminal_release_cross_binding"] = (
             executed["provider_invocations"] == 2
             and terminal_calls == 2
             and finalized["generation_sha256"] == generation["generation_sha256"]
             and generation["trust_root_sha256"] == trust_root.trust_root_sha256
-            and validation["trust_root_sha256"] == trust_root.trust_root_sha256
+            and validation.get("trust_root_sha256") == trust_root.trust_root_sha256
             and validation["passed"] is True
         )
 

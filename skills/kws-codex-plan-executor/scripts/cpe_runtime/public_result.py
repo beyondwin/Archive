@@ -88,7 +88,11 @@ def validate_release_evidence_root(
     if not root.is_dir():
         return {"passed": False, "errors": ["release_evidence_missing"]}
     try:
-        from live_migration.ledger import LedgerError, terminal_release_generation
+        from live_migration.ledger import (
+            LedgerError,
+            load_registered_release_manifest,
+            terminal_release_generation,
+        )
 
         terminal, generation = terminal_release_generation(root)
     except (ImportError, LedgerError, OSError, ValueError):
@@ -153,7 +157,34 @@ def validate_release_evidence_root(
 
     privacy_reaudit = audit_sanitized_payload(release_payloads)
     trust_root = None
-    trust_digest = manifest.get("trust_root_sha256")
+    trust_digest = None
+    registered = None
+    child = None
+    authoritative_run_id = str(terminal.get("run_id") or "")
+    try:
+        registered = load_registered_release_manifest(root, authoritative_run_id)
+        child_path = root / authoritative_run_id / "manifest.json"
+        child_raw = child_path.read_bytes()
+        child = json.loads(child_raw, object_pairs_hook=reject_duplicate_keys)
+        if (
+            registered is None
+            or not isinstance(child, dict)
+            or child_raw
+            != (json.dumps(child, sort_keys=True, separators=(",", ":")) + "\n").encode()
+            or child.get("manifest_sha256")
+            != _canonical_sha256(
+                {
+                    key: value
+                    for key, value in child.items()
+                    if key != "manifest_sha256"
+                }
+            )
+            or registered != child
+        ):
+            raise ValueError("release authoritative manifest mismatch")
+        trust_digest = registered.get("trust_root_sha256")
+    except (ImportError, LedgerError, OSError, ValueError):
+        errors.append("release_trust_root_mismatch")
     if trust_digest is not None:
         try:
             trust_root = load_trust_root(
@@ -169,15 +200,34 @@ def validate_release_evidence_root(
                 for payload in (manifest, result, dogfood)
             ):
                 raise ValueError("release_trust_root_mismatch")
-        except ValueError:
+            for authoritative in (registered, child):
+                assert isinstance(authoritative, dict)
+                slots = authoritative.get("slots")
+                if (
+                    authoritative.get("trust_root") != trust_root.body()
+                    or authoritative.get("trust_root_sha256")
+                    != trust_root.trust_root_sha256
+                    or not isinstance(slots, list)
+                    or any(
+                        not isinstance(slot, dict)
+                        or slot.get("trust_root_sha256")
+                        != trust_root.trust_root_sha256
+                        for slot in slots
+                    )
+                ):
+                    raise ValueError("release_trust_root_mismatch")
+        except (ImportError, LedgerError, OSError, ValueError):
             errors.append("release_trust_root_mismatch")
-    elif expected_trust_root is not None:
+    elif expected_trust_root is not None or any(
+        payload.get("trust_root_sha256") is not None
+        for payload in (manifest, result, dogfood)
+    ):
         errors.append("release_trust_root_mismatch")
     schema_payloads = {
         name: {
             key: value
             for key, value in payload.items()
-            if key != "trust_root_sha256"
+            if key not in {"trust_root", "trust_root_sha256"}
         }
         for name, payload in release_payloads.items()
     }
@@ -349,6 +399,7 @@ def validate_release_evidence_root(
             expected_trust_root_sha256=(
                 trust_root.trust_root_sha256 if trust_root is not None else None
             ),
+            expected_trust_root=trust_root,
         )
         retained_checkpoint = root / "dogfood" / retained_run_id / "checkpoint.json"
         if (
@@ -409,7 +460,10 @@ def validate_release_evidence_root(
         "child_manifest_sha256": manifest.get("ledger_manifest_sha256"),
         "proof_profile": manifest.get("proof_profile"),
         **(
-            {"trust_root_sha256": trust_root.trust_root_sha256}
+            {
+                "trust_root": trust_root.body(),
+                "trust_root_sha256": trust_root.trust_root_sha256,
+            }
             if trust_root is not None
             else {}
         ),

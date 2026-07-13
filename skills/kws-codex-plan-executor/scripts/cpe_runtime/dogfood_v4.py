@@ -16,6 +16,7 @@ from .events import read_events, validate_chain
 from .git_delta import committed_patch_digest, working_tree_changed_files
 from .manifest import load_verified_manifest, resolve_ref
 from .projector import project
+from .release_policy_vnext import load_trust_root
 
 
 _RETAINED_FILES = frozenset(
@@ -57,6 +58,8 @@ def verify_v4_dogfood_run(
     expected_implementation_tree: str,
     expected_task_contract_sha256: str,
     expected_trust_root_sha256: str | None = None,
+    expected_trust_root=None,
+    trust_repository: Path | None = None,
 ) -> dict[str, object]:
     """Verify and field-select one production CPE v4 dogfood run."""
 
@@ -166,10 +169,52 @@ def verify_v4_dogfood_run(
         "source_checkout_unchanged": True,
         "runtime_patch_required": False,
     }
-    if expected_trust_root_sha256 is not None:
-        if not re.fullmatch(r"[0-9a-f]{64}", expected_trust_root_sha256):
+    if expected_trust_root is not None or expected_trust_root_sha256 is not None:
+        if trust_repository is None:
             raise ValueError("dogfood_trust_root_invalid")
-        result["trust_root_sha256"] = expected_trust_root_sha256
+        runtime_repository = Path(
+            _git(Path(__file__).resolve().parent, "rev-parse", "--show-toplevel")
+        ).resolve()
+        if trust_repository.expanduser().resolve() != runtime_repository:
+            raise ValueError("dogfood_trust_root_invalid")
+        try:
+            derived_trust_root = load_trust_root(workspace, expected_implementation_commit)
+            authoritative_trust_root = load_trust_root(
+                runtime_repository, expected_implementation_commit
+            )
+        except ValueError as exc:
+            raise ValueError("dogfood_trust_root_invalid") from exc
+        derived_body = derived_trust_root.body()
+        authoritative_body = authoritative_trust_root.body()
+        if expected_trust_root is not None:
+            if (
+                authoritative_body != expected_trust_root.body()
+                or authoritative_trust_root.trust_root_sha256
+                != expected_trust_root.trust_root_sha256
+            ):
+                raise ValueError("dogfood_trust_root_invalid")
+        derived_git_body = {
+            key: value for key, value in derived_body.items() if key != "repository_identity"
+        }
+        authoritative_git_body = {
+            key: value
+            for key, value in authoritative_body.items()
+            if key != "repository_identity"
+        }
+        evidence_digest = hashlib.sha256(_canonical(authoritative_body)).hexdigest()
+        if (
+            derived_git_body != authoritative_git_body
+            or evidence_digest != authoritative_trust_root.trust_root_sha256
+        ):
+            raise ValueError("dogfood_trust_root_invalid")
+        evidence_body = authoritative_body
+        if (
+            expected_trust_root_sha256 is not None
+            and evidence_digest != expected_trust_root_sha256
+        ):
+            raise ValueError("dogfood_trust_root_invalid")
+        result["trust_root"] = evidence_body
+        result["trust_root_sha256"] = evidence_digest
     return result
 
 
@@ -182,6 +227,8 @@ def retain_v4_dogfood_run(
     expected_task_contract_sha256: str,
     task_contract_path: Path,
     expected_trust_root_sha256: str | None = None,
+    expected_trust_root=None,
+    trust_repository: Path | None = None,
 ) -> dict[str, object]:
     """Publish the replayable dogfood trust evidence beneath the release root."""
 
@@ -191,6 +238,8 @@ def retain_v4_dogfood_run(
         expected_implementation_tree=expected_implementation_tree,
         expected_task_contract_sha256=expected_task_contract_sha256,
         expected_trust_root_sha256=expected_trust_root_sha256,
+        expected_trust_root=expected_trust_root,
+        trust_repository=trust_repository,
     )
     source = run_dir.expanduser().resolve()
     raw = {
@@ -213,6 +262,14 @@ def retain_v4_dogfood_run(
         "run_manifest_sha256": hashlib.sha256(raw["run_manifest.json"]).hexdigest(),
         "events_sha256": hashlib.sha256(raw["events.jsonl"]).hexdigest(),
         "state_sha256": hashlib.sha256(raw["state.json"]).hexdigest(),
+        **(
+            {
+                "trust_root": result["trust_root"],
+                "trust_root_sha256": result["trust_root_sha256"],
+            }
+            if "trust_root_sha256" in result
+            else {}
+        ),
         "result": result,
     }
     parent = target.parent
@@ -245,6 +302,7 @@ def verify_retained_v4_dogfood_run(
     expected_implementation_tree: str,
     expected_task_contract_sha256: str,
     expected_trust_root_sha256: str | None = None,
+    expected_trust_root=None,
 ) -> dict[str, object]:
     """Replay the retained relative artifacts without trusting the original run path."""
 
@@ -287,12 +345,32 @@ def verify_retained_v4_dogfood_run(
     ):
         raise ValueError("dogfood_retained_artifact_invalid")
     result = checkpoint.get("result")
+    result_trust = result.get("trust_root") if isinstance(result, dict) else None
+    result_trust_digest = (
+        hashlib.sha256(_canonical(result_trust)).hexdigest()
+        if isinstance(result_trust, dict)
+        else None
+    )
     if (
         not isinstance(result, dict)
         or result.get("model_attempts") != len(attempts)
+        or checkpoint.get("trust_root") != result_trust
+        or checkpoint.get("trust_root_sha256") != result.get("trust_root_sha256")
+        or (
+            result.get("trust_root_sha256") is not None
+            and result_trust_digest != result.get("trust_root_sha256")
+        )
         or (
             expected_trust_root_sha256 is not None
             and result.get("trust_root_sha256") != expected_trust_root_sha256
+        )
+        or (
+            expected_trust_root is not None
+            and (
+                result_trust != expected_trust_root.body()
+                or result.get("trust_root_sha256")
+                != expected_trust_root.trust_root_sha256
+            )
         )
     ):
         raise ValueError("dogfood_retained_artifact_invalid")

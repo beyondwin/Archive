@@ -103,7 +103,11 @@ def _parser() -> argparse.ArgumentParser:
         choices=("critical_path_live", "full_paid_matrix"),
         default="full_paid_matrix",
     )
-    start.add_argument("--sentinel-only", action="store_true")
+    start.add_argument(
+        "--sentinel-only",
+        action="store_true",
+        help="run only the qualified sentinel for --matrix v4 or vnext",
+    )
     _add_checkpoint_arguments(start)
 
     resume = commands.add_parser("resume")
@@ -723,7 +727,12 @@ def _start(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict[st
     run_id = args.run_id or f"cpe-live-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
     run_dir = _new_run_dir(args.evidence_root, run_id)
     binding = _checkpoint_binding(args, required=True)
-    recover_orphan_release_registration(run_dir.parent, run_id)
+    recover_orphan_release_registration(
+        run_dir.parent,
+        run_id,
+        repository=REPOSITORY_ROOT,
+        require_trust=args.matrix == "vnext",
+    )
     recovered_manifest = load_registered_release_manifest(run_dir.parent, run_id)
     if recovered_manifest is not None:
         if _manifest_checkpoint_binding(recovered_manifest) != binding:
@@ -797,7 +806,8 @@ def _start(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict[st
         if args.sentinel_only:
             if manifest.get("schema_version") != "cpe-quality-manifest.v4":
                 raise LiveRunnerError(
-                    "sentinel_requires_v4", "--sentinel-only requires --matrix v4"
+                    "sentinel_requires_v4",
+                    "--sentinel-only requires --matrix v4 or vnext",
                 )
             slots = slots[:1]
         return _execute(context, slots, complete_run=not args.sentinel_only)
