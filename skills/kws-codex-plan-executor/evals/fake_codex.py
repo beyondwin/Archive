@@ -33,7 +33,12 @@ SCENARIOS = frozenset(
         "mapping_conflict",
         "mapping_bad_excerpt",
         "mapping_extra_artifact",
+        "mapping_unreported_extra_artifact",
         "mapping_partial_failure",
+        "mapping_invalid_companion",
+        "mapping_noncompleted_result",
+        "mapping_lossy_split",
+        "mapping_weaken_candidate",
     }
 )
 
@@ -142,6 +147,34 @@ def _source_entry(
     }
 
 
+def _bound_statement(
+    statement: str, reference: dict[str, object]
+) -> dict[str, object]:
+    return {
+        "statement": statement,
+        "source_references": [reference],
+        "authority_ids": [],
+    }
+
+
+def _bound_command(command: str, reference: dict[str, object]) -> dict[str, object]:
+    return {
+        "command": command,
+        "source_references": [reference],
+        "authority_ids": [],
+    }
+
+
+def _dependency_edge(
+    task_id: str, reference: dict[str, object]
+) -> dict[str, object]:
+    return {
+        "task_id": task_id,
+        "source_references": [reference],
+        "authority_ids": [],
+    }
+
+
 def _mapping_document_result(
     *, item_id: str, input_paths: list[str], outbox: Path, report_path: str
 ) -> list[str]:
@@ -159,6 +192,14 @@ def _mapping_document_result(
     role = "program_plan" if item_id == "program-plan" else item_id.split("-", 1)[0]
     heading = lines[0].lstrip("# ") if lines else item_id
     exact_excerpt = text
+    source_ref = {
+        "document_id": item_id,
+        "heading": heading,
+        "line_start": 1,
+        "line_end": len(lines),
+        "source_sha256": hashlib.sha256(data).hexdigest(),
+        "exact_excerpt": exact_excerpt,
+    }
     requirements: list[dict[str, object]] = []
     candidates: list[dict[str, object]] = []
     verification_commands: list[str] = []
@@ -171,7 +212,12 @@ def _mapping_document_result(
                 "line_start": 1,
                 "line_end": len(lines),
                 "exact_excerpt": exact_excerpt,
-                "constraints": ["preserve the immutable approved requirement"],
+                "constraints": [
+                    _bound_statement(
+                        "preserve the immutable approved requirement",
+                        source_ref,
+                    )
+                ],
             }
         )
     elif role == "plan":
@@ -191,10 +237,38 @@ def _mapping_document_result(
                     "line_start": 1,
                     "line_end": len(lines),
                     "exact_excerpt": exact_excerpt,
-                    "requirement_ids": [],
+                    "requirement_ids": (
+                        ["spec-01:R1"]
+                        if task_id == "plan-01:T1"
+                        else ["spec-02:R1"]
+                        if task_id == "plan-01:T2"
+                        else []
+                    ),
                     "dependencies": dependency,
-                    "acceptance": ["python3 evals/check_lean_mapping.py"],
+                    "dependency_edges": [
+                        _dependency_edge(
+                            dependency_id,
+                            source_ref,
+                        )
+                        for dependency_id in dependency
+                    ],
+                    "acceptance": [
+                        _bound_command(
+                            "python3 evals/check_lean_mapping.py",
+                            source_ref,
+                        )
+                    ],
                     "global_constraints": [],
+                    "upstream_interface_commitments": (
+                        [
+                            _bound_statement(
+                                "preserve the upstream plan-01:T1 interface",
+                                source_ref,
+                            )
+                        ]
+                        if task_id == "plan-01:T2"
+                        else []
+                    ),
                 }
             )
     else:
@@ -220,6 +294,106 @@ def _mapping_document_result(
         "dependencies": [],
         "authority_items": [],
         "verification_commands": verification_commands,
+        "plan_wave_graph": {
+            "plans": (
+                [
+                    {
+                        "node_id": "plan-01",
+                        "member_ids": ["plan-01:T1", "plan-01:T2"],
+                        "source_references": [source_ref],
+                        "authority_ids": [],
+                    },
+                    {
+                        "node_id": "plan-02",
+                        "member_ids": ["plan-02:T1"],
+                        "source_references": [source_ref],
+                        "authority_ids": [],
+                    },
+                ]
+                if role == "program_plan"
+                else []
+            ),
+            "waves": (
+                [
+                    {
+                        "node_id": "wave-01",
+                        "member_ids": ["plan-01"],
+                        "source_references": [source_ref],
+                        "authority_ids": [],
+                    },
+                    {
+                        "node_id": "wave-02",
+                        "member_ids": ["plan-02"],
+                        "source_references": [source_ref],
+                        "authority_ids": [],
+                    },
+                ]
+                if role == "program_plan"
+                else []
+            ),
+            "edges": (
+                [
+                    {
+                        "predecessor_id": "plan-01",
+                        "successor_id": "plan-02",
+                        "kind": "plan_order",
+                        "source_references": [source_ref],
+                        "authority_ids": [],
+                    }
+                ]
+                if role == "program_plan"
+                else []
+            ),
+        },
+        "hotspots": (
+            [
+                {
+                    "hotspot_id": f"{item_id}:H1",
+                    "kind": "shared_file" if item_id == "plan-01" else "interface",
+                    "location": (
+                        "src/shared.py" if item_id == "plan-01" else "SharedInterface"
+                    ),
+                    "task_ids": (
+                        ["plan-01:T1", "plan-01:T2"]
+                        if item_id == "plan-01"
+                        else ["plan-02:T1"]
+                    ),
+                    "source_references": [source_ref],
+                    "authority_ids": [],
+                }
+            ]
+            if item_id in {"plan-01", "plan-02"}
+            else []
+        ),
+        "decisions": (
+            [
+                {
+                    "decision_id": f"{item_id}:D1",
+                    "role": role,
+                    "kind": "approved",
+                    "statement": "preserve the approved immutable requirement",
+                    "source_references": [source_ref],
+                    "authority_ids": [],
+                }
+            ]
+            if role == "spec"
+            else []
+        ),
+        "constraints": (
+            [
+                {
+                    "constraint_id": f"{item_id}:C1",
+                    "role": role,
+                    "kind": "global",
+                    "affected_ids": [],
+                    "statement": "preserve the immutable approved requirement",
+                    "source_references": [source_ref],
+                    "authority_ids": [],
+                }
+            ]
+            if role == "spec"
+            else []
+        ),
     }
     if os.environ.get("CPE_FAKE_SCENARIO") == "mapping_bad_excerpt":
         entries = payload["requirements"] or payload["task_candidates"]
@@ -257,32 +431,88 @@ def _mapping_program_result(
         for document_map in maps.values()
         for requirement in document_map["requirements"]
     }
-    task_specs = [
-        ("plan-01:T1", [], ["plan-01", "spec-01"], ["spec-01:R1"]),
-        ("plan-01:T2", ["plan-01:T1"], ["plan-01", "spec-02"], ["spec-02:R1"]),
-        ("plan-02:T1", ["plan-01:T2"], ["plan-02", "program-plan"], []),
+    global_constraint_bindings = [
+        {
+            "statement": constraint["statement"],
+            "source_references": constraint["source_references"],
+            "authority_ids": constraint["authority_ids"],
+        }
+        for document_map in maps.values()
+        for constraint in document_map["constraints"]
+        if constraint["kind"] == "global" and not constraint["affected_ids"]
     ]
+    task_specs = [
+        ("plan-01:T1", [], ["plan-01", "spec-01"], ["spec-01:R1"], "plan-01:T1"),
+        ("plan-01:T2", ["plan-01:T1"], ["plan-01", "spec-02"], ["spec-02:R1"], "plan-01:T2"),
+        ("plan-02:T1", ["plan-01:T2"], ["plan-02", "program-plan"], [], "plan-02:T1"),
+    ]
+    task_splits: list[dict[str, object]] = []
+    if scenario == "mapping_lossy_split":
+        task_specs[-1:] = [
+            ("plan-02:T1.1", ["plan-01:T2"], ["plan-02", "program-plan"], [], "plan-02:T1"),
+            ("plan-02:T1.2", ["plan-02:T1.1"], ["plan-02", "program-plan"], [], "plan-02:T1"),
+        ]
+        task_splits = [
+            {
+                "source_task_id": "plan-02:T1",
+                "split_task_ids": ["plan-02:T1.1", "plan-02:T1.2"],
+                "source_references": [_source_entry(maps["plan-02"], candidates["plan-02:T1"])],
+                "reason": "bounded context split along an interface boundary",
+            }
+        ]
     tasks = [
         {
             "task_id": task_id,
-            "title": candidates[task_id]["title"],
+            "title": candidates[source_task_id]["title"],
             "dependencies": dependencies,
+            "dependency_edges": [
+                _dependency_edge(
+                    dependency,
+                    _source_entry(maps[source_task_id.split(":", 1)[0]], candidates[source_task_id]),
+                )
+                for dependency in dependencies
+            ],
             "document_ids": document_ids,
             "requirement_ids": requirement_ids,
+            "acceptance": (
+                []
+                if scenario == "mapping_lossy_split"
+                and task_id in {"plan-02:T1.1", "plan-02:T1.2"}
+                or scenario == "mapping_weaken_candidate"
+                and task_id == "plan-01:T2"
+                else candidates[source_task_id]["acceptance"]
+            ),
+            "global_constraints": [
+                *candidates[source_task_id]["global_constraints"],
+                *global_constraint_bindings,
+            ],
+            "upstream_interface_commitments": candidates[source_task_id][
+                "upstream_interface_commitments"
+            ],
             "brief_path": f"briefs/{task_id.replace(':', '-')}.json",
         }
-        for task_id, dependencies, document_ids, requirement_ids in task_specs
+        for task_id, dependencies, document_ids, requirement_ids, source_task_id in task_specs
     ]
     coverage = {
         "spec-01:R1": {
             "disposition": "planned",
             "task_ids": ["plan-01:T1"],
             "reason": None,
+            "source_references": [
+                _source_entry(*requirements["spec-01:R1"]),
+                _source_entry(maps["plan-01"], candidates["plan-01:T1"]),
+            ],
+            "authority_ids": [],
         },
         "spec-02:R1": {
             "disposition": "planned",
             "task_ids": ["plan-01:T2"],
             "reason": None,
+            "source_references": [
+                _source_entry(*requirements["spec-02:R1"]),
+                _source_entry(maps["plan-01"], candidates["plan-01:T2"]),
+            ],
+            "authority_ids": [],
         },
     }
     authority_items: list[dict[str, object]] = []
@@ -292,6 +522,8 @@ def _mapping_program_result(
             "disposition": disposition,
             "task_ids": [],
             "reason": "deterministic blocking coverage fixture",
+            "source_references": [_source_entry(*requirements["spec-01:R1"])],
+            "authority_ids": [],
         }
         tasks[0]["requirement_ids"] = []
         if disposition == "conflict":
@@ -315,7 +547,17 @@ def _mapping_program_result(
         "document_map_sha256s": map_hashes,
         "tasks": tasks,
         "coverage": coverage,
-        "task_splits": [],
+        "task_splits": task_splits,
+        "plan_wave_graph": maps["program-plan"]["plan_wave_graph"],
+        "hotspots": [
+            hotspot for document_map in maps.values() for hotspot in document_map["hotspots"]
+        ],
+        "decisions": [
+            decision for document_map in maps.values() for decision in document_map["decisions"]
+        ],
+        "constraints": [
+            constraint for document_map in maps.values() for constraint in document_map["constraints"]
+        ],
         "final_verification_commands": ["python3 evals/check_lean_mapping.py"],
         "authority_items": authority_items,
     }
@@ -331,7 +573,11 @@ def _mapping_program_result(
         {
             "schema_version": 1,
             "program_map_sha256": program_sha256,
-            "coverage": coverage,
+            "coverage": (
+                {"unexpected": "staging companion mismatch"}
+                if scenario == "mapping_invalid_companion"
+                else coverage
+            ),
         },
     )
     _write_json(
@@ -347,8 +593,13 @@ def _mapping_program_result(
 
     affected_document_ids: list[str] = []
     for task in tasks:
-        candidate = candidates[task["task_id"]]
-        references = [_source_entry(maps[task["task_id"].split(":", 1)[0]], candidate)]
+        source_task_id = (
+            "plan-02:T1"
+            if task["task_id"] in {"plan-02:T1.1", "plan-02:T1.2"}
+            else task["task_id"]
+        )
+        candidate = candidates[source_task_id]
+        references = [_source_entry(maps[source_task_id.split(":", 1)[0]], candidate)]
         for requirement_id in task["requirement_ids"]:
             references.append(_source_entry(*requirements[requirement_id]))
         if (
@@ -356,7 +607,7 @@ def _mapping_program_result(
             and "spec-01" not in {reference["document_id"] for reference in references}
         ):
             references.append(_source_entry(*requirements["spec-01:R1"]))
-        if task["task_id"] == "plan-02:T1":
+        if source_task_id == "plan-02:T1":
             references.append(_source_entry(*requirements["program-plan:R1"]))
         brief = {
             "schema_version": 1,
@@ -364,22 +615,23 @@ def _mapping_program_result(
             "program_map_sha256": program_sha256,
             "title": task["title"],
             "dependencies": task["dependencies"],
+            "dependency_edges": task["dependency_edges"],
             "source_references": references,
-            "global_constraints": [
-                reference
-                for reference in references
-                if str(reference["document_id"]).startswith("spec-")
+            "global_constraints": task["global_constraints"],
+            "acceptance": task["acceptance"],
+            "upstream_interface_commitments": task[
+                "upstream_interface_commitments"
             ],
-            "acceptance": candidate["acceptance"],
             "expected_report_path": f"reports/{task['task_id'].replace(':', '-')}.md",
         }
         _write_json(outbox, task["brief_path"], brief)
         artifact_paths.append(task["brief_path"])
         affected_document_ids.extend(task["document_ids"])
-    if scenario == "mapping_extra_artifact":
+    if scenario in {"mapping_extra_artifact", "mapping_unreported_extra_artifact"}:
         extra_path = "logs/unexpected-mapper-output.json"
         _write_json(outbox, extra_path, {"unexpected": True})
-        artifact_paths.append(extra_path)
+        if scenario == "mapping_extra_artifact":
+            artifact_paths.append(extra_path)
     return artifact_paths, sorted(set(affected_document_ids))
 
 
@@ -449,7 +701,13 @@ def main() -> int:
             raise SystemExit("mapping scenario requires a mapper role")
         result = {
             "role": role,
-            "status": "completed",
+            "status": (
+                "interrupted"
+                if scenario == "mapping_noncompleted_result"
+                and role == "document_mapper"
+                and item_id == "spec-01"
+                else "completed"
+            ),
             "item_id": item_id,
             "commit": None,
             "verdict": None,

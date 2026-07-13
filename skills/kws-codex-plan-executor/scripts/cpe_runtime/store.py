@@ -6,6 +6,7 @@ import fcntl
 import hashlib
 import json
 import os
+import shutil
 import stat
 import subprocess
 import uuid
@@ -926,6 +927,27 @@ class RunStore:
             self.put_artifact(normalized, data)
             ingested.append(normalized)
         return tuple(ingested)
+
+    def discard_outbox(self, attempt_id: str) -> None:
+        """Atomically detach and safely remove one rejected or consumed outbox."""
+
+        normalized_attempt = normalize_relative_path(attempt_id)
+        if "/" in normalized_attempt:
+            raise ValueError("attempt_id must be one normalized path component")
+        source = self.paths.outbox / normalized_attempt
+        try:
+            metadata = source.lstat()
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            raise ValueError(f"outbox is unavailable: {attempt_id}") from exc
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+            raise ValueError("outbox discard target must be a real directory")
+        detached = self.paths.outbox / f".discarded-{uuid.uuid4().hex}"
+        os.replace(source, detached)
+        _fsync_directory(self.paths.outbox)
+        shutil.rmtree(detached)
+        _fsync_directory(self.paths.outbox)
 
     def replay(self) -> dict[str, object]:
         manifest = self._load_manifest()

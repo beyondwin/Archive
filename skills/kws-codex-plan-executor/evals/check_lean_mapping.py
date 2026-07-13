@@ -51,6 +51,36 @@ def source_reference(
     }
 
 
+def bound_statement(
+    statement: str, reference: dict[str, object]
+) -> dict[str, object]:
+    return {
+        "statement": statement,
+        "source_references": [reference],
+        "authority_ids": [],
+    }
+
+
+def bound_command(command: str, reference: dict[str, object]) -> dict[str, object]:
+    return {
+        "command": command,
+        "source_references": [reference],
+        "authority_ids": [],
+    }
+
+
+def dependency_edge(task_id: str, reference: dict[str, object]) -> dict[str, object]:
+    return {
+        "task_id": task_id,
+        "source_references": [reference],
+        "authority_ids": [],
+    }
+
+
+def empty_plan_wave_graph() -> dict[str, object]:
+    return {"plans": [], "waves": [], "edges": []}
+
+
 class LeanMappingTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory(prefix="cpe-lean-mapping-")
@@ -183,6 +213,28 @@ class LeanMappingTest(unittest.TestCase):
         self.assertEqual(events[-1]["payload"]["generation_id"], "generation-0001")
         self.assertEqual(events[-1]["payload"]["artifact_paths"], sorted(events[-1]["payload"]["artifact_paths"]))
 
+        program = json.loads(store.read_artifact(program_path))
+        self.assertEqual(
+            program["plan_wave_graph"]["edges"][0]["predecessor_id"],
+            "plan-01",
+        )
+        self.assertEqual(
+            {item["kind"] for item in program["hotspots"]},
+            {"shared_file", "interface"},
+        )
+        self.assertEqual(
+            {item["role"] for item in program["decisions"]}, {"spec"}
+        )
+        self.assertEqual(
+            {item["role"] for item in program["constraints"]}, {"spec"}
+        )
+        self.assertGreaterEqual(
+            len(program["coverage"]["spec-01:R1"]["source_references"]), 2
+        )
+        brief = json.loads(store.read_artifact("briefs/plan-01-T2.json"))
+        self.assertEqual(brief["dependency_edges"][0]["task_id"], "plan-01:T1")
+        self.assertTrue(brief["upstream_interface_commitments"])
+
     def test_completed_immutable_document_maps_are_reused_after_interruption(self) -> None:
         store = self.create_store()
         engine = self.create_engine(store=store)
@@ -240,6 +292,10 @@ class LeanMappingTest(unittest.TestCase):
             "dependencies": [],
             "authority_items": [],
             "verification_commands": [],
+            "plan_wave_graph": empty_plan_wave_graph(),
+            "hotspots": [],
+            "decisions": [],
+            "constraints": [],
         }
         with self.assertRaisesRegex(ValueError, "source SHA"):
             validate_document_map(payload, document=document)
@@ -262,6 +318,60 @@ class LeanMappingTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "authority item"):
             validate_document_map(malformed_authority, document=document)
 
+    def test_document_map_rejects_unknown_requirement_kind(self) -> None:
+        document = InputDocument(
+            document_id="spec-01",
+            role="spec",
+            original_path="/tmp/spec.md",
+            snapshot_path="inputs/spec-01.md",
+            sha256="a" * 64,
+            byte_length=10,
+            input_order=0,
+        )
+        reference = source_reference("spec-01", source_sha256=document.sha256)
+        payload = {
+            "schema_version": 1,
+            "document_id": "spec-01",
+            "role": "spec",
+            "source_sha256": document.sha256,
+            "requirements": [
+                {
+                    "requirement_id": "spec-01:R1",
+                    "kind": "invented_kind",
+                    "heading": reference["heading"],
+                    "line_start": reference["line_start"],
+                    "line_end": reference["line_end"],
+                    "exact_excerpt": reference["exact_excerpt"],
+                    "constraints": [],
+                }
+            ],
+            "task_candidates": [],
+            "dependencies": [],
+            "authority_items": [],
+            "verification_commands": [],
+            "plan_wave_graph": empty_plan_wave_graph(),
+            "hotspots": [],
+            "decisions": [],
+            "constraints": [],
+        }
+        with self.assertRaisesRegex(ValueError, "requirement kind"):
+            validate_document_map(payload, document=document)
+
+        wrong_role = json.loads(json.dumps(payload))
+        wrong_role["requirements"][0]["kind"] = "normative"
+        wrong_role["decisions"] = [
+            {
+                "decision_id": "spec-01:D1",
+                "role": "plan",
+                "kind": "ordering",
+                "statement": "invent a plan-only decision from a spec map",
+                "source_references": [reference],
+                "authority_ids": [],
+            }
+        ]
+        with self.assertRaisesRegex(ValueError, "document role"):
+            validate_document_map(wrong_role, document=document)
+
     def test_queue_rejects_excerpt_that_is_not_the_declared_source_range(self) -> None:
         store = self.create_store()
         engine = self.create_engine(store=store, scenario="mapping_bad_excerpt")
@@ -276,6 +386,10 @@ class LeanMappingTest(unittest.TestCase):
             "plan-02": "4" * 64,
             "program-plan": "5" * 64,
         }
+        plan_01_ref = source_reference("plan-01", source_sha256="a" * 64)
+        plan_02_ref = source_reference("plan-02", source_sha256="b" * 64)
+        spec_01_ref = source_reference("spec-01", source_sha256="c" * 64)
+        spec_02_ref = source_reference("spec-02", source_sha256="d" * 64)
         return {
             "schema_version": 1,
             "generation": 1,
@@ -285,24 +399,44 @@ class LeanMappingTest(unittest.TestCase):
                     "task_id": "plan-01:T1",
                     "title": "Implement one bounded change",
                     "dependencies": [],
+                    "dependency_edges": [],
                     "document_ids": ["plan-01", "spec-01"],
                     "requirement_ids": ["spec-01:R1"],
+                    "acceptance": [
+                        bound_command("python3 evals/check_lean_mapping.py", plan_01_ref)
+                    ],
+                    "global_constraints": [],
+                    "upstream_interface_commitments": [],
                     "brief_path": "briefs/plan-01-T1.json",
                 },
                 {
                     "task_id": "plan-01:T2",
                     "title": "Implement the dependent change",
                     "dependencies": ["plan-01:T1"],
+                    "dependency_edges": [dependency_edge("plan-01:T1", plan_01_ref)],
                     "document_ids": ["plan-01", "spec-02"],
                     "requirement_ids": ["spec-02:R1"],
+                    "acceptance": [
+                        bound_command("python3 evals/check_lean_mapping.py", plan_01_ref)
+                    ],
+                    "global_constraints": [],
+                    "upstream_interface_commitments": [
+                        bound_statement("preserve the upstream interface", plan_01_ref)
+                    ],
                     "brief_path": "briefs/plan-01-T2.json",
                 },
                 {
                     "task_id": "plan-02:T1",
                     "title": "Integrate both changes",
                     "dependencies": ["plan-01:T2"],
+                    "dependency_edges": [dependency_edge("plan-01:T2", plan_02_ref)],
                     "document_ids": ["plan-02", "program-plan"],
                     "requirement_ids": [],
+                    "acceptance": [
+                        bound_command("python3 evals/check_lean_mapping.py", plan_02_ref)
+                    ],
+                    "global_constraints": [],
+                    "upstream_interface_commitments": [],
                     "brief_path": "briefs/plan-02-T1.json",
                 },
             ],
@@ -311,22 +445,41 @@ class LeanMappingTest(unittest.TestCase):
                     "disposition": "planned",
                     "task_ids": ["plan-01:T1"],
                     "reason": None,
+                    "source_references": [spec_01_ref, plan_01_ref],
+                    "authority_ids": [],
                 },
                 "spec-02:R1": {
                     "disposition": "planned",
                     "task_ids": ["plan-01:T2"],
                     "reason": None,
+                    "source_references": [spec_02_ref, plan_01_ref],
+                    "authority_ids": [],
                 },
             },
             "task_splits": [],
+            "plan_wave_graph": empty_plan_wave_graph(),
+            "hotspots": [],
+            "decisions": [],
+            "constraints": [],
             "final_verification_commands": ["python3 evals/check_lean_mapping.py"],
             "authority_items": [],
+        }
+
+    @staticmethod
+    def program_document_hashes() -> dict[str, str]:
+        return {
+            "spec-01": "c" * 64,
+            "spec-02": "d" * 64,
+            "plan-01": "a" * 64,
+            "plan-02": "b" * 64,
+            "program-plan": "e" * 64,
         }
 
     def test_program_map_uses_design_dispositions_and_rejects_bad_graphs(self) -> None:
         payload = self.valid_program_map()
         validated = validate_program_map(
-            payload, document_ids=set(payload["document_map_sha256s"])
+            payload,
+            document_hashes=self.program_document_hashes(),
         )
         self.assertEqual(
             [task["task_id"] for task in validated["tasks"]],
@@ -347,27 +500,60 @@ class LeanMappingTest(unittest.TestCase):
                     "disposition": disposition,
                     "task_ids": ["plan-01:T1"] if disposition == "planned" else [],
                     "reason": None if disposition == "planned" else "recorded basis",
+                    "source_references": [
+                        source_reference("spec-01", source_sha256="c" * 64)
+                    ],
+                    "authority_ids": ["A-defer"]
+                    if disposition == "approved_deferred"
+                    else [],
                 }
                 if disposition != "planned":
                     candidate["tasks"][0]["requirement_ids"] = []
+                if disposition == "approved_deferred":
+                    candidate["authority_items"] = [
+                        {
+                            "authority_id": "A-defer",
+                            "authority_code": "material_scope_expansion",
+                            "affected_task_ids": ["plan-01:T1"],
+                            "question": "Defer this approved requirement?",
+                            "options": ["defer", "implement"],
+                            "recommended": "defer",
+                            "source_references": [
+                                source_reference("spec-01", source_sha256="c" * 64)
+                            ],
+                        }
+                    ]
                 validate_program_map(
-                    candidate, document_ids=set(candidate["document_map_sha256s"])
+                    candidate,
+                    document_hashes=self.program_document_hashes(),
                 )
 
         outdated = self.valid_program_map()
         outdated["coverage"]["spec-01:R1"]["disposition"] = "implemented"
         with self.assertRaises(ValueError):
-            validate_program_map(outdated, document_ids=set(outdated["document_map_sha256s"]))
+            validate_program_map(outdated, document_hashes=self.program_document_hashes())
 
         unknown = self.valid_program_map()
         unknown["tasks"][1]["dependencies"] = ["plan-99:T1"]
+        unknown["tasks"][1]["dependency_edges"] = [
+            dependency_edge(
+                "plan-99:T1",
+                source_reference("plan-01", source_sha256="a" * 64),
+            )
+        ]
         with self.assertRaisesRegex(ValueError, "unknown dependency"):
-            validate_program_map(unknown, document_ids=set(unknown["document_map_sha256s"]))
+            validate_program_map(unknown, document_hashes=self.program_document_hashes())
 
         cyclic = self.valid_program_map()
         cyclic["tasks"][0]["dependencies"] = ["plan-02:T1"]
+        cyclic["tasks"][0]["dependency_edges"] = [
+            dependency_edge(
+                "plan-02:T1",
+                source_reference("plan-01", source_sha256="a" * 64),
+            )
+        ]
         with self.assertRaisesRegex(ValueError, "cycle"):
-            validate_program_map(cyclic, document_ids=set(cyclic["document_map_sha256s"]))
+            validate_program_map(cyclic, document_hashes=self.program_document_hashes())
 
         malformed_authority = self.valid_program_map()
         malformed_authority["authority_items"] = [
@@ -387,7 +573,7 @@ class LeanMappingTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "authority item"):
             validate_program_map(
                 malformed_authority,
-                document_ids=set(malformed_authority["document_map_sha256s"]),
+                document_hashes=self.program_document_hashes(),
             )
 
     def test_unmapped_or_conflicting_requirement_blocks_generation_acceptance(self) -> None:
@@ -412,18 +598,113 @@ class LeanMappingTest(unittest.TestCase):
                 self.assertEqual(len(authority_events), 1 if scenario == "mapping_conflict" else 0)
 
     def test_program_mapper_must_report_exact_generation_artifact_paths(self) -> None:
+        for scenario in (
+            "mapping_extra_artifact",
+            "mapping_unreported_extra_artifact",
+        ):
+            with self.subTest(scenario=scenario):
+                store = self.create_store()
+                engine = self.create_engine(store=store, scenario=scenario)
+                engine.map_documents()
+                with self.assertRaisesRegex(ValueError, "unexpected artifact paths"):
+                    engine.map_program()
+                self.assertFalse(
+                    (store.paths.root / "logs/unexpected-mapper-output.json").exists()
+                )
+                self.assertFalse(any(store.paths.outbox.iterdir()))
+                self.assertFalse(
+                    any(
+                        event["event_type"] == "map.generation_created"
+                        for event in store.validate_event_chain()
+                    )
+                )
+
+    def test_rejected_staging_generation_is_discarded_and_resume_retries_cleanly(self) -> None:
         store = self.create_store()
-        engine = self.create_engine(store=store, scenario="mapping_extra_artifact")
+        engine = self.create_engine(store=store, scenario="mapping_invalid_companion")
         engine.map_documents()
-        with self.assertRaisesRegex(ValueError, "unexpected artifact paths"):
+        with self.assertRaisesRegex(ValueError, "coverage companion"):
             engine.map_program()
-        self.assertFalse(
-            (store.paths.root / "logs/unexpected-mapper-output.json").exists()
+        self.assertFalse((store.paths.root / "maps/generation-0001/program-map.json").exists())
+        self.assertFalse(any(store.paths.outbox.iterdir()))
+
+        resumed = QueueEngine(
+            store,
+            engine.worktree,
+            self.create_launcher(scenario="mapping_success"),
         )
+        self.assertEqual(
+            resumed.map_program(), "maps/generation-0001/program-map.json"
+        )
+
+    def test_noncompleted_mapper_does_not_hide_successful_sibling_outputs(self) -> None:
+        store = self.create_store()
+        engine = self.create_engine(store=store, scenario="mapping_noncompleted_result")
+        with self.assertRaisesRegex(ValueError, "did not complete"):
+            engine.map_documents()
+        completed_paths = [
+            engine._document_map_path(document)
+            for document in store.document_set()
+            if document.document_id != "spec-01"
+        ]
+        self.assertTrue(
+            all((store.paths.root / path).is_file() for path in completed_paths)
+        )
+
+    def test_document_instruction_chains_and_program_union_are_deterministic(self) -> None:
+        nested = self.repo / "specs"
+        nested.mkdir()
+        nested_spec = nested / "spec-a.md"
+        shutil.copyfile(FIXTURES / "spec-a.md", nested_spec)
+        (nested / "AGENTS.md").write_text(
+            "# Nested Instructions\n\nPreserve nested spec ownership.\n",
+            encoding="utf-8",
+        )
+        subprocess.run(["git", "-C", str(self.repo), "add", "."], check=True)
+        subprocess.run(
+            ["git", "-C", str(self.repo), "commit", "-q", "-m", "nested instructions"],
+            check=True,
+        )
+        store = RunStore.create(
+            codex_home=self.home,
+            workspace=self.repo,
+            specs=[nested_spec, self.repo / "spec-b.md"],
+            plans=[self.repo / "plan-a.md", self.repo / "plan-b.md"],
+            program_plan=self.repo / "program.md",
+        )
+        engine = self.create_engine(store=store)
+        engine.map_program()
+        invocations = self.invocations()
+        root_agents = str((engine.worktree.root / "AGENTS.md").resolve())
+        nested_agents = str((engine.worktree.root / "specs/AGENTS.md").resolve())
+        spec_invocation = next(
+            item
+            for item in invocations
+            if item["role"] == "document_mapper"
+            and any("spec-01.md" in path for path in item["input_paths"])
+        )
+        self.assertEqual(spec_invocation["input_paths"][-2:], [root_agents, nested_agents])
+        program_invocation = invocations[-1]
+        instruction_inputs = [
+            path for path in program_invocation["input_paths"] if path.endswith("AGENTS.md")
+        ]
+        self.assertEqual(instruction_inputs, [root_agents, nested_agents])
+
+    def test_mapping_allows_repository_without_root_agents(self) -> None:
+        (self.repo / "AGENTS.md").unlink()
+        subprocess.run(["git", "-C", str(self.repo), "add", "-u"], check=True)
+        subprocess.run(
+            ["git", "-C", str(self.repo), "commit", "-q", "-m", "no root instructions"],
+            check=True,
+        )
+        store = self.create_store()
+        engine = self.create_engine(store=store)
+        self.assertEqual(engine.map_program(), "maps/generation-0001/program-map.json")
         self.assertFalse(
             any(
-                event["event_type"] == "map.generation_created"
-                for event in store.validate_event_chain()
+                path.endswith("AGENTS.md")
+                for invocation in self.invocations()
+                for path in invocation["input_paths"]
             )
         )
 
@@ -435,6 +716,7 @@ class LeanMappingTest(unittest.TestCase):
             "program_map_sha256": "c" * 64,
             "title": "Implement one bounded change",
             "dependencies": [],
+            "dependency_edges": [],
             "source_references": [
                 source_reference("plan-01", source_sha256=document_hashes["plan-01"]),
                 source_reference(
@@ -444,13 +726,27 @@ class LeanMappingTest(unittest.TestCase):
                 ),
             ],
             "global_constraints": [
-                source_reference(
-                    "spec-01",
-                    source_sha256=document_hashes["spec-01"],
-                    exact_excerpt="The first approved requirement is immutable.",
+                bound_statement(
+                    "preserve the immutable approved requirement",
+                    source_reference(
+                        "spec-01",
+                        source_sha256=document_hashes["spec-01"],
+                        exact_excerpt="The first approved requirement is immutable.",
+                    ),
                 )
             ],
-            "acceptance": ["python3 evals/check_lean_mapping.py"],
+            "acceptance": [
+                bound_command(
+                    "python3 evals/check_lean_mapping.py",
+                    source_reference("plan-01", source_sha256=document_hashes["plan-01"]),
+                )
+            ],
+            "upstream_interface_commitments": [
+                bound_statement(
+                    "preserve the upstream interface",
+                    source_reference("plan-01", source_sha256=document_hashes["plan-01"]),
+                )
+            ],
             "expected_report_path": "reports/plan-01-T1.md",
         }
         validated = validate_task_brief(
@@ -473,7 +769,7 @@ class LeanMappingTest(unittest.TestCase):
     def test_oversized_task_split_records_and_preserves_exact_source_coverage(self) -> None:
         payload = self.valid_program_map()
         original = payload["tasks"].pop()
-        shared_reference = source_reference("plan-02", source_sha256="4" * 64)
+        shared_reference = source_reference("plan-02", source_sha256="b" * 64)
         first = {
             **original,
             "task_id": "plan-02:T1.1",
@@ -485,6 +781,9 @@ class LeanMappingTest(unittest.TestCase):
             "task_id": "plan-02:T1.2",
             "title": "Integrate the second boundary",
             "dependencies": ["plan-02:T1.1"],
+            "dependency_edges": [
+                dependency_edge("plan-02:T1.1", shared_reference)
+            ],
             "brief_path": "briefs/plan-02-T1.2.json",
         }
         payload["tasks"].extend([first, second])
@@ -497,12 +796,82 @@ class LeanMappingTest(unittest.TestCase):
             }
         ]
         validated = validate_program_map(
-            payload, document_ids=set(payload["document_map_sha256s"])
+            payload, document_hashes=self.program_document_hashes()
         )
         split = validated["task_splits"][0]
         self.assertEqual(split["source_task_id"], "plan-02:T1")
         self.assertEqual(split["split_task_ids"], ["plan-02:T1.1", "plan-02:T1.2"])
         self.assertEqual(split["source_references"], [shared_reference])
+
+    def test_program_authority_and_split_refs_require_immutable_document_sha(self) -> None:
+        authority = self.valid_program_map()
+        authority["authority_items"] = [
+            {
+                "authority_id": "A1",
+                "authority_code": "authoritative_document_conflict",
+                "affected_task_ids": ["plan-01:T1"],
+                "question": "Which authority governs?",
+                "options": ["a", "b"],
+                "recommended": "a",
+                "source_references": [
+                    source_reference("spec-01", source_sha256="f" * 64)
+                ],
+            }
+        ]
+        with self.assertRaisesRegex(ValueError, "source SHA"):
+            validate_program_map(
+                authority, document_hashes=self.program_document_hashes()
+            )
+
+        split = self.valid_program_map()
+        original = split["tasks"].pop()
+        split["tasks"].extend(
+            [
+                {
+                    **original,
+                    "task_id": "plan-02:T1.1",
+                    "brief_path": "briefs/plan-02-T1.1.json",
+                },
+                {
+                    **original,
+                    "task_id": "plan-02:T1.2",
+                    "dependencies": ["plan-02:T1.1"],
+                    "dependency_edges": [
+                        dependency_edge(
+                            "plan-02:T1.1",
+                            source_reference("plan-02", source_sha256="b" * 64),
+                        )
+                    ],
+                    "brief_path": "briefs/plan-02-T1.2.json",
+                },
+            ]
+        )
+        split["task_splits"] = [
+            {
+                "source_task_id": "plan-02:T1",
+                "split_task_ids": ["plan-02:T1.1", "plan-02:T1.2"],
+                "source_references": [
+                    source_reference("plan-02", source_sha256="f" * 64)
+                ],
+                "reason": "bounded split",
+            }
+        ]
+        with self.assertRaisesRegex(ValueError, "source SHA"):
+            validate_program_map(split, document_hashes=self.program_document_hashes())
+
+    def test_split_briefs_collectively_preserve_candidate_contract(self) -> None:
+        store = self.create_store()
+        engine = self.create_engine(store=store, scenario="mapping_lossy_split")
+        engine.map_documents()
+        with self.assertRaisesRegex(ValueError, "split.*acceptance|split.*dependencies"):
+            engine.map_program()
+
+    def test_program_mapper_cannot_weaken_an_unsplit_candidate_contract(self) -> None:
+        store = self.create_store()
+        engine = self.create_engine(store=store, scenario="mapping_weaken_candidate")
+        engine.map_documents()
+        with self.assertRaisesRegex(ValueError, "task acceptance"):
+            engine.map_program()
 
 
 if __name__ == "__main__":

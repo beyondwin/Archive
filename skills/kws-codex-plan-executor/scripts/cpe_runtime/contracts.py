@@ -87,6 +87,45 @@ REQUIREMENT_DISPOSITIONS = frozenset(
         "unmapped",
     }
 )
+REQUIREMENT_KINDS = frozenset(
+    {
+        "normative",
+        "goal",
+        "non_goal",
+        "decision",
+        "constraint",
+        "amendment",
+        "supersession",
+    }
+)
+_DECISION_KINDS_BY_ROLE = {
+    "spec": frozenset(
+        {"goal", "non_goal", "approved", "amendment", "supersession", "unresolved"}
+    ),
+    "plan": frozenset(
+        {"checkpoint", "authority_decision", "external_effect", "ordering", "approved"}
+    ),
+    "program_plan": frozenset(
+        {
+            "plan_order",
+            "wave_order",
+            "ownership",
+            "integration_gate",
+            "supersession",
+            "authority_rule",
+            "approved",
+        }
+    ),
+}
+_CONSTRAINT_KINDS_BY_ROLE = {
+    "spec": frozenset({"global", "scoped", "interface", "file"}),
+    "plan": frozenset({"global", "task", "file", "interface", "acceptance"}),
+    "program_plan": frozenset({"global", "plan", "wave", "ownership", "integration"}),
+}
+_GRAPH_EDGE_KINDS = frozenset(
+    {"task_dependency", "plan_order", "wave_order", "cross_plan_dependency"}
+)
+_HOTSPOT_KINDS = frozenset({"shared_file", "interface"})
 
 _EVENT_PAYLOAD_SCHEMAS = {
     "run.created": (
@@ -385,8 +424,341 @@ def _validate_source_references(
     return result
 
 
+def _validate_authority_ids(value: object, name: str) -> list[str]:
+    return [
+        _map_id(item, f"{name} authority_id")
+        for item in _map_string_list(value, f"{name} authority_ids")
+    ]
+
+
+def _validate_binding(
+    payload: Mapping[str, object],
+    *,
+    document_hashes: Mapping[str, str],
+    text_field: str,
+    name: str,
+) -> dict[str, object]:
+    value = _map_object(
+        payload,
+        fields=frozenset({text_field, "source_references", "authority_ids"}),
+        name=name,
+    )
+    references = _validate_source_references(
+        value["source_references"],
+        document_hashes=document_hashes,
+        name=f"{name} source_references",
+        allow_empty=True,
+    )
+    authority_ids = _validate_authority_ids(value["authority_ids"], name)
+    if not references and not authority_ids:
+        raise ValueError(f"{name} must bind to immutable source or recorded authority")
+    return {
+        text_field: _map_text(value[text_field], f"{name} {text_field}", 4096),
+        "source_references": references,
+        "authority_ids": authority_ids,
+    }
+
+
+def _validate_bindings(
+    value: object,
+    *,
+    document_hashes: Mapping[str, str],
+    text_field: str,
+    name: str,
+    allow_empty: bool = True,
+) -> list[dict[str, object]]:
+    if not isinstance(value, list) or (not allow_empty and not value) or len(value) > 4096:
+        raise ValueError(f"{name} must be a bounded array")
+    result = [
+        _validate_binding(
+            item,
+            document_hashes=document_hashes,
+            text_field=text_field,
+            name=f"{name} entry",
+        )
+        for item in value
+    ]
+    encoded = [canonical_json(item) for item in result]
+    if len(encoded) != len(set(encoded)):
+        raise ValueError(f"{name} entries must be unique")
+    return result
+
+
+def _validate_dependency_edges(
+    value: object,
+    *,
+    document_hashes: Mapping[str, str],
+    name: str,
+) -> list[dict[str, object]]:
+    if not isinstance(value, list) or len(value) > 4096:
+        raise ValueError(f"{name} must be a bounded array")
+    result: list[dict[str, object]] = []
+    task_ids: set[str] = set()
+    for raw_edge in value:
+        edge = _map_object(
+            raw_edge,
+            fields=frozenset({"task_id", "source_references", "authority_ids"}),
+            name=f"{name} entry",
+        )
+        task_id = _map_id(edge["task_id"], f"{name} task_id")
+        if task_id in task_ids:
+            raise ValueError(f"{name} task IDs must be unique")
+        task_ids.add(task_id)
+        references = _validate_source_references(
+            edge["source_references"],
+            document_hashes=document_hashes,
+            name=f"{name} source_references",
+            allow_empty=True,
+        )
+        authority_ids = _validate_authority_ids(edge["authority_ids"], name)
+        if not references and not authority_ids:
+            raise ValueError(f"{name} must bind to immutable source or recorded authority")
+        result.append(
+            {
+                "task_id": task_id,
+                "source_references": references,
+                "authority_ids": authority_ids,
+            }
+        )
+    return result
+
+
+def _validate_graph_edges(
+    value: object,
+    *,
+    document_hashes: Mapping[str, str],
+    name: str,
+) -> list[dict[str, object]]:
+    if not isinstance(value, list) or len(value) > 4096:
+        raise ValueError(f"{name} must be a bounded array")
+    result: list[dict[str, object]] = []
+    for raw_edge in value:
+        edge = _map_object(
+            raw_edge,
+            fields=frozenset(
+                {
+                    "predecessor_id",
+                    "successor_id",
+                    "kind",
+                    "source_references",
+                    "authority_ids",
+                }
+            ),
+            name=f"{name} entry",
+        )
+        kind = edge["kind"]
+        if kind not in _GRAPH_EDGE_KINDS:
+            raise ValueError(f"{name} has an unknown edge kind")
+        references = _validate_source_references(
+            edge["source_references"],
+            document_hashes=document_hashes,
+            name=f"{name} source_references",
+            allow_empty=True,
+        )
+        authority_ids = _validate_authority_ids(edge["authority_ids"], name)
+        if not references and not authority_ids:
+            raise ValueError(f"{name} must bind to immutable source or recorded authority")
+        result.append(
+            {
+                "predecessor_id": _map_id(
+                    edge["predecessor_id"], f"{name} predecessor_id"
+                ),
+                "successor_id": _map_id(
+                    edge["successor_id"], f"{name} successor_id"
+                ),
+                "kind": kind,
+                "source_references": references,
+                "authority_ids": authority_ids,
+            }
+        )
+    encoded = [canonical_json(item) for item in result]
+    if len(encoded) != len(set(encoded)):
+        raise ValueError(f"{name} entries must be unique")
+    return result
+
+
+def _validate_plan_wave_graph(
+    payload: object,
+    *,
+    document_hashes: Mapping[str, str],
+    name: str,
+) -> dict[str, object]:
+    value = _map_object(
+        payload,
+        fields=frozenset({"plans", "waves", "edges"}),
+        name=name,
+    )
+    node_fields = frozenset(
+        {"node_id", "member_ids", "source_references", "authority_ids"}
+    )
+
+    def nodes(raw: object, node_name: str) -> list[dict[str, object]]:
+        if not isinstance(raw, list) or len(raw) > 4096:
+            raise ValueError(f"{node_name} must be a bounded array")
+        result: list[dict[str, object]] = []
+        node_ids: set[str] = set()
+        for raw_node in raw:
+            node = _map_object(raw_node, fields=node_fields, name=f"{node_name} entry")
+            node_id = _map_id(node["node_id"], f"{node_name} node_id")
+            if node_id in node_ids:
+                raise ValueError(f"{node_name} node IDs must be unique")
+            node_ids.add(node_id)
+            references = _validate_source_references(
+                node["source_references"],
+                document_hashes=document_hashes,
+                name=f"{node_name} source_references",
+                allow_empty=True,
+            )
+            authority_ids = _validate_authority_ids(node["authority_ids"], node_name)
+            if not references and not authority_ids:
+                raise ValueError(
+                    f"{node_name} must bind to immutable source or recorded authority"
+                )
+            result.append(
+                {
+                    "node_id": node_id,
+                    "member_ids": [
+                        _map_id(item, f"{node_name} member_id")
+                        for item in _map_string_list(
+                            node["member_ids"], f"{node_name} member_ids", allow_empty=False
+                        )
+                    ],
+                    "source_references": references,
+                    "authority_ids": authority_ids,
+                }
+            )
+        return result
+
+    return {
+        "plans": nodes(value["plans"], f"{name} plans"),
+        "waves": nodes(value["waves"], f"{name} waves"),
+        "edges": _validate_graph_edges(
+            value["edges"], document_hashes=document_hashes, name=f"{name} edges"
+        ),
+    }
+
+
+def _validate_hotspots(
+    value: object,
+    *,
+    document_hashes: Mapping[str, str],
+    name: str,
+) -> list[dict[str, object]]:
+    if not isinstance(value, list) or len(value) > 4096:
+        raise ValueError(f"{name} must be a bounded array")
+    fields = frozenset(
+        {
+            "hotspot_id",
+            "kind",
+            "location",
+            "task_ids",
+            "source_references",
+            "authority_ids",
+        }
+    )
+    result: list[dict[str, object]] = []
+    ids: set[str] = set()
+    for raw_item in value:
+        item = _map_object(raw_item, fields=fields, name=f"{name} entry")
+        hotspot_id = _map_id(item["hotspot_id"], f"{name} hotspot_id")
+        if hotspot_id in ids:
+            raise ValueError(f"{name} IDs must be unique")
+        ids.add(hotspot_id)
+        kind = item["kind"]
+        if kind not in _HOTSPOT_KINDS:
+            raise ValueError(f"{name} has an unknown kind")
+        references = _validate_source_references(
+            item["source_references"],
+            document_hashes=document_hashes,
+            name=f"{name} source_references",
+            allow_empty=True,
+        )
+        authority_ids = _validate_authority_ids(item["authority_ids"], name)
+        if not references and not authority_ids:
+            raise ValueError(f"{name} must bind to immutable source or recorded authority")
+        result.append(
+            {
+                "hotspot_id": hotspot_id,
+                "kind": kind,
+                "location": _map_text(item["location"], f"{name} location", 4096),
+                "task_ids": [
+                    _map_id(task_id, f"{name} task_id")
+                    for task_id in _map_string_list(item["task_ids"], f"{name} task_ids")
+                ],
+                "source_references": references,
+                "authority_ids": authority_ids,
+            }
+        )
+    return result
+
+
+def _validate_role_records(
+    value: object,
+    *,
+    document_hashes: Mapping[str, str],
+    name: str,
+    id_field: str,
+    roles: Mapping[str, frozenset[str]],
+    include_affected_ids: bool,
+    expected_role: str | None = None,
+) -> list[dict[str, object]]:
+    if not isinstance(value, list) or len(value) > 4096:
+        raise ValueError(f"{name} must be a bounded array")
+    fields = {id_field, "role", "kind", "statement", "source_references", "authority_ids"}
+    if include_affected_ids:
+        fields.add("affected_ids")
+    result: list[dict[str, object]] = []
+    ids: set[str] = set()
+    for raw_item in value:
+        item = _map_object(raw_item, fields=frozenset(fields), name=f"{name} entry")
+        record_id = _map_id(item[id_field], f"{name} {id_field}")
+        if record_id in ids:
+            raise ValueError(f"{name} IDs must be unique")
+        ids.add(record_id)
+        role = item["role"]
+        kind = item["kind"]
+        if expected_role is not None and role != expected_role:
+            raise ValueError(f"{name} must match its document role")
+        if role not in roles or kind not in roles[role]:
+            raise ValueError(f"{name} kind is invalid for its document role")
+        parsed = _validate_binding(
+            {
+                "statement": item["statement"],
+                "source_references": item["source_references"],
+                "authority_ids": item["authority_ids"],
+            },
+            document_hashes=document_hashes,
+            text_field="statement",
+            name=f"{name} entry",
+        )
+        record = {id_field: record_id, "role": role, "kind": kind, **parsed}
+        if include_affected_ids:
+            record["affected_ids"] = [
+                _map_id(identifier, f"{name} affected_id")
+                for identifier in _map_string_list(
+                    item["affected_ids"], f"{name} affected_ids"
+                )
+            ]
+        result.append(record)
+    return result
+
+
+def _referenced_authority_ids(value: object) -> set[str]:
+    result: set[str] = set()
+    if isinstance(value, Mapping):
+        for key, child in value.items():
+            if key == "authority_ids" and isinstance(child, list):
+                result.update(str(item) for item in child)
+            else:
+                result.update(_referenced_authority_ids(child))
+    elif isinstance(value, list):
+        for child in value:
+            result.update(_referenced_authority_ids(child))
+    return result
+
+
 def _validate_program_authority_items(
-    value: object, *, document_ids: set[str], task_ids: set[str]
+    value: object, *, document_hashes: Mapping[str, str], task_ids: set[str]
 ) -> list[dict[str, object]]:
     if not isinstance(value, list) or len(value) > 256:
         raise ValueError("program authority_items must be a bounded array")
@@ -431,10 +803,10 @@ def _validate_program_authority_items(
         if recommended not in options:
             raise ValueError("program authority recommendation must be one option")
         references = _validate_source_references(
-            item["source_references"], name="authority source_references"
+            item["source_references"],
+            document_hashes=document_hashes,
+            name="authority source_references",
         )
-        if not {str(reference["document_id"]) for reference in references} <= document_ids:
-            raise ValueError("program authority item names an unknown source document")
         result.append(
             {
                 "authority_id": authority_id,
@@ -501,6 +873,10 @@ def validate_document_map(
             "dependencies",
             "authority_items",
             "verification_commands",
+            "plan_wave_graph",
+            "hotspots",
+            "decisions",
+            "constraints",
         }
     )
     value = _map_object(payload, fields=fields, name="document map")
@@ -512,6 +888,15 @@ def validate_document_map(
         raise ValueError("document map role does not match its input")
     if _map_hash(value["source_sha256"], "document map source SHA") != document.sha256:
         raise ValueError("document map source SHA does not match its immutable input")
+    document_hashes = {document.document_id: document.sha256}
+    authority_items = _validate_document_authority_items(
+        value["authority_items"],
+        document_id=document.document_id,
+        source_sha256=document.sha256,
+    )
+    document_authority_ids = {
+        str(item["authority_id"]) for item in authority_items
+    }
 
     requirement_fields = frozenset(
         {
@@ -540,6 +925,8 @@ def validate_document_map(
             raise ValueError("requirement IDs must be unique")
         requirement_ids.add(requirement_id)
         kind = _map_text(requirement["kind"], "requirement kind", 64)
+        if kind not in REQUIREMENT_KINDS:
+            raise ValueError("requirement kind is not approved by the mapping schema")
         heading = _map_text(requirement["heading"], "requirement heading", 1024)
         line_start = requirement["line_start"]
         line_end = requirement["line_end"]
@@ -562,8 +949,11 @@ def validate_document_map(
                 "exact_excerpt": _map_text(
                     requirement["exact_excerpt"], "requirement exact_excerpt", 256_000
                 ),
-                "constraints": _map_string_list(
-                    requirement["constraints"], "requirement constraints"
+                "constraints": _validate_bindings(
+                    requirement["constraints"],
+                    document_hashes=document_hashes,
+                    text_field="statement",
+                    name="requirement constraints",
                 ),
             }
         )
@@ -578,8 +968,10 @@ def validate_document_map(
             "exact_excerpt",
             "requirement_ids",
             "dependencies",
+            "dependency_edges",
             "acceptance",
             "global_constraints",
+            "upstream_interface_commitments",
         }
     )
     candidates_value = value["task_candidates"]
@@ -608,6 +1000,19 @@ def validate_document_map(
             or line_end < line_start
         ):
             raise ValueError("task candidate line range is invalid")
+        dependencies = [
+            _map_id(item, "task candidate dependency")
+            for item in _map_string_list(
+                candidate["dependencies"], "task candidate dependencies"
+            )
+        ]
+        dependency_edges = _validate_dependency_edges(
+            candidate["dependency_edges"],
+            document_hashes=document_hashes,
+            name="task candidate dependency_edges",
+        )
+        if dependencies != [str(edge["task_id"]) for edge in dependency_edges]:
+            raise ValueError("task candidate dependency edges differ from dependencies")
         candidates.append(
             {
                 "task_id": task_id,
@@ -624,30 +1029,76 @@ def validate_document_map(
                         candidate["requirement_ids"], "task candidate requirement_ids"
                     )
                 ],
-                "dependencies": [
-                    _map_id(item, "task candidate dependency")
-                    for item in _map_string_list(
-                        candidate["dependencies"], "task candidate dependencies"
-                    )
-                ],
-                "acceptance": _map_string_list(
-                    candidate["acceptance"], "task candidate acceptance"
+                "dependencies": dependencies,
+                "dependency_edges": dependency_edges,
+                "acceptance": _validate_bindings(
+                    candidate["acceptance"],
+                    document_hashes=document_hashes,
+                    text_field="command",
+                    name="task candidate acceptance",
                 ),
-                "global_constraints": _map_string_list(
-                    candidate["global_constraints"], "task candidate global_constraints"
+                "global_constraints": _validate_bindings(
+                    candidate["global_constraints"],
+                    document_hashes=document_hashes,
+                    text_field="statement",
+                    name="task candidate global_constraints",
+                ),
+                "upstream_interface_commitments": _validate_bindings(
+                    candidate["upstream_interface_commitments"],
+                    document_hashes=document_hashes,
+                    text_field="statement",
+                    name="task candidate upstream interface commitments",
                 ),
             }
         )
 
-    dependencies = _map_string_list(value["dependencies"], "document dependencies")
-    authority_items = _validate_document_authority_items(
-        value["authority_items"],
-        document_id=document.document_id,
-        source_sha256=document.sha256,
+    dependencies = _validate_graph_edges(
+        value["dependencies"],
+        document_hashes=document_hashes,
+        name="document dependencies",
     )
     verification_commands = _map_string_list(
         value["verification_commands"], "document verification_commands"
     )
+    plan_wave_graph = _validate_plan_wave_graph(
+        value["plan_wave_graph"],
+        document_hashes=document_hashes,
+        name="document plan_wave_graph",
+    )
+    hotspots = _validate_hotspots(
+        value["hotspots"], document_hashes=document_hashes, name="document hotspots"
+    )
+    decisions = _validate_role_records(
+        value["decisions"],
+        document_hashes=document_hashes,
+        name="document decisions",
+        id_field="decision_id",
+        roles=_DECISION_KINDS_BY_ROLE,
+        include_affected_ids=False,
+        expected_role=document.role,
+    )
+    constraints = _validate_role_records(
+        value["constraints"],
+        document_hashes=document_hashes,
+        name="document constraints",
+        id_field="constraint_id",
+        roles=_CONSTRAINT_KINDS_BY_ROLE,
+        include_affected_ids=True,
+        expected_role=document.role,
+    )
+    bound_authority_ids = _referenced_authority_ids(
+        {
+            "requirements": requirements,
+            "task_candidates": candidates,
+            "dependencies": dependencies,
+            "plan_wave_graph": plan_wave_graph,
+            "hotspots": hotspots,
+            "decisions": decisions,
+            "constraints": constraints,
+        }
+    )
+    if not bound_authority_ids <= document_authority_ids:
+        raise ValueError("document map binding names an unknown authority item")
     return {
         "schema_version": MAP_SCHEMA_VERSION,
         "document_id": document.document_id,
@@ -658,11 +1109,15 @@ def validate_document_map(
         "dependencies": dependencies,
         "authority_items": authority_items,
         "verification_commands": verification_commands,
+        "plan_wave_graph": plan_wave_graph,
+        "hotspots": hotspots,
+        "decisions": decisions,
+        "constraints": constraints,
     }
 
 
 def validate_program_map(
-    payload: object, *, document_ids: set[str]
+    payload: object, *, document_hashes: Mapping[str, str]
 ) -> dict[str, object]:
     """Validate a global task graph and honest requirement dispositions."""
 
@@ -675,6 +1130,10 @@ def validate_program_map(
             "coverage",
             "final_verification_commands",
             "authority_items",
+            "plan_wave_graph",
+            "hotspots",
+            "decisions",
+            "constraints",
         }
     )
     if not isinstance(payload, Mapping):
@@ -685,8 +1144,15 @@ def validate_program_map(
     value = dict(payload)
     if value["schema_version"] != MAP_SCHEMA_VERSION or value["generation"] != 1:
         raise ValueError("program map must be schema 1 generation 1")
-    if not isinstance(document_ids, set) or not document_ids:
-        raise ValueError("document_ids must be a non-empty set")
+    if not isinstance(document_hashes, Mapping) or not document_hashes:
+        raise ValueError("document_hashes must be a non-empty mapping")
+    normalized_document_hashes = {
+        _map_id(document_id, "program document ID"): _map_hash(
+            digest, "program document SHA"
+        )
+        for document_id, digest in document_hashes.items()
+    }
+    document_ids = set(normalized_document_hashes)
     hashes = value["document_map_sha256s"]
     if not isinstance(hashes, Mapping) or set(hashes) != document_ids:
         raise ValueError("program map document-map IDs are incomplete or unknown")
@@ -700,8 +1166,12 @@ def validate_program_map(
             "task_id",
             "title",
             "dependencies",
+            "dependency_edges",
             "document_ids",
             "requirement_ids",
+            "acceptance",
+            "global_constraints",
+            "upstream_interface_commitments",
             "brief_path",
         }
     )
@@ -721,6 +1191,13 @@ def validate_program_map(
             _map_id(item, "task dependency")
             for item in _map_string_list(task["dependencies"], "task dependencies")
         ]
+        dependency_edges = _validate_dependency_edges(
+            task["dependency_edges"],
+            document_hashes=normalized_document_hashes,
+            name="program task dependency_edges",
+        )
+        if dependencies != [str(edge["task_id"]) for edge in dependency_edges]:
+            raise ValueError("program task dependency edges differ from dependencies")
         task_document_ids = [
             _map_id(item, "task document_id")
             for item in _map_string_list(
@@ -746,8 +1223,27 @@ def validate_program_map(
                 "task_id": task_id,
                 "title": _map_text(task["title"], "program task title", 1024),
                 "dependencies": dependencies,
+                "dependency_edges": dependency_edges,
                 "document_ids": task_document_ids,
                 "requirement_ids": requirement_ids,
+                "acceptance": _validate_bindings(
+                    task["acceptance"],
+                    document_hashes=normalized_document_hashes,
+                    text_field="command",
+                    name="program task acceptance",
+                ),
+                "global_constraints": _validate_bindings(
+                    task["global_constraints"],
+                    document_hashes=normalized_document_hashes,
+                    text_field="statement",
+                    name="program task global_constraints",
+                ),
+                "upstream_interface_commitments": _validate_bindings(
+                    task["upstream_interface_commitments"],
+                    document_hashes=normalized_document_hashes,
+                    text_field="statement",
+                    name="program task upstream interface commitments",
+                ),
                 "brief_path": brief_path,
             }
         )
@@ -791,7 +1287,15 @@ def validate_program_map(
         requirement_id = _map_id(raw_requirement_id, "coverage requirement_id")
         record = _map_object(
             raw_record,
-            fields=frozenset({"disposition", "task_ids", "reason"}),
+            fields=frozenset(
+                {
+                    "disposition",
+                    "task_ids",
+                    "reason",
+                    "source_references",
+                    "authority_ids",
+                }
+            ),
             name="coverage record",
         )
         disposition = record["disposition"]
@@ -804,18 +1308,31 @@ def validate_program_map(
         if not set(coverage_task_ids) <= task_ids:
             raise ValueError("coverage names an unknown task")
         reason = record["reason"]
+        source_references = _validate_source_references(
+            record["source_references"],
+            document_hashes=normalized_document_hashes,
+            name="coverage source_references",
+            allow_empty=True,
+        )
+        authority_ids = _validate_authority_ids(record["authority_ids"], "coverage")
+        if not source_references and not authority_ids:
+            raise ValueError("coverage disposition must bind to source or authority")
         if disposition == "planned":
             if not coverage_task_ids or reason is not None:
                 raise ValueError("planned coverage needs tasks and a null reason")
         else:
             if coverage_task_ids or not isinstance(reason, str) or not reason.strip():
                 raise ValueError("non-planned coverage needs no tasks and a recorded reason")
+        if disposition == "approved_deferred" and not authority_ids:
+            raise ValueError("approved_deferred coverage needs recorded authority")
         for task_id in coverage_task_ids:
             task_edges[task_id].add(requirement_id)
         coverage[requirement_id] = {
             "disposition": disposition,
             "task_ids": coverage_task_ids,
             "reason": reason,
+            "source_references": source_references,
+            "authority_ids": authority_ids,
         }
     for task in tasks:
         if set(task["requirement_ids"]) != task_edges[str(task["task_id"])]:
@@ -846,10 +1363,10 @@ def validate_program_map(
         if split_targets & set(split_task_ids):
             raise ValueError("split task targets must not overlap")
         references = _validate_source_references(
-            split["source_references"], name="task split source_references"
+            split["source_references"],
+            document_hashes=normalized_document_hashes,
+            name="task split source_references",
         )
-        if not {str(item["document_id"]) for item in references} <= document_ids:
-            raise ValueError("task split source reference names an unknown document")
         split_sources.add(source_task_id)
         split_targets.update(split_task_ids)
         task_splits.append(
@@ -862,8 +1379,52 @@ def validate_program_map(
         )
 
     authority_items = _validate_program_authority_items(
-        value["authority_items"], document_ids=document_ids, task_ids=task_ids
+        value["authority_items"],
+        document_hashes=normalized_document_hashes,
+        task_ids=task_ids,
     )
+    plan_wave_graph = _validate_plan_wave_graph(
+        value["plan_wave_graph"],
+        document_hashes=normalized_document_hashes,
+        name="program plan_wave_graph",
+    )
+    hotspots = _validate_hotspots(
+        value["hotspots"],
+        document_hashes=normalized_document_hashes,
+        name="program hotspots",
+    )
+    decisions = _validate_role_records(
+        value["decisions"],
+        document_hashes=normalized_document_hashes,
+        name="program decisions",
+        id_field="decision_id",
+        roles=_DECISION_KINDS_BY_ROLE,
+        include_affected_ids=False,
+    )
+    constraints = _validate_role_records(
+        value["constraints"],
+        document_hashes=normalized_document_hashes,
+        name="program constraints",
+        id_field="constraint_id",
+        roles=_CONSTRAINT_KINDS_BY_ROLE,
+        include_affected_ids=True,
+    )
+    known_authority_ids = {
+        str(item["authority_id"]) for item in authority_items
+    }
+    referenced_authority_ids = _referenced_authority_ids(
+        {
+            "tasks": tasks,
+            "coverage": coverage,
+            "task_splits": task_splits,
+            "plan_wave_graph": plan_wave_graph,
+            "hotspots": hotspots,
+            "decisions": decisions,
+            "constraints": constraints,
+        }
+    )
+    if not referenced_authority_ids <= known_authority_ids:
+        raise ValueError("program map binding names an unknown authority item")
     return {
         "schema_version": MAP_SCHEMA_VERSION,
         "generation": 1,
@@ -871,6 +1432,10 @@ def validate_program_map(
         "tasks": tasks,
         "coverage": coverage,
         "task_splits": task_splits,
+        "plan_wave_graph": plan_wave_graph,
+        "hotspots": hotspots,
+        "decisions": decisions,
+        "constraints": constraints,
         "final_verification_commands": _map_string_list(
             value["final_verification_commands"],
             "final verification commands",
@@ -895,9 +1460,11 @@ def validate_task_brief(
             "program_map_sha256",
             "title",
             "dependencies",
+            "dependency_edges",
             "source_references",
             "global_constraints",
             "acceptance",
+            "upstream_interface_commitments",
             "expected_report_path",
         }
     )
@@ -916,12 +1483,23 @@ def validate_task_brief(
         document_hashes=normalized_hashes,
         name="task brief source_references",
     )
-    constraints = _validate_source_references(
+    constraints = _validate_bindings(
         value["global_constraints"],
         document_hashes=normalized_hashes,
+        text_field="statement",
         name="task brief global_constraints",
-        allow_empty=True,
     )
+    dependencies = [
+        _map_id(item, "task brief dependency")
+        for item in _map_string_list(value["dependencies"], "task brief dependencies")
+    ]
+    dependency_edges = _validate_dependency_edges(
+        value["dependency_edges"],
+        document_hashes=normalized_hashes,
+        name="task brief dependency_edges",
+    )
+    if dependencies != [str(edge["task_id"]) for edge in dependency_edges]:
+        raise ValueError("task brief dependency edges differ from dependencies")
     expected_report_path = normalize_relative_path(
         _map_text(value["expected_report_path"], "expected report path", 512)
     )
@@ -932,14 +1510,21 @@ def validate_task_brief(
         "task_id": _map_id(value["task_id"], "task brief task_id"),
         "program_map_sha256": expected_sha,
         "title": _map_text(value["title"], "task brief title", 1024),
-        "dependencies": [
-            _map_id(item, "task brief dependency")
-            for item in _map_string_list(value["dependencies"], "task brief dependencies")
-        ],
+        "dependencies": dependencies,
+        "dependency_edges": dependency_edges,
         "source_references": references,
         "global_constraints": constraints,
-        "acceptance": _map_string_list(
-            value["acceptance"], "task brief acceptance", allow_empty=False
+        "acceptance": _validate_bindings(
+            value["acceptance"],
+            document_hashes=normalized_hashes,
+            text_field="command",
+            name="task brief acceptance",
+        ),
+        "upstream_interface_commitments": _validate_bindings(
+            value["upstream_interface_commitments"],
+            document_hashes=normalized_hashes,
+            text_field="statement",
+            name="task brief upstream interface commitments",
         ),
         "expected_report_path": expected_report_path,
     }

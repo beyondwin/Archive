@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import stat
+from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -66,12 +67,43 @@ class QueueEngine:
         self.worktree = worktree
         self.launcher = launcher
 
-    def _repository_instructions(self) -> tuple[Path, ...]:
+    @staticmethod
+    def _instruction_file(path: Path) -> Path | None:
+        if path.is_symlink():
+            raise ValueError("mapping instructions must not be a symlink")
+        if not path.exists():
+            return None
+        if not path.is_file():
+            raise ValueError("mapping instructions must be a regular file")
+        return path.resolve(strict=True)
+
+    def _document_instructions(self, document: InputDocument) -> tuple[Path, ...]:
         root = self.worktree.root
-        instructions = root / "AGENTS.md"
-        if not instructions.is_file() or instructions.is_symlink():
-            raise ValueError("mapping requires repository-root AGENTS.md instructions")
-        return (instructions.resolve(strict=True),)
+        result: list[Path] = []
+        root_instruction = self._instruction_file(root / "AGENTS.md")
+        if root_instruction is not None:
+            result.append(root_instruction)
+
+        try:
+            original = Path(document.original_path).resolve(strict=True)
+            relative_parent = original.relative_to(self.worktree.source).parent
+        except (OSError, ValueError):
+            return tuple(result)
+        current = root
+        for part in relative_parent.parts:
+            current = current / part
+            instruction = self._instruction_file(current / "AGENTS.md")
+            if instruction is not None and instruction not in result:
+                result.append(instruction)
+        return tuple(result)
+
+    def _repository_instructions(self) -> tuple[Path, ...]:
+        result: list[Path] = []
+        for document in self.store.document_set():
+            for instruction in self._document_instructions(document):
+                if instruction not in result:
+                    result.append(instruction)
+        return tuple(result)
 
     @staticmethod
     def _document_map_path(document: InputDocument) -> str:
@@ -116,15 +148,33 @@ class QueueEngine:
         finally:
             os.close(descriptor)
 
-    def _read_document_map(
-        self, document: InputDocument, relative_path: str
-    ) -> tuple[dict[str, object], bytes]:
-        data = self.store.read_artifact(relative_path)
+    @staticmethod
+    def _outbox_artifact_paths(outbox: Path) -> tuple[str, ...]:
+        paths: list[str] = []
+        for path in sorted(outbox.rglob("*")):
+            metadata = path.lstat()
+            if stat.S_ISLNK(metadata.st_mode):
+                raise ValueError("mapper outbox contains a symlink")
+            if stat.S_ISDIR(metadata.st_mode):
+                continue
+            if not stat.S_ISREG(metadata.st_mode):
+                raise ValueError("mapper outbox contains a special file")
+            relative = path.relative_to(outbox).as_posix()
+            if relative != ".child-result.json":
+                paths.append(relative)
+        return tuple(paths)
+
+    def _validate_document_map_bytes(
+        self, document: InputDocument, data: bytes
+    ) -> dict[str, object]:
         payload = _load_json(data, f"document map {document.document_id}")
         validated = validate_document_map(payload, document=document)
         if canonical_json(validated) != data:
             raise ValueError("document map is not in its canonical validated shape")
         source = self.store.read_artifact(document.snapshot_path)
+        self._verify_nested_source_references(
+            validated, sources={document.document_id: source}
+        )
         for section in ("requirements", "task_candidates"):
             for entry in validated[section]:
                 self._verify_exact_excerpt(
@@ -133,6 +183,13 @@ class QueueEngine:
                     line_end=int(entry["line_end"]),
                     exact_excerpt=str(entry["exact_excerpt"]),
                 )
+        return validated
+
+    def _read_document_map(
+        self, document: InputDocument, relative_path: str
+    ) -> tuple[dict[str, object], bytes]:
+        data = self.store.read_artifact(relative_path)
+        validated = self._validate_document_map_bytes(document, data)
         return validated, data
 
     @staticmethod
@@ -165,6 +222,27 @@ class QueueEngine:
                 line_end=int(reference["line_end"]),
                 exact_excerpt=str(reference["exact_excerpt"]),
             )
+
+    def _verify_nested_source_references(
+        self, value: object, *, sources: dict[str, bytes]
+    ) -> None:
+        if isinstance(value, Mapping):
+            source_fields = {
+                "document_id",
+                "heading",
+                "line_start",
+                "line_end",
+                "source_sha256",
+                "exact_excerpt",
+            }
+            if set(value) == source_fields:
+                self._verify_source_references([dict(value)], sources=sources)
+                return
+            for child in value.values():
+                self._verify_nested_source_references(child, sources=sources)
+        elif isinstance(value, list):
+            for child in value:
+                self._verify_nested_source_references(child, sources=sources)
 
     def _launch_document_map(
         self,
@@ -203,7 +281,6 @@ class QueueEngine:
         """Launch one fresh mapper per missing immutable input, then ingest in order."""
 
         documents = self.store.document_set()
-        instructions = self._repository_instructions()
         paths = tuple(self._document_map_path(document) for document in documents)
         pending: list[tuple[InputDocument, str, str]] = []
         for document, relative_path in zip(documents, paths, strict=True):
@@ -224,7 +301,7 @@ class QueueEngine:
                     executor.submit(
                         self._launch_document_map,
                         document,
-                        instructions,
+                        self._document_instructions(document),
                         attempt_id,
                         relative_path,
                     )
@@ -236,15 +313,50 @@ class QueueEngine:
                     except Exception as exc:
                         failures.append(exc)
 
-        for item in sorted(completed, key=lambda result: result.document.input_order):
-            if item.outcome.result.status != "completed":
-                raise ValueError(
+        successful = sorted(
+            (
+                item
+                for item in completed
+                if item.outcome.result.status == "completed"
+            ),
+            key=lambda result: result.document.input_order,
+        )
+        noncompleted = sorted(
+            (
+                item
+                for item in completed
+                if item.outcome.result.status != "completed"
+            ),
+            key=lambda result: result.document.input_order,
+        )
+        validation_failures: list[Exception] = []
+        for item in successful:
+            outbox = self.store.paths.outbox / item.attempt_id
+            try:
+                if item.outcome.result.artifact_paths != (item.artifact_path,):
+                    raise ValueError("document mapper returned unexpected artifact paths")
+                if self._outbox_artifact_paths(outbox) != (item.artifact_path,):
+                    raise ValueError("document mapper outbox has unexpected artifacts")
+                data = self._read_outbox_file(outbox, item.artifact_path)
+                self._validate_document_map_bytes(item.document, data)
+                self.store.put_artifact(item.artifact_path, data)
+                self._read_document_map(item.document, item.artifact_path)
+            except Exception as exc:
+                validation_failures.append(exc)
+            finally:
+                self.store.discard_outbox(item.attempt_id)
+        for item in noncompleted:
+            self.store.discard_outbox(item.attempt_id)
+            validation_failures.append(
+                ValueError(
                     f"document mapper {item.document.document_id} did not complete"
                 )
-            if item.outcome.result.artifact_paths != (item.artifact_path,):
-                raise ValueError("document mapper returned unexpected artifact paths")
-            self.store.ingest_outbox(item.attempt_id, item.outcome.result.artifact_paths)
-            self._read_document_map(item.document, item.artifact_path)
+            )
+        successful_attempts = {item.attempt_id for item in completed}
+        for _, attempt_id, _ in pending:
+            if attempt_id not in successful_attempts:
+                self.store.discard_outbox(attempt_id)
+        failures.extend(validation_failures)
         if failures:
             raise failures[0]
         return paths
@@ -266,12 +378,19 @@ class QueueEngine:
         document_maps: tuple[
             tuple[InputDocument, dict[str, object], bytes, str], ...
         ],
+        *,
+        reader: Callable[[str], bytes] | None = None,
     ) -> tuple[dict[str, object], bytes, tuple[str, ...]]:
+        read = self.store.read_artifact if reader is None else reader
         program_path = f"{_GENERATION_ROOT}/program-map.json"
-        program_bytes = self.store.read_artifact(program_path)
+        program_bytes = read(program_path)
+        document_hashes = {
+            document.document_id: document.sha256
+            for document, _, _, _ in document_maps
+        }
         program = validate_program_map(
             _load_json(program_bytes, "program map"),
-            document_ids={document.document_id for document, _, _, _ in document_maps},
+            document_hashes=document_hashes,
         )
         if canonical_json(program) != program_bytes:
             raise ValueError("program map is not in its canonical validated shape")
@@ -287,6 +406,11 @@ class QueueEngine:
             for _, document_map, _, _ in document_maps
             for requirement in document_map["requirements"]
             if requirement["kind"] == "normative"
+        }
+        mapped_requirements = {
+            str(requirement["requirement_id"]): (document, requirement)
+            for document, document_map, _, _ in document_maps
+            for requirement in document_map["requirements"]
         }
         if set(program["coverage"]) != normative_requirements:
             raise ValueError("program coverage does not exactly cover normative requirements")
@@ -315,22 +439,215 @@ class QueueEngine:
         if {str(task["task_id"]) for task in program["tasks"]} != expected_task_ids:
             raise ValueError("program task graph differs from mapped candidates and splits")
 
-        program_sha256 = _sha256(program_bytes)
-        document_hashes = {
-            document.document_id: document.sha256
-            for document, _, _, _ in document_maps
+        expected_plan_wave_graph = {
+            key: [
+                item
+                for _, document_map, _, _ in document_maps
+                for item in document_map["plan_wave_graph"][key]
+            ]
+            for key in ("plans", "waves", "edges")
         }
+        expected_plan_wave_graph["edges"] = [
+            item
+            for _, document_map, _, _ in document_maps
+            for item in (
+                *document_map["dependencies"],
+                *document_map["plan_wave_graph"]["edges"],
+            )
+        ]
+        if program["plan_wave_graph"] != expected_plan_wave_graph:
+            raise ValueError("program map weakens or invents the mapped plan-wave graph")
+        for field in ("hotspots", "decisions", "constraints"):
+            expected = [
+                item
+                for _, document_map, _, _ in document_maps
+                for item in document_map[field]
+            ]
+            if program[field] != expected:
+                raise ValueError(f"program map weakens or invents mapped {field}")
+        program_authority = {
+            str(item["authority_id"]): item for item in program["authority_items"]
+        }
+        for _, document_map, _, _ in document_maps:
+            for document_authority in document_map["authority_items"]:
+                authority_id = str(document_authority["authority_id"])
+                mapped = program_authority.get(authority_id)
+                if mapped is None or any(
+                    mapped[field] != document_authority[field]
+                    for field in (
+                        "authority_code",
+                        "question",
+                        "source_references",
+                    )
+                ):
+                    raise ValueError("program map omits or changes mapped authority")
+
+        global_constraint_bindings = [
+            {
+                "statement": constraint["statement"],
+                "source_references": constraint["source_references"],
+                "authority_ids": constraint["authority_ids"],
+            }
+            for _, document_map, _, _ in document_maps
+            for constraint in document_map["constraints"]
+            if constraint["kind"] == "global" and not constraint["affected_ids"]
+        ]
+
+        def encoded(values: list[dict[str, object]]) -> set[bytes]:
+            return {canonical_json(item) for item in values}
+
+        def candidate_reference(
+            document: InputDocument, candidate: dict[str, object]
+        ) -> dict[str, object]:
+            return {
+                "document_id": document.document_id,
+                "heading": candidate["heading"],
+                "line_start": candidate["line_start"],
+                "line_end": candidate["line_end"],
+                "source_sha256": document.sha256,
+                "exact_excerpt": candidate["exact_excerpt"],
+            }
+
+        task_by_id = {str(task["task_id"]): task for task in program["tasks"]}
+        split_by_source = {
+            str(split["source_task_id"]): split for split in program["task_splits"]
+        }
+        for source_task_id in split_by_source:
+            if source_task_id not in task_candidates:
+                raise ValueError("task split source_task_id is not a mapped candidate")
+
+        for candidate_id, (candidate_document, candidate) in task_candidates.items():
+            split = split_by_source.get(candidate_id)
+            target_ids = (
+                [str(item) for item in split["split_task_ids"]]
+                if split is not None
+                else [candidate_id]
+            )
+            target_tasks = [task_by_id[task_id] for task_id in target_ids]
+            planned_requirement_ids = {
+                str(requirement_id)
+                for requirement_id in candidate["requirement_ids"]
+                if requirement_id in program["coverage"]
+                and program["coverage"][requirement_id]["disposition"] == "planned"
+            }
+            unknown_requirement_ids = set(candidate["requirement_ids"]) - set(
+                program["coverage"]
+            )
+            if unknown_requirement_ids:
+                raise ValueError(
+                    "mapped candidate names unknown normative requirements: "
+                    f"{sorted(unknown_requirement_ids)}"
+                )
+            actual_requirement_ids = {
+                str(requirement_id)
+                for task in target_tasks
+                for requirement_id in task["requirement_ids"]
+            }
+            if actual_requirement_ids != planned_requirement_ids:
+                raise ValueError("program tasks weaken or invent mapped candidate coverage")
+            requirement_constraints = [
+                constraint
+                for requirement_id in planned_requirement_ids
+                for constraint in mapped_requirements[requirement_id][1]["constraints"]
+            ]
+            expected_constraints = encoded(
+                [
+                    *candidate["global_constraints"],
+                    *global_constraint_bindings,
+                    *requirement_constraints,
+                ]
+            )
+            if split is None:
+                task = target_tasks[0]
+                if task["dependencies"] != candidate["dependencies"]:
+                    raise ValueError("program task dependencies differ from mapped candidate")
+                if task["dependency_edges"] != candidate["dependency_edges"]:
+                    raise ValueError("program dependency edges differ from mapped candidate")
+                if task["acceptance"] != candidate["acceptance"]:
+                    raise ValueError("program task acceptance differs from mapped candidate")
+                if encoded(task["global_constraints"]) != expected_constraints:
+                    raise ValueError("program task constraints differ from mapped candidate")
+                if task["upstream_interface_commitments"] != candidate[
+                    "upstream_interface_commitments"
+                ]:
+                    raise ValueError(
+                        "program task upstream interfaces differ from mapped candidate"
+                    )
+            else:
+                expected_reference = candidate_reference(candidate_document, candidate)
+                if split["source_references"] != [expected_reference]:
+                    raise ValueError("task split source reference differs from its candidate")
+                external_dependencies = {
+                    str(dependency)
+                    for task in target_tasks
+                    for dependency in task["dependencies"]
+                    if dependency not in target_ids
+                }
+                if external_dependencies != set(candidate["dependencies"]):
+                    raise ValueError("task split dependencies differ from mapped candidate")
+                external_dependency_edges = [
+                    edge
+                    for task in target_tasks
+                    for edge in task["dependency_edges"]
+                    if edge["task_id"] not in target_ids
+                ]
+                if encoded(external_dependency_edges) != encoded(
+                    candidate["dependency_edges"]
+                ):
+                    raise ValueError(
+                        "task split dependency edges differ from mapped candidate"
+                    )
+                if encoded(
+                    [item for task in target_tasks for item in task["acceptance"]]
+                ) != encoded(candidate["acceptance"]):
+                    raise ValueError("task split acceptance differs from mapped candidate")
+                if encoded(
+                    [
+                        item
+                        for task in target_tasks
+                        for item in task["global_constraints"]
+                    ]
+                ) != expected_constraints:
+                    raise ValueError("task split constraints differ from mapped candidate")
+                if encoded(
+                    [
+                        item
+                        for task in target_tasks
+                        for item in task["upstream_interface_commitments"]
+                    ]
+                ) != encoded(candidate["upstream_interface_commitments"]):
+                    raise ValueError(
+                        "task split upstream interfaces differ from mapped candidate"
+                    )
+
+        for requirement_id, record in program["coverage"].items():
+            document, requirement = mapped_requirements[requirement_id]
+            expected_reference = {
+                "document_id": document.document_id,
+                "heading": requirement["heading"],
+                "line_start": requirement["line_start"],
+                "line_end": requirement["line_end"],
+                "source_sha256": document.sha256,
+                "exact_excerpt": requirement["exact_excerpt"],
+            }
+            if canonical_json(expected_reference) not in encoded(
+                record["source_references"]
+            ):
+                raise ValueError("coverage disposition omits its exact requirement source")
+
+        program_sha256 = _sha256(program_bytes)
         document_sources = {
             document.document_id: self.store.read_artifact(document.snapshot_path)
             for document, _, _, _ in document_maps
         }
+        self._verify_nested_source_references(program, sources=document_sources)
         artifact_paths = [
             program_path,
             f"{_GENERATION_ROOT}/coverage.json",
             f"{_GENERATION_ROOT}/authority-queue.json",
         ]
         coverage = _load_json(
-            self.store.read_artifact(artifact_paths[1]), "coverage companion"
+            read(artifact_paths[1]), "coverage companion"
         )
         if coverage != {
             "schema_version": 1,
@@ -339,7 +656,7 @@ class QueueEngine:
         }:
             raise ValueError("coverage companion does not match the program map")
         authority_queue = _load_json(
-            self.store.read_artifact(artifact_paths[2]), "authority queue"
+            read(artifact_paths[2]), "authority queue"
         )
         if authority_queue != {
             "schema_version": 1,
@@ -351,7 +668,7 @@ class QueueEngine:
         briefs: dict[str, dict[str, object]] = {}
         for task in program["tasks"]:
             brief_path = str(task["brief_path"])
-            brief_bytes = self.store.read_artifact(brief_path)
+            brief_bytes = read(brief_path)
             brief = validate_task_brief(
                 _load_json(brief_bytes, f"task brief {task['task_id']}"),
                 program_map_sha256=program_sha256,
@@ -359,18 +676,18 @@ class QueueEngine:
             )
             if canonical_json(brief) != brief_bytes:
                 raise ValueError("task brief is not in its canonical validated shape")
-            self._verify_source_references(
-                brief["source_references"], sources=document_sources
-            )
-            self._verify_source_references(
-                brief["global_constraints"], sources=document_sources
-            )
+            self._verify_nested_source_references(brief, sources=document_sources)
             if (
                 brief["task_id"] != task["task_id"]
                 or brief["title"] != task["title"]
                 or brief["dependencies"] != task["dependencies"]
+                or brief["dependency_edges"] != task["dependency_edges"]
+                or brief["acceptance"] != task["acceptance"]
+                or brief["global_constraints"] != task["global_constraints"]
+                or brief["upstream_interface_commitments"]
+                != task["upstream_interface_commitments"]
             ):
-                raise ValueError("task brief identity or dependencies differ from program map")
+                raise ValueError("task brief contract differs from program map")
             referenced_documents = {
                 str(reference["document_id"])
                 for reference in brief["source_references"]
@@ -380,21 +697,14 @@ class QueueEngine:
             task_id = str(task["task_id"])
             if task_id in task_candidates:
                 candidate_document, candidate = task_candidates[task_id]
-                expected_task_reference = {
-                    "document_id": candidate_document.document_id,
-                    "heading": candidate["heading"],
-                    "line_start": candidate["line_start"],
-                    "line_end": candidate["line_end"],
-                    "source_sha256": candidate_document.sha256,
-                    "exact_excerpt": candidate["exact_excerpt"],
-                }
+                expected_task_reference = candidate_reference(
+                    candidate_document, candidate
+                )
                 if canonical_json(expected_task_reference) not in {
                     canonical_json(reference)
                     for reference in brief["source_references"]
                 }:
                     raise ValueError("task brief omits its exact mapped task source")
-                if not set(candidate["acceptance"]) <= set(brief["acceptance"]):
-                    raise ValueError("task brief omits mapped acceptance commands")
             briefs[str(task["task_id"])] = brief
             artifact_paths.append(brief_path)
 
@@ -483,34 +793,51 @@ class QueueEngine:
                     "every task has a lossless digest-bound brief",
                 ),
             )
-            outcome = self.launcher.launch(
-                request,
-                worktree=self.worktree,
-                store=self.store,
-                ingest_artifacts=False,
-            )
-            if outcome.result.status != "completed":
-                raise ValueError("program mapper did not complete")
-            reported_artifact_paths = outcome.result.artifact_paths
-            untrusted_program_bytes = self._read_outbox_file(outbox, program_path)
-            untrusted_program = validate_program_map(
-                _load_json(untrusted_program_bytes, "program mapper output"),
-                document_ids={
-                    document.document_id for document, _, _, _ in document_maps
-                },
-            )
-            expected_reported_paths = {
-                program_path,
-                f"{_GENERATION_ROOT}/coverage.json",
-                f"{_GENERATION_ROOT}/authority-queue.json",
-                *(str(task["brief_path"]) for task in untrusted_program["tasks"]),
-            }
-            if (
-                len(reported_artifact_paths) != len(expected_reported_paths)
-                or set(reported_artifact_paths) != expected_reported_paths
-            ):
-                raise ValueError("program mapper returned unexpected artifact paths")
-            self.store.ingest_outbox(attempt_id, outcome.result.artifact_paths)
+            try:
+                outcome = self.launcher.launch(
+                    request,
+                    worktree=self.worktree,
+                    store=self.store,
+                    ingest_artifacts=False,
+                )
+                if outcome.result.status != "completed":
+                    raise ValueError("program mapper did not complete")
+                reported_artifact_paths = outcome.result.artifact_paths
+                untrusted_program_bytes = self._read_outbox_file(outbox, program_path)
+                untrusted_program = validate_program_map(
+                    _load_json(untrusted_program_bytes, "program mapper output"),
+                    document_hashes={
+                        document.document_id: document.sha256
+                        for document, _, _, _ in document_maps
+                    },
+                )
+                expected_reported_paths = {
+                    program_path,
+                    f"{_GENERATION_ROOT}/coverage.json",
+                    f"{_GENERATION_ROOT}/authority-queue.json",
+                    *(str(task["brief_path"]) for task in untrusted_program["tasks"]),
+                }
+                actual_paths = set(self._outbox_artifact_paths(outbox))
+                if (
+                    len(reported_artifact_paths) != len(expected_reported_paths)
+                    or set(reported_artifact_paths) != expected_reported_paths
+                    or actual_paths != expected_reported_paths
+                ):
+                    raise ValueError("program mapper returned unexpected artifact paths")
+                staged_bytes = {
+                    relative_path: self._read_outbox_file(outbox, relative_path)
+                    for relative_path in sorted(expected_reported_paths)
+                }
+                staged_program, _, staged_paths = self._validate_program_artifacts(
+                    document_maps,
+                    reader=staged_bytes.__getitem__,
+                )
+                if staged_program != untrusted_program or set(staged_paths) != actual_paths:
+                    raise ValueError("staged program artifacts changed during validation")
+                for relative_path in staged_paths:
+                    self.store.put_artifact(relative_path, staged_bytes[relative_path])
+            finally:
+                self.store.discard_outbox(attempt_id)
 
         program, program_bytes, artifact_paths = self._validate_program_artifacts(
             document_maps
