@@ -10,6 +10,7 @@ from .manifest import sha256_bytes
 
 
 TASK_CONTRACT_SCHEMA_VERSION = "cpe.task-contract.v4"
+TASK_CONTRACT_VNEXT_SCHEMA_VERSION = "cpe.task-contract.vnext"
 TaskType = Literal[
     "tdd_implementation",
     "non_tdd_implementation",
@@ -113,6 +114,63 @@ class TaskContractV4:
         }
 
 
+@dataclass(frozen=True)
+class TaskContractVNext:
+    schema_version: str
+    plan_id: str
+    task_id: str
+    qualified_task_id: str
+    document_sha256: str
+    upstream_graph_sha256: str
+    title: str
+    task_type: TaskType
+    risk_class: str
+    dependencies: tuple[str, ...]
+    task_source: str
+    task_source_sha256: str
+    spec_sections: tuple[dict[str, str], ...]
+    file_claims: tuple[str, ...]
+    forbidden_paths: tuple[str, ...]
+    acceptance_commands: tuple[str, ...]
+    required_methods: tuple[str, ...]
+    required_evidence: tuple[str, ...]
+    checkpoint_message: str
+    source_hashes: dict[str, object]
+    contract_sha256: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "spec_sections",
+            tuple(_deep_freeze(dict(section)) for section in self.spec_sections),
+        )
+        object.__setattr__(self, "source_hashes", _deep_freeze(dict(self.source_hashes)))
+
+    def body(self) -> dict[str, object]:
+        return {
+            "schema_version": self.schema_version,
+            "plan_id": self.plan_id,
+            "task_id": self.task_id,
+            "qualified_task_id": self.qualified_task_id,
+            "document_sha256": self.document_sha256,
+            "upstream_graph_sha256": self.upstream_graph_sha256,
+            "title": self.title,
+            "task_type": self.task_type,
+            "risk_class": self.risk_class,
+            "dependencies": list(self.dependencies),
+            "task_source": self.task_source,
+            "task_source_sha256": self.task_source_sha256,
+            "spec_sections": _json_copy(list(self.spec_sections)),
+            "file_claims": list(self.file_claims),
+            "forbidden_paths": list(self.forbidden_paths),
+            "acceptance_commands": list(self.acceptance_commands),
+            "required_methods": list(self.required_methods),
+            "required_evidence": list(self.required_evidence),
+            "checkpoint_message": self.checkpoint_message,
+            "source_hashes": _json_copy(self.source_hashes),
+        }
+
+
 def _strings(value: object) -> tuple[str, ...]:
     if not isinstance(value, (list, tuple)):
         return ()
@@ -181,9 +239,118 @@ def _validated_contract(contract: TaskContractV4, expected_digest: str) -> TaskC
     return replace(contract, contract_sha256=actual_digest)
 
 
-def contract_from_body(body: object, expected_digest: str) -> TaskContractV4:
+def _is_sha256(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def _validated_vnext_contract(
+    contract: TaskContractVNext, expected_digest: str
+) -> TaskContractVNext:
+    if contract.schema_version != TASK_CONTRACT_VNEXT_SCHEMA_VERSION:
+        raise ValueError("task_contract_schema_invalid")
+    if contract.task_type not in TASK_TYPES:
+        raise ValueError("task_type_invalid")
+    if (
+        not contract.plan_id
+        or "::" in contract.plan_id
+        or not contract.task_id
+        or "::" in contract.task_id
+        or contract.qualified_task_id != f"{contract.plan_id}::{contract.task_id}"
+    ):
+        raise ValueError("qualified_task_id_invalid")
+    if not _is_sha256(contract.document_sha256) or not _is_sha256(
+        contract.upstream_graph_sha256
+    ):
+        raise ValueError("task_graph_binding_invalid")
+    if any("::" not in dependency for dependency in contract.dependencies):
+        raise ValueError("qualified_dependency_invalid")
+    if (
+        len(contract.dependencies) != len(set(contract.dependencies))
+        or contract.qualified_task_id in contract.dependencies
+    ):
+        raise ValueError("qualified_dependency_invalid")
+    if not contract.title or not contract.task_source or not contract.acceptance_commands:
+        raise ValueError("task_contract_incomplete")
+    if sha256_bytes(contract.task_source.encode("utf-8")) != contract.task_source_sha256:
+        raise ValueError("task_source_digest_mismatch")
+    source_spec_hashes = contract.source_hashes.get("spec_sections", {})
+    if not isinstance(source_spec_hashes, dict):
+        raise ValueError("source_hashes_invalid")
+    if contract.source_hashes.get("plan") != contract.document_sha256:
+        raise ValueError("task_document_binding_mismatch")
+    for section in contract.spec_sections:
+        section_id = section["id"]
+        actual = sha256_bytes(section["text"].encode("utf-8"))
+        if actual != section["sha256"] or source_spec_hashes.get(section_id) != actual:
+            raise ValueError(f"spec_section_digest_mismatch:{section_id}")
+    actual_digest = sha256_bytes(canonical_contract_bytes(contract.body()))
+    if actual_digest != expected_digest:
+        raise ValueError("task_contract_digest_mismatch")
+    return replace(contract, contract_sha256=actual_digest)
+
+
+def _vnext_contract_from_body(body: Mapping[str, object], expected_digest: str) -> TaskContractVNext:
+    required = {
+        "schema_version",
+        "plan_id",
+        "task_id",
+        "qualified_task_id",
+        "document_sha256",
+        "upstream_graph_sha256",
+        "title",
+        "task_type",
+        "risk_class",
+        "dependencies",
+        "task_source",
+        "task_source_sha256",
+        "spec_sections",
+        "file_claims",
+        "forbidden_paths",
+        "acceptance_commands",
+        "required_methods",
+        "required_evidence",
+        "checkpoint_message",
+        "source_hashes",
+    }
+    if set(body) != required:
+        raise ValueError("task_contract_invalid")
+    contract = TaskContractVNext(
+        schema_version=str(body["schema_version"]),
+        plan_id=str(body["plan_id"]),
+        task_id=str(body["task_id"]),
+        qualified_task_id=str(body["qualified_task_id"]),
+        document_sha256=str(body["document_sha256"]),
+        upstream_graph_sha256=str(body["upstream_graph_sha256"]),
+        title=str(body["title"]),
+        task_type=cast(TaskType, str(body["task_type"])),
+        risk_class=str(body["risk_class"]),
+        dependencies=_strings(body["dependencies"]),
+        task_source=str(body["task_source"]),
+        task_source_sha256=str(body["task_source_sha256"]),
+        spec_sections=_spec_sections(body["spec_sections"]),
+        file_claims=_strings(body["file_claims"]),
+        forbidden_paths=_strings(body["forbidden_paths"]),
+        acceptance_commands=_strings(body["acceptance_commands"]),
+        required_methods=_strings(body["required_methods"]),
+        required_evidence=_strings(body["required_evidence"]),
+        checkpoint_message=str(body["checkpoint_message"]),
+        source_hashes=_source_hashes(body["source_hashes"]),
+        contract_sha256=expected_digest,
+    )
+    return _validated_vnext_contract(contract, expected_digest)
+
+
+def contract_from_body(
+    body: object, expected_digest: str
+) -> TaskContractV4 | TaskContractVNext:
     if not isinstance(body, Mapping):
         raise ValueError("task_contract_invalid")
+    if body.get("schema_version") == TASK_CONTRACT_VNEXT_SCHEMA_VERSION:
+        return _vnext_contract_from_body(body, expected_digest)
     required = {
         "schema_version",
         "task_id",
@@ -278,3 +445,65 @@ def compile_task_contract(
     )
     digest = sha256_bytes(canonical_contract_bytes(contract.body()))
     return _validated_contract(replace(contract, contract_sha256=digest), digest)
+
+
+def compile_task_contract_vnext(
+    task: Mapping[str, object],
+    *,
+    plan_id: str,
+    document_sha256: str,
+    upstream_graph_sha256: str,
+    spec_sections: tuple[dict[str, str], ...] = (),
+    source_hashes: dict[str, object] | None = None,
+) -> TaskContractVNext:
+    """Compile one task whose identity and dependencies are globally qualified."""
+
+    task_type_value = str(task.get("task_type") or "")
+    if task_type_value not in TASK_TYPES:
+        raise ValueError("task_type_invalid")
+    task_type = cast(TaskType, task_type_value)
+    task_id = str(task.get("id") or task.get("task_id") or "")
+    task_source = str(task.get("task_source") or "")
+    execution_contract = task.get("execution_contract")
+    execution_contract = execution_contract if isinstance(execution_contract, Mapping) else {}
+    forbidden_paths = _strings(task.get("forbidden_paths")) or _strings(
+        execution_contract.get("forbidden_paths")
+    )
+    required_methods = _strings(task.get("required_methods"))
+    if not required_methods:
+        required_methods = (
+            ("using-superpowers", "test-driven-development")
+            if task_type == "tdd_implementation"
+            else ("using-superpowers",)
+        )
+    required_evidence = _strings(task.get("required_evidence"))
+    if not required_evidence and task_type == "tdd_implementation":
+        required_evidence = ("red", "green")
+    source_hashes_value = _source_hashes(source_hashes or task.get("source_hashes") or {})
+    contract = TaskContractVNext(
+        schema_version=TASK_CONTRACT_VNEXT_SCHEMA_VERSION,
+        plan_id=plan_id,
+        task_id=task_id,
+        qualified_task_id=f"{plan_id}::{task_id}",
+        document_sha256=document_sha256,
+        upstream_graph_sha256=upstream_graph_sha256,
+        title=str(task.get("title") or task_id),
+        task_type=task_type,
+        risk_class=str(task.get("risk_class") or "high"),
+        dependencies=_strings(task.get("dependencies")) or _strings(task.get("depends_on")),
+        task_source=task_source,
+        task_source_sha256=sha256_bytes(task_source.encode("utf-8")),
+        spec_sections=_spec_sections(spec_sections),
+        file_claims=_strings(task.get("file_claims")) or _strings(task.get("files")),
+        forbidden_paths=forbidden_paths,
+        acceptance_commands=_acceptance_commands(task),
+        required_methods=required_methods,
+        required_evidence=required_evidence,
+        checkpoint_message=str(
+            task.get("checkpoint_message") or f"Complete {plan_id}::{task_id}"
+        ),
+        source_hashes=source_hashes_value,
+        contract_sha256="",
+    )
+    digest = sha256_bytes(canonical_contract_bytes(contract.body()))
+    return _validated_vnext_contract(replace(contract, contract_sha256=digest), digest)
