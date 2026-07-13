@@ -1,113 +1,163 @@
-# KWS Codex Plan Executor 3.1.0
+# KWS Codex Plan Executor 4.0.0
 
-CPE v3 executes implementation plans in isolated git worktrees and records each
-durable transition as a hash-chained event. It remains independent from
-Waygent. `events.jsonl` is authoritative; `state.json` is a rebuildable
-projection for resume and inspection.
+CPE is a durable schema-4 queue for executing one or many approved
+Superpowers implementation plans. It snapshots the source documents, maps them
+with fresh bounded roles, serializes writers in one isolated worktree, and
+resumes from immutable file-backed evidence. It does not keep a coordinating
+model session alive.
 
-Published evidence state: **deterministic-ready; paid-live-verified**. The
-cost-free integrity suite exercises the audited fail-closed boundaries, and the
-reviewed four-treatment, eight-case ChatGPT subscription matrix completed all
-25 credentialed calls and seven expected policy failures with the unchanged
-release gate passing. The tracked privacy audit also passed; account-side USD
-cost attribution remains unavailable.
+Use direct Superpowers for a small task that fits one session. Use CPE for a
+large, multi-document, interruptible program.
 
-## Quick Start
+## Requirements
 
-```bash
-cd skills/kws-codex-plan-executor
-python3 scripts/cpe.py run --plan /abs/plan.md --spec /abs/spec.md \
-  --workspace /abs/repo --mode interactive
-```
+- Python 3 using only the standard library
+- Git
+- Codex available as codex on PATH
+- a clean Git workspace for the source repository
+- absolute input and workspace paths
 
-Export without executing:
+No package install, network access, credential, or provider call is needed for
+the deterministic eval suite.
 
-```bash
-python3 scripts/cpe.py export --plan /abs/plan.md \
-  --workspace /abs/repo --mode prompt
-python3 scripts/cpe.py export --plan /abs/plan.md \
-  --workspace /abs/repo --mode handoff
-```
+## Start A Run
 
-Resume and inspect:
+Spec and plan options may repeat. At least one plan is required. A program plan
+is optional and singular.
 
-```bash
-python3 scripts/cpe.py resume --run-id RUN_ID
-python3 scripts/validate_state.py ~/.codex/orchestrator/RUN_ID
-python3 scripts/reconcile_state.py --run-dir ~/.codex/orchestrator/RUN_ID --check
-python3 scripts/repair_runs.py --run-dir ~/.codex/orchestrator/RUN_ID --dry-run
-python3 scripts/inspect_runs.py --codex-home ~/.codex --all-plans
-python3 scripts/analyze_recent_runs.py --codex-home ~/.codex --recent 20
-```
+    cd skills/kws-codex-plan-executor
+    python3 scripts/cpe.py run \
+      --spec /abs/product-spec.md \
+      --spec /abs/security-spec.md \
+      --plan /abs/foundation-plan.md \
+      --plan /abs/integration-plan.md \
+      --program-plan /abs/program-plan.md \
+      --workspace /abs/repository
 
-Plan the subscription live matrix without making provider calls:
+CLI order records input order; it does not grant one document authority over
+another. Explicit supersession or a recorded authority answer is required for
+incompatible approved requirements.
 
-```bash
-python3 evals/live_model_runner.py dry-run \
-  --billing-mode chatgpt_subscription \
-  --output /tmp/cpe-v3-subscription-plan.json
-```
+Every command prints one JSON result. Public statuses and exit codes are:
 
-`start` and `resume` are release-evidence operations, not normal CPE execution
-commands. They require `--confirm-subscription-usage`, an external evidence
-directory, and ChatGPT login; API-key authentication is rejected. Any future
-matrix must again receive independent review of the exact implementation and
-sanitized report. See [evals-and-verification.md](docs/evals-and-verification.md).
+| Status | Exit | Meaning |
+| --- | ---: | --- |
+| completed | 0 | terminal integration artifact was published |
+| failed | 1 | invocation or integrity failure cannot continue safely |
+| waiting_authority | 2 | one of six user-owned decisions blocks affected work |
+| interrupted | 3 | durable state is valid and resume is available |
 
-For an explicitly authorized v4 corrected run in a new evidence root, first
-use `live_model_runner.py attest-predecessor`. The command makes no provider
-call: it validates the old failed ledger, projections, manifests, aggregate,
-privacy verdict, and Git checkpoint in place, then persists only digest-bound
-lineage. The corrected registration must use a changed checkpoint, and a third
-full run is rejected before authentication or provider preflight.
+The terminal artifact contains the separate quality verdict. Do not interpret
+completed alone as a stronger product-quality claim.
 
-V4 execution always qualifies the exact candidate security/migration case
-before other credentialed slots. The compiler seals exact stdin and
-`--output-schema` bytes into one content-addressed launch envelope per call;
-the runner reopens and verifies that artifact immediately before launch.
-Hidden oracle paths and bytes are bound separately and never enter the worker
-prompt, argv, or environment. Resume reuses a passed sentinel and cannot bypass
-or duplicate it. The runner-owned semantic gate requires an exact hidden-oracle
-ID match for the qualified block case. The v4 merge gate uses
-`--proof-profile critical_path_live`: that sentinel, one Sol single-file
-regression, and seven deterministic no-call outcomes. The 17-call
-`full_paid_matrix` is optional and remains `full paid-live certification
-deferred` until separately finalized. `aggregate` is non-terminal; only
-dogfood-bound `finalize-release` can publish a terminal generation.
+## Resume, Authority, And Refresh
 
-V4 release compilation and validation load one Git-tracked canonical policy at
-`evals/live-migration/release-policy-v4.json`. It fixes the trusted base,
-approved dogfood contract digest, exact `2 + 4 <= 6` attempt budgets, and
-release labels; none are CLI-overridable. A terminal release retains and
-replays the dogfood run evidence beneath `dogfood/<run_id>` and accepts only the
-closed release-root layout.
+    python3 scripts/cpe.py resume --run-id RUN_ID
+    python3 scripts/cpe.py inspect --run-id RUN_ID
 
-## Contract Summary
+Inspect is read-only. Resume validates the run and worktree before continuing.
+A completed task, clean review, accepted audit, or accepted final record is not
+redispatched.
 
-- Sol/high is fixed for all core and verdict-capable attempts.
-- Terra/high is limited to bounded read-only scouting.
-- Write-capable tasks run sequentially.
-- Supplied specs require explicit per-task section mappings.
-- Models cannot write durable executor state.
-- All six worker roles consume one manifest-indexed, digest-verified task packet.
-- Implementation and repair are the only product-writing roles; every success
-  record binds to the resulting Git revision and patch digest.
-- Validation, reconciliation, repair, and inspection replay the same manifest
-  and event chain.
-- V2 runs are preserved but classified only as `unsupported_schema`.
-- The live runner freezes the exact 32-slot manifest (25 credentialed calls and
-  seven expected policy failures), runs each credentialed slot in an isolated
-  ephemeral Codex turn, and commits digest-bound evidence to a replayable
-  external ledger.
+When inspect reports an open authority item, choose one of that packet's exact
+options:
 
-Execution prints exactly one machine-readable `PublicResult`. Status-to-exit
-mapping is `success=0`, `blocked=1`, and `failed=2`; zero is possible only after
-canonical completion validation. The deterministic harness uses the maintained
-eval inventory to drive the public CLI against temporary repositories and
-compares results with an isolated oracle. It never treats duplicated fixture
-logic as production behavior.
+    python3 scripts/cpe.py resume --run-id RUN_ID \
+      --authority-id AUTHORITY_ID \
+      --authority-answer OFFERED_OPTION
 
-See [SKILL.md](SKILL.md), [ARCHITECTURE.md](ARCHITECTURE.md), and
-[evals-and-verification.md](docs/evals-and-verification.md). The current v4
-release blockers and ordered follow-up work are tracked in
-[v4-main-residual-risks-and-follow-up.md](docs/v4-main-residual-risks-and-follow-up.md).
+Changed source documents are ignored until an explicit refresh:
+
+    python3 scripts/cpe.py resume --run-id RUN_ID --refresh-inputs
+
+Refresh snapshots the current declared source paths into a new generation. It
+preserves earlier generations and invalidates only work whose task identity,
+brief, dependency closure, or governing document changed.
+
+## Export Without Execution
+
+    python3 scripts/cpe.py export \
+      --spec /abs/spec.md \
+      --plan /abs/plan.md \
+      --workspace /abs/repository \
+      --mode prompt
+
+    python3 scripts/cpe.py export \
+      --plan /abs/plan.md \
+      --workspace /abs/repository \
+      --mode handoff
+
+Export validates paths and renders a launcher document to stdout. It does not
+create CODEX_HOME, a run directory, events, or a worktree.
+
+## Artifacts
+
+By default a run owns:
+
+    ~/.codex/orchestrator/RUN_ID/
+      run.json
+      events.jsonl
+      events.head.json
+      artifacts.jsonl
+      autonomy-decisions.jsonl
+      writer.lease
+      inputs/
+      maps/
+      briefs/
+      reports/
+      reviews/
+      verification/
+      logs/
+      outbox/
+      result.json
+
+    ~/.codex/worktrees/RUN_ID/
+
+All durable files are private. Input snapshots and accepted artifacts are
+digest-bound. events.jsonl is the authoritative transition history and
+events.head.json detects truncation or unsynced tails. artifacts.jsonl binds
+logical paths to immutable bytes. result.json exists only after terminal
+integration.
+
+Mapping publications are content-addressed under a generation's attempts
+directory. One map.generation_created event uniquely selects the accepted
+publication. Event-selected evidence is never eligible for automatic deletion.
+The store retains one live unselected Program Mapper attempt per generation,
+including strict partial pre-manifest groups. It durably tombstones pruned
+index records before unlink and finishes interrupted unlinks on open.
+
+## Execution Shape
+
+1. One fresh mapper reads each immutable document.
+2. One fresh program mapper composes lossless briefs, dependencies, coverage,
+   hotspots, and authority items.
+3. The non-LLM queue launches one ready task agent at a time.
+4. A fresh reviewer checks the exact task handoff; one consolidated fixer and
+   a changed-strategy investigator handle ordinary defects.
+5. Fresh document auditors verify source coverage at the final revision.
+6. One Program Final Integrator performs cross-program review and one full
+   verification.
+7. Any later write invalidates affected final evidence before closure repeats.
+
+Superpowers owns TDD, code review, and verification-before-completion inside
+the applicable fresh role. CPE owns only durable orchestration and strict
+contract validation.
+
+## Schema 3
+
+CPE 4 inspect can summarize an existing schema-3 directory without mutation.
+CPE 4 does not migrate or resume it. Use the pre-4.0 Git revision only after an
+explicit decision to operate the historical implementation.
+
+## Verify
+
+    ./evals/run.sh
+    python3 -m py_compile scripts/cpe.py scripts/cpe_runtime/*.py evals/*.py
+    bash -n evals/run.sh
+    python3 scripts/cpe.py --help
+    python3 scripts/cpe.py run --help
+    python3 scripts/cpe.py export --help
+
+The runner executes exactly six deterministic checks and must finish under 60
+seconds on the development machine. See docs/evals-and-verification.md for the
+coverage boundary and docs/risks-limitations-deferrals.md for known risks.

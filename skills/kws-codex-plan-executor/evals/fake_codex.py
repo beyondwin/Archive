@@ -7,9 +7,12 @@ import json
 import hashlib
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
+import unittest
 from pathlib import Path
 
 
@@ -69,6 +72,55 @@ SCENARIOS = frozenset(
         "writer_hold",
     }
 )
+
+
+class LeanEvalCase(unittest.TestCase):
+    """Shared isolated Git fixture for the six lean checks."""
+
+    fixture_prefix = "cpe-lean-"
+    repository_instructions: str | None = None
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory(prefix=self.fixture_prefix)
+        self.root = Path(self.temporary.name)
+        self.home = self.root / "codex-home"
+        self.repo = self.root / "repo"
+        self.home.mkdir(mode=0o700)
+        self.repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
+        subprocess.run(
+            ["git", "-C", str(self.repo), "config", "user.email", "cpe@example.invalid"],
+            check=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(self.repo), "config", "user.name", "CPE Eval"],
+            check=True,
+        )
+        fixtures = Path(__file__).resolve().parent / "lean-fixtures"
+        for name in ("spec-a.md", "spec-b.md", "plan-a.md", "plan-b.md", "program.md"):
+            shutil.copyfile(fixtures / name, self.repo / name)
+        if self.repository_instructions is not None:
+            (self.repo / "AGENTS.md").write_text(
+                self.repository_instructions, encoding="utf-8"
+            )
+        subprocess.run(["git", "-C", str(self.repo), "add", "."], check=True)
+        subprocess.run(
+            ["git", "-C", str(self.repo), "commit", "-q", "-m", "fixture base"],
+            check=True,
+        )
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    def install_fake_codex(self, directory: str = "fake-bin") -> Path:
+        bin_dir = self.root / directory
+        bin_dir.mkdir(exist_ok=True)
+        fake = bin_dir / "codex"
+        source = Path(__file__).read_text(encoding="utf-8").splitlines()
+        source[0] = f"#!{sys.executable}"
+        fake.write_text("\n".join(source) + "\n", encoding="utf-8")
+        fake.chmod(0o700)
+        return bin_dir
 
 
 def _value(argv: list[str], flag: str) -> str:
@@ -1162,7 +1214,7 @@ def main() -> int:
         marker = os.environ.get("CPE_FAKE_WRITER_MARKER")
         if marker:
             Path(marker).write_text("started\n", encoding="utf-8")
-        time.sleep(0.35)
+        time.sleep(0.15)
         commit = _commit_change(worktree, item_id)
     elif scenario == "review_changes_requested":
         status = "changes_requested"

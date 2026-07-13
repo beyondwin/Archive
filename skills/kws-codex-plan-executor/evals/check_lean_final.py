@@ -5,16 +5,13 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
-FIXTURES = Path(__file__).resolve().parent / "lean-fixtures"
 sys.path.insert(0, str(SKILL_ROOT / "scripts"))
 
 from cpe_runtime import contracts  # noqa: E402
@@ -22,50 +19,21 @@ from cpe_runtime.launcher import ChildLauncher  # noqa: E402
 from cpe_runtime.queue import QueueEngine  # noqa: E402
 from cpe_runtime.store import RunStore  # noqa: E402
 from cpe_runtime.worktree import Worktree  # noqa: E402
+from fake_codex import LeanEvalCase  # noqa: E402
 
 
-class LeanFinalTest(unittest.TestCase):
+class LeanFinalTest(LeanEvalCase):
+    fixture_prefix = "cpe-lean-final-"
+    repository_instructions = (
+        "# Repository Instructions\n\nUse strict TDD and one final verification.\n"
+    )
+
     def setUp(self) -> None:
-        self.temporary = tempfile.TemporaryDirectory(prefix="cpe-lean-final-")
-        self.root = Path(self.temporary.name)
-        self.home = self.root / "codex-home"
-        self.repo = self.root / "repo"
-        self.home.mkdir(mode=0o700)
-        self.repo.mkdir()
-        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
-        subprocess.run(
-            ["git", "-C", str(self.repo), "config", "user.email", "cpe@example.invalid"],
-            check=True,
-        )
-        subprocess.run(
-            ["git", "-C", str(self.repo), "config", "user.name", "CPE Eval"],
-            check=True,
-        )
-        for name in ("spec-a.md", "spec-b.md", "plan-a.md", "plan-b.md", "program.md"):
-            shutil.copyfile(FIXTURES / name, self.repo / name)
-        (self.repo / "AGENTS.md").write_text(
-            "# Repository Instructions\n\nUse strict TDD and one final verification.\n",
-            encoding="utf-8",
-        )
-        subprocess.run(["git", "-C", str(self.repo), "add", "."], check=True)
-        subprocess.run(
-            ["git", "-C", str(self.repo), "commit", "-q", "-m", "fixture base"],
-            check=True,
-        )
+        super().setUp()
         self.invocation_log = self.root / "final-invocations.jsonl"
         self.fake_state = self.root / "final-state.json"
         self.verification_log = self.root / "verification-invocations.jsonl"
-        self.bin_dir = self.root / "fake-bin"
-        self.bin_dir.mkdir()
-        fake_codex = self.bin_dir / "codex"
-        source = (SKILL_ROOT / "evals" / "fake_codex.py").read_text(encoding="utf-8")
-        lines = source.splitlines()
-        lines[0] = f"#!{sys.executable}"
-        fake_codex.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        fake_codex.chmod(0o700)
-
-    def tearDown(self) -> None:
-        self.temporary.cleanup()
+        self.bin_dir = self.install_fake_codex()
 
     def create_engine(self, scenario: str) -> tuple[RunStore, QueueEngine]:
         store = RunStore.create(
@@ -83,6 +51,7 @@ class LeanFinalTest(unittest.TestCase):
         launcher = ChildLauncher(
             schema_path=SKILL_ROOT / "templates" / "child-result-schema.json",
             timeout_seconds=10,
+            terminate_grace_seconds=0.05,
             environ={
                 **os.environ,
                 "PATH": str(self.bin_dir),
@@ -359,7 +328,9 @@ class LeanFinalTest(unittest.TestCase):
 
     def test_integrator_timeout_gets_one_durable_retry(self) -> None:
         store, engine = self.create_engine("final_integrator_timeout")
-        engine.launcher.timeout_seconds = 0.1
+        # Leave enough startup budget under the bounded parallel runner while
+        # still deterministically timing out the 60-second fake integrator.
+        engine.launcher.timeout_seconds = 0.75
 
         with self.assertRaisesRegex(TimeoutError, "timed out"):
             engine.run_until_terminal()

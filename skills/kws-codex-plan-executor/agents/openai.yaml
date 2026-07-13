@@ -1,4 +1,0 @@
-interface:
-  display_name: "KWS Codex Plan Executor"
-  short_description: "Execute or inspect deterministic CPE v3 plan runs"
-  default_prompt: "Use $kws-codex-plan-executor to run or resume a v3 plan from explicit paths, or export an artifact-free prompt or handoff launcher."

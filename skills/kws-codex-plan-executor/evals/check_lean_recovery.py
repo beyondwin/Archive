@@ -5,11 +5,9 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import stat
 import subprocess
 import sys
-import tempfile
 import unittest
 from contextlib import redirect_stdout
 from io import StringIO
@@ -19,7 +17,6 @@ from unittest import mock
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 CLI = SKILL_ROOT / "scripts" / "cpe.py"
-FIXTURES = Path(__file__).resolve().parent / "lean-fixtures"
 sys.path.insert(0, str(SKILL_ROOT / "scripts"))
 
 from cpe_runtime.launcher import ChildLauncher  # noqa: E402
@@ -28,42 +25,17 @@ from cpe_runtime.store import RunStore  # noqa: E402
 from cpe_runtime.worktree import Worktree  # noqa: E402
 import cpe as cpe_cli  # noqa: E402
 import cpe_runtime.store as store_module  # noqa: E402
+from fake_codex import LeanEvalCase  # noqa: E402
 
 
-class LeanRecoveryTest(unittest.TestCase):
+class LeanRecoveryTest(LeanEvalCase):
+    fixture_prefix = "cpe-lean-recovery-"
+
     def setUp(self) -> None:
-        self.temporary = tempfile.TemporaryDirectory(prefix="cpe-lean-recovery-")
-        self.root = Path(self.temporary.name)
-        self.home = self.root / "codex-home"
-        self.repo = self.root / "repo"
-        self.home.mkdir(mode=0o700)
-        self.repo.mkdir()
-        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
-        subprocess.run(
-            ["git", "-C", str(self.repo), "config", "user.email", "cpe@example.invalid"],
-            check=True,
-        )
-        subprocess.run(
-            ["git", "-C", str(self.repo), "config", "user.name", "CPE Eval"],
-            check=True,
-        )
-        for name in ("spec-a.md", "spec-b.md", "plan-a.md", "plan-b.md", "program.md"):
-            shutil.copyfile(FIXTURES / name, self.repo / name)
-        subprocess.run(["git", "-C", str(self.repo), "add", "."], check=True)
-        subprocess.run(
-            ["git", "-C", str(self.repo), "commit", "-q", "-m", "fixture base"],
-            check=True,
-        )
+        super().setUp()
         self.invocations = self.root / "invocations.jsonl"
         self.fake_state = self.root / "state.json"
-        self.bin_dir = self.root / "bin"
-        self.bin_dir.mkdir()
-        fake = self.bin_dir / "codex"
-        source = (SKILL_ROOT / "evals" / "fake_codex.py").read_text(encoding="utf-8")
-        lines = source.splitlines()
-        lines[0] = f"#!{sys.executable}"
-        fake.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        fake.chmod(0o700)
+        self.bin_dir = self.install_fake_codex("bin")
         self.env = {
             **os.environ,
             "PATH": f"{self.bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
@@ -72,9 +44,6 @@ class LeanRecoveryTest(unittest.TestCase):
             "CPE_FAKE_INVOCATION_LOG": str(self.invocations),
             "CPE_FAKE_QUEUE_STATE": str(self.fake_state),
         }
-
-    def tearDown(self) -> None:
-        self.temporary.cleanup()
 
     def cli(self, *arguments: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
@@ -103,6 +72,7 @@ class LeanRecoveryTest(unittest.TestCase):
         launcher = ChildLauncher(
             schema_path=SKILL_ROOT / "templates" / "child-result-schema.json",
             timeout_seconds=10,
+            terminate_grace_seconds=0.05,
             environ={**self.env, "CPE_FAKE_SCENARIO": scenario},
         )
         return store, QueueEngine(store, worktree, launcher)
@@ -373,7 +343,8 @@ class LeanRecoveryTest(unittest.TestCase):
         engine.map_program()
         timed_launcher = ChildLauncher(
             schema_path=SKILL_ROOT / "templates" / "child-result-schema.json",
-            timeout_seconds=0.05,
+            timeout_seconds=0.1,
+            terminate_grace_seconds=0.05,
             environ={**self.env, "CPE_FAKE_SCENARIO": "writer_hold"},
         )
         output = StringIO()

@@ -1,33 +1,64 @@
 # Execution Cycle
 
-1. Resolve explicit plan, optional spec/docs, workspace, and mode.
-2. Parse tasks and acceptance commands; supplied specs require explicit
-   per-task `spec_refs`.
-3. Run read-only dependency, capability, dirty-scope, and method preflight.
-4. Allocate a unique run ID, isolated worktree, and run directory.
-5. Freeze the manifest, initialize the event journal, export task packets once,
-   and index every packet path and `packet_sha256`.
-6. Run dependency-ready write tasks sequentially. Bounded independent scouts
-   may run concurrently under Terra/high read-only policy.
-7. Bind every `scout`, `implementation`, `task_review`, `verification`,
-   `repair`, and `final_review` request to that indexed packet and current
-   revision. Only implementation and repair may write.
-8. For each task run `implementation -> acceptance -> task_review ->
-   verification`. A typed non-pass routes to a bounded repair or blocker.
-9. Run the ordered unique repository command bundle once, attach one
-   `repository_check` result per task packet, then run `final_review` per task.
-10. If repair advances `worktree_revision`, invalidate the old revision's
-    acceptance and verdicts, and rerun the complete downstream suffix until all
-    evidence binds the same `worktree_patch_sha256`.
-11. Run `validate_integrity`, record the exact completion audit, run
-    `validate_completion`, transition terminal status, then revalidate before
-    public success.
+## 1. Snapshot
 
-No edit starts without a task contract containing scope, inspected files,
-allowed and forbidden edits, and an acceptance command or honest substitute.
-Repeated failures are bounded by root cause; unresolved safety or evidence
-gaps block rather than fabricate completion.
+Run validates a clean Git workspace, creates a private run root and isolated
+worktree, copies every declared document, and records stable IDs, roles, byte
+lengths, and SHA-256 digests before a child starts.
 
-Blocked work resumes only from the evidence-derived phase recorded by
-`task.retry_scheduled`; there is no generic blocked-to-ready shortcut. Review,
-verification, and final review are read-only even when they request changes.
+## 2. Document Mapping
+
+One fresh read-only mapper receives one snapshot and applicable repository
+instructions. It emits exact excerpts and references, requirements, task
+candidates, constraints, decisions, and conflicts. Its outbox is validated and
+ingested before the next state transition.
+
+## 3. Program Mapping
+
+One fresh mapper composes document maps into:
+
+- a global task and dependency graph;
+- exact lossless task briefs;
+- requirement dispositions and coverage;
+- shared-file and interface hotspots;
+- an authority queue.
+
+The validated artifact set is published as one content-addressed batch. A
+single map.generation_created event selects it.
+
+## 4. Task And Review
+
+The queue selects the first dependency-ready, authority-free task. One task
+agent follows Superpowers TDD, runs focused checks, creates one clean commit,
+and writes a report. One fresh read-only reviewer checks the exact brief,
+report, upstream evidence, and diff.
+
+A clean review closes the task. Findings go to one consolidated fix agent and a
+fresh reviewer. Repeated material failure records a fresh investigation and
+changed recovery strategy. Only one writer may run at a time.
+
+## 5. Authority And Resume
+
+A genuine authority item blocks only affected tasks. Independent ready work may
+continue. Resume can append one offered answer, explicitly refresh inputs into
+a new generation, or continue from existing durable state.
+
+Before launch, resume validates the manifest, events, artifacts, selected
+publication, worktree, commits, and any active handoff. Completed queue items
+are not redispatched.
+
+## 6. Document Audits
+
+At the final revision, one fresh auditor per source document receives that
+snapshot plus only relevant maps, briefs, reports, reviews, and diff slices.
+Auditors check coverage and exact constraints, not general code quality.
+
+## 7. Final Integration
+
+The Program Final Integrator receives the program and coverage maps, auditor
+verdicts, autonomy ledger, authority state, whole diff, and final verification
+command. It reviews integration and executes the full verification once.
+
+A clean current-revision result produces the launcher-owned handoff and
+result.json. An integration finding launches one consolidated writer; the new
+revision invalidates audits and verification before closure repeats.
