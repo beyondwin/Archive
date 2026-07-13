@@ -1,5 +1,29 @@
 # Verification Log
 
+## 2026-07-13 Asia/Seoul - vNext pre-task contract alignment and hermetic baseline
+
+- Branch: `codex/cpe-vnext-quality-first-workflow`; checkpoint commit pending.
+- Scope: reconciled the approved vNext design/program/three-plan contracts and
+  replaced machine-global Superpowers capability discovery in deterministic
+  evals with an explicit, semantic, test-owned capability root. Required
+  capability checks were not weakened.
+- TDD RED: `./evals/run.sh` failed in
+  `maintained:check_quality_matrix_v4` at the authentic production release E2E
+  with `required Superpowers or CPE capabilities are unavailable`.
+- Focused GREEN: `check_quality_matrix_v4.py`,
+  `check_release_transaction_v4.py`, `check_superpowers_compatibility.py`,
+  `check_docs_contract.py`, Python compile, and `bash -n evals/run.sh` passed.
+- `./evals/run.sh`: exit 0; all 36 recorded checks passed and
+  `paid_execution=skipped_not_approved`.
+- `bun run check`: exit 0; 820 passed, 10 skipped, 0 failed across 149 files.
+- `git diff --check`: exit 0.
+- `graphify update .`: exit 0; canonical outputs refreshed. Freshness check
+  returned `fresh=true` with no errors.
+- Provider, network, model, credentialed, billing, remote-write, push, and live
+  calls: zero.
+- Residual risk: none for the pre-task; future implementation still requires
+  the gates and explicit live authority declared by the approved plans.
+
 ## 2026-07-12 Asia/Seoul - CPE 3.1.0 paid-live verified closeout
 
 - Branch: local `main`; implementation checkpoint

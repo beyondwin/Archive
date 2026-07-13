@@ -16,6 +16,7 @@
 - No credentialed call occurs before the Program Final Gate and fresh explicit user authority.
 - Deterministic parsing, hashing, graphing, filtering, deduplication, and result classification do not use model turns.
 - Final proof binds the post-Plan-3 checkpoint, not a Plan 1 or Plan 2 checkpoint.
+- `operator_reviewed` is implementation-review metadata only; it does not authorize any live call.
 
 ---
 
@@ -66,8 +67,10 @@ def consolidate_findings(reports, *, revision: int) -> TaskQualityVerdict:
 ```
 
 Change the third same-root release-impact action from local patch blocking to `redesign_invariant`; the task remains incomplete.
-Add `review-program --run-id` as a read-only four-lane dispatcher that writes
-only kernel-owned review evidence, and add `--latest-vnext-id` as a read-only
+Add `review-program --run-id` as a workspace- and provider-read-only four-lane
+dispatcher. Its only allowed write is submission of review results through the
+kernel-owned evidence writer; it cannot edit product files, mutate provider
+state, or append events directly. Add `--latest-vnext-id` as a read-only
 inspection selector that prints exactly one run ID.
 
 - [ ] **Step 4: Run GREEN**
@@ -228,6 +231,10 @@ operator_reviewed: true
 
 **Interfaces:** Produces a sanitized comparison for small single-plan, ten-task, Canvas multi-plan, and Waygent dogfood fixtures.
 
+The v4 side is loaded only from the immutable tracked
+`evals/fixtures/v4-control-snapshot.json` created before Plan 2 removed the v4
+success path. The comparison must not import or execute v4 runtime code.
+
 - [ ] **Step 1: Implement the deterministic comparison driver**
 
 ```python
@@ -242,7 +249,9 @@ for fixture in ("single", "ten-task", "canvas-program", "waygent-p0"):
 
 Run: `python3 skills/kws-codex-plan-executor/evals/check_vnext_quality_comparison.py`
 
-Expected: exit 0; quality gates pass and exact efficiency deltas are reported without a credentialed call.
+Expected: exit 0; the tracked control digest is verified, quality gates pass,
+and exact efficiency deltas are reported without a credentialed call or a v4
+success route.
 
 - [ ] **Step 3: Register maintained checks and run the cost-free suite**
 
@@ -259,9 +268,12 @@ Expected: both exit 0.
 - [ ] **Step 5: Commit the frozen Plan 3 runtime checkpoint**
 
 ```bash
-git add skills/kws-codex-plan-executor/evals skills/kws-codex-plan-executor/docs/verification-log.md
+git add skills/kws-codex-plan-executor/evals/check_vnext_quality_comparison.py skills/kws-codex-plan-executor/evals/maintained-checks.json skills/kws-codex-plan-executor/docs/verification-log.md
 git commit -m "test(cpe): freeze vnext quality comparison checkpoint"
 ```
+
+Record the frozen checkpoint's commit, tree, Plan 3 hash, spec hash, and Plan 2
+upstream checkpoint before entering the Program Final Gate.
 
 ### Task 5: Execute The Program Final Gate
 
@@ -293,13 +305,15 @@ Expected: one checkpoint-bound consolidated report. If it contains P0/P1 finding
 
 - [ ] **Step 2: Run the final cost-free gate once**
 
-Run: `cd skills/kws-codex-plan-executor && ./evals/run.sh && cd ../../.. && bun run check && git diff --check`
+Run: `cd skills/kws-codex-plan-executor && ./evals/run.sh && cd ../.. && bun run check && git diff --check`
 
 Expected: all commands exit 0; the proof checkpoint is unchanged throughout.
 
 - [ ] **Step 3: Stop for current credentialed-call authority**
 
 Do not infer approval from this plan. Obtain explicit authority for ChatGPT subscription usage and the `2/4/6` ceiling. Without authority, record `authority_required` and preserve the frozen run.
+No `operator_reviewed` field, prior review result, or implementation checkpoint
+can substitute for this fresh live-call authority.
 
 - [ ] **Step 4: Execute sentinel, normal regression, dogfood, and finalization**
 
@@ -323,6 +337,6 @@ Update the verification log and risk register with proof and closeout commits, k
 graphify update .
 python3 skills/kws-codex-plan-executor/scripts/check_graphify_freshness.py --repo-root . --update-ran
 git diff --check
-git add skills/kws-codex-plan-executor/docs graphify-out/GRAPH_REPORT.md graphify-out/graph.json
+git add skills/kws-codex-plan-executor/docs/verification-log.md skills/kws-codex-plan-executor/docs/risks-limitations-deferrals.md skills/kws-codex-plan-executor/docs/release-process.md graphify-out/GRAPH_REPORT.md graphify-out/graph.json
 git commit -m "docs(cpe): close vnext program release evidence"
 ```
