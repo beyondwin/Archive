@@ -800,6 +800,18 @@ class RunStore:
             raise ValueError("artifact digest does not match its durable index")
         return data
 
+    def _read_physical_indexed_artifact(
+        self,
+        relative_path: str,
+        records: Mapping[str, Mapping[str, object]],
+    ) -> bytes:
+        """Read one physical artifact without re-entering logical publication lookup."""
+
+        record = records.get(relative_path)
+        if record is None:
+            raise ValueError("accepted publication artifact is not indexed")
+        return self._read_indexed_artifact(relative_path, record)
+
     def _validate_artifacts(self) -> tuple[dict[str, object], ...]:
         records = self._artifact_records()
         indexed = {str(record["relative_path"]): record for record in records}
@@ -1052,78 +1064,69 @@ class RunStore:
             str(record["relative_path"]): record
             for record in self._artifact_records()
         }
+        published: list[bytes] = []
+        for event in self.validate_event_chain():
+            if event["event_type"] != "map.generation_created":
+                continue
+            payload = event["payload"]
+            manifest_path = payload.get("publication_manifest_path")
+            manifest_digest = payload.get("publication_manifest_sha256")
+            if not isinstance(manifest_path, str) or not isinstance(
+                manifest_digest, str
+            ):
+                raise ValueError("map generation event omits its accepted publication")
+            raw = self._read_physical_indexed_artifact(manifest_path, records)
+            if _sha256(raw) != manifest_digest:
+                raise ValueError("accepted publication event digest does not match")
+            manifest = self._validate_publication_manifest(raw, manifest_path)
+            generation_id = manifest.get("generation_id")
+            publication_id = manifest.get("publication_id")
+            artifacts = manifest.get("artifacts")
+            if (
+                not isinstance(generation_id, str)
+                or generation_id != payload.get("generation_id")
+                or manifest.get("program_map_sha256") != payload.get("map_sha256")
+                or not isinstance(publication_id, str)
+                or not isinstance(artifacts, dict)
+            ):
+                raise ValueError("accepted publication identity is invalid")
+            descriptor = artifacts.get(normalized)
+            if descriptor is None:
+                continue
+            if (
+                not isinstance(descriptor, dict)
+                or frozenset(descriptor)
+                != frozenset({"relative_path", "sha256", "byte_length"})
+            ):
+                raise ValueError("accepted publication artifact record is invalid")
+            physical_path = descriptor.get("relative_path")
+            digest = descriptor.get("sha256")
+            byte_length = descriptor.get("byte_length")
+            expected_physical_path = (
+                f"maps/{generation_id}/attempts/{publication_id}/artifacts/"
+                f"{normalized}"
+            )
+            if (
+                not isinstance(physical_path, str)
+                or physical_path != expected_physical_path
+                or not isinstance(digest, str)
+                or len(digest) != 64
+                or not isinstance(byte_length, int)
+                or isinstance(byte_length, bool)
+                or byte_length < 0
+            ):
+                raise ValueError("accepted publication artifact binding is invalid")
+            data = self._read_physical_indexed_artifact(physical_path, records)
+            if len(data) != byte_length or _sha256(data) != digest:
+                raise ValueError("accepted publication artifact digest does not match")
+            published.append(data)
+        if len(published) > 1:
+            raise ValueError("artifact is published by multiple accepted generations")
+        if published:
+            return published[0]
         record = records.get(normalized)
         if record is None:
-            published: list[bytes] = []
-            for event in self.validate_event_chain():
-                if event["event_type"] != "map.generation_created":
-                    continue
-                payload = event["payload"]
-                if normalized not in payload.get("artifact_paths", []):
-                    continue
-                manifest_path = payload.get("publication_manifest_path")
-                manifest_digest = payload.get("publication_manifest_sha256")
-                if not isinstance(manifest_path, str) or not isinstance(
-                    manifest_digest, str
-                ):
-                    raise ValueError(
-                        "map generation event omits its accepted publication"
-                    )
-                manifest_record = records.get(manifest_path)
-                if manifest_record is None:
-                    raise ValueError("accepted publication manifest is not indexed")
-                raw = self._read_indexed_artifact(manifest_path, manifest_record)
-                if _sha256(raw) != manifest_digest:
-                    raise ValueError("accepted publication event digest does not match")
-                manifest = self._validate_publication_manifest(raw, manifest_path)
-                generation_id = manifest.get("generation_id")
-                publication_id = manifest.get("publication_id")
-                artifacts = manifest.get("artifacts")
-                if (
-                    not isinstance(generation_id, str)
-                    or generation_id != payload.get("generation_id")
-                    or not isinstance(publication_id, str)
-                    or not isinstance(artifacts, dict)
-                    or set(artifacts) != set(payload.get("artifact_paths", []))
-                ):
-                    raise ValueError("accepted publication identity is invalid")
-                descriptor = artifacts.get(normalized)
-                if descriptor is None:
-                    continue
-                if (
-                    not isinstance(descriptor, dict)
-                    or frozenset(descriptor)
-                    != frozenset({"relative_path", "sha256", "byte_length"})
-                ):
-                    raise ValueError("accepted publication artifact record is invalid")
-                physical_path = descriptor.get("relative_path")
-                digest = descriptor.get("sha256")
-                byte_length = descriptor.get("byte_length")
-                expected_physical_path = (
-                    f"maps/{generation_id}/attempts/{publication_id}/artifacts/"
-                    f"{normalized}"
-                )
-                physical_record = records.get(str(physical_path))
-                if (
-                    not isinstance(physical_path, str)
-                    or physical_path != expected_physical_path
-                    or physical_record is None
-                    or not isinstance(digest, str)
-                    or len(digest) != 64
-                    or not isinstance(byte_length, int)
-                    or isinstance(byte_length, bool)
-                    or byte_length < 0
-                ):
-                    raise ValueError("accepted publication artifact binding is invalid")
-                data = self._read_indexed_artifact(physical_path, physical_record)
-                if len(data) != byte_length or _sha256(data) != digest:
-                    raise ValueError("accepted publication artifact digest does not match")
-                published.append(data)
-            if len(published) != 1:
-                if published:
-                    raise ValueError("artifact is published by multiple accepted generations")
-                raise ValueError("artifact has no durable digest record")
-            return published[0]
+            raise ValueError("artifact has no durable digest record")
         return self._read_indexed_artifact(normalized, record)
 
     def allocate_outbox(self, attempt_id: str) -> Path:

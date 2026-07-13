@@ -214,7 +214,7 @@ class LeanMappingTest(unittest.TestCase):
         events = store.validate_event_chain()
         self.assertEqual(events[-1]["event_type"], "map.generation_created")
         self.assertEqual(events[-1]["payload"]["generation_id"], "generation-0001")
-        self.assertEqual(events[-1]["payload"]["artifact_paths"], sorted(events[-1]["payload"]["artifact_paths"]))
+        self.assertNotIn("artifact_paths", events[-1]["payload"])
 
         program = json.loads(store.read_artifact(program_path))
         self.assertEqual(
@@ -237,6 +237,71 @@ class LeanMappingTest(unittest.TestCase):
         brief = json.loads(store.read_artifact("briefs/plan-01-T2.json"))
         self.assertEqual(brief["dependency_edges"][0]["task_id"], "plan-01:T1")
         self.assertTrue(brief["upstream_interface_commitments"])
+
+    def test_generation_event_stays_bounded_for_sixty_two_task_program(self) -> None:
+        store = self.create_store()
+        engine = self.create_engine(store=store, scenario="mapping_many_tasks")
+
+        program_path = engine.map_program()
+
+        program = json.loads(store.read_artifact(program_path))
+        self.assertEqual(len(program["tasks"]), 62)
+        generation_event = next(
+            event
+            for event in store.validate_event_chain()
+            if event["event_type"] == "map.generation_created"
+        )
+        payload = generation_event["payload"]
+        self.assertNotIn("artifact_paths", payload)
+        self.assertEqual(
+            set(payload),
+            {
+                "generation_id",
+                "map_sha256",
+                "publication_manifest_path",
+                "publication_manifest_sha256",
+                "authority_ids",
+                "task_ids",
+            },
+        )
+        manifest = json.loads(store.read_artifact(payload["publication_manifest_path"]))
+        self.assertEqual(len(manifest["artifacts"]), 65)
+        self.assertEqual(
+            set(manifest["artifacts"]),
+            {
+                program_path,
+                "maps/generation-0001/coverage.json",
+                "maps/generation-0001/authority-queue.json",
+                *(task["brief_path"] for task in program["tasks"]),
+            },
+        )
+        self.assertEqual(
+            json.loads(store.read_artifact("briefs/plan-02-T60.json"))["task_id"],
+            "plan-02:T60",
+        )
+
+    def test_event_selected_publication_ignores_direct_logical_shadows(self) -> None:
+        store = self.create_store()
+        engine = self.create_engine(store=store, scenario="mapping_success")
+        engine.map_program()
+        logical_paths = (
+            "maps/generation-0001/program-map.json",
+            "maps/generation-0001/coverage.json",
+            "briefs/plan-01-T1.json",
+        )
+        selected_bytes = {
+            logical_path: store.read_artifact(logical_path)
+            for logical_path in logical_paths
+        }
+        for logical_path in logical_paths:
+            store.put_artifact(logical_path, b'{"shadow":true}')
+
+        for logical_path in logical_paths:
+            with self.subTest(logical_path=logical_path):
+                self.assertEqual(
+                    store.read_artifact(logical_path),
+                    selected_bytes[logical_path],
+                )
 
     def test_completed_immutable_document_maps_are_reused_after_interruption(self) -> None:
         store = self.create_store()

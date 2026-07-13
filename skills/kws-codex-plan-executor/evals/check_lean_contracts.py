@@ -75,6 +75,21 @@ class LeanContractsTest(unittest.TestCase):
             program_plan=self.program,
         )
 
+    @staticmethod
+    def generation_event_payload(**overrides: object) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "generation_id": "generation-0001",
+            "map_sha256": "a" * 64,
+            "publication_manifest_path": (
+                "maps/generation-0001/attempts/" + "b" * 64 + "/accepted.json"
+            ),
+            "publication_manifest_sha256": "c" * 64,
+            "authority_ids": [],
+            "task_ids": [],
+        }
+        payload.update(overrides)
+        return payload
+
     def create_store_with_relationships(self) -> RunStore:
         return RunStore.create(
             codex_home=self.home,
@@ -285,10 +300,7 @@ class LeanContractsTest(unittest.TestCase):
 
         first = store.append_event(
             "map.generation_created",
-            {
-                "generation_id": "generation-0001",
-                "artifact_paths": ["maps/generation-0001/program-map.json"],
-            },
+            self.generation_event_payload(),
         )
         self.assertEqual(first["prev_event_sha256"], provenance[-1]["event_sha256"])
         self.assertEqual(store.replay()["status"], "running")
@@ -324,7 +336,7 @@ class LeanContractsTest(unittest.TestCase):
                 store = self.create_store()
                 store.append_event(
                     "map.generation_created",
-                    {"generation_id": "generation-0001", "artifact_paths": []},
+                    self.generation_event_payload(),
                 )
                 lines = store.paths.events.read_bytes().splitlines(keepends=True)
                 store.paths.events.write_bytes(
@@ -394,18 +406,16 @@ class LeanContractsTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "at most 64"):
             store.append_event(
                 "map.generation_created",
-                {
-                    "generation_id": "generation-0001",
-                    "authority_ids": [f"A{index}" for index in range(65)],
-                },
+                self.generation_event_payload(
+                    authority_ids=[f"A{index}" for index in range(65)]
+                ),
             )
         with self.assertRaisesRegex(ValueError, "artifact path"):
             store.append_event(
                 "map.generation_created",
-                {
-                    "generation_id": "generation-0001",
-                    "publication_manifest_path": "maps/../accepted.json",
-                },
+                self.generation_event_payload(
+                    publication_manifest_path="maps/../accepted.json"
+                ),
             )
 
     def test_artifacts_are_immutable_and_outbox_ingestion_is_bounded(self) -> None:
