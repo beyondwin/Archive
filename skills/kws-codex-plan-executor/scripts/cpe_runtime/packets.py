@@ -12,6 +12,7 @@ from .task_contracts import contract_from_body
 PACKET_MEDIA_TYPE = "application/json"
 PACKET_SCHEMA_VERSION = "3.1"
 PACKET_V4_SCHEMA_VERSION = "cpe.task-packet.v4"
+PACKET_VNEXT_SCHEMA_VERSION = "cpe.task-packet.vnext"
 PACKET_ROLE_POLICY: dict[str, dict[str, bool]] = {
     "scout": {"read_only": True, "verdict_capable": False, "product_write": False},
     "implementation": {"read_only": False, "verdict_capable": False, "product_write": True},
@@ -117,11 +118,17 @@ def build_packet(compiled: object, task: dict) -> PacketDraft:
         if not isinstance(task_contract, dict) or not isinstance(task_contract_sha256, str):
             raise ValueError("task_contract_invalid")
         contract = contract_from_body(task_contract, task_contract_sha256)
-        if contract.task_id != task_id:
+        is_vnext = contract.schema_version == "cpe.task-contract.vnext"
+        packet_task_id = (
+            contract.qualified_task_id if is_vnext else contract.task_id
+        )
+        if packet_task_id != task_id:
             raise ValueError("task_contract_id_mismatch")
         payload = {
-            "schema_version": PACKET_V4_SCHEMA_VERSION,
-            "task_id": contract.task_id,
+            "schema_version": (
+                PACKET_VNEXT_SCHEMA_VERSION if is_vnext else PACKET_V4_SCHEMA_VERSION
+            ),
+            "task_id": packet_task_id,
             "task_contract": contract.body(),
             "task_contract_sha256": contract.contract_sha256,
             "execution_contract": {
@@ -236,14 +243,27 @@ def verify_packet(run_dir: Path, manifest: dict, task_id: str) -> PacketDraft:
     ):
         raise ValueError("packet_invalid")
     schema_version = payload.get("schema_version")
-    if schema_version == PACKET_V4_SCHEMA_VERSION:
+    if schema_version in {PACKET_V4_SCHEMA_VERSION, PACKET_VNEXT_SCHEMA_VERSION}:
         task_contract = payload.get("task_contract")
         task_contract_sha256 = payload.get("task_contract_sha256")
         if not isinstance(task_contract_sha256, str):
             raise ValueError("task_contract_invalid")
         contract = contract_from_body(task_contract, task_contract_sha256)
-        if contract.task_id != task_id:
+        contract_task_id = (
+            contract.qualified_task_id
+            if contract.schema_version == "cpe.task-contract.vnext"
+            else contract.task_id
+        )
+        if contract_task_id != task_id:
             raise ValueError("task_contract_id_mismatch")
+        if (
+            schema_version == PACKET_VNEXT_SCHEMA_VERSION
+            and contract.schema_version != "cpe.task-contract.vnext"
+        ) or (
+            schema_version == PACKET_V4_SCHEMA_VERSION
+            and contract.schema_version != "cpe.task-contract.v4"
+        ):
+            raise ValueError("packet_contract_schema_mismatch")
         if payload.get("role_policy") != PACKET_ROLE_POLICY:
             raise ValueError("packet_role_policy_mismatch")
         if payload.get("source_hashes") != contract.source_hashes:

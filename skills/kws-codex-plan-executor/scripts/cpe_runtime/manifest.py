@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from collections.abc import Mapping
 from pathlib import Path
 from pathlib import PurePosixPath
 
@@ -43,6 +44,59 @@ def file_record(path: Path) -> dict[str, str]:
     return {"ref": relative_ref(path), "sha256": sha256_file(path)}
 
 
+def _plain(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {str(key): _plain(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_plain(item) for item in value]
+    return value
+
+
+def _graph_value(graph: object, name: str) -> object:
+    if isinstance(graph, Mapping):
+        return graph.get(name)
+    return getattr(graph, name)
+
+
+def plan_graph_record(graph: object) -> dict[str, object]:
+    """Return the complete canonical PlanGraph body plus its verified digest."""
+
+    fields = (
+        "schema_version",
+        "spec_document_id",
+        "program_document_id",
+        "plan_documents",
+        "plan_ids",
+        "document_hashes",
+        "spec_section_hashes",
+        "tasks",
+        "edges",
+        "spec_coverage",
+        "file_ownership",
+        "ownership_authority",
+        "file_ownership_patterns",
+        "file_interface_writers",
+        "plan_checkpoints",
+        "global_integration_gate",
+    )
+    body = {name: _plain(_graph_value(graph, name)) for name in fields}
+    expected = str(_graph_value(graph, "graph_sha256"))
+    actual = hashlib.sha256(
+        json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    if actual != expected:
+        raise ValueError("plan_graph_digest_mismatch")
+    return {**body, "graph_sha256": expected}
+
+
+def bind_plan_graph(manifest: dict, graph: object) -> dict:
+    """Bind a manifest copy to one immutable, content-addressed PlanGraph."""
+
+    bound = dict(manifest)
+    bound["plan_graph"] = plan_graph_record(graph)
+    return bound
+
+
 def _fsync_dir(path: Path) -> None:
     descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
     try:
@@ -65,13 +119,14 @@ def create_manifest(
     source_head: str | None = None,
     source_status: list[str] | None = None,
     runtime_commit: str | None = None,
+    plan_graph: object | None = None,
 ) -> dict:
     if not run_id or "/" in run_id or run_id in {".", ".."}:
         raise ValueError("invalid run_id")
     ids = [str(item.get("id", "")) for item in task_graph]
     if any(not item for item in ids) or len(ids) != len(set(ids)):
         raise ValueError("task graph requires unique task ids")
-    return {
+    manifest = {
         "schema_version": RUN_SCHEMA_VERSION,
         "run_id": run_id,
         "mode": mode,
@@ -93,6 +148,7 @@ def create_manifest(
         },
         "task_packets": [],
     }
+    return bind_plan_graph(manifest, plan_graph) if plan_graph is not None else manifest
 
 
 def write_manifest(path: Path, manifest: dict) -> None:
@@ -131,6 +187,31 @@ def validate_manifest(manifest: dict) -> list[str]:
     if not isinstance(manifest, dict) or manifest.get("schema_version") != RUN_SCHEMA_VERSION:
         return ["unsupported_run_schema"]
     errors: list[str] = []
+    if "plan_graph" in manifest:
+        graph = manifest.get("plan_graph")
+        if not isinstance(graph, dict):
+            errors.append("plan_graph_invalid")
+        else:
+            expected = graph.get("graph_sha256")
+            body = {key: value for key, value in graph.items() if key != "graph_sha256"}
+            actual = hashlib.sha256(
+                json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+            graph_task_ids = set((graph.get("tasks") or {}).keys()) if isinstance(
+                graph.get("tasks"), dict
+            ) else set()
+            task_ids = {
+                str(task.get("id"))
+                for task in manifest.get("task_graph", [])
+                if isinstance(task, dict)
+            }
+            if (
+                not isinstance(expected, str)
+                or expected != actual
+                or not graph_task_ids
+                or task_ids != graph_task_ids
+            ):
+                errors.append("plan_graph_digest_mismatch")
     attempt_limit = manifest.get("attempt_budget_limit", 40)
     if type(attempt_limit) is not int or not 1 <= attempt_limit <= 40:
         errors.append("attempt_budget_limit_invalid")

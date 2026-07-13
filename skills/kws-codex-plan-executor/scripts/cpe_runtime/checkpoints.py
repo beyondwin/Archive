@@ -8,6 +8,7 @@ import os
 import subprocess
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from collections.abc import Mapping
 from typing import Iterable
 
 from .git_delta import (
@@ -61,6 +62,211 @@ class ReviewEvidence:
     decision: str
     review_content_sha256: str
     artifact_sha256: str
+
+
+class _FrozenEvidence(dict[str, str]):
+    def _reject_mutation(self, *args: object, **kwargs: object) -> None:
+        del args, kwargs
+        raise TypeError("PlanCheckpoint evidence is immutable")
+
+    __setitem__ = _reject_mutation
+    __delitem__ = _reject_mutation
+    clear = _reject_mutation
+    pop = _reject_mutation
+    popitem = _reject_mutation
+    setdefault = _reject_mutation
+    update = _reject_mutation
+    __ior__ = _reject_mutation
+
+
+@dataclass(frozen=True)
+class PlanCheckpoint:
+    plan_id: str
+    commit: str
+    tree: str
+    plan_sha256: str
+    spec_sha256: str
+    upstream_checkpoint: str | None
+    upstream_graph_sha256: str
+    evidence_refs: tuple[dict[str, str], ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "evidence_refs",
+            tuple(_FrozenEvidence(dict(reference)) for reference in self.evidence_refs),
+        )
+
+    def body(self) -> dict[str, object]:
+        return {
+            "plan_id": self.plan_id,
+            "commit": self.commit,
+            "tree": self.tree,
+            "plan_sha256": self.plan_sha256,
+            "spec_sha256": self.spec_sha256,
+            "upstream_checkpoint": self.upstream_checkpoint,
+            "upstream_graph_sha256": self.upstream_graph_sha256,
+            "evidence_refs": [dict(reference) for reference in self.evidence_refs],
+        }
+
+    def identity(self) -> str:
+        raw = json.dumps(self.body(), sort_keys=True, separators=(",", ":")).encode()
+        return hashlib.sha256(b"CPE-PLAN-CHECKPOINT-VNEXT\0" + raw).hexdigest()
+
+
+def _plain(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {str(key): _plain(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_plain(item) for item in value]
+    return value
+
+
+def _graph_value(graph: object, name: str) -> object:
+    if isinstance(graph, Mapping):
+        return graph.get(name)
+    return getattr(graph, name)
+
+
+def upstream_graph_sha256(graph: object, plan_id: str) -> str:
+    """Digest only the graph prefix that can affect ``plan_id``."""
+
+    plan_ids = tuple(str(item) for item in (_graph_value(graph, "plan_ids") or ()))
+    if plan_id not in plan_ids:
+        raise ValueError("plan_checkpoint_plan_unknown")
+    included_plans = plan_ids[: plan_ids.index(plan_id) + 1]
+    included_set = set(included_plans)
+    tasks = {
+        str(task_id): _plain(task)
+        for task_id, task in (_graph_value(graph, "tasks") or {}).items()
+        if isinstance(task, Mapping) and str(task.get("plan_id")) in included_set
+    }
+    task_ids = set(tasks)
+    plan_documents = tuple(_graph_value(graph, "plan_documents") or ())
+    included_documents = plan_documents[: len(included_plans)]
+    document_ids = {
+        str(item)
+        for item in (
+            _graph_value(graph, "spec_document_id"),
+            _graph_value(graph, "program_document_id"),
+            *included_documents,
+        )
+        if item is not None
+    }
+    document_hashes = {
+        str(document_id): str(digest)
+        for document_id, digest in (_graph_value(graph, "document_hashes") or {}).items()
+        if str(document_id) in document_ids
+    }
+    edges = [
+        [str(start), str(end)]
+        for start, end in (_graph_value(graph, "edges") or ())
+        if str(start) in task_ids and str(end) in task_ids
+    ]
+    coverage = {
+        str(section): [str(task) for task in owners if str(task) in task_ids]
+        for section, owners in (_graph_value(graph, "spec_coverage") or {}).items()
+        if any(str(task) in task_ids for task in owners)
+    }
+    payload = {
+        "schema_version": "cpe.upstream-plan-graph.vnext",
+        "source_graph_schema_version": _graph_value(graph, "schema_version"),
+        "spec_document_id": _graph_value(graph, "spec_document_id"),
+        "program_document_id": _graph_value(graph, "program_document_id"),
+        "plan_ids": list(included_plans),
+        "plan_documents": list(included_documents),
+        "document_hashes": document_hashes,
+        "spec_section_hashes": _plain(_graph_value(graph, "spec_section_hashes") or {}),
+        "tasks": tasks,
+        "edges": sorted(edges),
+        "spec_coverage": coverage,
+    }
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(b"CPE-UPSTREAM-PLAN-GRAPH-VNEXT\0" + raw).hexdigest()
+
+
+def create_plan_checkpoint(
+    *,
+    plan_id: str,
+    commit: str,
+    tree: str,
+    plan_sha256: str,
+    spec_sha256: str,
+    upstream_checkpoint: str | None,
+    upstream_graph_sha256: str,
+    evidence_refs: tuple[dict[str, str], ...],
+) -> PlanCheckpoint:
+    """Create an immutable checkpoint bound to exact Git, document, and graph evidence."""
+
+    if not plan_id or "::" in plan_id:
+        raise ValueError("plan_checkpoint_plan_invalid")
+    if not _is_hex(commit, 40) or not _is_hex(tree, 40):
+        raise ValueError("plan_checkpoint_git_invalid")
+    if not all(_is_hex(value, 64) for value in (plan_sha256, spec_sha256, upstream_graph_sha256)):
+        raise ValueError("plan_checkpoint_digest_invalid")
+    if upstream_checkpoint is not None and not _is_hex(upstream_checkpoint, 64):
+        raise ValueError("plan_checkpoint_upstream_invalid")
+    if not evidence_refs:
+        raise ValueError("plan_checkpoint_evidence_missing")
+    for reference in evidence_refs:
+        if (
+            not isinstance(reference, dict)
+            or not reference
+            or any(not isinstance(key, str) or not isinstance(value, str) or not value for key, value in reference.items())
+            or not _is_hex(reference.get("sha256"), 64)
+        ):
+            raise ValueError("plan_checkpoint_evidence_invalid")
+    return PlanCheckpoint(
+        plan_id=plan_id,
+        commit=commit,
+        tree=tree,
+        plan_sha256=plan_sha256,
+        spec_sha256=spec_sha256,
+        upstream_checkpoint=upstream_checkpoint,
+        upstream_graph_sha256=upstream_graph_sha256,
+        evidence_refs=evidence_refs,
+    )
+
+
+def promote_plan_checkpoint(
+    checkpoint: PlanCheckpoint,
+    *,
+    plan_id: str,
+    plan_sha256: str,
+    spec_sha256: str,
+    upstream_checkpoint: str | None,
+    upstream_graph_sha256: str,
+) -> PlanCheckpoint:
+    """Promote only a checkpoint current for its plan, documents, and upstream graph."""
+
+    if not isinstance(checkpoint, PlanCheckpoint):
+        raise ValueError("plan_checkpoint_invalid")
+    try:
+        validated = create_plan_checkpoint(
+            plan_id=checkpoint.plan_id,
+            commit=checkpoint.commit,
+            tree=checkpoint.tree,
+            plan_sha256=checkpoint.plan_sha256,
+            spec_sha256=checkpoint.spec_sha256,
+            upstream_checkpoint=checkpoint.upstream_checkpoint,
+            upstream_graph_sha256=checkpoint.upstream_graph_sha256,
+            evidence_refs=checkpoint.evidence_refs,
+        )
+    except ValueError as exc:
+        raise ValueError("plan_checkpoint_invalid") from exc
+    if validated.identity() != checkpoint.identity():
+        raise ValueError("plan_checkpoint_invalid")
+    if checkpoint.plan_id != plan_id:
+        raise ValueError("plan_checkpoint_plan_mismatch")
+    if checkpoint.plan_sha256 != plan_sha256:
+        raise ValueError("plan_checkpoint_document_stale")
+    if checkpoint.spec_sha256 != spec_sha256:
+        raise ValueError("plan_checkpoint_spec_stale")
+    if checkpoint.upstream_graph_sha256 != upstream_graph_sha256:
+        raise ValueError("plan_checkpoint_upstream_graph_stale")
+    if checkpoint.upstream_checkpoint != upstream_checkpoint:
+        raise ValueError("plan_checkpoint_upstream_stale")
+    return checkpoint
 
 
 def _git(worktree: Path, *args: str, env: dict[str, str] | None = None) -> bytes:
