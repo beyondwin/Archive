@@ -281,40 +281,38 @@ def snapshot_source_bytes(document_set: DocumentSet) -> tuple[InputSource, ...]:
         key=lambda item: (role_order[item[1].kind], item[0]),
     )
     return tuple(
-        InputSource(document.kind, document.path, document.sha256, document.content)
+        InputSource(
+            document.kind,
+            (document_set.source_root / document.path).resolve(strict=True),
+            document.sha256,
+            document.content,
+        )
         for _, document in ordered
     )
 
 
 def compile_run(
     *,
-    plans: tuple[Path, ...] | None = None,
-    program_plan: Path | None = None,
+    plans: tuple[Path, ...],
+    program_plan: Path | None,
     spec: Path | None,
     docs: tuple[Path, ...],
     workspace: Path,
     mode: str,
-    **legacy: object,
 ) -> CompiledRun:
-    legacy_plan = legacy.pop("plan", None)
-    if legacy:
-        unexpected = next(iter(legacy))
-        raise TypeError(f"compile_run() got an unexpected keyword argument {unexpected!r}")
-    if legacy_plan is not None:
-        if plans is not None:
-            raise TypeError("compile_run() accepts either plans or legacy plan, not both")
-        if not isinstance(legacy_plan, Path):
-            raise TypeError("compile_run() legacy plan must be a pathlib.Path")
-        plans = (legacy_plan,)
-    if plans is None:
-        raise TypeError("compile_run() missing required keyword-only argument: 'plans'")
     workspace = workspace.expanduser().resolve()
     plans = tuple(plan.expanduser().resolve() for plan in plans)
     program_plan = program_plan.expanduser().resolve() if program_plan else None
     spec = spec.expanduser().resolve() if spec else None
     docs = tuple(path.expanduser().resolve() for path in docs)
     try:
-        document_set = compile_document_set(spec, plans, program_plan, docs)
+        document_set = compile_document_set(
+            spec,
+            plans,
+            program_plan,
+            docs,
+            workspace=workspace,
+        )
     except DocumentSetBlocked as exc:
         raise CompileBlocked(
             "document_set_invalid",

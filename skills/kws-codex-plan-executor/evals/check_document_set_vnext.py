@@ -67,14 +67,22 @@ def main() -> int:
     checks["cli_program_plan_is_optional"] = single.program_plan is None
 
     signature = inspect.signature(compile_run)
+    plans_parameter = signature.parameters.get("plans")
     checks["compiler_uses_tuple_interface"] = (
-        "plans" in signature.parameters
+        plans_parameter is not None
+        and plans_parameter.kind is inspect.Parameter.KEYWORD_ONLY
+        and plans_parameter.default is inspect.Parameter.empty
         and "program_plan" in signature.parameters
         and "plan" not in signature.parameters
+        and all(
+            parameter.kind is not inspect.Parameter.VAR_KEYWORD
+            for parameter in signature.parameters.values()
+        )
     )
 
     with tempfile.TemporaryDirectory(prefix="cpe-document-set-") as temp:
         root = Path(temp)
+        (root / ".git").mkdir()
         spec = _write(root / "spec.md", "Quality Spec", "spec body")
         program = _write(root / "program.md", "Delivery Program", "program body")
         plan_a = _write(root / "waves" / "a.md", "Wave Alpha", "alpha body")
@@ -97,8 +105,11 @@ def main() -> int:
         else:
             checks["input_document_is_frozen"] = False
 
+        checks["stored_paths_are_workspace_relative"] = all(
+            not item.path.is_absolute() for item in compiled.documents
+        )
         checks["bytes_and_hash_are_exact"] = all(
-            item.content == item.path.read_bytes()
+            item.content == (compiled.source_root / item.path).resolve().read_bytes()
             and item.sha256 == hashlib.sha256(item.content).hexdigest()
             for item in compiled.documents
         )
@@ -107,6 +118,13 @@ def main() -> int:
         ) == len(compiled.documents)
         checks["document_set_hash_is_stable"] = (
             compiled.sha256 == compile_document_set(spec, (plan_a, plan_b), program, (doc,)).sha256
+        )
+        plan_a_identity = next(
+            item.document_id for item in compiled.documents if item.path == Path("waves/a.md")
+        )
+        reduced = compile_document_set(spec, (plan_a,), None, ())
+        checks["identity_is_stable_when_inputs_change"] = plan_a_identity == next(
+            item.document_id for item in reduced.documents if item.path == Path("waves/a.md")
         )
 
         without_program = compile_document_set(spec, (plan_a, plan_b), None, ())
@@ -122,7 +140,60 @@ def main() -> int:
 
         normalized = root / "waves" / "nested" / ".." / "a.md"
         normalized_set = compile_document_set(spec, (normalized,), None, ())
-        checks["paths_are_normalized"] = normalized_set.documents[1].path == plan_a.resolve()
+        checks["paths_are_normalized"] = normalized_set.documents[1].path == Path("waves/a.md")
+
+        relocated_sets = []
+        relocated_workspace_sets = []
+        for checkout_name in ("checkout-a", "checkout-b"):
+            checkout = root / checkout_name
+            (checkout / ".git").mkdir(parents=True)
+            relocated_spec = _write(checkout / "specs" / "quality.md", "Quality Spec", "spec body")
+            relocated_program = _write(
+                checkout / "programs" / "delivery.md", "Delivery Program", "program body"
+            )
+            relocated_plan_a = _write(
+                checkout / "plans" / "a.md", "Wave Alpha", "alpha body"
+            )
+            relocated_plan_b = _write(
+                checkout / "plans" / "b.md", "Wave Beta", "beta body"
+            )
+            relocated_doc = _write(
+                checkout / "references" / "guide.md", "Operator Guide", "guide body"
+            )
+            arguments = (
+                relocated_spec,
+                (relocated_plan_a, relocated_plan_b),
+                relocated_program,
+                (relocated_doc,),
+            )
+            relocated_sets.append(compile_document_set(*arguments))
+            relocated_workspace_sets.append(compile_document_set(*arguments, workspace=checkout))
+
+        checks["relocated_default_ids_are_stable"] = (
+            [item.document_id for item in relocated_sets[0].documents]
+            == [item.document_id for item in relocated_sets[1].documents]
+            and relocated_sets[0].sha256 == relocated_sets[1].sha256
+        )
+        checks["relocated_workspace_ids_are_stable"] = (
+            [item.document_id for item in relocated_workspace_sets[0].documents]
+            == [item.document_id for item in relocated_workspace_sets[1].documents]
+            and relocated_workspace_sets[0].sha256 == relocated_workspace_sets[1].sha256
+        )
+        checks["relocated_paths_are_canonical_relative"] = [
+            item.path.as_posix() for item in relocated_workspace_sets[0].documents
+        ] == [
+            "specs/quality.md",
+            "programs/delivery.md",
+            "plans/a.md",
+            "plans/b.md",
+            "references/guide.md",
+        ]
+        checks["relocated_reads_stay_bound_to_source_root"] = all(
+            item.content
+            == (document_set.source_root / item.path).resolve(strict=True).read_bytes()
+            for document_set in relocated_workspace_sets
+            for item in document_set.documents
+        )
 
         checks["empty_plan_set_blocks"] = _expect_blocked(
             "plans_missing", lambda: compile_document_set(spec, (), None, ())
@@ -174,6 +245,27 @@ def main() -> int:
         no_title.write_text("body without a declared title\n", encoding="utf-8")
         checks["missing_title_blocks"] = _expect_blocked(
             "declared_title_missing", lambda: compile_document_set(spec, (no_title,), None, ())
+        )
+
+    with tempfile.TemporaryDirectory(prefix="cpe-document-set-standalone-") as standalone_temp:
+        standalone_root = Path(standalone_temp)
+        standalone_plan = _write(
+            standalone_root / "plan.md", "Standalone Plan", "standalone body"
+        )
+        checks["standalone_requires_explicit_workspace"] = _expect_blocked(
+            "workspace_required",
+            lambda: compile_document_set(None, (standalone_plan,), None, ()),
+        )
+        standalone = compile_document_set(
+            None,
+            (standalone_plan,),
+            None,
+            (),
+            workspace=standalone_root,
+        )
+        checks["standalone_explicit_workspace_is_usable"] = (
+            standalone.documents[0].path == Path("plan.md")
+            and standalone.documents[0].content == standalone_plan.read_bytes()
         )
 
     failures.extend(name for name, passed in checks.items() if not passed)
