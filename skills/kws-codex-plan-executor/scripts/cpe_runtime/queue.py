@@ -415,14 +415,16 @@ class QueueEngine:
         return manifest, manifest_path, _sha256(manifest_bytes)
 
     def _accepted_program_artifacts(
-        self, manifest_path: str, manifest_sha256: str
+        self,
+        manifest_path: str,
+        manifest_sha256: str,
+        *,
+        require_event_selection: bool = True,
     ) -> dict[str, bytes]:
-        manifest_bytes = self.store.read_artifact(manifest_path)
-        if _sha256(manifest_bytes) != manifest_sha256:
-            raise ValueError("accepted program publication event digest does not match")
-        manifest = self.store._validate_publication_manifest(  # noqa: SLF001
-            manifest_bytes,
+        manifest, artifacts = self.store.read_accepted_publication(
             manifest_path,
+            manifest_sha256,
+            require_event_selection=require_event_selection,
         )
         if frozenset(manifest) != frozenset(
             {
@@ -446,7 +448,6 @@ class QueueEngine:
         ):
             raise ValueError("accepted program publication identity is invalid")
         prefix = f"{_GENERATION_ROOT}/attempts/{publication_id}/artifacts/"
-        artifacts: dict[str, bytes] = {}
         for logical_path, raw_record in records.items():
             if not isinstance(logical_path, str) or not isinstance(raw_record, Mapping):
                 raise ValueError("accepted program publication record is invalid")
@@ -455,13 +456,6 @@ class QueueEngine:
             physical_path = raw_record["relative_path"]
             if physical_path != f"{prefix}{logical_path}":
                 raise ValueError("accepted program publication path is invalid")
-            data = self.store.read_artifact(physical_path)
-            if (
-                raw_record["sha256"] != _sha256(data)
-                or raw_record["byte_length"] != len(data)
-            ):
-                raise ValueError("accepted program publication digest does not match")
-            artifacts[logical_path] = data
         if self._publication_id(artifacts) != publication_id:
             raise ValueError("accepted program publication commitment does not match")
         program_path = f"{_GENERATION_ROOT}/program-map.json"
@@ -1006,7 +1000,9 @@ class QueueEngine:
         ):
             raise ValueError("accepted program publication is unavailable")
         published_bytes = self._accepted_program_artifacts(
-            selected_manifest_path, selected_manifest_sha256
+            selected_manifest_path,
+            selected_manifest_sha256,
+            require_event_selection=bool(generation_events),
         )
         program, program_bytes, artifact_paths = self._validate_program_artifacts(
             document_maps,

@@ -280,6 +280,66 @@ class LeanMappingTest(unittest.TestCase):
             "plan-02:T60",
         )
 
+    def test_accepted_publication_batch_loads_durable_state_once(self) -> None:
+        store = self.create_store()
+        engine = self.create_engine(store=store, scenario="mapping_many_tasks")
+        engine.map_program()
+        generation_event = next(
+            event
+            for event in store.validate_event_chain()
+            if event["event_type"] == "map.generation_created"
+        )
+        payload = generation_event["payload"]
+
+        with (
+            mock.patch.object(
+                store, "_artifact_records", wraps=store._artifact_records
+            ) as artifact_records,
+            mock.patch.object(
+                store, "validate_event_chain", wraps=store.validate_event_chain
+            ) as event_chain,
+            mock.patch.object(
+                store,
+                "_validate_publication_manifest",
+                wraps=store._validate_publication_manifest,
+            ) as manifest_validation,
+            mock.patch.object(
+                store, "read_artifact", wraps=store.read_artifact
+            ) as logical_reads,
+        ):
+            artifacts = engine._accepted_program_artifacts(
+                payload["publication_manifest_path"],
+                payload["publication_manifest_sha256"],
+            )
+
+        self.assertEqual(len(artifacts), 65)
+        self.assertEqual(artifact_records.call_count, 1)
+        self.assertEqual(event_chain.call_count, 1)
+        self.assertEqual(manifest_validation.call_count, 1)
+        self.assertEqual(logical_reads.call_count, 0)
+
+    def test_accepted_publication_batch_rejects_physical_mode_drift(self) -> None:
+        store = self.create_store()
+        engine = self.create_engine(store=store, scenario="mapping_success")
+        engine.map_program()
+        generation_event = next(
+            event
+            for event in store.validate_event_chain()
+            if event["event_type"] == "map.generation_created"
+        )
+        payload = generation_event["payload"]
+        manifest = json.loads(store.read_artifact(payload["publication_manifest_path"]))
+        physical_path = manifest["artifacts"]["briefs/plan-01-T1.json"][
+            "relative_path"
+        ]
+        (store.paths.root / physical_path).chmod(0o644)
+
+        with self.assertRaisesRegex(ValueError, "mode"):
+            engine._accepted_program_artifacts(
+                payload["publication_manifest_path"],
+                payload["publication_manifest_sha256"],
+            )
+
     def test_event_selected_publication_ignores_direct_logical_shadows(self) -> None:
         store = self.create_store()
         engine = self.create_engine(store=store, scenario="mapping_success")

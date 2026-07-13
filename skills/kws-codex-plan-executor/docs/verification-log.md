@@ -1255,3 +1255,19 @@ canonical digest validation; real dogfood may later replace the closed
   complete merge-gate pass.
 - Repository `bun run check` and post-merge verification were not run because
   the user requested an immediate merge.
+
+## 2026-07-14 Asia/Seoul - Task 3 accepted-publication batch loading
+
+- Branch: `codex/cpe-durable-superpowers-queue-20260713`; implementation base
+  `0e275922ed33d74c3ce4865fe130f6bc532cb509`.
+- Scope: removed per-descriptor public logical reads from accepted program
+  publication loading, added one-snapshot physical batch verification, and
+  rejected indexed artifact mode drift.
+- `python3 evals/check_lean_mapping.py`: exit 0; 31 tests passed, including the
+  62-task/65-artifact bounded call-count regression.
+- `python3 evals/check_lean_contracts.py`: exit 0; 21 tests passed.
+- Exact changed-file Python compilation and `git diff --check`: exit 0.
+- Full `./evals/run.sh` was not run because this review-fix wave requested the
+  focused mapping/contracts gates. Provider/network/model calls: zero.
+- Residual risk: none in the changed Task 3 scope; unaccepted publication
+  retention remains the separately recorded Task 7 follow-up.
