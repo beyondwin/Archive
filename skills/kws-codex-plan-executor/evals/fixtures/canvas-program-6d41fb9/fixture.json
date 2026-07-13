@@ -1,0 +1,67 @@
+{
+  "schema_version": "cpe.plan-graph-fixture.v1",
+  "source": {
+    "repository": "https://github.com/beyondwin/Canvas-clone",
+    "commit": "6d41fb96aa34d4522a8af5bfd911680c2548be3e",
+    "program_path": "docs/superpowers/plans/2026-07-12-editable-project-files-program.md",
+    "program_blob_sha1": "c62805d5b15b9f21d3bc7eab7e05c9153e734278"
+  },
+  "spec": {
+    "title": "Canvas Editable Project Design",
+    "required_sections": ["S-CANVAS"]
+  },
+  "program": {
+    "title": "Canvas Editable Project Program",
+    "contract": {
+      "plan_order": [
+        "wave-1-foundation-shell-pages",
+        "wave-a1-domain-history",
+        "wave-a2-local-repository-recovery",
+        "wave-2-layers",
+        "wave-3-catalogs-assets",
+        "wave-4-inspectors-crop",
+        "wave-5-table-editor",
+        "wave-b1-package-codec-security",
+        "wave-b2-import-repair-ux",
+        "wave-c1-portable-user-templates",
+        "wave-c2-server-contracts-integration",
+        "wave-6-integration-evidence"
+      ],
+      "required_spec_sections": ["S-CANVAS"],
+      "spec_coverage": {
+        "S-CANVAS": [
+          "wave-1-foundation-shell-pages::complete",
+          "wave-a1-domain-history::complete",
+          "wave-a2-local-repository-recovery::complete",
+          "wave-2-layers::complete",
+          "wave-3-catalogs-assets::complete",
+          "wave-4-inspectors-crop::complete",
+          "wave-5-table-editor::complete",
+          "wave-b1-package-codec-security::complete",
+          "wave-b2-import-repair-ux::complete",
+          "wave-c1-portable-user-templates::complete",
+          "wave-c2-server-contracts-integration::complete",
+          "wave-6-integration-evidence::complete"
+        ]
+      },
+      "cross_plan_dependencies": [],
+      "file_ownership": {},
+      "ownership_transfers": [],
+      "global_integration_gate": "wave-6-integration-evidence::complete"
+    }
+  },
+  "plans": [
+    {"plan_id":"wave-1-foundation-shell-pages","title":"Wave 1 Foundation Shell Pages","source_path":"docs/superpowers/plans/2026-07-12-miricanvas-design-editor-wave-1-foundation-shell-pages.md","source_blob_sha1":"cc14c05d605a921a24e98fdc667636d9777aa18f"},
+    {"plan_id":"wave-a1-domain-history","title":"Wave A1 Domain History","source_path":"docs/superpowers/plans/2026-07-12-editable-project-wave-a1-domain-history.md","source_blob_sha1":"743e82a7b2f04a419a0970f3e08a530b92d57fb0"},
+    {"plan_id":"wave-a2-local-repository-recovery","title":"Wave A2 Local Repository Recovery","source_path":"docs/superpowers/plans/2026-07-12-editable-project-wave-a2-local-repository-recovery.md","source_blob_sha1":"88ed1d41f0aa07478898e31b830902dbd8f70c36"},
+    {"plan_id":"wave-2-layers","title":"Wave 2 Layers","source_path":"docs/superpowers/plans/2026-07-12-miricanvas-design-editor-wave-2-layers.md","source_blob_sha1":"ea49497e4572685f57a4cc7484ba55dfa511d2b2"},
+    {"plan_id":"wave-3-catalogs-assets","title":"Wave 3 Catalogs Assets","source_path":"docs/superpowers/plans/2026-07-12-miricanvas-design-editor-wave-3-catalogs-assets.md","source_blob_sha1":"df1343b7bcb1f35d904e5ae2eb47a4b8900a1b8f"},
+    {"plan_id":"wave-4-inspectors-crop","title":"Wave 4 Inspectors Crop","source_path":"docs/superpowers/plans/2026-07-12-miricanvas-design-editor-wave-4-inspectors-crop.md","source_blob_sha1":"58cfb5116a173fc337d628d151a6be0978d04c7d"},
+    {"plan_id":"wave-5-table-editor","title":"Wave 5 Table Editor","source_path":"docs/superpowers/plans/2026-07-12-miricanvas-design-editor-wave-5-table-editor.md","source_blob_sha1":"ef1993f17bbd03fbf874ffafd9a1505d12f336af"},
+    {"plan_id":"wave-b1-package-codec-security","title":"Wave B1 Package Codec Security","source_path":"docs/superpowers/plans/2026-07-12-editable-project-wave-b1-package-codec-security.md","source_blob_sha1":"f74a962fe818248b35671d270665e412408e6ed0"},
+    {"plan_id":"wave-b2-import-repair-ux","title":"Wave B2 Import Repair UX","source_path":"docs/superpowers/plans/2026-07-12-editable-project-wave-b2-import-repair-ux.md","source_blob_sha1":"492f089d8f821eb5783b2896b870525a59451547"},
+    {"plan_id":"wave-c1-portable-user-templates","title":"Wave C1 Portable User Templates","source_path":"docs/superpowers/plans/2026-07-12-editable-project-wave-c1-portable-user-templates.md","source_blob_sha1":"4be70271c527e22660620a284a264ed07eadaa17"},
+    {"plan_id":"wave-c2-server-contracts-integration","title":"Wave C2 Server Contracts Integration","source_path":"docs/superpowers/plans/2026-07-12-editable-project-wave-c2-server-contracts-integration.md","source_blob_sha1":"e9a15b8de1098958491d34f45ec05286fd04517d"},
+    {"plan_id":"wave-6-integration-evidence","title":"Wave 6 Integration Evidence","source_path":"docs/superpowers/plans/2026-07-12-miricanvas-design-editor-wave-6-integration-evidence.md","source_blob_sha1":"eb25e3135f6f2ca57801780973183d851add45e1"}
+  ]
+}
