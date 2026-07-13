@@ -352,6 +352,12 @@ class LeanContractsTest(unittest.TestCase):
 
     def test_event_types_and_payloads_are_strict_and_bounded(self) -> None:
         store = self.create_store()
+        baseline = subprocess.run(
+            ["git", "-C", str(self.repo), "rev-parse", "HEAD"],
+            check=True,
+            stdout=subprocess.PIPE,
+            text=True,
+        ).stdout.strip()
         with self.assertRaises(ValueError):
             store.append_event("unknown.event", {"task_id": "plan-01:T1"})
 
@@ -375,6 +381,28 @@ class LeanContractsTest(unittest.TestCase):
                     "task_id": "plan-01:T1",
                     "attempt_id": "attempt-1",
                     "strategy_key": "x" * 513,
+                },
+            )
+        started = store.append_event(
+            "task.started",
+            {
+                "task_id": "plan-01:T1",
+                "attempt_id": "attempt-1",
+                "role": "task_agent",
+                "strategy_key": "initial",
+                "baseline_commit": baseline,
+                "evidence_sha256": "d" * 64,
+            },
+        )
+        self.assertEqual(started["payload"]["baseline_commit"], baseline)
+        with self.assertRaisesRegex(ValueError, "missing=.*evidence_sha256"):
+            store.append_event(
+                "task.started",
+                {
+                    "task_id": "plan-01:T1",
+                    "attempt_id": "attempt-2",
+                    "strategy_key": "changed",
+                    "baseline_commit": baseline,
                 },
             )
         with self.assertRaises(ValueError):

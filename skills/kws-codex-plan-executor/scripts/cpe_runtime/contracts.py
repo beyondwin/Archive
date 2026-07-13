@@ -161,12 +161,23 @@ _EVENT_PAYLOAD_SCHEMAS = {
         },
     ),
     "task.started": (
-        frozenset({"task_id", "attempt_id", "strategy_key"}),
+        frozenset(
+            {
+                "task_id",
+                "attempt_id",
+                "role",
+                "strategy_key",
+                "baseline_commit",
+                "evidence_sha256",
+            }
+        ),
         {
             "task_id": "id",
             "attempt_id": "id",
             "role": "id",
             "strategy_key": "strategy",
+            "baseline_commit": "commit",
+            "evidence_sha256": "hash",
         },
     ),
     "task.reported": (
@@ -182,7 +193,16 @@ _EVENT_PAYLOAD_SCHEMAS = {
         },
     ),
     "review.reported": (
-        frozenset({"task_id", "review_id", "status", "verdict", "artifact_paths"}),
+        frozenset(
+            {
+                "task_id",
+                "review_id",
+                "status",
+                "verdict",
+                "evidence_sha256",
+                "artifact_paths",
+            }
+        ),
         {
             "task_id": "id",
             "review_id": "id",
@@ -190,6 +210,7 @@ _EVENT_PAYLOAD_SCHEMAS = {
             "commit": "commit",
             "verdict": "verdict",
             "result_sha256": "hash",
+            "evidence_sha256": "hash",
             "artifact_paths": "paths",
         },
     ),

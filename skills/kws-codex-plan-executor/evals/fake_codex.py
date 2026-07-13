@@ -50,6 +50,8 @@ SCENARIOS = frozenset(
         "queue_test_failure",
         "queue_authority",
         "queue_review_crash",
+        "queue_fix_review_crash",
+        "queue_repeated_review_finding",
         "queue_unchanged_strategy",
         "writer_hold",
     }
@@ -861,13 +863,23 @@ def main() -> int:
 
     if scenario in {"success", "queue_success", "queue_review_crash"} and role in WRITE_ROLES:
         commit = _commit_change(worktree, item_id)
-    elif scenario == "queue_review_fix":
+    elif scenario in {
+        "queue_review_fix",
+        "queue_fix_review_crash",
+        "queue_repeated_review_finding",
+    }:
         if role in WRITE_ROLES:
             commit = _commit_change(worktree, item_id)
-        elif role == "reviewer" and queue_number == 1:
+        elif role == "reviewer" and (
+            queue_number == 1
+            or scenario == "queue_repeated_review_finding" and queue_number == 2
+        ):
             status = "changes_requested"
             verdict = "changes_requested"
-            finding_path = f"reviews/{item_id.replace(':', '-')}/findings-important.json"
+            finding_path = (
+                f"reviews/{item_id.replace(':', '-')}/"
+                f"findings-important-{queue_number}.json"
+            )
             _write_json(
                 outbox,
                 finding_path,
@@ -930,10 +942,20 @@ def main() -> int:
             and scenario in {"queue_ordinary_failure", "queue_test_failure"}
             else _prompt_strategy(prompt)
         ),
-        "affected_document_ids": [],
+        "affected_document_ids": (
+            json.loads(os.environ.get("CPE_FAKE_AFFECTED_DOCUMENT_IDS", '["plan-01"]'))
+            if status == "waiting_authority"
+            else []
+        ),
         "artifact_paths": artifact_paths,
         "summary": f"deterministic {scenario} result",
     }
+    if (
+        scenario == "queue_fix_review_crash"
+        and role == "reviewer"
+        and queue_number == 2
+    ):
+        raise SystemExit("deterministic fresh reviewer process interruption")
     last_message.write_text(json.dumps(result, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps({"type": "thread.started"}, sort_keys=True), flush=True)
     print(json.dumps({"type": "turn.completed"}, sort_keys=True), flush=True)
