@@ -79,14 +79,79 @@ def plan_graph_record(graph: object) -> dict[str, object]:
         "plan_checkpoints",
         "global_integration_gate",
     )
+    if isinstance(graph, Mapping) and set(graph) != {*fields, "graph_sha256"}:
+        raise ValueError("plan_graph_digest_mismatch")
     body = {name: _plain(_graph_value(graph, name)) for name in fields}
-    expected = str(_graph_value(graph, "graph_sha256"))
+    expected = _graph_value(graph, "graph_sha256")
     actual = hashlib.sha256(
         json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
-    if actual != expected:
+    if (
+        not isinstance(expected, str)
+        or len(expected) != 64
+        or any(character not in "0123456789abcdef" for character in expected)
+        or actual != expected
+    ):
         raise ValueError("plan_graph_digest_mismatch")
     return {**body, "graph_sha256": expected}
+
+
+def upstream_plan_graph_sha256(graph: object, plan_id: str) -> str:
+    """Digest a plan prefix only after validating the complete canonical graph."""
+
+    record = plan_graph_record(graph)
+    plan_ids = tuple(str(item) for item in record["plan_ids"])
+    if plan_id not in plan_ids:
+        raise ValueError("plan_checkpoint_plan_unknown")
+    included_plans = plan_ids[: plan_ids.index(plan_id) + 1]
+    included_set = set(included_plans)
+    tasks = {
+        str(task_id): task
+        for task_id, task in record["tasks"].items()
+        if isinstance(task, dict) and str(task.get("plan_id")) in included_set
+    }
+    task_ids = set(tasks)
+    plan_documents = tuple(record["plan_documents"])
+    included_documents = plan_documents[: len(included_plans)]
+    document_ids = {
+        str(item)
+        for item in (
+            record["spec_document_id"],
+            record["program_document_id"],
+            *included_documents,
+        )
+        if item is not None
+    }
+    document_hashes = {
+        str(document_id): str(digest)
+        for document_id, digest in record["document_hashes"].items()
+        if str(document_id) in document_ids
+    }
+    edges = [
+        [str(start), str(end)]
+        for start, end in record["edges"]
+        if str(start) in task_ids and str(end) in task_ids
+    ]
+    coverage = {
+        str(section): [str(task) for task in owners if str(task) in task_ids]
+        for section, owners in record["spec_coverage"].items()
+        if any(str(task) in task_ids for task in owners)
+    }
+    payload = {
+        "schema_version": "cpe.upstream-plan-graph.vnext",
+        "source_graph_schema_version": record["schema_version"],
+        "spec_document_id": record["spec_document_id"],
+        "program_document_id": record["program_document_id"],
+        "plan_ids": list(included_plans),
+        "plan_documents": list(included_documents),
+        "document_hashes": document_hashes,
+        "spec_section_hashes": record["spec_section_hashes"],
+        "tasks": tasks,
+        "edges": sorted(edges),
+        "spec_coverage": coverage,
+    }
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(b"CPE-UPSTREAM-PLAN-GRAPH-VNEXT\0" + raw).hexdigest()
 
 
 def bind_plan_graph(manifest: dict, graph: object) -> dict:
@@ -205,6 +270,43 @@ def validate_manifest(manifest: dict) -> list[str]:
                 for task in manifest.get("task_graph", [])
                 if isinstance(task, dict)
             }
+            predecessors: dict[str, list[str]] = {
+                task_id: [] for task_id in graph_task_ids
+            }
+            edges = graph.get("edges")
+            if isinstance(edges, list):
+                for edge in edges:
+                    if (
+                        isinstance(edge, list)
+                        and len(edge) == 2
+                        and all(isinstance(item, str) for item in edge)
+                        and edge[1] in predecessors
+                    ):
+                        predecessors[edge[1]].append(edge[0])
+            dependency_mismatch = False
+            for task in manifest.get("task_graph", []):
+                if not isinstance(task, dict) or not isinstance(task.get("id"), str):
+                    dependency_mismatch = True
+                    continue
+                task_id = task["id"]
+                dependencies = task.get("dependencies")
+                expected_dependencies = predecessors.get(task_id)
+                contract = task.get("task_contract")
+                if (
+                    not isinstance(dependencies, list)
+                    or any(not isinstance(item, str) for item in dependencies)
+                    or expected_dependencies is None
+                    or dependencies != expected_dependencies
+                    or (
+                        contract is not None
+                        and (
+                            not isinstance(contract, dict)
+                            or contract.get("qualified_task_id") != task_id
+                            or contract.get("dependencies") != dependencies
+                        )
+                    )
+                ):
+                    dependency_mismatch = True
             if (
                 not isinstance(expected, str)
                 or expected != actual
@@ -212,6 +314,8 @@ def validate_manifest(manifest: dict) -> list[str]:
                 or task_ids != graph_task_ids
             ):
                 errors.append("plan_graph_digest_mismatch")
+            if dependency_mismatch:
+                errors.append("plan_graph_dependency_mismatch")
     attempt_limit = manifest.get("attempt_budget_limit", 40)
     if type(attempt_limit) is not int or not 1 <= attempt_limit <= 40:
         errors.append("attempt_budget_limit_invalid")
