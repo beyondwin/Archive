@@ -874,7 +874,82 @@ class RunStore:
         }
         record = records.get(normalized)
         if record is None:
-            raise ValueError("artifact has no durable digest record")
+            published: list[bytes] = []
+            for manifest_path, manifest_record in records.items():
+                if (
+                    not manifest_path.startswith("maps/generation-")
+                    or not manifest_path.endswith("/accepted.json")
+                ):
+                    continue
+                raw = self._read_indexed_artifact(manifest_path, manifest_record)
+                try:
+                    manifest = json.loads(raw.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                    raise ValueError("accepted publication manifest is unreadable") from exc
+                if (
+                    not isinstance(manifest, dict)
+                    or raw != canonical_json(manifest)
+                    or frozenset(manifest)
+                    != frozenset(
+                        {
+                            "schema_version",
+                            "generation_id",
+                            "publication_id",
+                            "program_map_sha256",
+                            "artifacts",
+                        }
+                    )
+                    or manifest.get("schema_version") != 1
+                ):
+                    raise ValueError("accepted publication manifest is invalid")
+                generation_id = manifest.get("generation_id")
+                publication_id = manifest.get("publication_id")
+                artifacts = manifest.get("artifacts")
+                if (
+                    not isinstance(generation_id, str)
+                    or manifest_path != f"maps/{generation_id}/accepted.json"
+                    or not isinstance(publication_id, str)
+                    or len(publication_id) != 64
+                    or any(character not in "0123456789abcdef" for character in publication_id)
+                    or not isinstance(artifacts, dict)
+                ):
+                    raise ValueError("accepted publication identity is invalid")
+                descriptor = artifacts.get(normalized)
+                if descriptor is None:
+                    continue
+                if (
+                    not isinstance(descriptor, dict)
+                    or frozenset(descriptor)
+                    != frozenset({"relative_path", "sha256", "byte_length"})
+                ):
+                    raise ValueError("accepted publication artifact record is invalid")
+                physical_path = descriptor.get("relative_path")
+                digest = descriptor.get("sha256")
+                byte_length = descriptor.get("byte_length")
+                expected_prefix = (
+                    f"maps/{generation_id}/attempts/{publication_id}/artifacts/"
+                )
+                physical_record = records.get(str(physical_path))
+                if (
+                    not isinstance(physical_path, str)
+                    or not physical_path.startswith(expected_prefix)
+                    or physical_record is None
+                    or not isinstance(digest, str)
+                    or len(digest) != 64
+                    or not isinstance(byte_length, int)
+                    or isinstance(byte_length, bool)
+                    or byte_length < 0
+                ):
+                    raise ValueError("accepted publication artifact binding is invalid")
+                data = self._read_indexed_artifact(physical_path, physical_record)
+                if len(data) != byte_length or _sha256(data) != digest:
+                    raise ValueError("accepted publication artifact digest does not match")
+                published.append(data)
+            if len(published) != 1:
+                if published:
+                    raise ValueError("artifact is published by multiple accepted generations")
+                raise ValueError("artifact has no durable digest record")
+            return published[0]
         return self._read_indexed_artifact(normalized, record)
 
     def allocate_outbox(self, attempt_id: str) -> Path:

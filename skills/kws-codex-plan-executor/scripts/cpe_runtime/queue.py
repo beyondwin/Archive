@@ -26,6 +26,7 @@ from .worktree import Worktree
 
 _GENERATION_ID = "generation-0001"
 _GENERATION_ROOT = f"maps/{_GENERATION_ID}"
+_ACCEPTED_PUBLICATION_PATH = f"{_GENERATION_ROOT}/accepted.json"
 
 
 def _sha256(data: bytes) -> str:
@@ -373,6 +374,95 @@ class QueueEngine:
             values.append((document, payload, data, relative_path))
         return tuple(values)
 
+    @staticmethod
+    def _publication_id(artifacts: Mapping[str, bytes]) -> str:
+        commitment = {
+            relative_path: {
+                "sha256": _sha256(data),
+                "byte_length": len(data),
+            }
+            for relative_path, data in sorted(artifacts.items())
+        }
+        return _sha256(b"cpe-map-publication-v1\0" + canonical_json(commitment))
+
+    def _publish_program_artifacts(
+        self, artifacts: Mapping[str, bytes], *, program_path: str
+    ) -> dict[str, object]:
+        publication_id = self._publication_id(artifacts)
+        prefix = (
+            f"{_GENERATION_ROOT}/attempts/{publication_id}/artifacts"
+        )
+        records: dict[str, dict[str, object]] = {}
+        for logical_path, data in sorted(artifacts.items()):
+            physical_path = f"{prefix}/{logical_path}"
+            self.store.put_artifact(physical_path, data)
+            records[logical_path] = {
+                "relative_path": physical_path,
+                "sha256": _sha256(data),
+                "byte_length": len(data),
+            }
+        manifest = {
+            "schema_version": 1,
+            "generation_id": _GENERATION_ID,
+            "publication_id": publication_id,
+            "program_map_sha256": _sha256(artifacts[program_path]),
+            "artifacts": records,
+        }
+        self.store.put_artifact(
+            _ACCEPTED_PUBLICATION_PATH, canonical_json(manifest)
+        )
+        return manifest
+
+    def _accepted_program_artifacts(self) -> dict[str, bytes]:
+        manifest = _load_json(
+            self.store.read_artifact(_ACCEPTED_PUBLICATION_PATH),
+            "accepted program publication",
+        )
+        if frozenset(manifest) != frozenset(
+            {
+                "schema_version",
+                "generation_id",
+                "publication_id",
+                "program_map_sha256",
+                "artifacts",
+            }
+        ) or manifest.get("schema_version") != 1 or manifest.get(
+            "generation_id"
+        ) != _GENERATION_ID:
+            raise ValueError("accepted program publication has invalid fields")
+        publication_id = manifest.get("publication_id")
+        records = manifest.get("artifacts")
+        if (
+            not isinstance(publication_id, str)
+            or len(publication_id) != 64
+            or not isinstance(records, Mapping)
+            or not records
+        ):
+            raise ValueError("accepted program publication identity is invalid")
+        prefix = f"{_GENERATION_ROOT}/attempts/{publication_id}/artifacts/"
+        artifacts: dict[str, bytes] = {}
+        for logical_path, raw_record in records.items():
+            if not isinstance(logical_path, str) or not isinstance(raw_record, Mapping):
+                raise ValueError("accepted program publication record is invalid")
+            if set(raw_record) != {"relative_path", "sha256", "byte_length"}:
+                raise ValueError("accepted program publication record fields are invalid")
+            physical_path = raw_record["relative_path"]
+            if not isinstance(physical_path, str) or not physical_path.startswith(prefix):
+                raise ValueError("accepted program publication path is invalid")
+            data = self.store.read_artifact(physical_path)
+            if (
+                raw_record["sha256"] != _sha256(data)
+                or raw_record["byte_length"] != len(data)
+            ):
+                raise ValueError("accepted program publication digest does not match")
+            artifacts[logical_path] = data
+        if self._publication_id(artifacts) != publication_id:
+            raise ValueError("accepted program publication commitment does not match")
+        program_path = f"{_GENERATION_ROOT}/program-map.json"
+        if manifest.get("program_map_sha256") != _sha256(artifacts[program_path]):
+            raise ValueError("accepted program map digest does not match")
+        return artifacts
+
     def _validate_program_artifacts(
         self,
         document_maps: tuple[
@@ -508,6 +598,17 @@ class QueueEngine:
                 "exact_excerpt": candidate["exact_excerpt"],
             }
 
+        def requirement_reference(requirement_id: str) -> dict[str, object]:
+            document, requirement = mapped_requirements[requirement_id]
+            return {
+                "document_id": document.document_id,
+                "heading": requirement["heading"],
+                "line_start": requirement["line_start"],
+                "line_end": requirement["line_end"],
+                "source_sha256": document.sha256,
+                "exact_excerpt": requirement["exact_excerpt"],
+            }
+
         task_by_id = {str(task["task_id"]): task for task in program["tasks"]}
         split_by_source = {
             str(split["source_task_id"]): split for split in program["task_splits"]
@@ -621,15 +722,7 @@ class QueueEngine:
                     )
 
         for requirement_id, record in program["coverage"].items():
-            document, requirement = mapped_requirements[requirement_id]
-            expected_reference = {
-                "document_id": document.document_id,
-                "heading": requirement["heading"],
-                "line_start": requirement["line_start"],
-                "line_end": requirement["line_end"],
-                "source_sha256": document.sha256,
-                "exact_excerpt": requirement["exact_excerpt"],
-            }
+            expected_reference = requirement_reference(requirement_id)
             if canonical_json(expected_reference) not in encoded(
                 record["source_references"]
             ):
@@ -694,6 +787,17 @@ class QueueEngine:
             }
             if not set(task["document_ids"]) <= referenced_documents:
                 raise ValueError("task brief omits a program-map source document")
+            brief_source_references = {
+                canonical_json(reference)
+                for reference in brief["source_references"]
+            }
+            for requirement_id in task["requirement_ids"]:
+                if canonical_json(requirement_reference(requirement_id)) not in (
+                    brief_source_references
+                ):
+                    raise ValueError(
+                        "task brief omits its canonical assigned requirement source"
+                    )
             task_id = str(task["task_id"])
             if task_id in task_candidates:
                 candidate_document, candidate = task_candidates[task_id]
@@ -768,9 +872,9 @@ class QueueEngine:
         self.map_documents()
         document_maps = self._validated_document_maps()
         program_path = f"{_GENERATION_ROOT}/program-map.json"
-        target = self.store.paths.root / program_path
+        accepted_target = self.store.paths.root / _ACCEPTED_PUBLICATION_PATH
         reported_artifact_paths: tuple[str, ...] | None = None
-        if not target.exists() and not target.is_symlink():
+        if not accepted_target.exists() and not accepted_target.is_symlink():
             attempt_id, outbox = self._allocate_attempt("map-program-0001")
             request = ChildRequest(
                 role="program_mapper",
@@ -834,13 +938,23 @@ class QueueEngine:
                 )
                 if staged_program != untrusted_program or set(staged_paths) != actual_paths:
                     raise ValueError("staged program artifacts changed during validation")
-                for relative_path in staged_paths:
-                    self.store.put_artifact(relative_path, staged_bytes[relative_path])
+                blocking = sorted(
+                    requirement_id
+                    for requirement_id, record in staged_program["coverage"].items()
+                    if record["disposition"] == "unmapped"
+                )
+                if blocking:
+                    raise ValueError(f"blocking coverage dispositions: {blocking}")
+                self._publish_program_artifacts(
+                    staged_bytes, program_path=program_path
+                )
             finally:
                 self.store.discard_outbox(attempt_id)
 
+        published_bytes = self._accepted_program_artifacts()
         program, program_bytes, artifact_paths = self._validate_program_artifacts(
-            document_maps
+            document_maps,
+            reader=published_bytes.__getitem__,
         )
         returned_paths = set(artifact_paths)
         if not returned_paths:
@@ -850,12 +964,10 @@ class QueueEngine:
             or set(reported_artifact_paths) != returned_paths
         ):
             raise ValueError("program mapper returned unexpected artifact paths")
-        authority_path = f"{_GENERATION_ROOT}/authority-queue.json"
-        self._append_authority_events(program, authority_path)
         blocking = sorted(
             requirement_id
             for requirement_id, record in program["coverage"].items()
-            if record["disposition"] in {"conflict", "unmapped"}
+            if record["disposition"] == "unmapped"
         )
         if blocking:
             raise ValueError(f"blocking coverage dispositions: {blocking}")
@@ -885,6 +997,8 @@ class QueueEngine:
                     "artifact_paths": list(artifact_paths),
                 },
             )
+        authority_path = f"{_GENERATION_ROOT}/authority-queue.json"
+        self._append_authority_events(program, authority_path)
         return program_path
 
     def run_until_terminal(self) -> dict[str, object]:

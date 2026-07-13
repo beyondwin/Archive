@@ -39,6 +39,10 @@ SCENARIOS = frozenset(
         "mapping_noncompleted_result",
         "mapping_lossy_split",
         "mapping_weaken_candidate",
+        "mapping_brief_omits_requirement",
+        "mapping_brief_substitutes_requirement",
+        "mapping_split_brief_substitutes_requirement",
+        "mapping_success_retry_variant",
     }
 )
 
@@ -242,6 +246,10 @@ def _mapping_document_result(
                         if task_id == "plan-01:T1"
                         else ["spec-02:R1"]
                         if task_id == "plan-01:T2"
+                        else ["spec-01:R1"]
+                        if task_id == "plan-02:T1"
+                        and os.environ.get("CPE_FAKE_SCENARIO")
+                        == "mapping_split_brief_substitutes_requirement"
                         else []
                     ),
                     "dependencies": dependency,
@@ -447,10 +455,30 @@ def _mapping_program_result(
         ("plan-02:T1", ["plan-01:T2"], ["plan-02", "program-plan"], [], "plan-02:T1"),
     ]
     task_splits: list[dict[str, object]] = []
-    if scenario == "mapping_lossy_split":
+    if scenario in {
+        "mapping_lossy_split",
+        "mapping_split_brief_substitutes_requirement",
+    }:
+        split_requirement_ids = (
+            ["spec-01:R1"]
+            if scenario == "mapping_split_brief_substitutes_requirement"
+            else []
+        )
         task_specs[-1:] = [
-            ("plan-02:T1.1", ["plan-01:T2"], ["plan-02", "program-plan"], [], "plan-02:T1"),
-            ("plan-02:T1.2", ["plan-02:T1.1"], ["plan-02", "program-plan"], [], "plan-02:T1"),
+            (
+                "plan-02:T1.1",
+                ["plan-01:T2"],
+                ["plan-02", "program-plan", "spec-01"],
+                split_requirement_ids,
+                "plan-02:T1",
+            ),
+            (
+                "plan-02:T1.2",
+                ["plan-02:T1.1"],
+                ["plan-02", "program-plan", "spec-01"],
+                split_requirement_ids,
+                "plan-02:T1",
+            ),
         ]
         task_splits = [
             {
@@ -493,6 +521,8 @@ def _mapping_program_result(
         }
         for task_id, dependencies, document_ids, requirement_ids, source_task_id in task_specs
     ]
+    if scenario == "mapping_brief_omits_requirement":
+        tasks[0]["document_ids"] = ["plan-01"]
     coverage = {
         "spec-01:R1": {
             "disposition": "planned",
@@ -515,6 +545,12 @@ def _mapping_program_result(
             "authority_ids": [],
         },
     }
+    if scenario == "mapping_split_brief_substitutes_requirement":
+        coverage["spec-01:R1"]["task_ids"] = [
+            "plan-01:T1",
+            "plan-02:T1.1",
+            "plan-02:T1.2",
+        ]
     authority_items: list[dict[str, object]] = []
     if scenario in {"mapping_unmapped", "mapping_conflict"}:
         disposition = "unmapped" if scenario == "mapping_unmapped" else "conflict"
@@ -527,6 +563,7 @@ def _mapping_program_result(
         }
         tasks[0]["requirement_ids"] = []
         if disposition == "conflict":
+            coverage["spec-01:R1"]["authority_ids"] = ["mapping-conflict-1"]
             authority_items.append(
                 {
                     "authority_id": "mapping-conflict-1",
@@ -609,6 +646,35 @@ def _mapping_program_result(
             references.append(_source_entry(*requirements["spec-01:R1"]))
         if source_task_id == "plan-02:T1":
             references.append(_source_entry(*requirements["program-plan:R1"]))
+        if scenario == "mapping_brief_omits_requirement" and task["task_id"] == "plan-01:T1":
+            references = [
+                reference
+                for reference in references
+                if reference["document_id"] != "spec-01"
+            ]
+        if (
+            scenario == "mapping_brief_substitutes_requirement"
+            and task["task_id"] == "plan-01:T1"
+        ) or (
+            scenario == "mapping_split_brief_substitutes_requirement"
+            and task["task_id"] == "plan-02:T1.2"
+        ):
+            references = [
+                reference
+                for reference in references
+                if reference != _source_entry(*requirements["spec-01:R1"])
+            ]
+            spec_map = maps["spec-01"]
+            references.append(
+                {
+                    "document_id": "spec-01",
+                    "heading": "Specification A",
+                    "line_start": 1,
+                    "line_end": 1,
+                    "source_sha256": spec_map["source_sha256"],
+                    "exact_excerpt": "# Specification A\n",
+                }
+            )
         brief = {
             "schema_version": 1,
             "task_id": task["task_id"],
@@ -622,7 +688,11 @@ def _mapping_program_result(
             "upstream_interface_commitments": task[
                 "upstream_interface_commitments"
             ],
-            "expected_report_path": f"reports/{task['task_id'].replace(':', '-')}.md",
+            "expected_report_path": (
+                f"reports/retry-{task['task_id'].replace(':', '-')}.md"
+                if scenario == "mapping_success_retry_variant"
+                else f"reports/{task['task_id'].replace(':', '-')}.md"
+            ),
         }
         _write_json(outbox, task["brief_path"], brief)
         artifact_paths.append(task["brief_path"])
