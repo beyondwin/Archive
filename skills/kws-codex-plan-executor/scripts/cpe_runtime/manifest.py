@@ -265,11 +265,20 @@ def validate_manifest(manifest: dict) -> list[str]:
             graph_task_ids = set((graph.get("tasks") or {}).keys()) if isinstance(
                 graph.get("tasks"), dict
             ) else set()
-            task_ids = {
-                str(task.get("id"))
-                for task in manifest.get("task_graph", [])
-                if isinstance(task, dict)
-            }
+            raw_task_graph = manifest.get("task_graph")
+            task_entries = raw_task_graph if isinstance(raw_task_graph, list) else []
+            task_id_entries = [
+                task.get("id")
+                for task in task_entries
+                if isinstance(task, dict) and isinstance(task.get("id"), str)
+            ]
+            task_cardinality_invalid = (
+                not isinstance(raw_task_graph, list)
+                or len(task_entries) != len(graph_task_ids)
+                or len(task_id_entries) != len(task_entries)
+                or len(set(task_id_entries)) != len(task_id_entries)
+            )
+            task_ids = set(task_id_entries)
             predecessors: dict[str, list[str]] = {
                 task_id: [] for task_id in graph_task_ids
             }
@@ -287,7 +296,7 @@ def validate_manifest(manifest: dict) -> list[str]:
             task_contract_invalid = False
             from .task_contracts import TaskContractVNext, contract_from_body
 
-            for task in manifest.get("task_graph", []):
+            for task in task_entries:
                 if not isinstance(task, dict) or not isinstance(task.get("id"), str):
                     dependency_mismatch = True
                     continue
@@ -326,6 +335,8 @@ def validate_manifest(manifest: dict) -> list[str]:
                     or contract.get("dependencies") != dependencies
                 ):
                     dependency_mismatch = True
+            if task_cardinality_invalid:
+                errors.append("plan_graph_task_cardinality_invalid")
             if (
                 not isinstance(expected, str)
                 or expected != actual

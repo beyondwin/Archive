@@ -276,6 +276,8 @@ def main() -> int:
         )
         assert manifest["plan_graph"]["graph_sha256"] == graph.graph_sha256
         assert manifest["plan_graph"]["tasks"][contract.qualified_task_id]["plan_id"] == "second"
+        assert len(manifest["task_graph"]) == len(graph.tasks)
+        assert len({task["id"] for task in manifest["task_graph"]}) == len(graph.tasks)
         assert validate_manifest(manifest) == []
         graph_tamper = json.loads(json.dumps(manifest))
         graph_tamper["plan_graph"]["tasks"].pop("first::build")
@@ -300,6 +302,16 @@ def main() -> int:
         ).hexdigest()
         forged_upstream["plan_graph_hash"] = canonical_hash(forged_upstream["task_graph"])
         assert "plan_graph_task_contract_invalid" in validate_manifest(forged_upstream)
+        duplicate_contract = json.loads(json.dumps(manifest))
+        duplicate_contract["task_graph"].append(
+            json.loads(json.dumps(duplicate_contract["task_graph"][0]))
+        )
+        duplicate_contract["plan_graph_hash"] = canonical_hash(
+            duplicate_contract["task_graph"]
+        )
+        assert "plan_graph_task_cardinality_invalid" in validate_manifest(
+            duplicate_contract
+        )
 
         task = {
             "id": contract.qualified_task_id,
@@ -603,6 +615,7 @@ def main() -> int:
                     "authoritative_graph_dependencies",
                     "complete_execution_scope_authority",
                     "mandatory_manifest_task_contracts",
+                    "unique_manifest_task_contract_cardinality",
                     "immutable_plan_checkpoint",
                     "checkpoint_promotion",
                     "stale_upstream_fail_closed",
