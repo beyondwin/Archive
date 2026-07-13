@@ -124,11 +124,6 @@ class ConsolidatedReview:
                 (finding.severity for _, finding in entries),
                 key=lambda item: _SEVERITY_RANK[item],
             )
-            strongest_dispositions = {
-                finding.recommended_disposition
-                for _, finding in entries
-                if finding.severity == severity
-            }
             dispositions = tuple(
                 sorted(
                     {finding.recommended_disposition for _, finding in entries},
@@ -149,10 +144,7 @@ class ConsolidatedReview:
                     severity=severity,
                     affected_revision=next(iter(revisions)),
                     evidence=evidence,
-                    recommended_disposition=min(
-                        strongest_dispositions,
-                        key=lambda item: _DISPOSITION_RANK[item],
-                    ),
+                    recommended_disposition=dispositions[0],
                     source_lanes=lanes,
                     dispositions=dispositions,
                 )

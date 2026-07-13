@@ -186,6 +186,25 @@ def main() -> None:
         finding.recommended_disposition == "return_to_design"
         and finding.dispositions == ("return_to_design", "repair")
     )
+    cross_severity_review = consolidate_review_lanes(
+        _reports(
+            lane_findings={
+                "state_crash": (
+                    _finding(severity="P0", disposition="no_action"),
+                ),
+                "trust_privacy": (
+                    _finding(severity="P1", disposition="return_to_design"),
+                ),
+            }
+        ),
+        checkpoint_sha256=CHECKPOINT,
+    )
+    cross_severity_finding = cross_severity_review.findings[0]
+    checks["disposition_precedence_is_independent_of_severity_precedence"] = (
+        cross_severity_finding.severity == "P0"
+        and cross_severity_finding.recommended_disposition == "return_to_design"
+        and cross_severity_finding.dispositions == ("return_to_design", "no_action")
+    )
     _expect_error(
         "review_disposition_invalid",
         lambda: consolidate_review_lanes(
