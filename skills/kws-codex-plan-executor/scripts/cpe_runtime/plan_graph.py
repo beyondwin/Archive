@@ -77,6 +77,8 @@ class PlanGraph:
     edges: tuple[tuple[str, str], ...]
     spec_coverage: Mapping[str, tuple[str, ...]]
     file_ownership: Mapping[str, tuple[str, ...]]
+    file_ownership_patterns: Mapping[str, str]
+    file_interface_writers: Mapping[str, tuple[str, ...]]
     plan_checkpoints: Mapping[str, tuple[str, ...]]
     global_integration_gate: IntegrationGate
     graph_sha256: str
@@ -202,7 +204,9 @@ def _fallback_plan_contract(document: InputDocument) -> dict[str, object]:
         body = text[match.end() : end]
         yaml_match = re.search(r"(?ms)^```yaml[^\n]*\n(?P<body>.*?)\n```", body)
         yaml_body = yaml_match.group("body") if yaml_match else ""
-        dependencies = _inline_yaml_list(yaml_body, "dependencies")
+        dependencies = _inline_yaml_list(yaml_body, "dependencies") or _markdown_dependencies(body)
+        if not dependencies and tasks:
+            dependencies = [str(tasks[-1]["task_id"])]
         spec_refs = _inline_yaml_list(yaml_body, "spec_refs") or SPEC_REF_RE.findall(body)
         file_claims = _yaml_block_list(yaml_body, "file_claims") or _markdown_file_claims(body)
         task_id = "task_" + match.group("number").replace(".", "_")
@@ -212,6 +216,7 @@ def _fallback_plan_contract(document: InputDocument) -> dict[str, object]:
                 "dependencies": dependencies,
                 "spec_refs": list(dict.fromkeys(spec_refs)),
                 "file_claims": file_claims,
+                "interface_declared": _markdown_interfaces_declared(body),
                 "source_token": hashlib.sha256(
                     text[match.start() : end].encode("utf-8")
                 ).hexdigest(),
@@ -265,6 +270,30 @@ def _markdown_file_claims(body: str) -> list[str]:
     return list(dict.fromkeys(claims))
 
 
+def _markdown_dependencies(body: str) -> list[str]:
+    match = re.search(r"(?mi)^\*\*Depends(?: on)?:\*\*[ \t]*(?P<value>.+)$", body)
+    if not match:
+        return []
+    return [
+        "task_" + number.replace(".", "_")
+        for number in re.findall(r"\b(?:Task|T)[ _]?(\d+(?:\.\d+)*)\b", match.group("value"), re.I)
+    ]
+
+
+def _markdown_interfaces_declared(body: str) -> bool:
+    match = re.search(r"(?mi)^\*\*Interfaces?:\*\*[ \t]*$", body)
+    if not match:
+        return False
+    for line in body[match.end() :].splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("**") or stripped.startswith("#"):
+            return False
+        return stripped.startswith("-")
+    return False
+
+
 def _markdown_section(text: str, heading: str) -> str:
     match = re.search(rf"(?mi)^##[ \t]+{re.escape(heading)}[ \t]*$", text)
     if not match:
@@ -281,6 +310,55 @@ def _markdown_section(text: str, heading: str) -> str:
 def _stage_alias(document: InputDocument) -> str | None:
     match = re.search(r"(?:^|-)wave-([a-c]\d|\d+)(?:-|$)", _path_plan_id(document), re.I)
     return match.group(1).upper() if match else None
+
+
+def _path_matches_pattern(path: str, pattern: str) -> bool:
+    if pattern.endswith("/**"):
+        return path.startswith(pattern[:-3].rstrip("/") + "/")
+    return path == pattern
+
+
+def _natural_ownership_rules(
+    section: str,
+    aliases: Mapping[str, str],
+) -> tuple[dict[str, str], dict[str, str]]:
+    patterns: dict[str, str] = {}
+    interface_only: dict[str, str] = {}
+    current_owner: str | None = None
+    for line in section.splitlines():
+        heading = re.match(r"^###[ \t]+([A-C]\d)[ \t]+owns[ \t]*$", line, re.I)
+        if heading:
+            alias = heading.group(1).upper()
+            if alias not in aliases:
+                _blocked(
+                    "file_ownership_invalid",
+                    "ownership heading references an unknown stage alias",
+                    stage_alias=alias,
+                )
+            current_owner = aliases[alias]
+            continue
+        if current_owner is None or not line.lstrip().startswith("-"):
+            continue
+        bullet = line.lstrip()[1:].strip()
+        candidates = [item for item in re.findall(r"`([^`]+)`", bullet) if "/" in item]
+        for candidate in candidates:
+            target = patterns if bullet.startswith(f"`{candidate}`") else interface_only
+            previous = target.get(candidate)
+            if previous is not None and previous != current_owner:
+                _blocked(
+                    "ambiguous_file_ownership",
+                    "ownership pattern has more than one normalized owner",
+                    pattern=candidate,
+                    owners=[previous, current_owner],
+                )
+            target[candidate] = current_owner
+    if not patterns:
+        _blocked(
+            "file_ownership_invalid",
+            "natural-language program has no path ownership patterns",
+            heading="File Ownership Map",
+        )
+    return patterns, interface_only
 
 
 def _natural_program_contract(
@@ -313,11 +391,19 @@ def _natural_program_contract(
         )
     plan_order = [plan_id for _, plan_id in staged]
 
-    aliases = {
-        alias: plan_id
-        for plan_id, (plan_document, _) in plans.items()
-        if (alias := _stage_alias(plan_document)) is not None
-    }
+    aliases: dict[str, str] = {}
+    for plan_id, (plan_document, _) in plans.items():
+        alias = _stage_alias(plan_document)
+        if alias is None:
+            continue
+        if alias in aliases and aliases[alias] != plan_id:
+            _blocked(
+                "stage_alias_ambiguous",
+                "normalized natural-program stage aliases must be unique",
+                stage_alias=alias,
+                plan_ids=[aliases[alias], plan_id],
+            )
+        aliases[alias] = plan_id
     coverage_section = _markdown_section(text, "Spec Coverage Map")
     ownership_section = _markdown_section(text, "File Ownership Map")
     coverage: dict[str, list[str]] = {}
@@ -343,12 +429,65 @@ def _natural_program_contract(
             for task in plans[owner][1]["tasks"]
         ]
 
+    ownership_patterns, interface_only_rules = _natural_ownership_rules(
+        ownership_section, aliases
+    )
     claimed: dict[str, list[str]] = defaultdict(list)
+    task_interfaces: dict[str, bool] = {}
     for plan_id in plan_order:
         for task in plans[plan_id][1]["tasks"]:
             task_id = str(QualifiedTaskId(plan_id, str(task.get("task_id") or task.get("id"))))
+            task_interfaces[task_id] = task.get("interface_declared") is True
             for path in task.get("file_claims", []):
                 claimed[str(path)].append(task_id)
+    interface_writers: dict[str, list[str]] = defaultdict(list)
+    for pattern, owner_plan in ownership_patterns.items():
+        matching_paths = [path for path in claimed if _path_matches_pattern(path, pattern)]
+        owner_claims = [
+            writer
+            for path in matching_paths
+            for writer in claimed[path]
+            if writer.startswith(owner_plan + "::")
+        ]
+        if not owner_claims:
+            _blocked(
+                "file_ownership_invalid",
+                "ownership pattern must match a claim by its owning plan",
+                pattern=pattern,
+                owner_plan=owner_plan,
+            )
+        for path in matching_paths:
+            for writer in claimed[path]:
+                if writer.startswith(owner_plan + "::"):
+                    continue
+                if not task_interfaces.get(writer, False):
+                    _blocked(
+                        "interface_contract_missing",
+                        "non-owner file claim must declare an explicit task interface",
+                        pattern=pattern,
+                        path=path,
+                        writer=writer,
+                        owner_plan=owner_plan,
+                    )
+                interface_writers[path].append(writer)
+    for pattern, interface_plan in interface_only_rules.items():
+        matching = [
+            writer
+            for path, writers in claimed.items()
+            if _path_matches_pattern(path, pattern)
+            for writer in writers
+            if writer.startswith(interface_plan + "::") and task_interfaces.get(writer, False)
+        ]
+        if not matching:
+            _blocked(
+                "interface_contract_missing",
+                "interface-only path rule must match a declared task interface",
+                pattern=pattern,
+                interface_plan=interface_plan,
+            )
+        for path, writers in claimed.items():
+            if _path_matches_pattern(path, pattern):
+                interface_writers[path].extend(writer for writer in writers if writer in matching)
     ownership = {
         path: list(dict.fromkeys(writers))
         for path, writers in claimed.items()
@@ -384,9 +523,19 @@ def _natural_program_contract(
         "ownership_transfers": [
             {"path": path, "from": first, "to": second}
             for path, writers in ownership.items()
+            if path not in interface_writers
             for first, second in zip(writers, writers[1:])
         ],
-        "shared_interfaces": [],
+        "shared_interfaces": [
+            path
+            for path in ownership
+            if path in interface_writers
+        ],
+        "file_ownership_patterns": ownership_patterns,
+        "file_interface_writers": {
+            path: list(dict.fromkeys(writers))
+            for path, writers in interface_writers.items()
+        },
         "global_integration_gate": str(QualifiedTaskId(final_plan, final_task_id)),
     }
 
@@ -593,6 +742,7 @@ def compile_plan_graph(document_set: DocumentSet) -> PlanGraph:
                 "dependencies": dependencies,
                 "spec_refs": refs,
                 "file_claims": claims,
+                "interface_declared": raw.get("interface_declared") is True,
                 "task_source_sha256": hashlib.sha256(canonical_source).hexdigest(),
             }
             ordered.append(qualified)
@@ -704,6 +854,92 @@ def compile_plan_graph(document_set: DocumentSet) -> PlanGraph:
     for task_id, task in task_records.items():
         for path in task["file_claims"]:
             claimed[str(path)].append(task_id)
+    raw_patterns = program_contract.get("file_ownership_patterns", {}) if program_contract else {}
+    if not isinstance(raw_patterns, dict):
+        _blocked(
+            "contract_invalid",
+            "file_ownership_patterns must be an object",
+            field="file_ownership_patterns",
+        )
+    ownership_patterns = {str(pattern): str(owner) for pattern, owner in raw_patterns.items()}
+    matched_pattern_owners: dict[str, str] = {}
+    for pattern, owner_plan in ownership_patterns.items():
+        if owner_plan not in plan_order:
+            _blocked(
+                "file_ownership_invalid",
+                "ownership pattern references an unknown plan",
+                pattern=pattern,
+                owner_plan=owner_plan,
+            )
+        matching_paths = [path for path in claimed if _path_matches_pattern(path, pattern)]
+        if not any(
+            writer.startswith(owner_plan + "::")
+            for path in matching_paths
+            for writer in claimed[path]
+        ):
+            _blocked(
+                "file_ownership_invalid",
+                "ownership pattern must match an actual writer in its owning plan",
+                pattern=pattern,
+                owner_plan=owner_plan,
+            )
+        for path in matching_paths:
+            previous = matched_pattern_owners.get(path)
+            if previous is not None and previous != owner_plan:
+                _blocked(
+                    "ambiguous_file_ownership",
+                    "concrete path matches ownership patterns with different owners",
+                    path=path,
+                    owners=[previous, owner_plan],
+                )
+            matched_pattern_owners[path] = owner_plan
+    raw_interface_writers = (
+        program_contract.get("file_interface_writers", {}) if program_contract else {}
+    )
+    if not isinstance(raw_interface_writers, dict):
+        _blocked(
+            "contract_invalid",
+            "file_interface_writers must be an object",
+            field="file_interface_writers",
+        )
+    interface_writers: dict[str, tuple[str, ...]] = {}
+    for path, raw_writers in raw_interface_writers.items():
+        if not isinstance(raw_writers, list) or str(path) not in claimed:
+            _blocked(
+                "interface_contract_missing",
+                "interface writers must be a list for one actually claimed path",
+                path=str(path),
+            )
+        writers = tuple(str(writer) for writer in raw_writers)
+        if (
+            not writers
+            or len(writers) != len(set(writers))
+            or any(writer not in claimed[str(path)] for writer in writers)
+            or any(task_records[writer].get("interface_declared") is not True for writer in writers)
+        ):
+            _blocked(
+                "interface_contract_missing",
+                "interface writers must be unique actual writers with declared interfaces",
+                path=str(path),
+                writers=list(writers),
+                actual_writers=claimed[str(path)],
+            )
+        interface_writers[str(path)] = writers
+    for path, owner_plan in matched_pattern_owners.items():
+        missing_interface_writers = [
+            writer
+            for writer in claimed[path]
+            if not writer.startswith(owner_plan + "::")
+            and writer not in interface_writers.get(path, ())
+        ]
+        if missing_interface_writers:
+            _blocked(
+                "interface_contract_missing",
+                "non-owner pattern writers require an explicit interface binding",
+                path=path,
+                owner_plan=owner_plan,
+                writers=missing_interface_writers,
+            )
     declared_ownership = program_contract.get("file_ownership", {}) if program_contract else {}
     if not isinstance(declared_ownership, dict):
         _blocked("contract_invalid", "file_ownership must be an object", field="file_ownership")
@@ -874,6 +1110,8 @@ def compile_plan_graph(document_set: DocumentSet) -> PlanGraph:
         "edges": sorted(edges),
         "spec_coverage": coverage,
         "file_ownership": ownership,
+        "file_ownership_patterns": ownership_patterns,
+        "file_interface_writers": interface_writers,
         "plan_checkpoints": checkpoints,
         "global_integration_gate": dict(gate),
     }
@@ -892,6 +1130,8 @@ def compile_plan_graph(document_set: DocumentSet) -> PlanGraph:
         edges=tuple(sorted(edges)),
         spec_coverage=_freeze(coverage),
         file_ownership=_freeze(ownership),
+        file_ownership_patterns=_freeze(ownership_patterns),
+        file_interface_writers=_freeze(interface_writers),
         plan_checkpoints=_freeze(checkpoints),
         global_integration_gate=gate,
         graph_sha256=graph_sha256,
@@ -941,6 +1181,16 @@ def invalidated_nodes(old: PlanGraph, new: PlanGraph) -> tuple[str, ...]:
             if task in new.tasks
         }
         seeds.update(related or all_covered_tasks)
+    old_spec_binding = (
+        old.spec_document_id,
+        old.document_hashes.get(old.spec_document_id) if old.spec_document_id else None,
+    )
+    new_spec_binding = (
+        new.spec_document_id,
+        new.document_hashes.get(new.spec_document_id) if new.spec_document_id else None,
+    )
+    if old_spec_binding != new_spec_binding and not changed_sections:
+        seeds.update(all_covered_tasks)
     affected: set[str] = set()
     for seed in seeds:
         affected.update(new.downstream_of(seed))

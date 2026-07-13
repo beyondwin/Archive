@@ -32,21 +32,28 @@ def _markdown(title: str, tag: str, payload: dict[str, object]) -> str:
 
 def _compile_bundle(bundle: dict[str, object], root: Path):
     root.mkdir(parents=True, exist_ok=True)
-    spec = bundle["spec"]
+    spec = bundle.get("spec")
     program = bundle.get("program")
     plans = bundle["plans"]
-    assert isinstance(spec, dict) and isinstance(plans, list)
-    spec_path = root / "spec.md"
-    required = spec.get("required_sections", [])
-    sections = spec.get("sections")
-    if sections is None:
-        sections = {str(section): "required" for section in required}
-    assert isinstance(sections, dict)
-    spec_path.write_text(
-        f"# {spec['title']}\n\n"
-        + "\n".join(f"## {section}\n{body}" for section, body in sections.items()),
-        encoding="utf-8",
-    )
+    assert (spec is None or isinstance(spec, dict)) and isinstance(plans, list)
+    spec_path = None
+    required: list[object] = []
+    if isinstance(spec, dict):
+        spec_path = root / "spec.md"
+        required = spec.get("required_sections", [])
+        raw_body = spec.get("raw_body")
+        if raw_body is not None:
+            spec_path.write_text(f"# {spec['title']}\n\n{raw_body}\n", encoding="utf-8")
+        else:
+            sections = spec.get("sections")
+            if sections is None:
+                sections = {str(section): "required" for section in required}
+            assert isinstance(sections, dict)
+            spec_path.write_text(
+                f"# {spec['title']}\n\n"
+                + "\n".join(f"## {section}\n{body}" for section, body in sections.items()),
+                encoding="utf-8",
+            )
     program_path = None
     if isinstance(program, dict):
         program_path = root / "program.md"
@@ -88,7 +95,11 @@ def _git_blob_sha1(content: bytes) -> str:
     return hashlib.sha1(f"blob {len(content)}\0".encode("ascii") + content).hexdigest()
 
 
-def _compile_exact_canvas(bundle: dict[str, object], root: Path):
+def _compile_exact_canvas(
+    bundle: dict[str, object],
+    root: Path,
+    mutations: dict[str, bytes] | None = None,
+):
     root.mkdir(parents=True, exist_ok=True)
     source = bundle["source"]
     plans = bundle["plans"]
@@ -100,7 +111,7 @@ def _compile_exact_canvas(bundle: dict[str, object], root: Path):
     program_bytes = (source_root / program_name).read_bytes()
     assert _git_blob_sha1(program_bytes) == source["program_blob_sha1"]
     program_path = root / program_name
-    program_path.write_bytes(program_bytes)
+    program_path.write_bytes((mutations or {}).get(program_name, program_bytes))
     plan_paths = []
     for item in plans:
         assert isinstance(item, dict)
@@ -108,11 +119,23 @@ def _compile_exact_canvas(bundle: dict[str, object], root: Path):
         content = (source_root / name).read_bytes()
         assert _git_blob_sha1(content) == item["source_blob_sha1"]
         target = root / name
-        target.write_bytes(content)
+        target.write_bytes((mutations or {}).get(name, content))
         plan_paths.append(target)
     return compile_plan_graph(
         compile_document_set(None, tuple(plan_paths), program_path, (), workspace=root)
     )
+
+
+def _exact_canvas_block_category(
+    bundle: dict[str, object],
+    root: Path,
+    mutations: dict[str, bytes],
+) -> str | None:
+    try:
+        _compile_exact_canvas(bundle, root, mutations)
+    except PlanGraphBlocked as exc:
+        return exc.category
+    return None
 
 
 def _blocked(category: str, bundle: dict[str, object], root: Path) -> bool:
@@ -206,6 +229,62 @@ def _section_bundle(sections: dict[str, str]) -> dict[str, object]:
     }
 
 
+def _non_s_bundle(raw_body: str | None) -> dict[str, object]:
+    bundle = _section_bundle({"S1": "unused", "S2": "unused"})
+    bundle["spec"] = (
+        None
+        if raw_body is None
+        else {"title": "Non S Spec", "required_sections": [], "raw_body": raw_body}
+    )
+    return bundle
+
+
+def _alias_collision_blocks(root: Path) -> bool:
+    root.mkdir(parents=True, exist_ok=True)
+    program = root / "program.md"
+    program.write_text(
+        """# Duplicate Alias Program
+
+## Authoritative Execution Order
+
+| Stage | Plan | Working deliverable | Depends on |
+|---|---|---|---|
+| 1 | `wave-a1-first.md` | first | design |
+| 2 | `wave-a1-second.md` | second | stage 1 |
+
+## Spec Coverage Map
+
+| Design sections | Owning stage |
+|---|---|
+| 1-2 | A1 |
+
+## File Ownership Map
+
+### A1 owns
+
+- `src/a1/**`
+
+A new wave may change an existing owner only through an interface explicitly named in that wave's plan.
+""",
+        encoding="utf-8",
+    )
+    plan_paths = []
+    for name, title in (("wave-a1-first.md", "First A1"), ("wave-a1-second.md", "Second A1")):
+        path = root / name
+        path.write_text(
+            f"# {title}\n\n## Task 1: Build\n\n**Files:**\n- Create: `src/a1/{name}.py`\n",
+            encoding="utf-8",
+        )
+        plan_paths.append(path)
+    try:
+        compile_plan_graph(
+            compile_document_set(None, tuple(plan_paths), program, (), workspace=root)
+        )
+    except PlanGraphBlocked as exc:
+        return exc.category == "stage_alias_ambiguous" and bool(exc.evidence)
+    return False
+
+
 def main() -> int:
     checks: dict[str, bool] = {}
 
@@ -230,6 +309,88 @@ def main() -> int:
             "wave-6-integration-evidence"
         )
         checks["all_task_ids_are_qualified"] = all("::" in task_id for task_id in canvas.tasks)
+        canvas_plan_tasks = {
+            plan_id: tuple(
+                task_id for task_id, task in canvas.tasks.items() if task["plan_id"] == plan_id
+            )
+            for plan_id in canvas.plan_ids
+        }
+        checks["canvas_task_heading_order_is_dependency_order"] = all(
+            all(edge in canvas.edges for edge in zip(tasks, tasks[1:]))
+            for tasks in canvas_plan_tasks.values()
+        )
+        checks["canvas_internal_dependency_edges_are_nonzero"] = sum(
+            1
+            for dependency, dependent in canvas.edges
+            if canvas.tasks[dependency]["plan_id"] == canvas.tasks[dependent]["plan_id"]
+        ) >= 69
+        checks["canvas_ownership_glob_is_bound_to_stage"] = canvas.file_ownership_patterns[
+            "src/domain/project/**"
+        ].endswith("wave-a1-domain-history")
+        checks["canvas_ownership_glob_matches_actual_claims"] = any(
+            canvas.tasks[writer]["plan_id"].endswith("wave-a1-domain-history")
+            for writer in canvas.file_ownership["src/domain/project/types.ts"]
+        )
+        checks["canvas_interface_only_rule_binds_declared_interface"] = any(
+            canvas.tasks[writer]["plan_id"].endswith("wave-a1-domain-history")
+            for writer in canvas.file_interface_writers["src/editor/store/editorStore.ts"]
+        )
+
+        first_source_name = Path(str(canvas_bundle["plans"][0]["source_path"])).name
+        first_source = (
+            FIXTURES
+            / "canvas-program-6d41fb9"
+            / str(canvas_bundle["source"]["tracked_sources_root"])
+            / first_source_name
+        ).read_bytes()
+        changed_first_source = first_source.replace(
+            b"**Files:**", b"Task source revision marker.\n\n**Files:**", 1
+        )
+        changed_exact_canvas = _compile_exact_canvas(
+            canvas_bundle,
+            root / "canvas-first-task-changed",
+            {first_source_name: changed_first_source},
+        )
+        first_task = canvas_plan_tasks[canvas.plan_ids[0]][0]
+        checks["canvas_first_task_change_invalidates_later_tasks"] = (
+            invalidated_nodes(canvas, changed_exact_canvas)
+            == changed_exact_canvas.downstream_of(first_task)
+            and set(canvas_plan_tasks[canvas.plan_ids[0]]).issubset(
+                invalidated_nodes(canvas, changed_exact_canvas)
+            )
+        )
+        program_source_name = Path(str(canvas_bundle["source"]["program_path"])).name
+        program_source = (
+            FIXTURES
+            / "canvas-program-6d41fb9"
+            / str(canvas_bundle["source"]["tracked_sources_root"])
+            / program_source_name
+        ).read_bytes()
+        unmatched_pattern_program = program_source.replace(
+            b"`src/domain/project/**`", b"`src/not-claimed/**`", 1
+        )
+        checks["canvas_unmatched_ownership_glob_blocks"] = _exact_canvas_block_category(
+            canvas_bundle,
+            root / "canvas-unmatched-ownership",
+            {program_source_name: unmatched_pattern_program},
+        ) == "file_ownership_invalid"
+        a1_source_name = next(
+            Path(str(item["source_path"])).name
+            for item in canvas_bundle["plans"]
+            if item["plan_id"] == "wave-a1-domain-history"
+        )
+        a1_source = (
+            FIXTURES
+            / "canvas-program-6d41fb9"
+            / str(canvas_bundle["source"]["tracked_sources_root"])
+            / a1_source_name
+        ).read_bytes()
+        missing_interfaces_a1 = a1_source.replace(b"**Interfaces:**", b"**Contracts:**")
+        checks["canvas_missing_interface_only_contract_blocks"] = _exact_canvas_block_category(
+            canvas_bundle,
+            root / "canvas-missing-interface-contract",
+            {a1_source_name: missing_interfaces_a1},
+        ) == "interface_contract_missing"
         checks["qualified_task_id_is_public"] = str(
             QualifiedTaskId("wave-b2-import-repair-ux", "complete")
         ) == "wave-b2-import-repair-ux::complete"
@@ -425,6 +586,38 @@ file_claims:
         checks["section_removal_invalidates_old_coverage_and_downstream"] = invalidated_nodes(
             section_base, section_removed
         ) == ("section-plan::s2", "section-plan::gate")
+
+        numeric_base = _compile_bundle(
+            _non_s_bundle("### 7.3 Authority\nalpha\n\n### 7.4 Other\nbeta"),
+            root / "numeric-base",
+        )
+        numeric_changed = _compile_bundle(
+            _non_s_bundle("### 7.3 Authority\nalpha changed\n\n### 7.4 Other\nbeta"),
+            root / "numeric-changed",
+        )
+        checks["numeric_heading_spec_change_invalidates_conservatively"] = invalidated_nodes(
+            numeric_base, numeric_changed
+        ) == tuple(numeric_changed.tasks)
+        unstructured_base = _compile_bundle(
+            _non_s_bundle("Unstructured requirements alpha"), root / "unstructured-base"
+        )
+        unstructured_changed = _compile_bundle(
+            _non_s_bundle("Unstructured requirements beta"), root / "unstructured-changed"
+        )
+        checks["unstructured_spec_change_invalidates_conservatively"] = invalidated_nodes(
+            unstructured_base, unstructured_changed
+        ) == tuple(unstructured_changed.tasks)
+        no_spec = _compile_bundle(_non_s_bundle(None), root / "no-spec")
+        checks["spec_addition_invalidates_conservatively"] = invalidated_nodes(
+            no_spec, unstructured_base
+        ) == tuple(unstructured_base.tasks)
+        checks["spec_removal_invalidates_conservatively"] = invalidated_nodes(
+            unstructured_base, no_spec
+        ) == tuple(no_spec.tasks)
+
+        checks["duplicate_natural_stage_alias_blocks"] = _alias_collision_blocks(
+            root / "alias-collision"
+        )
 
         changed_bundle = copy.deepcopy(canvas_bundle)
         changed = next(
