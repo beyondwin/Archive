@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import tempfile
-from dataclasses import FrozenInstanceError
+from contextlib import contextmanager
+from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
 
 
@@ -39,6 +41,17 @@ def git_bytes(repository: Path, *args: str) -> bytes:
     return subprocess.run(
         ["git", *args], cwd=repository, capture_output=True, check=True
     ).stdout
+
+
+@contextmanager
+def git_environment(**updates: str):
+    original = dict(os.environ)
+    os.environ.update(updates)
+    try:
+        yield
+    finally:
+        os.environ.clear()
+        os.environ.update(original)
 
 
 def write(repository: Path, relative: str, content: bytes) -> None:
@@ -145,6 +158,36 @@ def main() -> int:
             and root.body()["attempt_ceilings"] == dict(root.attempt_ceilings)
         )
 
+        replacement_file = repo / "seed.txt"
+        replacement_file.write_bytes(b"replacement tree\n")
+        replacement_commit = commit_all(repo, "replacement commit")
+        git(repo, "replace", reviewed_commit, replacement_commit)
+        replacement_root = load_trust_root(repo, reviewed_commit)
+        git(repo, "replace", "-d", reviewed_commit)
+        expected_replacement_safe_patch = measured_patch_digest(
+            repo, base, reviewed_commit
+        )[1]
+        checks["git_replacement_cannot_change_patch_root"] = (
+            replacement_root.patch_sha256 == expected_replacement_safe_patch
+        )
+        git(repo, "reset", "--hard", "-q", reviewed_commit)
+
+        with tempfile.TemporaryDirectory(prefix="cpe-release-trust-redirect-") as decoy_raw:
+            decoy = Path(decoy_raw)
+            fixture(decoy)
+            with git_environment(
+                GIT_DIR=str(decoy / ".git"),
+                GIT_WORK_TREE=str(decoy),
+                GIT_INDEX_FILE=str(decoy / ".git" / "index"),
+            ):
+                try:
+                    redirected_root = load_trust_root(repo, reviewed_commit)
+                except ValueError:
+                    redirected_root = None
+        checks["ambient_git_repository_redirect_rejected"] = bool(
+            redirected_root is not None and redirected_root.body() == root.body()
+        )
+
         try:
             root.reviewed_commit = base  # type: ignore[misc]
         except FrozenInstanceError:
@@ -179,6 +222,22 @@ def main() -> int:
         )
         git(repo, "reset", "-q", "HEAD", "--", POLICY_PATH)
 
+        git(repo, "update-index", "--skip-worktree", POLICY_PATH)
+        policy_file.write_bytes(policy_bytes(base, contract, hidden_by_skip_worktree=True))
+        checks["skip_worktree_fixed_path_rejected"] = expect_value_error(
+            lambda: load_trust_root(repo, reviewed_commit), "release_trust_worktree_dirty"
+        )
+        git(repo, "update-index", "--no-skip-worktree", POLICY_PATH)
+        git(repo, "checkout", "--", POLICY_PATH)
+
+        git(repo, "update-index", "--assume-unchanged", POLICY_PATH)
+        policy_file.write_bytes(policy_bytes(base, contract, hidden_by_assume_unchanged=True))
+        checks["assume_unchanged_fixed_path_rejected"] = expect_value_error(
+            lambda: load_trust_root(repo, reviewed_commit), "release_trust_worktree_dirty"
+        )
+        git(repo, "update-index", "--no-assume-unchanged", POLICY_PATH)
+        git(repo, "checkout", "--", POLICY_PATH)
+
         checks["policy_path_key_rejected"] = expect_value_error(
             lambda: validate_policy_bytes(
                 policy_bytes(base, contract, dogfood_task_contract_path="elsewhere")
@@ -205,6 +264,42 @@ def main() -> int:
                 validate_policy_bytes(root.policy.content),
             ),
             "release_trust_base_tree_mismatch",
+        )
+
+        substituted_policy = replace(
+            root.policy,
+            sha256="0" * 64,
+            content=root.policy.content + b"substituted\n",
+        )
+        substituted_payload = dict(validate_policy_bytes(root.policy.content))
+        substituted_payload["release_labels"] = ["caller supplied"]
+        checks["direct_untrusted_build_rejected"] = (
+            expect_value_error(
+                lambda: TrustRoot.build(
+                    repo,
+                    reviewed_commit,
+                    root.reviewed_tree,
+                    base,
+                    root.trusted_base_tree,
+                    substituted_policy,
+                    root.dogfood_contract,
+                    validate_policy_bytes(root.policy.content),
+                ),
+                "release_trust_policy_mismatch",
+            )
+            and expect_value_error(
+                lambda: TrustRoot.build(
+                    repo,
+                    reviewed_commit,
+                    root.reviewed_tree,
+                    base,
+                    root.trusted_base_tree,
+                    root.policy,
+                    root.dogfood_contract,
+                    substituted_payload,
+                ),
+                "release_trust_policy_payload_mismatch",
+            )
         )
 
         original_body = root.body()

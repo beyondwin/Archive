@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
 from pathlib import Path
 from typing import TypedDict, cast
 
@@ -72,27 +71,8 @@ def validate_policy_bytes(content: bytes) -> PolicyPayload:
     return cast(PolicyPayload, payload)
 
 
-def _reject_fixed_path_mutation(repository: Path) -> None:
-    result = subprocess.run(
-        [
-            "git",
-            "status",
-            "--porcelain=v1",
-            "--untracked-files=all",
-            "--",
-            POLICY_PATH,
-            DOGFOOD_CONTRACT_PATH,
-        ],
-        cwd=repository,
-        capture_output=True,
-    )
-    if result.returncode or result.stdout:
-        raise ValueError("release_trust_worktree_dirty")
-
-
 def load_trust_root(repository: Path, reviewed_commit: str) -> TrustRoot:
     repo = repository.expanduser().resolve()
-    _reject_fixed_path_mutation(repo)
     source = GitObjectSource(repo)
     policy = source.read_blob(reviewed_commit, POLICY_PATH)
     payload = validate_policy_bytes(policy.content)
