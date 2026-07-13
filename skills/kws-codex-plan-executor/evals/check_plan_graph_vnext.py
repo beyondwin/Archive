@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import sys
 import tempfile
@@ -37,8 +38,13 @@ def _compile_bundle(bundle: dict[str, object], root: Path):
     assert isinstance(spec, dict) and isinstance(plans, list)
     spec_path = root / "spec.md"
     required = spec.get("required_sections", [])
+    sections = spec.get("sections")
+    if sections is None:
+        sections = {str(section): "required" for section in required}
+    assert isinstance(sections, dict)
     spec_path.write_text(
-        f"# {spec['title']}\n\n" + "\n".join(f"## {section}\nrequired" for section in required),
+        f"# {spec['title']}\n\n"
+        + "\n".join(f"## {section}\n{body}" for section, body in sections.items()),
         encoding="utf-8",
     )
     program_path = None
@@ -76,6 +82,37 @@ def _compile_bundle(bundle: dict[str, object], root: Path):
         spec_path, tuple(plan_paths), program_path, (), workspace=root
     )
     return compile_plan_graph(document_set)
+
+
+def _git_blob_sha1(content: bytes) -> str:
+    return hashlib.sha1(f"blob {len(content)}\0".encode("ascii") + content).hexdigest()
+
+
+def _compile_exact_canvas(bundle: dict[str, object], root: Path):
+    root.mkdir(parents=True, exist_ok=True)
+    source = bundle["source"]
+    plans = bundle["plans"]
+    assert isinstance(source, dict) and isinstance(plans, list)
+    source_root = (
+        FIXTURES / "canvas-program-6d41fb9" / str(source["tracked_sources_root"])
+    )
+    program_name = Path(str(source["program_path"])).name
+    program_bytes = (source_root / program_name).read_bytes()
+    assert _git_blob_sha1(program_bytes) == source["program_blob_sha1"]
+    program_path = root / program_name
+    program_path.write_bytes(program_bytes)
+    plan_paths = []
+    for item in plans:
+        assert isinstance(item, dict)
+        name = Path(str(item["source_path"])).name
+        content = (source_root / name).read_bytes()
+        assert _git_blob_sha1(content) == item["source_blob_sha1"]
+        target = root / name
+        target.write_bytes(content)
+        plan_paths.append(target)
+    return compile_plan_graph(
+        compile_document_set(None, tuple(plan_paths), program_path, (), workspace=root)
+    )
 
 
 def _blocked(category: str, bundle: dict[str, object], root: Path) -> bool:
@@ -130,6 +167,45 @@ def _simple_bundle(plan_count: int = 1, with_program: bool = False) -> dict[str,
     return bundle
 
 
+def _section_bundle(sections: dict[str, str]) -> dict[str, object]:
+    return {
+        "spec": {
+            "title": "Sectioned Spec",
+            "required_sections": ["S1", "S2"],
+            "sections": sections,
+        },
+        "program": {
+            "title": "Section Program",
+            "contract": {
+                "plan_order": ["section-plan"],
+                "required_spec_sections": ["S1", "S2"],
+                "spec_coverage": {
+                    "S1": ["section-plan::s1"],
+                    "S2": ["section-plan::s2"],
+                },
+                "cross_plan_dependencies": [],
+                "file_ownership": {},
+                "ownership_transfers": [],
+                "global_integration_gate": "section-plan::gate",
+            },
+        },
+        "plans": [
+            {
+                "plan_id": "section-plan",
+                "title": "Section Plan",
+                "contract": {
+                    "plan_id": "section-plan",
+                    "tasks": [
+                        {"task_id": "s1", "dependencies": [], "spec_refs": ["S1"], "file_claims": ["s1.py"]},
+                        {"task_id": "s2", "dependencies": [], "spec_refs": ["S2"], "file_claims": ["s2.py"]},
+                        {"task_id": "gate", "dependencies": ["s1", "s2"], "spec_refs": [], "file_claims": ["gate.py"]},
+                    ],
+                },
+            }
+        ],
+    }
+
+
 def main() -> int:
     checks: dict[str, bool] = {}
 
@@ -147,8 +223,9 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="cpe-plan-graph-") as temp:
         root = Path(temp)
         root.mkdir(exist_ok=True)
-        canvas = _compile_bundle(canvas_bundle, root / "canvas")
+        canvas = _compile_exact_canvas(canvas_bundle, root / "canvas")
         checks["canvas_has_twelve_plans"] = canvas.plan_count == 12
+        checks["canvas_exact_markdown_yields_real_tasks"] = len(canvas.tasks) == 81
         checks["canvas_gate_is_final_wave"] = canvas.global_integration_gate.plan_id.endswith(
             "wave-6-integration-evidence"
         )
@@ -280,6 +357,75 @@ file_claims:
             and tuple(owners) in transferred.edges
         )
 
+        sole_owner = _simple_bundle(1, with_program=True)
+        sole_owner["program"]["contract"]["file_ownership"] = {
+            "src/plan-1.py": ["plan-1::wrong"]
+        }
+        checks["sole_writer_contradiction_blocks"] = _blocked(
+            "ambiguous_file_ownership", sole_owner, root / "sole-owner-bad"
+        )
+        sole_owner["program"]["contract"]["file_ownership"] = {
+            "src/plan-1.py": ["plan-1::build"]
+        }
+        sole_owner_graph = _compile_bundle(sole_owner, root / "sole-owner-good")
+        checks["sole_writer_declaration_is_validated"] = (
+            sole_owner_graph.file_ownership["src/plan-1.py"] == ("plan-1::build",)
+        )
+
+        bad_transfer = copy.deepcopy(ownership)
+        bad_transfer["program"]["contract"]["ownership_transfers"] = [
+            {"path": "shared/api.py", "from": "plan-1::missing", "to": owners[1]}
+        ]
+        checks["transfer_endpoints_must_be_actual_writers"] = _blocked(
+            "ambiguous_file_ownership", bad_transfer, root / "bad-transfer-endpoint"
+        )
+
+        bad_shared = _simple_bundle(1, with_program=True)
+        bad_shared["program"]["contract"]["shared_interfaces"] = ["not-claimed.py"]
+        checks["shared_interface_must_name_claimed_path"] = _blocked(
+            "ambiguous_file_ownership", bad_shared, root / "bad-shared-interface"
+        )
+        shared = copy.deepcopy(ownership)
+        shared["program"]["contract"]["ownership_transfers"] = []
+        shared["program"]["contract"]["shared_interfaces"] = ["shared/api.py"]
+        checks["validated_shared_interface_allows_ordered_writers"] = (
+            _compile_bundle(shared, root / "shared-interface").file_ownership["shared/api.py"]
+            == tuple(owners)
+        )
+
+        section_base = _compile_bundle(
+            _section_bundle({"S1": "alpha", "S2": "beta"}), root / "sections-base"
+        )
+        section_s1 = _compile_bundle(
+            _section_bundle({"S1": "alpha changed", "S2": "beta"}), root / "sections-s1"
+        )
+        section_s2 = _compile_bundle(
+            _section_bundle({"S1": "alpha", "S2": "beta changed"}), root / "sections-s2"
+        )
+        checks["section_digests_are_canonical"] = (
+            section_base.spec_section_hashes["S1"] != section_s1.spec_section_hashes["S1"]
+            and section_base.spec_section_hashes["S2"] == section_s1.spec_section_hashes["S2"]
+        )
+        checks["s1_edit_invalidates_s1_and_gate_only"] = invalidated_nodes(
+            section_base, section_s1
+        ) == ("section-plan::s1", "section-plan::gate")
+        checks["s2_edit_invalidates_s2_and_gate_only"] = invalidated_nodes(
+            section_base, section_s2
+        ) == ("section-plan::s2", "section-plan::gate")
+        section_added = _compile_bundle(
+            _section_bundle({"S1": "alpha", "S2": "beta", "S3": "new"}),
+            root / "sections-added",
+        )
+        section_removed = _compile_bundle(
+            _section_bundle({"S1": "alpha"}), root / "sections-removed"
+        )
+        checks["section_addition_invalidates_conservatively"] = invalidated_nodes(
+            section_base, section_added
+        ) == tuple(section_added.tasks)
+        checks["section_removal_invalidates_old_coverage_and_downstream"] = invalidated_nodes(
+            section_base, section_removed
+        ) == ("section-plan::s2", "section-plan::gate")
+
         changed_bundle = copy.deepcopy(canvas_bundle)
         changed = next(
             item for item in changed_bundle["plans"] if item["plan_id"] == "wave-b2-import-repair-ux"
@@ -296,14 +442,19 @@ file_claims:
                 }
             ],
         }
+        synthetic_canvas = _compile_bundle(canvas_bundle, root / "canvas-synthetic")
         changed_canvas = _compile_bundle(changed_bundle, root / "canvas-changed")
         checks["invalidation_is_changed_region_and_downstream_only"] = (
-            invalidated_nodes(canvas, changed_canvas)
+            invalidated_nodes(synthetic_canvas, changed_canvas)
             == changed_canvas.downstream_of("wave-b2-import-repair-ux")
-            and not any("wave-b1" in node for node in invalidated_nodes(canvas, changed_canvas))
+            and not any(
+                "wave-b1" in node
+                for node in invalidated_nodes(synthetic_canvas, changed_canvas)
+            )
         )
         checks["graph_hash_is_deterministic"] = (
-            canvas.graph_sha256 == _compile_bundle(canvas_bundle, root / "canvas-again").graph_sha256
+            canvas.graph_sha256
+            == _compile_exact_canvas(canvas_bundle, root / "canvas-again").graph_sha256
         )
         try:
             canvas.tasks["new"] = {}  # type: ignore[index]
