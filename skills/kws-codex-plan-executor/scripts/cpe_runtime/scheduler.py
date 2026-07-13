@@ -18,7 +18,8 @@ from .attempt_controller import (
     canonical_role,
     validate_verdict,
 )
-from .evidence import EvidenceRef, put_json
+from .evidence import EvidenceRef
+from .evidence_store import EvidenceStore
 from .events import read_events
 from .git_delta import INVALID_GIT_HEAD, GitDelta, capture_snapshot, diff_snapshots, matches_path
 from .kernel import Kernel, Transition
@@ -26,8 +27,10 @@ from .manifest import load_verified_manifest, resolve_ref
 from .model_policy import CORE_ROUTE
 from .operator_decisions import approved_cleanup_claims, approved_scope_claims
 from .packets import packet_entry, verify_packet
+from .phase_executor import PhaseExecutor, PhaseHandler
 from .validation import COMPLETION_EVIDENCE_KINDS, validate_completion, validate_integrity
 from .worker import Worker, WorkerError, WorkerRequest, WorkerResult
+from .transition_kernel import RunState, TypedOutcome, decide
 
 
 TaskPhase = Literal[
@@ -122,32 +125,83 @@ def next_phase(state: dict, task_id: str) -> str:
                 raise ValueError(f"unknown retry phase: {phase}")
             return str(phase)
     status = tasks[task_id].get("status")
-    phases = {
-        "pending": "implementation",
-        "ready": "implementation",
-        "scouting": "implementation",
-        "implementing": "implementation",
-        "reviewing": "acceptance",
-        "verifying": "verification",
-        "repairing": "repair",
-        "completed": "repository_checks",
+    kernel_phases = {
+        "pending": "ready",
+        "ready": "ready",
+        "scouting": "ready",
+        "implementing": "ready",
+        "reviewing": "implemented",
+        "verifying": "reviewed",
+        "repairing": "repairing",
+        "completed": "completed",
     }
-    if status not in phases:
+    if status not in kernel_phases:
         raise ValueError(f"unknown or non-runnable task state: {status}")
-    return phases[status]
+    command = decide(
+        RunState(kernel_phases[str(status)], task_id),
+        TypedOutcome("dispatch", task_id),
+    )
+    return "verification" if command.kind == "verify" else command.kind
 
 
 def route_verdict(verdict: object) -> str:
     status = verdict.get("status") if isinstance(verdict, dict) else verdict
-    routes = {
-        "passed": "continue",
-        "changes_requested": "repair",
-        "blocked": "blocked",
-        "inconclusive": "inconclusive",
-    }
-    if status not in routes:
+    if status not in {"passed", "changes_requested", "blocked", "inconclusive"}:
         raise ValueError(f"unknown verdict: {status}")
-    return routes[str(status)]
+    command = decide(RunState("verdict"), TypedOutcome(str(status)))
+    return {"block": "blocked", "wait": "inconclusive"}.get(
+        command.kind, command.kind
+    )
+
+
+def execute_transition(
+    state: RunState,
+    outcome: TypedOutcome,
+    handlers: Mapping[str, PhaseHandler],
+):
+    """Choose and execute one vNext command; durable recording stays in Kernel."""
+
+    command = decide(state, outcome)
+    return command, PhaseExecutor(handlers).execute(command)
+
+
+def promote_current_plan_checkpoint(
+    checkpoint: object,
+    *,
+    state: dict,
+    plan_id: str,
+    plan_sha256: str,
+    spec_sha256: str,
+    upstream_graph_sha256: str,
+    promote=None,
+):
+    """Promote against the authoritative projected checkpoint chain.
+
+    Never trust the candidate's own upstream string as the current identity.
+    """
+
+    checkpoints = state.get("plan_checkpoints")
+    if not isinstance(checkpoints, list):
+        raise ValueError("plan_checkpoint_state_invalid")
+    upstream = checkpoints[-1].get("identity") if checkpoints else None
+    if getattr(checkpoint, "upstream_checkpoint", None) != upstream:
+        raise ValueError("plan_checkpoint_upstream_stale")
+    if promote is None:
+        from .checkpoints import promote_plan_checkpoint
+
+        promote = promote_plan_checkpoint
+    return promote(
+        checkpoint,
+        plan_id=plan_id,
+        plan_sha256=plan_sha256,
+        spec_sha256=spec_sha256,
+        upstream_checkpoint=upstream,
+        upstream_graph_sha256=upstream_graph_sha256,
+    )
+
+
+def _put_json(run_dir: Path, kind: str, payload: object) -> EvidenceRef:
+    return EvidenceStore(run_dir).put_json(kind, payload)
 
 
 def make_packet_request(
@@ -471,7 +525,7 @@ def _attach(
     kind: str,
     payload: object,
 ) -> dict[str, str]:
-    ref = put_json(kernel.run_dir, kind, payload)
+    ref = _put_json(kernel.run_dir, kind, payload)
     kernel.transition(
         Transition(
             "evidence.attached",
@@ -1764,7 +1818,7 @@ def _deterministic_evidence(
 ) -> None:
     from .evidence import put_json
 
-    ref = put_json(
+    ref = _put_json(
         kernel.run_dir,
         "deterministic_verification",
         {
@@ -1802,7 +1856,7 @@ def _store_review_evidence(
 
     if not isinstance(review_evidence, ReviewEvidence):
         raise ValueError("review_evidence_invalid")
-    ref = put_json(
+    ref = _put_json(
         kernel.run_dir, "review_evidence", asdict(review_evidence)
     ).as_dict()
     kernel.transition(
@@ -2567,7 +2621,7 @@ def run_repository_checks(manifest: dict, revision: int) -> tuple[EvidenceRef, .
             "results": results,
             **_binding(kernel, task_id),
         }
-        ref = put_json(kernel.run_dir, "repository_check", payload)
+        ref = _put_json(kernel.run_dir, "repository_check", payload)
         kernel.transition(
             Transition(
                 "evidence.attached",
