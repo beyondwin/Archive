@@ -790,12 +790,38 @@ class RunStore:
     ) -> bytes:
         target = self.paths.root / relative_path
         try:
-            metadata = target.lstat()
-            data = target.read_bytes()
+            descriptor = os.open(
+                target,
+                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            )
         except OSError as exc:
             raise ValueError("indexed artifact is unreadable") from exc
-        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
-            raise ValueError("indexed artifact must be a regular file")
+        try:
+            metadata = os.fstat(descriptor)
+            if not stat.S_ISREG(metadata.st_mode):
+                raise ValueError("indexed artifact must be a regular file")
+            if stat.S_IMODE(metadata.st_mode) != 0o600:
+                raise ValueError("indexed artifact mode must remain private")
+            chunks: list[bytes] = []
+            while True:
+                chunk = os.read(descriptor, 64 * 1024)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            data = b"".join(chunks)
+            try:
+                current = target.lstat()
+            except OSError as exc:
+                raise ValueError("indexed artifact changed while reading") from exc
+            if (
+                stat.S_ISLNK(current.st_mode)
+                or current.st_dev != metadata.st_dev
+                or current.st_ino != metadata.st_ino
+                or stat.S_IMODE(current.st_mode) != 0o600
+            ):
+                raise ValueError("indexed artifact changed while reading")
+        finally:
+            os.close(descriptor)
         if len(data) != record["byte_length"] or _sha256(data) != record["sha256"]:
             raise ValueError("artifact digest does not match its durable index")
         return data
@@ -811,6 +837,34 @@ class RunStore:
         if record is None:
             raise ValueError("accepted publication artifact is not indexed")
         return self._read_indexed_artifact(relative_path, record)
+
+    def _read_publication_artifact_batch(
+        self,
+        descriptors: Mapping[str, object],
+        records: Mapping[str, Mapping[str, object]],
+    ) -> dict[str, bytes]:
+        """Read and verify one accepted publication without logical recursion."""
+
+        artifacts: dict[str, bytes] = {}
+        for logical_path, raw_descriptor in descriptors.items():
+            if not isinstance(logical_path, str) or not isinstance(
+                raw_descriptor, Mapping
+            ):
+                raise ValueError("accepted publication artifact record is invalid")
+            if frozenset(raw_descriptor) != frozenset(
+                {"relative_path", "sha256", "byte_length"}
+            ):
+                raise ValueError("accepted publication artifact record is invalid")
+            physical_path = raw_descriptor.get("relative_path")
+            digest = raw_descriptor.get("sha256")
+            byte_length = raw_descriptor.get("byte_length")
+            if not isinstance(physical_path, str):
+                raise ValueError("accepted publication artifact binding is invalid")
+            data = self._read_physical_indexed_artifact(physical_path, records)
+            if len(data) != byte_length or _sha256(data) != digest:
+                raise ValueError("accepted publication artifact digest does not match")
+            artifacts[logical_path] = data
+        return artifacts
 
     def _validate_artifacts(self) -> tuple[dict[str, object], ...]:
         records = self._artifact_records()
@@ -1047,6 +1101,78 @@ class RunStore:
                 fcntl.flock(descriptor, fcntl.LOCK_UN)
             finally:
                 os.close(descriptor)
+
+    def read_accepted_publication(
+        self,
+        manifest_path: str,
+        manifest_sha256: str,
+        *,
+        require_event_selection: bool = True,
+    ) -> tuple[dict[str, object], dict[str, bytes]]:
+        """Batch-read a publication, requiring its event selection after commit."""
+
+        normalized_manifest_path, _ = self._artifact_target(
+            manifest_path, for_write=False
+        )
+        if (
+            not isinstance(manifest_sha256, str)
+            or len(manifest_sha256) != 64
+            or any(
+                character not in "0123456789abcdef"
+                for character in manifest_sha256
+            )
+        ):
+            raise ValueError("accepted publication manifest digest is invalid")
+        records = {
+            str(record["relative_path"]): record
+            for record in self._artifact_records()
+        }
+        selected_payload: Mapping[str, object] | None = None
+        if require_event_selection:
+            selected_payloads: list[Mapping[str, object]] = []
+            for event in self.validate_event_chain():
+                if event["event_type"] != "map.generation_created":
+                    continue
+                payload = event["payload"]
+                selected_path = payload.get("publication_manifest_path")
+                selected_digest = payload.get("publication_manifest_sha256")
+                if not isinstance(selected_path, str) or not isinstance(
+                    selected_digest, str
+                ):
+                    raise ValueError(
+                        "map generation event omits its accepted publication"
+                    )
+                if selected_path == normalized_manifest_path:
+                    if selected_digest != manifest_sha256:
+                        raise ValueError(
+                            "accepted publication event digest does not match"
+                        )
+                    selected_payloads.append(payload)
+            if len(selected_payloads) != 1:
+                raise ValueError("accepted publication is not uniquely event-selected")
+            selected_payload = selected_payloads[0]
+        raw = self._read_physical_indexed_artifact(
+            normalized_manifest_path, records
+        )
+        if _sha256(raw) != manifest_sha256:
+            raise ValueError("accepted publication event digest does not match")
+        manifest = self._validate_publication_manifest(
+            raw, normalized_manifest_path
+        )
+        descriptors = manifest.get("artifacts")
+        if not isinstance(descriptors, Mapping) or (
+            selected_payload is not None
+            and (
+                manifest.get("generation_id")
+                != selected_payload.get("generation_id")
+                or manifest.get("program_map_sha256")
+                != selected_payload.get("map_sha256")
+            )
+        ):
+            raise ValueError("accepted publication identity is invalid")
+        return manifest, self._read_publication_artifact_batch(
+            descriptors, records
+        )
 
     def read_artifact(self, relative_path: str) -> bytes:
         normalized, target = self._artifact_target(relative_path, for_write=False)
