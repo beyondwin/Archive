@@ -6,14 +6,12 @@ import hashlib
 import json
 import os
 import re
+import stat
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from types import MappingProxyType
 from typing import Mapping, TypedDict
-
-from .git_delta import committed_patch_digest as _measured_patch_digest
-
 
 _OID = re.compile(r"^[0-9a-f]{40}$")
 
@@ -22,22 +20,44 @@ def _canonical_json(payload: object) -> bytes:
     return (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode()
 
 
-def _git(repository: Path, *args: str, text: bool = False) -> bytes | str:
-    environment = dict(os.environ)
+def _field(label: bytes, value: bytes) -> bytes:
+    return label + len(value).to_bytes(8, "big") + value
+
+
+def _git_environment() -> dict[str, str]:
+    environment = {
+        key: value for key, value in os.environ.items() if not key.startswith("GIT_")
+    }
     environment["GIT_NO_REPLACE_OBJECTS"] = "1"
+    return environment
+
+
+def _discover_repository(repository: Path) -> tuple[Path, Path]:
+    requested = repository.expanduser().resolve()
     try:
-        result = subprocess.run(
-            ["git", *args],
-            cwd=repository,
-            env=environment,
+        root_result = subprocess.run(
+            ["git", "-C", str(requested), "rev-parse", "--show-toplevel"],
+            env=_git_environment(),
             capture_output=True,
-            text=text,
+            text=True,
         )
     except OSError as exc:
         raise ValueError("git_object_missing") from exc
-    if result.returncode:
+    if root_result.returncode:
         raise ValueError("git_object_missing")
-    return result.stdout.strip() if text else result.stdout
+    root = Path(root_result.stdout.strip()).resolve()
+    try:
+        git_dir_result = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--absolute-git-dir"],
+            env=_git_environment(),
+            capture_output=True,
+            text=True,
+        )
+    except OSError as exc:
+        raise ValueError("git_object_missing") from exc
+    if git_dir_result.returncode:
+        raise ValueError("git_object_missing")
+    return root, Path(git_dir_result.stdout.strip()).resolve()
 
 
 def _safe_path(path: str) -> str:
@@ -53,19 +73,21 @@ def _safe_path(path: str) -> str:
 def canonical_repository_identity(repository: Path) -> str:
     """Identify all worktrees sharing one canonical Git object database."""
 
-    repository = repository.expanduser().resolve()
-    common = str(_git(repository, "rev-parse", "--git-common-dir", text=True))
+    return _canonical_repository_identity(GitObjectSource(repository))
+
+
+def _canonical_repository_identity(source: "GitObjectSource") -> str:
+    common = str(source._git("rev-parse", "--git-common-dir", text=True))
     common_path = Path(common)
     if not common_path.is_absolute():
-        common_path = repository / common_path
+        common_path = source.repository / common_path
     return "git-common-dir:" + str(common_path.resolve())
 
 
 def committed_patch_digest(repository: Path, predecessor: str, commit: str) -> str:
     """Return only the canonical digest for one exact committed delta."""
 
-    _files, digest = _measured_patch_digest(repository, predecessor, commit)
-    return digest
+    return GitObjectSource(repository).patch_digest(predecessor, commit)
 
 
 @dataclass(frozen=True)
@@ -99,19 +121,43 @@ class GitObjectSource:
     """Read repository-relative blobs from one explicitly named commit."""
 
     def __init__(self, repository: Path):
-        self.repository = repository.expanduser().resolve()
-        _git(self.repository, "rev-parse", "--git-dir")
+        self.repository, self.git_dir = _discover_repository(repository)
+        self._environment = _git_environment()
+
+    def _result(self, *args: str, text: bool = False) -> subprocess.CompletedProcess:
+        argv = [
+            "git",
+            f"--git-dir={self.git_dir}",
+            f"--work-tree={self.repository}",
+            *args,
+        ]
+        try:
+            return subprocess.run(
+                argv,
+                cwd=self.repository,
+                env=self._environment,
+                capture_output=True,
+                text=text,
+            )
+        except OSError as exc:
+            raise ValueError("git_object_missing") from exc
+
+    def _git(self, *args: str, text: bool = False) -> bytes | str:
+        result = self._result(*args, text=text)
+        if result.returncode:
+            raise ValueError("git_object_missing")
+        return result.stdout.strip() if text else result.stdout
 
     def _commit(self, commit: str) -> str:
         if _OID.fullmatch(commit) is None:
             raise ValueError("git_object_missing")
-        if _git(self.repository, "cat-file", "-t", commit, text=True) != "commit":
+        if self._git("cat-file", "-t", commit, text=True) != "commit":
             raise ValueError("git_object_missing")
         return commit
 
     def tree(self, commit: str) -> str:
         commit = self._commit(commit)
-        tree = str(_git(self.repository, "rev-parse", f"{commit}^{{tree}}", text=True))
+        tree = str(self._git("rev-parse", f"{commit}^{{tree}}", text=True))
         if _OID.fullmatch(tree) is None:
             raise ValueError("git_object_missing")
         return tree
@@ -119,13 +165,126 @@ class GitObjectSource:
     def read_blob(self, commit: str, path: str) -> GitBlob:
         commit = self._commit(commit)
         path = _safe_path(path)
-        oid = str(_git(self.repository, "rev-parse", f"{commit}:{path}", text=True))
-        if _OID.fullmatch(oid) is None or _git(
-            self.repository, "cat-file", "-t", oid, text=True
+        oid = str(self._git("rev-parse", f"{commit}:{path}", text=True))
+        if _OID.fullmatch(oid) is None or self._git(
+            "cat-file", "-t", oid, text=True
         ) != "blob":
             raise ValueError("git_object_missing")
-        content = bytes(_git(self.repository, "cat-file", "blob", oid))
+        content = bytes(self._git("cat-file", "blob", oid))
         return GitBlob(path, oid, hashlib.sha256(content).hexdigest(), content)
+
+    def is_ancestor(self, predecessor: str, commit: str) -> bool:
+        predecessor = self._commit(predecessor)
+        commit = self._commit(commit)
+        result = self._result("merge-base", "--is-ancestor", predecessor, commit)
+        if result.returncode not in (0, 1):
+            raise ValueError("git_object_missing")
+        return result.returncode == 0
+
+    def patch_digest(self, predecessor: str, commit: str) -> str:
+        predecessor = self._commit(predecessor)
+        commit = self._commit(commit)
+        names = bytes(
+            self._git(
+                "diff",
+                "--name-only",
+                "--no-renames",
+                "-z",
+                predecessor,
+                commit,
+                "--",
+            )
+        )
+        patch = bytes(
+            self._git(
+                "diff",
+                "--binary",
+                "--full-index",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--no-renames",
+                predecessor,
+                commit,
+                "--",
+            )
+        )
+        changed_files = sorted(
+            {os.fsdecode(item) for item in names.split(b"\0") if item}
+        )
+        payload = bytearray(b"CPE-CANDIDATE-COMMIT-V1\0")
+        payload.extend(_field(b"P", predecessor.encode("ascii")))
+        payload.extend(_field(b"C", commit.encode("ascii")))
+        for path in changed_files:
+            payload.extend(_field(b"F", os.fsencode(path)))
+        payload.extend(_field(b"D", patch))
+        return hashlib.sha256(bytes(payload)).hexdigest()
+
+    def reject_fixed_path_mutation(
+        self, reviewed_commit: str, blobs: tuple[GitBlob, ...]
+    ) -> None:
+        paths = tuple(blob.path for blob in blobs)
+        try:
+            status = bytes(
+                self._git(
+                    "status",
+                    "--porcelain=v1",
+                    "--untracked-files=all",
+                    "--",
+                    *paths,
+                )
+            )
+            flags = bytes(self._git("ls-files", "-v", "-z", "--", *paths))
+            stages = bytes(self._git("ls-files", "--stage", "-z", "--", *paths))
+        except ValueError as exc:
+            raise ValueError("release_trust_worktree_dirty") from exc
+        if status:
+            raise ValueError("release_trust_worktree_dirty")
+
+        flag_records: dict[str, str] = {}
+        for record in flags.split(b"\0"):
+            if not record:
+                continue
+            if len(record) < 3 or record[1:2] != b" ":
+                raise ValueError("release_trust_worktree_dirty")
+            flag_records[os.fsdecode(record[2:])] = chr(record[0])
+        if set(flag_records) != set(paths) or any(
+            flag_records[path] != "H" for path in paths
+        ):
+            raise ValueError("release_trust_worktree_dirty")
+
+        stage_records: dict[str, tuple[str, str]] = {}
+        for record in stages.split(b"\0"):
+            if not record:
+                continue
+            try:
+                metadata, raw_path = record.split(b"\t", 1)
+                _mode, oid, stage = metadata.decode("ascii").split(" ")
+            except (ValueError, UnicodeError) as exc:
+                raise ValueError("release_trust_worktree_dirty") from exc
+            path = os.fsdecode(raw_path)
+            if path in stage_records:
+                raise ValueError("release_trust_worktree_dirty")
+            stage_records[path] = (oid, stage)
+
+        for blob in blobs:
+            if self.read_blob(reviewed_commit, blob.path) != blob:
+                raise ValueError("release_trust_worktree_dirty")
+            if stage_records.get(blob.path) != (blob.blob_oid, "0"):
+                raise ValueError("release_trust_worktree_dirty")
+            path = self.repository.joinpath(*PurePosixPath(blob.path).parts)
+            try:
+                descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+                try:
+                    if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                        raise ValueError("release_trust_worktree_dirty")
+                    with os.fdopen(descriptor, "rb", closefd=False) as handle:
+                        worktree_content = handle.read()
+                finally:
+                    os.close(descriptor)
+            except OSError as exc:
+                raise ValueError("release_trust_worktree_dirty") from exc
+            if worktree_content != blob.content:
+                raise ValueError("release_trust_worktree_dirty")
 
 
 @dataclass(frozen=True)
@@ -176,37 +335,55 @@ class TrustRoot:
         dogfood_contract: GitBlob,
         payload: Mapping[str, object],
     ) -> "TrustRoot":
+        from .release_policy_vnext import (
+            DOGFOOD_CONTRACT_PATH,
+            POLICY_PATH,
+            validate_policy_bytes,
+            validate_trusted_base_commit,
+        )
+
         source = GitObjectSource(repository)
-        if source.tree(reviewed_commit) != reviewed_tree:
+        exact_policy = source.read_blob(reviewed_commit, POLICY_PATH)
+        if policy != exact_policy:
+            raise ValueError("release_trust_policy_mismatch")
+        exact_contract = source.read_blob(reviewed_commit, DOGFOOD_CONTRACT_PATH)
+        if dogfood_contract != exact_contract:
+            raise ValueError("release_trust_contract_mismatch")
+        validated_payload = validate_policy_bytes(exact_policy.content)
+        if dict(payload) != dict(validated_payload):
+            raise ValueError("release_trust_policy_payload_mismatch")
+        exact_base_commit = validate_trusted_base_commit(
+            validated_payload["trusted_base_commit"]
+        )
+        if trusted_base_commit != exact_base_commit:
+            raise ValueError("release_trust_base_invalid")
+        exact_reviewed_tree = source.tree(reviewed_commit)
+        if exact_reviewed_tree != reviewed_tree:
             raise ValueError("release_trust_reviewed_tree_mismatch")
-        if source.tree(trusted_base_commit) != trusted_base_tree:
+        exact_base_tree = source.tree(exact_base_commit)
+        if exact_base_tree != trusted_base_tree:
             raise ValueError("release_trust_base_tree_mismatch")
         if trusted_base_commit == reviewed_commit:
             raise ValueError("release_trust_base_invalid")
-        ancestor = subprocess.run(
-            ["git", "merge-base", "--is-ancestor", trusted_base_commit, reviewed_commit],
-            cwd=source.repository,
-            env={**os.environ, "GIT_NO_REPLACE_OBJECTS": "1"},
-            capture_output=True,
-        )
-        if ancestor.returncode:
+        if not source.is_ancestor(trusted_base_commit, reviewed_commit):
             raise ValueError("release_trust_base_invalid")
-        if dogfood_contract.sha256 != payload["dogfood_contract_sha256"]:
+        if exact_contract.sha256 != validated_payload["dogfood_contract_sha256"]:
             raise ValueError("release_policy_vnext_contract_mismatch")
-        patch_sha256 = committed_patch_digest(
-            source.repository, trusted_base_commit, reviewed_commit
+        source.reject_fixed_path_mutation(
+            reviewed_commit, (exact_policy, exact_contract)
         )
-        labels = tuple(payload["release_labels"])  # type: ignore[arg-type]
-        ceilings = MappingProxyType(dict(payload["attempt_ceilings"]))  # type: ignore[arg-type]
+        patch_sha256 = source.patch_digest(trusted_base_commit, reviewed_commit)
+        labels = tuple(validated_payload["release_labels"])
+        ceilings = MappingProxyType(dict(validated_payload["attempt_ceilings"]))
         draft = cls(
-            canonical_repository_identity(source.repository),
+            _canonical_repository_identity(source),
             reviewed_commit,
-            reviewed_tree,
+            exact_reviewed_tree,
             trusted_base_commit,
-            trusted_base_tree,
+            exact_base_tree,
             patch_sha256,
-            policy,
-            dogfood_contract,
+            exact_policy,
+            exact_contract,
             labels,
             ceilings,
             "",
