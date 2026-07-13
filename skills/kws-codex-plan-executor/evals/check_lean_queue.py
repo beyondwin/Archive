@@ -20,6 +20,7 @@ FIXTURES = Path(__file__).resolve().parent / "lean-fixtures"
 sys.path.insert(0, str(SKILL_ROOT / "scripts"))
 
 from cpe_runtime.launcher import ChildLauncher, ChildRequest  # noqa: E402
+from cpe_runtime.contracts import ChildResult  # noqa: E402
 from cpe_runtime.queue import QueueEngine  # noqa: E402
 from cpe_runtime.store import RunStore  # noqa: E402
 from cpe_runtime.worktree import Worktree  # noqa: E402
@@ -67,7 +68,9 @@ class LeanQueueTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
-    def create_engine(self, scenario: str) -> tuple[RunStore, QueueEngine]:
+    def create_engine(
+        self, scenario: str, *, mapping_scenario: str = "mapping_success"
+    ) -> tuple[RunStore, QueueEngine]:
         store = RunStore.create(
             codex_home=self.home,
             workspace=self.repo,
@@ -87,7 +90,7 @@ class LeanQueueTest(unittest.TestCase):
                 **os.environ,
                 "PATH": str(self.bin_dir),
                 "CODEX_HOME": str(self.home),
-                "CPE_FAKE_SCENARIO": "mapping_success",
+                "CPE_FAKE_SCENARIO": mapping_scenario,
                 "CPE_FAKE_INVOCATION_LOG": str(self.invocation_log),
                 "CPE_FAKE_QUEUE_STATE": str(self.fake_state),
             },
@@ -230,7 +233,9 @@ class LeanQueueTest(unittest.TestCase):
         ]
         self.assertEqual(len(opened), 1)
         self.assertEqual(opened[0]["payload"]["authority_code"], "credential_required")
-        self.assertEqual(opened[0]["payload"]["task_ids"], ["plan-01:T1"])
+        self.assertEqual(
+            opened[0]["payload"]["task_ids"], ["plan-01:T1", "plan-01:T2"]
+        )
 
         other_home = self.root / "test-failure-home"
         other_home.mkdir(mode=0o700)
@@ -348,6 +353,223 @@ class LeanQueueTest(unittest.TestCase):
         ]
         self.assertEqual(len(reviews), 1)
         self.assertEqual(reviews[0]["payload"]["verdict"], "pass")
+
+    def test_resume_reconciles_clean_unreported_writer_commit_without_task_redispatch(
+        self,
+    ) -> None:
+        store, engine = self.create_engine("queue_success")
+        original_append = engine._append_task_result
+        interrupted = False
+
+        def interrupt_after_writer(*args: object, **kwargs: object) -> None:
+            nonlocal interrupted
+            if not interrupted:
+                interrupted = True
+                raise RuntimeError("interrupt before task.reported")
+            original_append(*args, **kwargs)
+
+        engine._append_task_result = interrupt_after_writer  # type: ignore[method-assign]
+        with self.assertRaisesRegex(RuntimeError, "before task.reported"):
+            engine.tick()
+        advanced_head = engine.worktree.head()
+        active = store.replay()["tasks"]["plan-01:T1"]["active_attempt"]
+        self.assertNotEqual(active["baseline_commit"], advanced_head)
+        self.assertRegex(active["evidence_sha256"], r"^[0-9a-f]{64}$")
+
+        engine._append_task_result = original_append  # type: ignore[method-assign]
+        engine.launcher.environ["CPE_FAKE_SCENARIO"] = "queue_ordinary_failure"
+        self.assertEqual(engine.tick(), "plan-01:T1")
+        roles = [
+            item["role"]
+            for item in self.invocations()
+            if item["role"] not in {"document_mapper", "program_mapper"}
+        ]
+        self.assertEqual(roles.count("task_agent"), 1)
+        self.assertEqual(roles, ["task_agent", "investigator", "fix_agent", "reviewer"])
+        recovered = [
+            event
+            for event in self.lifecycle_events(store)
+            if event["event_type"] == "task.reported"
+        ][0]["payload"]
+        self.assertEqual(recovered["status"], "interrupted")
+        self.assertEqual(recovered["commit"], advanced_head)
+        self.assertTrue(any(path.endswith("interrupted.patch") for path in recovered["artifact_paths"]))
+
+    def test_resume_after_reported_fix_reviews_expanded_range_without_refixing(self) -> None:
+        store, engine = self.create_engine("queue_fix_review_crash")
+        original = engine.worktree.head()
+
+        with self.assertRaisesRegex(ValueError, "Codex child exited"):
+            engine.tick()
+        reports = [
+            event["payload"]
+            for event in self.lifecycle_events(store)
+            if event["event_type"] == "task.reported"
+        ]
+        self.assertEqual([report["status"] for report in reports], ["completed", "completed"])
+        fix_commit = reports[-1]["commit"]
+
+        engine.launcher.environ["CPE_FAKE_SCENARIO"] = "queue_success"
+        self.assertEqual(engine.tick(), "plan-01:T1")
+        invocations = [
+            item
+            for item in self.invocations()
+            if item["role"] not in {"document_mapper", "program_mapper"}
+        ]
+        self.assertEqual([item["role"] for item in invocations].count("fix_agent"), 1)
+        resumed_review = invocations[-1]
+        self.assertEqual(resumed_review["role"], "reviewer")
+        patch_paths = [
+            Path(path) for path in resumed_review["input_paths"] if path.endswith(".patch")
+        ]
+        self.assertEqual(len(patch_paths), 1)
+        self.assertEqual(
+            patch_paths[0].read_text(encoding="utf-8"),
+            engine.worktree.diff(original, str(fix_commit)),
+        )
+
+    def test_repeated_identical_review_evidence_investigates_before_second_fix(self) -> None:
+        store, engine = self.create_engine("queue_repeated_review_finding")
+
+        self.assertEqual(engine.tick(), "plan-01:T1")
+        roles = [
+            item["role"]
+            for item in self.invocations()
+            if item["role"] not in {"document_mapper", "program_mapper"}
+        ]
+        self.assertEqual(
+            roles,
+            [
+                "task_agent",
+                "reviewer",
+                "fix_agent",
+                "reviewer",
+                "investigator",
+                "fix_agent",
+                "reviewer",
+            ],
+        )
+        reviews = [
+            event["payload"]
+            for event in self.lifecycle_events(store)
+            if event["event_type"] == "review.reported"
+        ]
+        self.assertEqual(reviews[0]["evidence_sha256"], reviews[1]["evidence_sha256"])
+        starts = [
+            event["payload"]
+            for event in self.lifecycle_events(store)
+            if event["event_type"] == "task.started"
+        ]
+        self.assertEqual(starts[1]["evidence_sha256"], reviews[0]["evidence_sha256"])
+        self.assertEqual(starts[2]["evidence_sha256"], reviews[1]["evidence_sha256"])
+        self.assertNotIn("review-consolidated-2", starts[2]["strategy_key"])
+
+    def test_replay_rejects_nonadjacent_strategy_evidence_cycle(self) -> None:
+        store, engine = self.create_engine("queue_success")
+        task = engine._task_by_id("plan-01:T1")
+        finding_path = "reviews/plan-01-T1/immutable-finding.json"
+        store.put_artifact(finding_path, b'{"finding":"same bytes"}')
+
+        self.assertIsNotNone(
+            engine._run_consolidated_fix(task, [finding_path], strategy_key="strategy-A")
+        )
+        self.assertIsNotNone(
+            engine._run_consolidated_fix(task, [finding_path], strategy_key="strategy-B")
+        )
+        with self.assertRaisesRegex(ValueError, "previously attempted strategy and evidence"):
+            engine._run_consolidated_fix(task, [finding_path], strategy_key="strategy-A")
+        fixes = [
+            item
+            for item in self.invocations()
+            if item["role"] == "fix_agent"
+        ]
+        self.assertEqual(len(fixes), 2)
+
+    def test_orphan_autonomy_ledger_reconciles_once_without_duplicate_investigation(
+        self,
+    ) -> None:
+        store, engine = self.create_engine("queue_ordinary_failure")
+        original_append_event = store.append_event
+        interrupted = False
+
+        def interrupt_autonomy(event_type: str, payload: object) -> object:
+            nonlocal interrupted
+            if event_type == "autonomy.recorded" and not interrupted:
+                interrupted = True
+                raise RuntimeError("interrupt after autonomy ledger fsync")
+            return original_append_event(event_type, payload)  # type: ignore[arg-type]
+
+        store.append_event = interrupt_autonomy  # type: ignore[method-assign]
+        with self.assertRaisesRegex(RuntimeError, "ledger fsync"):
+            engine.tick()
+        self.assertEqual(len(store.autonomy_decisions()), 1)
+        self.assertFalse(
+            any(event["event_type"] == "autonomy.recorded" for event in store.validate_event_chain())
+        )
+
+        store.append_event = original_append_event  # type: ignore[method-assign]
+        self.assertEqual(engine.tick(), "plan-01:T1")
+        roles = [
+            item["role"]
+            for item in self.invocations()
+            if item["role"] not in {"document_mapper", "program_mapper"}
+        ]
+        self.assertEqual(roles.count("investigator"), 1)
+        self.assertEqual(len(store.autonomy_decisions()), 1)
+        self.assertEqual(
+            len(
+                [
+                    event
+                    for event in store.validate_event_chain()
+                    if event["event_type"] == "autonomy.recorded"
+                ]
+            ),
+            1,
+        )
+
+    def test_authority_uses_document_edges_and_rejects_unknown_documents(self) -> None:
+        store, engine = self.create_engine(
+            "queue_authority", mapping_scenario="mapping_many_tasks"
+        )
+        engine.launcher.environ["CPE_FAKE_AFFECTED_DOCUMENT_IDS"] = '["plan-01"]'
+        self.assertEqual(engine.tick(), "plan-01:T1")
+        opened = [
+            event["payload"]
+            for event in store.validate_event_chain()
+            if event["event_type"] == "authority.opened"
+        ]
+        self.assertEqual(opened[-1]["task_ids"], ["plan-01:T1", "plan-01:T2"])
+        self.assertEqual(
+            engine._next_ready_task(store.replay())["task_id"], "plan-02:T2"
+        )
+
+        with self.assertRaisesRegex(ValueError, "unknown affected document"):
+            engine._open_authority(
+                ChildResult(
+                    role="task_agent",
+                    status="waiting_authority",
+                    item_id="plan-02:T2",
+                    commit=None,
+                    verdict=None,
+                    failure_code=None,
+                    authority_id="credential_required",
+                    strategy_key="initial",
+                    affected_document_ids=("unknown-doc",),
+                    artifact_paths=("reports/plan-01-T1/attempt-1.md",),
+                    summary="unknown document regression",
+                ),
+                "plan-02:T2",
+            )
+        self.assertEqual(
+            len(
+                [
+                    event
+                    for event in store.validate_event_chain()
+                    if event["event_type"] == "authority.opened"
+                ]
+            ),
+            1,
+        )
 
 
 if __name__ == "__main__":

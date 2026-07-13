@@ -55,6 +55,7 @@ _AUTONOMY_DECISION_KEYS = frozenset(
         "issue",
         "alternatives",
         "selected",
+        "strategy_key",
         "rationale",
         "evidence_paths",
         "affected_tasks",
@@ -467,6 +468,7 @@ class RunStore:
         store.document_set()
         store.validate_event_chain()
         store.autonomy_decisions()
+        store.reconcile_autonomy_events()
         store._reconcile_content_addressed_publication_manifests()
         store._validate_artifacts()
         return store
@@ -756,6 +758,7 @@ class RunStore:
         for field, limit in (
             ("issue", 4000),
             ("selected", 1000),
+            ("strategy_key", 512),
             ("rationale", 4000),
             ("created_at", 128),
         ):
@@ -844,6 +847,7 @@ class RunStore:
         issue: str,
         alternatives: Sequence[str],
         selected: str,
+        strategy_key: str,
         rationale: str,
         evidence_paths: Sequence[str],
         affected_tasks: Sequence[str],
@@ -869,6 +873,7 @@ class RunStore:
                     "issue": issue,
                     "alternatives": list(alternatives),
                     "selected": selected,
+                    "strategy_key": strategy_key,
                     "rationale": rationale,
                     "evidence_paths": list(evidence_paths),
                     "affected_tasks": list(affected_tasks),
@@ -998,6 +1003,62 @@ class RunStore:
         if len(data) != record["byte_length"] or _sha256(data) != record["sha256"]:
             raise ValueError("artifact digest does not match its durable index")
         return data
+
+    @staticmethod
+    def _autonomy_event_payload(decision: Mapping[str, object]) -> dict[str, object]:
+        evidence_paths = list(decision["evidence_paths"])
+        return {
+            "decision_id": decision["decision_id"],
+            "strategy_key": decision["strategy_key"],
+            "decision_sha256": _sha256(canonical_json(decision)),
+            "task_ids": list(decision["affected_tasks"]),
+            "artifact_paths": list(
+                dict.fromkeys(["autonomy-decisions.jsonl", *evidence_paths])
+            ),
+        }
+
+    def reconcile_autonomy_events(self) -> None:
+        """Cross-bind the private decision ledger to its compact event projection."""
+
+        descriptor = os.open(
+            self.paths.autonomy_decisions,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+        )
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            metadata = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or stat.S_IMODE(metadata.st_mode) != 0o600
+            ):
+                raise ValueError("autonomy decision ledger must remain private")
+            chunks: list[bytes] = []
+            while True:
+                chunk = os.read(descriptor, 64 * 1024)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            decisions = self._parse_autonomy_decisions(b"".join(chunks))
+            events = [
+                event
+                for event in self.validate_event_chain()
+                if event["event_type"] == "autonomy.recorded"
+            ]
+            if len(events) > len(decisions):
+                raise ValueError("autonomy events exceed the decision ledger")
+            for index, event in enumerate(events):
+                expected = self._autonomy_event_payload(decisions[index])
+                if event["payload"] != expected:
+                    raise ValueError("autonomy decision ledger and event differ")
+            for decision in decisions[len(events) :]:
+                self.append_event(
+                    "autonomy.recorded", self._autonomy_event_payload(decision)
+                )
+        finally:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+            finally:
+                os.close(descriptor)
 
     def _read_physical_indexed_artifact(
         self,
@@ -1538,7 +1599,10 @@ class RunStore:
                     "attempt_id": payload["attempt_id"],
                     "role": payload.get("role", "task_agent"),
                     "strategy_key": payload["strategy_key"],
+                    "baseline_commit": payload["baseline_commit"],
+                    "evidence_sha256": payload["evidence_sha256"],
                 }
+                task.pop("pending_recovery", None)
             elif event_type == "task.reported":
                 task = tasks.setdefault(
                     str(payload["task_id"]),
@@ -1555,6 +1619,12 @@ class RunStore:
                     "strategy_key": payload.get("strategy_key"),
                     "result_sha256": payload.get("result_sha256"),
                     "artifact_paths": list(payload["artifact_paths"]),
+                    "baseline_commit": task.get("active_attempt", {}).get(
+                        "baseline_commit"
+                    ),
+                    "evidence_sha256": task.get("active_attempt", {}).get(
+                        "evidence_sha256"
+                    ),
                 }
                 task["attempts"].append(attempt)
                 task["report_paths"].extend(payload["artifact_paths"])
@@ -1574,10 +1644,28 @@ class RunStore:
                     "commit": payload.get("commit"),
                     "verdict": payload["verdict"],
                     "artifact_paths": list(payload["artifact_paths"]),
+                    "evidence_sha256": payload["evidence_sha256"],
                 }
                 task["reviews"].append(review)
                 task["review_status"] = payload["status"]
                 task["review_verdict"] = payload["verdict"]
+            elif event_type == "autonomy.recorded":
+                for task_id in payload.get("task_ids", []):
+                    task = tasks.setdefault(
+                        str(task_id),
+                        {"attempts": [], "reviews": [], "report_paths": []},
+                    )
+                    recovery = {
+                        "decision_id": payload["decision_id"],
+                        "strategy_key": payload["strategy_key"],
+                        "artifact_paths": [
+                            path
+                            for path in payload["artifact_paths"]
+                            if path != "autonomy-decisions.jsonl"
+                        ],
+                    }
+                    task.setdefault("autonomy", []).append(recovery)
+                    task["pending_recovery"] = recovery
             elif event_type == "run.interrupted":
                 status = "interrupted"
             elif event_type == "audit.reported":

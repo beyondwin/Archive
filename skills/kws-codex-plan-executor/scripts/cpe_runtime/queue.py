@@ -1124,6 +1124,54 @@ class QueueEngine:
         }
         return _sha256(canonical_json(payload))
 
+    def _artifact_evidence_digest(self, relative_paths: Sequence[str]) -> str:
+        hashes = sorted(_sha256(self.store.read_artifact(path)) for path in relative_paths)
+        return _sha256(b"cpe-task-evidence-v1\0" + canonical_json(hashes))
+
+    @staticmethod
+    def _input_evidence_digest(paths: Sequence[Path]) -> str:
+        hashes = sorted(_sha256(path.read_bytes()) for path in paths)
+        return _sha256(b"cpe-task-input-v1\0" + canonical_json(hashes))
+
+    def _assert_new_attempt(
+        self, task_id: str, strategy_key: str, evidence_sha256: str
+    ) -> None:
+        for event in self.store.validate_event_chain():
+            if event["event_type"] != "task.started":
+                continue
+            payload = event["payload"]
+            if (
+                payload["task_id"] == task_id
+                and payload["strategy_key"] == strategy_key
+                and payload["evidence_sha256"] == evidence_sha256
+            ):
+                raise ValueError(
+                    "previously attempted strategy and evidence cannot be replayed"
+                )
+
+    def _append_task_started(
+        self,
+        *,
+        task_id: str,
+        attempt_id: str,
+        role: str,
+        strategy_key: str,
+        baseline_commit: str,
+        evidence_sha256: str,
+    ) -> None:
+        self._assert_new_attempt(task_id, strategy_key, evidence_sha256)
+        self.store.append_event(
+            "task.started",
+            {
+                "task_id": task_id,
+                "attempt_id": attempt_id,
+                "role": role,
+                "strategy_key": strategy_key,
+                "baseline_commit": baseline_commit,
+                "evidence_sha256": evidence_sha256,
+            },
+        )
+
     def _task_by_id(self, task_id: str) -> dict[str, object]:
         program, _ = self._program_context()
         for task in program["tasks"]:
@@ -1261,6 +1309,27 @@ class QueueEngine:
     def _open_authority(self, result: ChildResult, task_id: str) -> None:
         if result.status != "waiting_authority" or result.authority_id not in AUTHORITY_CODES:
             raise ValueError("non-authority child result cannot open authority")
+        known_documents = {
+            document.document_id for document in self.store.document_set()
+        }
+        affected_documents = set(result.affected_document_ids)
+        unknown = affected_documents - known_documents
+        if unknown:
+            raise ValueError(
+                f"unknown affected document IDs: {sorted(unknown)}"
+            )
+        if not affected_documents:
+            raise ValueError("authority result must name affected documents")
+        program, _ = self._program_context()
+        affected_tasks = [
+            str(task["task_id"])
+            for task in program["tasks"]
+            if affected_documents & set(task["document_ids"])
+        ]
+        if task_id not in affected_tasks:
+            raise ValueError("authority affected documents do not cover the current task")
+        if len(affected_tasks) > 64:
+            raise ValueError("authority affects more than 64 tasks")
         existing = [
             event
             for event in self.store.validate_event_chain()
@@ -1273,7 +1342,7 @@ class QueueEngine:
                 "authority_id": authority_id,
                 "authority_code": result.authority_id,
                 "status": "waiting_authority",
-                "task_ids": [task_id],
+                "task_ids": affected_tasks,
                 "artifact_paths": list(result.artifact_paths),
             },
         )
@@ -1292,14 +1361,13 @@ class QueueEngine:
             selected[str(task["brief_path"])],
             *(self._artifact_input(path, selected) for path in dependency_reports),
         ]
-        self.store.append_event(
-            "task.started",
-            {
-                "task_id": task_id,
-                "attempt_id": attempt_id,
-                "role": "task_agent",
-                "strategy_key": strategy_key,
-            },
+        self._append_task_started(
+            task_id=task_id,
+            attempt_id=attempt_id,
+            role="task_agent",
+            strategy_key=strategy_key,
+            baseline_commit=start_commit,
+            evidence_sha256=self._input_evidence_digest(inputs),
         )
         outcome = self._launch_role(
             role="task_agent",
@@ -1349,6 +1417,12 @@ class QueueEngine:
             state = self.store.replay()
             _, selected = self._program_context()
             task_state = state["tasks"][task_id]
+            previous_review_digests = {
+                review.get("evidence_sha256")
+                for review in task_state.get("reviews", [])
+                if isinstance(review, Mapping)
+                and review.get("verdict") == "changes_requested"
+            }
             input_paths = [
                 selected[str(task["brief_path"])],
                 *(self._artifact_input(path, selected) for path in task_state["report_paths"]),
@@ -1372,6 +1446,10 @@ class QueueEngine:
                 attempt_id=review_id,
             )
             result = outcome.result
+            material_paths = tuple(
+                path for path in result.artifact_paths if path != report_path
+            ) or result.artifact_paths
+            evidence_sha256 = self._artifact_evidence_digest(material_paths)
             self.store.append_event(
                 "review.reported",
                 {
@@ -1381,6 +1459,7 @@ class QueueEngine:
                     "commit": end_commit,
                     "verdict": result.verdict,
                     "result_sha256": self._result_digest(result, self.store),
+                    "evidence_sha256": evidence_sha256,
                     "artifact_paths": list(result.artifact_paths),
                 },
             )
@@ -1390,8 +1469,24 @@ class QueueEngine:
                 self._open_authority(result, task_id)
                 return
             if result.status == "changes_requested" and result.verdict == "changes_requested":
+                if evidence_sha256 in previous_review_digests:
+                    latest_strategy = str(
+                        task_state.get("latest_strategy_key") or "review-consolidated"
+                    )
+                    strategy, investigation_paths = self._run_investigation(
+                        task,
+                        result.artifact_paths,
+                        previous_strategy=latest_strategy,
+                    )
+                    finding_paths = (*result.artifact_paths, *investigation_paths)
+                else:
+                    strategy = "review-consolidated"
+                    finding_paths = result.artifact_paths
                 fixed_commit = self._run_consolidated_fix(
-                    task, result.artifact_paths, strategy_key=f"review-consolidated-{review_number}"
+                    task,
+                    finding_paths,
+                    strategy_key=strategy,
+                    evidence_sha256=evidence_sha256,
                 )
                 if fixed_commit is None:
                     return
@@ -1408,6 +1503,7 @@ class QueueEngine:
         finding_paths: Sequence[str],
         *,
         strategy_key: str,
+        evidence_sha256: str | None = None,
     ) -> str | None:
         task_id = str(task["task_id"])
         attempt_number = self._attempt_number(task_id)
@@ -1423,14 +1519,19 @@ class QueueEngine:
                 for path in self._dependency_report_paths(task, state)
             ),
         ]
-        self.store.append_event(
-            "task.started",
-            {
-                "task_id": task_id,
-                "attempt_id": attempt_id,
-                "role": "fix_agent",
-                "strategy_key": strategy_key,
-            },
+        baseline_commit = self.worktree.head()
+        dispatch_evidence = (
+            evidence_sha256
+            if evidence_sha256 is not None
+            else self._artifact_evidence_digest(finding_paths)
+        )
+        self._append_task_started(
+            task_id=task_id,
+            attempt_id=attempt_id,
+            role="fix_agent",
+            strategy_key=strategy_key,
+            baseline_commit=baseline_commit,
+            evidence_sha256=dispatch_evidence,
         )
         outcome = self._launch_role(
             role="fix_agent",
@@ -1508,26 +1609,19 @@ class QueueEngine:
             raise ValueError("investigator did not return a usable changed strategy")
         if result.strategy_key == previous_strategy:
             raise ValueError("unchanged strategy_key cannot be redispatched")
-        decision = self.store.append_autonomy_decision(
+        self.store.append_autonomy_decision(
             issue="focused test or child evidence failed under the previous strategy",
             alternatives=["repeat patch", "fresh root-cause investigation"],
             selected="fresh root-cause investigation",
+            strategy_key=result.strategy_key,
             rationale="same strategy and evidence made no progress",
-            evidence_paths=list(evidence_paths),
+            evidence_paths=list(
+                dict.fromkeys([*evidence_paths, *result.artifact_paths])
+            ),
             affected_tasks=[task_id],
             reversible=True,
         )
-        decision_sha256 = _sha256(canonical_json(decision))
-        self.store.append_event(
-            "autonomy.recorded",
-            {
-                "decision_id": decision["decision_id"],
-                "strategy_key": result.strategy_key,
-                "decision_sha256": decision_sha256,
-                "task_ids": [task_id],
-                "artifact_paths": ["autonomy-decisions.jsonl", *result.artifact_paths],
-            },
-        )
+        self.store.reconcile_autonomy_events()
         return result.strategy_key, result.artifact_paths
 
     def _handle_child_failure(self, result: ChildResult, task_id: str) -> str | None:
@@ -1562,6 +1656,117 @@ class QueueEngine:
             raise ValueError("completed task parent is not a full commit")
         return parent
 
+    def _record_interrupted(self, failure_code: str) -> None:
+        events = self.store.validate_event_chain()
+        if not (
+            events
+            and events[-1]["event_type"] == "run.interrupted"
+            and events[-1]["payload"]["failure_code"] == failure_code
+        ):
+            self.store.append_event(
+                "run.interrupted",
+                {"status": "interrupted", "failure_code": failure_code},
+            )
+
+    def _recover_active_attempt(
+        self, task: Mapping[str, object], task_state: Mapping[str, object]
+    ) -> None:
+        task_id = str(task["task_id"])
+        active = task_state.get("active_attempt")
+        if not isinstance(active, Mapping):
+            raise ValueError("active task attempt is invalid")
+        baseline = active.get("baseline_commit")
+        attempt_id = active.get("attempt_id")
+        strategy_key = active.get("strategy_key")
+        role = active.get("role")
+        evidence_sha256 = active.get("evidence_sha256")
+        if not all(
+            isinstance(value, str) and value
+            for value in (
+                baseline,
+                attempt_id,
+                strategy_key,
+                role,
+                evidence_sha256,
+            )
+        ):
+            raise ValueError("active task attempt lacks durable launch binding")
+        if self.worktree.status():
+            self._record_interrupted("active_writer_left_dirty_worktree")
+            raise ValueError("active writer left a dirty worktree; run is interrupted")
+        head = self.worktree.head()
+        if head == baseline:
+            self._record_interrupted("active_writer_has_no_bound_result")
+            raise ValueError("active writer has no bound result; run is interrupted")
+        ancestor = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(self.worktree.root),
+                "merge-base",
+                "--is-ancestor",
+                str(baseline),
+                head,
+            ],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if ancestor.returncode != 0:
+            self._record_interrupted("active_writer_commit_not_descendant")
+            raise ValueError("active writer commit is not based on its baseline")
+
+        report_number = str(attempt_id).rsplit("-", 1)[-1].lstrip("0") or "0"
+        report_path = f"reports/{self._task_slug(task_id)}/attempt-{report_number}.md"
+        try:
+            self.store.read_artifact(report_path)
+        except ValueError as exc:
+            self._record_interrupted("active_writer_report_unavailable")
+            raise ValueError("active writer report is unavailable; run is interrupted") from exc
+        diff_path = (
+            f"reports/{self._task_slug(task_id)}/{attempt_id}-interrupted.patch"
+        )
+        self.store.put_artifact(
+            diff_path, self.worktree.diff(str(baseline), head).encode("utf-8")
+        )
+        recovered_paths = [report_path, diff_path]
+        self.store.append_event(
+            "task.reported",
+            {
+                "task_id": task_id,
+                "attempt_id": attempt_id,
+                "status": "interrupted",
+                "commit": head,
+                "strategy_key": strategy_key,
+                "artifact_paths": recovered_paths,
+            },
+        )
+        changed_strategy, investigation_paths = self._run_investigation(
+            task,
+            recovered_paths,
+            previous_strategy=str(strategy_key),
+        )
+        fixed = self._run_consolidated_fix(
+            task,
+            (*recovered_paths, *investigation_paths),
+            strategy_key=changed_strategy,
+        )
+        if fixed is None:
+            return
+        completed = [
+            attempt
+            for attempt in task_state.get("attempts", [])
+            if isinstance(attempt, Mapping)
+            and attempt.get("status") == "completed"
+            and isinstance(attempt.get("commit"), str)
+        ]
+        review_start = (
+            self._commit_parent(str(completed[0]["commit"]))
+            if completed
+            else str(baseline)
+        )
+        self._run_review(task, review_start, fixed)
+
     def _resume_task(
         self, task: Mapping[str, object], task_state: Mapping[str, object]
     ) -> None:
@@ -1569,6 +1774,9 @@ class QueueEngine:
         attempts = task_state.get("attempts", [])
         if not isinstance(attempts, list):
             raise ValueError("replayed task attempts are invalid")
+        if isinstance(task_state.get("active_attempt"), Mapping):
+            self._recover_active_attempt(task, task_state)
+            return
         completed = [
             attempt
             for attempt in attempts
@@ -1585,11 +1793,21 @@ class QueueEngine:
                     isinstance(path, str) for path in evidence_paths
                 ):
                     raise ValueError("failed task evidence is invalid")
-                strategy, investigation_paths = self._run_investigation(
-                    task,
-                    evidence_paths,
-                    previous_strategy=str(previous_strategy),
-                )
+                pending = task_state.get("pending_recovery")
+                if isinstance(pending, Mapping):
+                    strategy = pending.get("strategy_key")
+                    recovery_paths = pending.get("artifact_paths")
+                    if not isinstance(strategy, str) or not isinstance(
+                        recovery_paths, list
+                    ) or not all(isinstance(path, str) for path in recovery_paths):
+                        raise ValueError("pending autonomous recovery is invalid")
+                    investigation_paths = tuple(recovery_paths)
+                else:
+                    strategy, investigation_paths = self._run_investigation(
+                        task,
+                        evidence_paths,
+                        previous_strategy=str(previous_strategy),
+                    )
                 start_commit = self.worktree.head()
                 recovered = self._run_consolidated_fix(
                     task,
@@ -1615,13 +1833,19 @@ class QueueEngine:
                 isinstance(path, str) for path in finding_paths
             ):
                 raise ValueError("review finding paths are invalid")
-            end_commit = self._run_consolidated_fix(
-                task,
-                finding_paths,
-                strategy_key=f"review-consolidated-{len(reviews)}",
-            )
-            if end_commit is None:
-                return
+            reviewed_commit = last_review.get("commit")
+            if reviewed_commit == end_commit:
+                review_evidence = last_review.get("evidence_sha256")
+                if not isinstance(review_evidence, str):
+                    raise ValueError("review finding evidence digest is invalid")
+                end_commit = self._run_consolidated_fix(
+                    task,
+                    finding_paths,
+                    strategy_key="review-consolidated",
+                    evidence_sha256=review_evidence,
+                )
+                if end_commit is None:
+                    return
         elif isinstance(last_review, Mapping) and last_review.get("status") == "failed":
             evidence_paths = last_review.get("artifact_paths", [])
             if not isinstance(evidence_paths, list) or not all(
@@ -1648,13 +1872,16 @@ class QueueEngine:
 
         self.worktree.verify_identity()
         self.map_program()
+        self.store.reconcile_autonomy_events()
         state = self.store.replay()
         task = self._next_ready_task(state)
         if task is None:
             return None
         task_id = str(task["task_id"])
         task_state = state["tasks"].get(task_id)
-        if isinstance(task_state, Mapping) and task_state.get("attempts"):
+        if isinstance(task_state, Mapping) and (
+            task_state.get("attempts") or task_state.get("active_attempt")
+        ):
             self._resume_task(task, task_state)
         else:
             self._run_task(task)
