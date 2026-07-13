@@ -29,6 +29,7 @@ class InputDocument:
 class DocumentSet:
     documents: tuple[InputDocument, ...]
     sha256: str
+    source_root: Path
 
 
 class DocumentSetBlocked(ValueError):
@@ -109,17 +110,85 @@ def _slug(title: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", title.casefold()).strip("-") or "document"
 
 
-def _compile_document(kind: DocumentKind, source: Path) -> tuple[InputDocument, str]:
-    path = _normalized_path(source, kind)
+def _source_root(paths: tuple[Path, ...], workspace: Path | None) -> Path:
+    if workspace is None:
+        discovered = tuple(_repository_root(path) for path in paths)
+        roots = {candidate for candidate in discovered if candidate is not None}
+        if len(roots) == 1 and all(candidate is not None for candidate in discovered):
+            return next(iter(roots))
+        raise DocumentSetBlocked(
+            "workspace_required",
+            "input documents must share one repository root or declare workspace",
+            {
+                "source_paths": [str(path) for path in paths],
+                "repository_roots": sorted(str(root) for root in roots),
+            },
+        )
+    root = Path(os.path.abspath(os.path.normpath(os.fspath(workspace.expanduser()))))
     try:
-        content = path.read_bytes()
+        metadata = root.lstat()
+    except OSError as exc:
+        raise DocumentSetBlocked(
+            "workspace_unreadable",
+            "workspace is unreadable",
+            {"workspace": str(root), "error": str(exc)},
+        ) from None
+    if stat.S_ISLNK(metadata.st_mode):
+        raise DocumentSetBlocked(
+            "workspace_symlink",
+            "workspace must not be a symbolic link",
+            {"workspace": str(root)},
+        )
+    if not stat.S_ISDIR(metadata.st_mode):
+        raise DocumentSetBlocked(
+            "workspace_not_directory",
+            "workspace must be a directory",
+            {"workspace": str(root)},
+        )
+    try:
+        return root.resolve(strict=True)
+    except OSError as exc:
+        raise DocumentSetBlocked(
+            "workspace_unreadable",
+            "workspace path cannot be canonicalized",
+            {"workspace": str(root), "error": str(exc)},
+        ) from None
+
+
+def _repository_root(source: Path) -> Path | None:
+    for candidate in (source.parent, *source.parents):
+        marker = candidate / ".git"
+        if marker.is_dir() or marker.is_file():
+            return candidate.resolve(strict=True)
+    return None
+
+
+def _relative_path(source: Path, source_root: Path) -> Path:
+    relative = Path(os.path.relpath(source, source_root))
+    if relative.is_absolute():
+        raise DocumentSetBlocked(
+            "source_path_invalid",
+            "source path could not be represented relative to the workspace",
+            {"source_path": str(source), "workspace": str(source_root)},
+        )
+    return relative
+
+
+def _compile_document(
+    kind: DocumentKind,
+    source: Path,
+    source_root: Path,
+) -> tuple[InputDocument, str]:
+    path = _relative_path(source, source_root)
+    try:
+        content = source.read_bytes()
     except OSError as exc:
         raise DocumentSetBlocked(
             "source_unreadable",
             f"{kind} source is unreadable",
-            {"kind": kind, "source_path": str(path), "error": str(exc)},
+            {"kind": kind, "source_path": str(source), "error": str(exc)},
         ) from None
-    title = _declared_title(content, kind, path)
+    title = _declared_title(content, kind, source)
     source_hash = hashlib.sha256(content).hexdigest()
     identity_hash = hashlib.sha256(
         b"cpe.document.vnext\0"
@@ -138,8 +207,10 @@ def compile_document_set(
     plans: tuple[Path, ...],
     program_plan: Path | None,
     docs: tuple[Path, ...],
+    *,
+    workspace: Path | None = None,
 ) -> DocumentSet:
-    """Snapshot one native vNext input set without allocating run state."""
+    """Snapshot one native vNext input set with relocation-stable identities."""
 
     if not plans:
         raise DocumentSetBlocked(
@@ -155,19 +226,22 @@ def compile_document_set(
     declared.extend(("plan", path) for path in plans)
     declared.extend(("doc", path) for path in docs)
 
+    normalized = tuple((kind, _normalized_path(source, kind)) for kind, source in declared)
+    source_root = _source_root(tuple(source for _, source in normalized), workspace)
     documents: list[InputDocument] = []
     paths: dict[Path, str] = {}
     identities: dict[tuple[DocumentKind, str], str] = {}
     hashes: dict[str, str] = {}
-    for kind, source in declared:
-        document, normalized_title = _compile_document(kind, source)
-        if document.path in paths:
+    for kind, source in normalized:
+        document, normalized_title = _compile_document(kind, source, source_root)
+        if source in paths:
             raise DocumentSetBlocked(
                 "duplicate_path",
                 "input documents resolve to the same canonical path",
                 {
-                    "source_path": str(document.path),
-                    "first_document_id": paths[document.path],
+                    "source_path": str(source),
+                    "canonical_path": document.path.as_posix(),
+                    "first_document_id": paths[source],
                     "duplicate_document_id": document.document_id,
                 },
             )
@@ -193,7 +267,7 @@ def compile_document_set(
                     "duplicate_document_id": document.document_id,
                 },
             )
-        paths[document.path] = document.document_id
+        paths[source] = document.document_id
         identities[identity] = document.document_id
         hashes[document.sha256] = document.document_id
         documents.append(document)
@@ -210,4 +284,4 @@ def compile_document_set(
     set_hash = hashlib.sha256(
         json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
-    return DocumentSet(tuple(documents), set_hash)
+    return DocumentSet(tuple(documents), set_hash, source_root)
