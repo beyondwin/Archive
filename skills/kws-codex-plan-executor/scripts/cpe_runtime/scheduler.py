@@ -28,6 +28,7 @@ from .model_policy import CORE_ROUTE
 from .operator_decisions import approved_cleanup_claims, approved_scope_claims
 from .packets import packet_entry, verify_packet
 from .phase_executor import PhaseExecutor, PhaseHandler
+from .projector import project_kernel_event
 from .validation import COMPLETION_EVIDENCE_KINDS, validate_completion, validate_integrity
 from .worker import Worker, WorkerError, WorkerRequest, WorkerResult
 from .transition_kernel import RunState, TypedOutcome, decide
@@ -165,10 +166,68 @@ def execute_transition(
     return command, PhaseExecutor(handlers).execute(command)
 
 
+_PRODUCTION_PHASE_COMMANDS = frozenset(
+    {"implementation", "acceptance", "review", "repair", "verify"}
+)
+
+
+def _next_scheduler_phase(
+    phase: str,
+    outcome: str,
+    task_id: str,
+) -> str:
+    """Translate one kernel decision to the retained scheduler loop label."""
+
+    command = decide(RunState(phase, task_id), TypedOutcome(outcome, task_id))
+    labels = {
+        "implementation": "implementation",
+        "acceptance": "acceptance",
+        "review": "task_review",
+        "repair": "repair",
+        "verify": "verification",
+    }
+    if command.kind not in labels:
+        raise ValueError(f"task_phase_not_executable:{command.kind}")
+    return labels[command.kind]
+
+
+def _execute_phase_operation(
+    state: RunState,
+    trigger: TypedOutcome,
+    operation: Callable[[], object],
+    *,
+    outcome_kind: Callable[[object], str] | None = None,
+) -> tuple[object, dict]:
+    """Execute one active scheduler operation through all vNext boundaries."""
+
+    def handler(command):
+        value = operation()
+        kind = outcome_kind(value) if outcome_kind is not None else "pass"
+        return TypedOutcome(kind, command.task_id, details={"value": value})
+
+    command, executed = execute_transition(
+        state,
+        trigger,
+        {kind: handler for kind in _PRODUCTION_PHASE_COMMANDS},
+    )
+    if command.kind not in _PRODUCTION_PHASE_COMMANDS:
+        raise ValueError(f"production_phase_command_invalid:{command.kind}")
+    projected = project_kernel_event(
+        {"phase": state.phase, "task_id": state.task_id},
+        {
+            "command": command.kind,
+            "task_id": command.task_id,
+            "outcome": executed.kind,
+            "evidence_refs": [dict(ref) for ref in executed.evidence_refs],
+        },
+    )
+    return executed.details["value"], projected
+
+
 def promote_current_plan_checkpoint(
     checkpoint: object,
     *,
-    state: dict,
+    kernel: object,
     plan_id: str,
     plan_sha256: str,
     spec_sha256: str,
@@ -180,10 +239,20 @@ def promote_current_plan_checkpoint(
     Never trust the candidate's own upstream string as the current identity.
     """
 
+    state = getattr(kernel, "state", None)
+    if not isinstance(state, dict):
+        raise ValueError("plan_checkpoint_state_invalid")
     checkpoints = state.get("plan_checkpoints")
     if not isinstance(checkpoints, list):
         raise ValueError("plan_checkpoint_state_invalid")
-    upstream = checkpoints[-1].get("identity") if checkpoints else None
+    if any(
+        not isinstance(item, dict)
+        or not isinstance(item.get("plan_id"), str)
+        or not isinstance(item.get("identity"), str)
+        for item in checkpoints
+    ):
+        raise ValueError("plan_checkpoint_state_invalid")
+    upstream = checkpoints[-1]["identity"] if checkpoints else None
     if getattr(checkpoint, "upstream_checkpoint", None) != upstream:
         raise ValueError("plan_checkpoint_upstream_stale")
     if promote is None:
@@ -1816,8 +1885,6 @@ def _deterministic_evidence(
     review_evidence: object,
     summary: str,
 ) -> None:
-    from .evidence import put_json
-
     ref = _put_json(
         kernel.run_dir,
         "deterministic_verification",
@@ -1852,7 +1919,6 @@ def _store_review_evidence(
 ) -> None:
     from dataclasses import asdict
     from .checkpoints import ReviewEvidence
-    from .evidence import put_json
 
     if not isinstance(review_evidence, ReviewEvidence):
         raise ValueError("review_evidence_invalid")
@@ -2039,13 +2105,19 @@ def run_task_cycle_v4(
         phases.append("implementation")
         base = _checkpoint_base(kernel)
         try:
-            turn = controller.run_model_turn(
-                task_id=task_id,
-                kind="implementation",
-                before_turn=operations.before_model_turn,
-                operation=lambda attempt_id: operations.implementation(contract, attempt_id),
-                preserve_attempt_on=(ExternalModelInterruption,),
-                on_turn_started=on_started("implementing"),
+            turn, _phase_projection = _execute_phase_operation(
+                RunState("ready", task_id),
+                TypedOutcome("start", task_id),
+                lambda: controller.run_model_turn(
+                    task_id=task_id,
+                    kind="implementation",
+                    before_turn=operations.before_model_turn,
+                    operation=lambda attempt_id: operations.implementation(
+                        contract, attempt_id
+                    ),
+                    preserve_attempt_on=(ExternalModelInterruption,),
+                    on_turn_started=on_started("implementing"),
+                ),
             )
         except PreTurnInterruption as exc:
             _wait_for_phase(kernel, task_id, "implementation", str(exc), None)
@@ -2083,20 +2155,28 @@ def run_task_cycle_v4(
         try:
             candidate = create_candidate_checkpoint(kernel, contract, product_worktree)
             phases.append("acceptance")
-            acceptance = _run_v4_acceptance(
-                contract, operations, product_worktree, run_dir, candidate
+            acceptance, _phase_projection = _execute_phase_operation(
+                RunState("implemented", task_id),
+                TypedOutcome("pass", task_id),
+                lambda: _run_v4_acceptance(
+                    contract, operations, product_worktree, run_dir, candidate
+                ),
             )
         except (RuntimeError, ValueError) as exc:
             _block_task(kernel, task_id, "evidence_integrity_failure")
             phases.append("blocked")
             return finish("blocked", "blocked", str(exc))
         scope = _initial_review_scope(candidate)
-        phase = "task_review"
+        phase = _next_scheduler_phase("accepted", "pass", task_id)
     else:
         try:
             candidate = _candidate_from_state(kernel, task_id)
-            acceptance = _run_v4_acceptance(
-                contract, operations, product_worktree, run_dir, candidate
+            acceptance, _phase_projection = _execute_phase_operation(
+                RunState("implemented", task_id),
+                TypedOutcome("pass", task_id),
+                lambda: _run_v4_acceptance(
+                    contract, operations, product_worktree, run_dir, candidate
+                ),
             )
             records = [
                 item
@@ -2125,15 +2205,19 @@ def run_task_cycle_v4(
             phases.append("task_review")
             scopes.append(scope)
             try:
-                review_turn = controller.run_model_turn(
-                    task_id=task_id,
-                    kind="task_review",
-                    before_turn=operations.before_model_turn,
-                    operation=lambda attempt_id: operations.review(
-                        contract, scope, attempt_id
+                review_turn, _phase_projection = _execute_phase_operation(
+                    RunState("accepted", task_id),
+                    TypedOutcome("pass", task_id),
+                    lambda: controller.run_model_turn(
+                        task_id=task_id,
+                        kind="task_review",
+                        before_turn=operations.before_model_turn,
+                        operation=lambda attempt_id: operations.review(
+                            contract, scope, attempt_id
+                        ),
+                        preserve_attempt_on=(ExternalModelInterruption,),
+                        on_turn_started=on_started("reviewing"),
                     ),
-                    preserve_attempt_on=(ExternalModelInterruption,),
-                    on_turn_started=on_started("reviewing"),
                 )
                 verdict = _bound_review_verdict(
                     _require_v4_worker_result(review_turn.result),
@@ -2186,7 +2270,7 @@ def run_task_cycle_v4(
                     _block_task(kernel, task_id, "review_evidence_invalid")
                     phases.append("blocked")
                     return finish("blocked", "blocked", str(exc))
-                phase = "verification"
+                phase = _next_scheduler_phase("reviewed", "pass", task_id)
                 continue
             if status in {"blocked", "inconclusive"}:
                 _block_task(kernel, task_id, status)
@@ -2281,7 +2365,9 @@ def run_task_cycle_v4(
                     return finish(
                         "blocked", "blocked", "evidence_integrity_failure"
                     )
-                phase = "repair"
+                phase = _next_scheduler_phase(
+                    "reviewed", "changes_requested", task_id
+                )
                 continue
             try:
                 review_evidence = _approved_review_evidence(
@@ -2295,7 +2381,7 @@ def run_task_cycle_v4(
                 _block_task(kernel, task_id, "review_evidence_invalid")
                 phases.append("blocked")
                 return finish("blocked", "blocked", str(exc))
-            phase = "verification"
+            phase = _next_scheduler_phase("reviewed", "pass", task_id)
             continue
 
         if phase == "repair":
@@ -2322,15 +2408,19 @@ def run_task_cycle_v4(
             count = int(selected_repair["repair_count"])
             phases.append("repair")
             try:
-                repair_turn = controller.run_model_turn(
-                    task_id=task_id,
-                    kind="repair",
-                    before_turn=operations.before_model_turn,
-                    operation=lambda attempt_id: operations.repair(
-                        contract, finding, attempt_id
+                repair_turn, _phase_projection = _execute_phase_operation(
+                    RunState("reviewed", task_id),
+                    TypedOutcome("changes_requested", task_id),
+                    lambda: controller.run_model_turn(
+                        task_id=task_id,
+                        kind="repair",
+                        before_turn=operations.before_model_turn,
+                        operation=lambda attempt_id: operations.repair(
+                            contract, finding, attempt_id
+                        ),
+                        preserve_attempt_on=(ExternalModelInterruption,),
+                        on_turn_started=on_started("repairing", (root, count)),
                     ),
-                    preserve_attempt_on=(ExternalModelInterruption,),
-                    on_turn_started=on_started("repairing", (root, count)),
                 )
             except PreTurnInterruption as exc:
                 _wait_for_phase(kernel, task_id, "repair", str(exc), None)
@@ -2371,8 +2461,12 @@ def run_task_cycle_v4(
                     kernel, contract, product_worktree
                 )
                 phases.append("acceptance")
-                acceptance = _run_v4_acceptance(
-                    contract, operations, product_worktree, run_dir, candidate
+                acceptance, _phase_projection = _execute_phase_operation(
+                    RunState("implemented", task_id),
+                    TypedOutcome("pass", task_id),
+                    lambda: _run_v4_acceptance(
+                        contract, operations, product_worktree, run_dir, candidate
+                    ),
                 )
                 boundaries = tuple(
                     operations.repair_boundary_changes(
@@ -2398,7 +2492,7 @@ def run_task_cycle_v4(
                 phases.append("blocked")
                 return finish("blocked", "blocked", str(exc))
             selected_repair = None
-            phase = "task_review"
+            phase = _next_scheduler_phase("accepted", "pass", task_id)
             continue
 
         if phase == "verification":
@@ -2420,11 +2514,14 @@ def run_task_cycle_v4(
             }:
                 _task_transition(kernel, task_id, "verifying")
             try:
-                deterministic_passed, deterministic_summary = (
-                    operations.deterministic_verification(
+                verification_result, _phase_projection = _execute_phase_operation(
+                    RunState("reviewed", task_id),
+                    TypedOutcome("pass", task_id),
+                    lambda: operations.deterministic_verification(
                         contract, candidate, acceptance, review_evidence
-                    )
+                    ),
                 )
+                deterministic_passed, deterministic_summary = verification_result
                 if (
                     deterministic_passed is not True
                     or not isinstance(deterministic_summary, str)

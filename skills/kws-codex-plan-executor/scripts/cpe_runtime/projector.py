@@ -80,14 +80,34 @@ def project_kernel_event(
     projected = deepcopy(state)
     hook("before_projection_replacement")
     if command == "plan_checkpoint":
-        identity = event.get("checkpoint_identity")
-        if not isinstance(identity, str) or len(identity) != 64:
+        checkpoint = event.get("checkpoint")
+        if not isinstance(checkpoint, dict):
+            raise ValueError("plan_checkpoint_identity_invalid")
+        plan_id = checkpoint.get("plan_id")
+        identity = checkpoint.get("identity")
+        upstream = checkpoint.get("upstream_checkpoint")
+        if (
+            not isinstance(plan_id, str)
+            or not plan_id
+            or not _valid_hex(identity, 64)
+            or (upstream is not None and not _valid_hex(upstream, 64))
+            or set(checkpoint) != {"plan_id", "identity", "upstream_checkpoint"}
+        ):
             raise ValueError("plan_checkpoint_identity_invalid")
         checkpoints = projected.setdefault("plan_checkpoints", [])
-        if identity in checkpoints:
+        if not isinstance(checkpoints, list) or any(
+            not isinstance(item, dict) for item in checkpoints
+        ):
+            raise ValueError("plan_checkpoint_state_invalid")
+        if any(item.get("identity") == identity for item in checkpoints):
             raise ValueError("plan_checkpoint_already_published")
+        authoritative_upstream = (
+            checkpoints[-1].get("identity") if checkpoints else None
+        )
+        if upstream != authoritative_upstream:
+            raise ValueError("plan_checkpoint_upstream_stale")
         hook("before_plan_checkpoint_publication")
-        checkpoints.append(identity)
+        checkpoints.append(deepcopy(checkpoint))
         projected["phase"] = "plan_complete"
         hook("after_plan_checkpoint_publication")
     elif command == "register_external_call":
@@ -105,9 +125,16 @@ def project_kernel_event(
             raise ValueError("global_completion_already_recorded")
         required = event.get("required_plan_checkpoints")
         published = projected.get("plan_checkpoints")
+        published_identities = (
+            [item.get("identity") for item in published]
+            if isinstance(published, list)
+            and all(isinstance(item, dict) for item in published)
+            else []
+        )
         if (
             not isinstance(required, list)
-            or not set(required).issubset(set(published or []))
+            or any(not _valid_hex(item, 64) for item in required)
+            or not set(required).issubset(set(published_identities))
             or event.get("integration_gate_passed") is not True
             or projected.get("integration_gate_passed") is not True
         ):

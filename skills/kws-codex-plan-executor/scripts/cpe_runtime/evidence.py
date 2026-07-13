@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import stat
 from dataclasses import asdict, dataclass
@@ -27,22 +26,6 @@ class EvidenceRef:
         return asdict(self)
 
 
-def _fsync_dir(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-
-
-def _evidence_root(run_dir: Path) -> Path:
-    root = run_dir.resolve() / "artifacts" / "evidence"
-    root.mkdir(parents=True, exist_ok=True)
-    if root.is_symlink():
-        raise EvidenceError("evidence root must not be a symlink")
-    return root.resolve()
-
-
 def _validate_kind(kind: str) -> None:
     if not isinstance(kind, str) or not KIND_RE.fullmatch(kind):
         raise EvidenceError("invalid evidence kind")
@@ -57,31 +40,11 @@ def _contained(root: Path, target: Path) -> bool:
 
 
 def put_json(run_dir: Path, kind: str, payload: object) -> EvidenceRef:
-    _validate_kind(kind)
-    raw = (json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode()
-    digest = hashlib.sha256(raw).hexdigest()
-    root = _evidence_root(run_dir)
-    kind_dir = root / kind
-    kind_dir.mkdir(mode=0o700, parents=False, exist_ok=True)
-    if kind_dir.is_symlink() or not _contained(root, kind_dir.resolve()):
-        raise EvidenceError("evidence path escapes run root")
-    target = kind_dir / f"{digest}.json"
-    relative = target.relative_to(run_dir.resolve())
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
-    try:
-        descriptor = os.open(target, flags, 0o600)
-    except FileExistsError:
-        if target.is_symlink() or target.read_bytes() != raw:
-            raise EvidenceError("existing evidence path has different content")
-    else:
-        try:
-            with os.fdopen(descriptor, "wb") as handle:
-                handle.write(raw)
-                handle.flush()
-                os.fsync(handle.fileno())
-        finally:
-            _fsync_dir(kind_dir)
-    return EvidenceRef(kind, relative.as_posix(), digest)
+    """Compatibility adapter; EvidenceStore is the only writer implementation."""
+
+    from .evidence_store import EvidenceStore
+
+    return EvidenceStore(run_dir).put_json(kind, payload)
 
 
 def put_method_evidence(
@@ -104,7 +67,9 @@ def put_method_evidence(
         "packet_sha256": packet_sha256,
         "contract_sha256": contract_sha256,
     }
-    ref = put_json(run_dir, "method_evidence", payload).as_dict()
+    from .evidence_store import EvidenceStore
+
+    ref = EvidenceStore(run_dir).put_json("method_evidence", payload).as_dict()
     return {
         **ref,
         "task_id": task_id,

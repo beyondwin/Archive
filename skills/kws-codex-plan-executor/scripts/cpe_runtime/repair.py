@@ -10,7 +10,8 @@ from copy import deepcopy
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from .evidence import put_json, verify_ref
+from .evidence import verify_ref
+from .evidence_store import EvidenceStore
 from .events import read_events
 from .kernel import Kernel, Transition, rebuild_snapshot
 from .manifest import load_verified_manifest
@@ -218,8 +219,8 @@ def record_selected_repair(
         "review_attempt_id": review_attempt_id,
         "verdict": deepcopy(verdict),
     }
-    review_ref = put_json(
-        kernel.run_dir, "review_findings", review_payload
+    review_ref = EvidenceStore(kernel.run_dir).put_json(
+        "review_findings", review_payload
     ).as_dict()
     finding_sha256 = _bound_json_digest(b"CPE-REPAIR-FINDING-V4", finding)
     payload = {
@@ -239,8 +240,8 @@ def record_selected_repair(
         "review_scope": deepcopy(review_scope),
         "review_scope_sha256": review_scope_sha256,
     }
-    selected_ref = put_json(
-        kernel.run_dir, "selected_repair", payload
+    selected_ref = EvidenceStore(kernel.run_dir).put_json(
+        "selected_repair", payload
     ).as_dict()
     decision = {
         "decision_kind": "selected_repair_recorded",

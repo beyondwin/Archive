@@ -26,24 +26,59 @@ def _fsync_dir(path: Path) -> None:
 
 class EvidenceStore:
     def __init__(self, run_dir: Path):
-        self.run_dir = run_dir.expanduser().resolve()
+        self.run_dir = Path(os.path.abspath(os.fspath(run_dir.expanduser())))
+
+    def _resolved_root(self) -> Path:
+        try:
+            metadata = self.run_dir.lstat()
+        except FileNotFoundError:
+            self.run_dir.mkdir(parents=True, mode=0o700)
+            metadata = self.run_dir.lstat()
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+            raise EvidenceError("evidence path escapes run root")
+        return self.run_dir.resolve()
+
+    def _checked_dir(self, path: Path, parent: Path) -> Path:
+        try:
+            path.mkdir(mode=0o700)
+        except FileExistsError:
+            pass
+        metadata = path.lstat()
+        if (
+            stat.S_ISLNK(metadata.st_mode)
+            or not stat.S_ISDIR(metadata.st_mode)
+            or path.resolve().parent != parent.resolve()
+        ):
+            raise EvidenceError("evidence path escapes run root")
+        return path
+
+    def _assert_lexical_components(self, target: Path) -> None:
+        try:
+            relative = target.relative_to(self.run_dir)
+        except ValueError as exc:
+            raise EvidenceError("evidence path escapes run root") from exc
+        current = self.run_dir
+        self._resolved_root()
+        for part in relative.parts:
+            current = current / part
+            try:
+                metadata = current.lstat()
+            except FileNotFoundError:
+                continue
+            if stat.S_ISLNK(metadata.st_mode):
+                raise EvidenceError("evidence path escapes run root")
+        try:
+            target.resolve(strict=False).relative_to(self._resolved_root())
+        except ValueError as exc:
+            raise EvidenceError("evidence path escapes run root") from exc
 
     def _root(self, kind: str) -> Path:
         if not isinstance(kind, str) or _KIND.fullmatch(kind) is None:
             raise EvidenceError("invalid evidence kind")
-        artifacts = self.run_dir / "artifacts"
-        artifacts.mkdir(mode=0o700, parents=True, exist_ok=True)
-        if artifacts.is_symlink():
-            raise EvidenceError("evidence root must not be a symlink")
-        root = artifacts / "evidence"
-        root.mkdir(mode=0o700, exist_ok=True)
-        if root.is_symlink() or root.resolve().parent != artifacts.resolve():
-            raise EvidenceError("evidence path escapes run root")
-        kind_dir = root / kind
-        kind_dir.mkdir(mode=0o700, exist_ok=True)
-        if kind_dir.is_symlink() or kind_dir.resolve().parent != root.resolve():
-            raise EvidenceError("evidence path escapes run root")
-        return kind_dir
+        self._resolved_root()
+        artifacts = self._checked_dir(self.run_dir / "artifacts", self.run_dir)
+        root = self._checked_dir(artifacts / "evidence", artifacts)
+        return self._checked_dir(root / kind, root)
 
     def put_bytes(
         self,
@@ -62,6 +97,7 @@ class EvidenceStore:
         digest = hashlib.sha256(content).hexdigest()
         root = self._root(kind)
         target = root / f"{digest}{suffix}"
+        self._assert_lexical_components(target)
         hook("before_evidence_persistence")
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
         try:
@@ -106,6 +142,10 @@ class EvidenceStore:
             raise EvidenceError("evidence_path_invalid")
         target = self.run_dir / path
         try:
+            self._assert_lexical_components(target)
+        except EvidenceError as exc:
+            raise EvidenceError("evidence_path_invalid") from exc
+        try:
             metadata = target.lstat()
         except FileNotFoundError as exc:
             raise EvidenceError("evidence_missing") from exc
@@ -114,10 +154,14 @@ class EvidenceStore:
             if ref.kind == "patch"
             else self.run_dir / "artifacts" / "evidence" / ref.kind
         )
+        expected_suffix = ".patch" if ref.kind == "patch" else (
+            ".json" if ref.media_type == "application/json" else ".bin"
+        )
         if (
             stat.S_ISLNK(metadata.st_mode)
             or not target.is_file()
             or target.resolve().parent != expected_parent.resolve()
+            or target.name != f"{ref.sha256}{expected_suffix}"
         ):
             raise EvidenceError("evidence_path_invalid")
         content = target.read_bytes()
@@ -131,17 +175,11 @@ class EvidenceStore:
         if not isinstance(content, bytes) or not content:
             raise EvidenceError("evidence bytes must be non-empty")
         digest = hashlib.sha256(content).hexdigest()
-        artifacts = self.run_dir / "artifacts"
-        artifacts.mkdir(mode=0o700, parents=True, exist_ok=True)
-        root = artifacts / "patches"
-        root.mkdir(mode=0o700, exist_ok=True)
-        if (
-            artifacts.is_symlink()
-            or root.is_symlink()
-            or root.resolve().parent != artifacts.resolve()
-        ):
-            raise EvidenceError("evidence path escapes run root")
+        self._resolved_root()
+        artifacts = self._checked_dir(self.run_dir / "artifacts", self.run_dir)
+        root = self._checked_dir(artifacts / "patches", artifacts)
         target = root / f"{digest}.patch"
+        self._assert_lexical_components(target)
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
         try:
             descriptor = os.open(target, flags, 0o600)

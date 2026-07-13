@@ -7,6 +7,7 @@ from typing import Callable, Generic, TypeVar
 from typing import TYPE_CHECKING
 
 from .events import read_events
+from .evidence_store import EvidenceStore
 from .git_delta import (
     INVALID_GIT_HEAD,
     GitDelta,
@@ -160,15 +161,13 @@ class ModelAttemptController:
         return f"{task_id}.{kind}.{ordinal}"
 
     def interrupt_active(self, *, task_id: str, kind: str, reason: str) -> None:
-        from .evidence import put_json
         from .kernel import Transition
 
         attempt_id = self._active_attempt(task_id, kind)
         if attempt_id is None:
             return
         digest = hashlib.sha256(reason.encode("utf-8", "replace")).hexdigest()
-        ref = put_json(
-            self.kernel.run_dir,
+        ref = EvidenceStore(self.kernel.run_dir).put_json(
             "model_interruption",
             {
                 "task_id": task_id,
@@ -236,16 +235,13 @@ class ModelAttemptController:
         except preserve_attempt_on:
             raise
         except Exception as exc:
-            from .evidence import put_json
-
             digest = hashlib.sha256(
                 f"{type(exc).__name__}:{exc}".encode("utf-8", "replace")
             ).hexdigest()
             run_dir = getattr(self.kernel, "run_dir", None)
             if not isinstance(run_dir, Path):
                 raise RuntimeError("model_interruption_evidence_unavailable") from exc
-            ref = put_json(
-                run_dir,
+            ref = EvidenceStore(run_dir).put_json(
                 "model_interruption",
                 {
                     "task_id": task_id,

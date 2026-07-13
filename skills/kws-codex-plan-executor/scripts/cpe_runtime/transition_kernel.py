@@ -107,6 +107,23 @@ _WAITABLE_PHASES = frozenset(
 _RESUME_COMMANDS = frozenset(
     {"implementation", "acceptance", "review", "verify", "repair"}
 )
+_KNOWN_PHASES = frozenset(
+    {
+        "ready",
+        "implemented",
+        "accepted",
+        "reviewed",
+        "verified",
+        "repairing",
+        "plan_complete",
+        "integration_complete",
+        "waiting_user",
+        "waiting_external",
+        "verdict",
+        "completed",
+        "blocked",
+    }
+)
 
 
 def decide(state: RunState, outcome: TypedOutcome) -> KernelCommand:
@@ -120,6 +137,8 @@ def decide(state: RunState, outcome: TypedOutcome) -> KernelCommand:
         and state.task_id != outcome.task_id
     ):
         raise IllegalTransition("outcome_task_mismatch")
+    if state.phase not in _KNOWN_PHASES:
+        raise IllegalTransition(f"illegal_transition:{state.phase}:{outcome.kind}")
     if state.phase in {"waiting_user", "waiting_external"} and outcome.kind == "resume":
         command = state.resume_command or "implementation"
         if command not in _RESUME_COMMANDS:
