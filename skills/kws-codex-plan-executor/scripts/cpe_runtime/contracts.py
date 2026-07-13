@@ -1412,6 +1412,9 @@ def validate_program_map(
     known_authority_ids = {
         str(item["authority_id"]) for item in authority_items
     }
+    authority_by_id = {
+        str(item["authority_id"]): item for item in authority_items
+    }
     referenced_authority_ids = _referenced_authority_ids(
         {
             "tasks": tasks,
@@ -1425,6 +1428,33 @@ def validate_program_map(
     )
     if not referenced_authority_ids <= known_authority_ids:
         raise ValueError("program map binding names an unknown authority item")
+    for requirement_id, record in coverage.items():
+        if record["disposition"] != "conflict":
+            continue
+        conflict_authorities = [
+            authority_by_id[authority_id]
+            for authority_id in record["authority_ids"]
+            if authority_by_id[authority_id]["authority_code"]
+            == "authoritative_document_conflict"
+        ]
+        if not conflict_authorities:
+            raise ValueError(
+                f"conflict coverage {requirement_id} needs a matching authority item"
+            )
+        coverage_references = {
+            canonical_json(reference) for reference in record["source_references"]
+        }
+        if not any(
+            coverage_references
+            & {
+                canonical_json(reference)
+                for reference in authority["source_references"]
+            }
+            for authority in conflict_authorities
+        ):
+            raise ValueError(
+                f"conflict coverage {requirement_id} authority has no matching source"
+            )
     return {
         "schema_version": MAP_SCHEMA_VERSION,
         "generation": 1,

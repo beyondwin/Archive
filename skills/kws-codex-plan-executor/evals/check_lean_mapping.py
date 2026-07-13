@@ -523,6 +523,25 @@ class LeanMappingTest(unittest.TestCase):
                             ],
                         }
                     ]
+                if disposition == "conflict":
+                    candidate["coverage"]["spec-01:R1"]["authority_ids"] = [
+                        "A-conflict"
+                    ]
+                    candidate["authority_items"] = [
+                        {
+                            "authority_id": "A-conflict",
+                            "authority_code": "authoritative_document_conflict",
+                            "affected_task_ids": ["plan-01:T1"],
+                            "question": "Which requirement governs?",
+                            "options": ["spec-01", "spec-02"],
+                            "recommended": "spec-01",
+                            "source_references": [
+                                source_reference(
+                                    "spec-01", source_sha256="c" * 64
+                                )
+                            ],
+                        }
+                    ]
                 validate_program_map(
                     candidate,
                     document_hashes=self.program_document_hashes(),
@@ -576,26 +595,62 @@ class LeanMappingTest(unittest.TestCase):
                 document_hashes=self.program_document_hashes(),
             )
 
-    def test_unmapped_or_conflicting_requirement_blocks_generation_acceptance(self) -> None:
-        for scenario in ("mapping_unmapped", "mapping_conflict"):
-            with self.subTest(scenario=scenario):
-                store = self.create_store()
-                engine = self.create_engine(store=store, scenario=scenario)
-                engine.map_documents()
-                with self.assertRaisesRegex(ValueError, "blocking coverage"):
-                    engine.map_program()
-                self.assertFalse(
-                    any(
-                        event["event_type"] == "map.generation_created"
-                        for event in store.validate_event_chain()
-                    )
-                )
-                authority_events = [
-                    event
-                    for event in store.validate_event_chain()
-                    if event["event_type"] == "authority.opened"
-                ]
-                self.assertEqual(len(authority_events), 1 if scenario == "mapping_conflict" else 0)
+    def test_unmapped_requirement_blocks_generation_acceptance(self) -> None:
+        store = self.create_store()
+        engine = self.create_engine(store=store, scenario="mapping_unmapped")
+        engine.map_documents()
+        with self.assertRaisesRegex(ValueError, "blocking coverage"):
+            engine.map_program()
+        self.assertFalse(
+            any(
+                event["event_type"] == "map.generation_created"
+                for event in store.validate_event_chain()
+            )
+        )
+
+    def test_conflict_accepts_generation_and_gates_only_affected_tasks(self) -> None:
+        store = self.create_store()
+        engine = self.create_engine(store=store, scenario="mapping_conflict")
+
+        program_path = engine.map_program()
+
+        program = json.loads(store.read_artifact(program_path))
+        self.assertEqual(
+            [task["task_id"] for task in program["tasks"]],
+            ["plan-01:T1", "plan-01:T2", "plan-02:T1"],
+        )
+        events = store.validate_event_chain()
+        self.assertEqual(
+            [event["event_type"] for event in events[-2:]],
+            ["map.generation_created", "authority.opened"],
+        )
+        self.assertEqual(events[-1]["payload"]["task_ids"], ["plan-01:T1"])
+        self.assertEqual(store.replay()["status"], "waiting_authority")
+
+    def test_unsplit_brief_cannot_omit_assigned_requirement_source(self) -> None:
+        store = self.create_store()
+        engine = self.create_engine(
+            store=store, scenario="mapping_brief_omits_requirement"
+        )
+        with self.assertRaisesRegex(ValueError, "requirement source"):
+            engine.map_program()
+
+    def test_unsplit_brief_cannot_substitute_unrelated_same_document_excerpt(self) -> None:
+        store = self.create_store()
+        engine = self.create_engine(
+            store=store, scenario="mapping_brief_substitutes_requirement"
+        )
+        with self.assertRaisesRegex(ValueError, "requirement source"):
+            engine.map_program()
+
+    def test_each_split_brief_keeps_its_assigned_requirement_source(self) -> None:
+        store = self.create_store()
+        engine = self.create_engine(
+            store=store,
+            scenario="mapping_split_brief_substitutes_requirement",
+        )
+        with self.assertRaisesRegex(ValueError, "requirement source"):
+            engine.map_program()
 
     def test_program_mapper_must_report_exact_generation_artifact_paths(self) -> None:
         for scenario in (
@@ -635,6 +690,52 @@ class LeanMappingTest(unittest.TestCase):
         )
         self.assertEqual(
             resumed.map_program(), "maps/generation-0001/program-map.json"
+        )
+
+    def test_interrupted_publication_retries_with_different_valid_bytes(self) -> None:
+        class SimulatedProcessInterruption(BaseException):
+            pass
+
+        store = self.create_store()
+        engine = self.create_engine(store=store, scenario="mapping_success")
+        engine.map_documents()
+        original_put_artifact = store.put_artifact
+        writes = 0
+
+        def interrupt_after_first_write(relative_path: str, data: bytes) -> Path:
+            nonlocal writes
+            result = original_put_artifact(relative_path, data)
+            writes += 1
+            if writes == 1:
+                raise SimulatedProcessInterruption
+            return result
+
+        store.put_artifact = interrupt_after_first_write  # type: ignore[method-assign]
+        with self.assertRaises(SimulatedProcessInterruption):
+            engine.map_program()
+        self.assertGreater(
+            len(store._artifact_records()),  # noqa: SLF001 - durable-state eval
+            len(store.document_set()),
+        )
+        self.assertFalse(
+            any(
+                event["event_type"] == "map.generation_created"
+                for event in store.validate_event_chain()
+            )
+        )
+
+        reopened = RunStore.open(codex_home=self.home, run_id=store.run_id)
+        resumed = QueueEngine(
+            reopened,
+            engine.worktree,
+            self.create_launcher(scenario="mapping_success_retry_variant"),
+        )
+        self.assertEqual(
+            resumed.map_program(), "maps/generation-0001/program-map.json"
+        )
+        brief = json.loads(reopened.read_artifact("briefs/plan-01-T1.json"))
+        self.assertEqual(
+            brief["expected_report_path"], "reports/retry-plan-01-T1.md"
         )
 
     def test_noncompleted_mapper_does_not_hide_successful_sibling_outputs(self) -> None:
