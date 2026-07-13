@@ -1,1 +1,0 @@
-CREATE TABLE accounts (id INTEGER PRIMARY KEY, owner TEXT NOT NULL);

@@ -1,169 +1,144 @@
-# CPE v3 Architecture
+# CPE 4 Architecture
 
-CPE v3 separates immutable inputs and events from rebuildable projections.
+CPE 4 is a non-semantic, non-LLM queue around fresh bounded Codex roles. Its
+purpose is durability across large Superpowers programs, not a second
+implementation methodology.
 
-## Seven Runtime Owners
+## Ownership Boundary
 
 | Owner | Responsibility |
 | --- | --- |
-| `PlanCompiler` | Read plan/spec/docs into immutable internal input snapshot bytes, freeze source hashes, and reject unsafe plans before allocation |
-| `PacketStore` | Export each task packet once and index its path and `packet_sha256` in the manifest |
-| `AttemptController` | Enforce role policy, measure the real Git/filesystem delta, scope it, and advance `worktree_revision` with `worktree_patch_sha256` |
-| `RunKernel` | Append typed events, attach immutable evidence, replay, and atomically project state |
-| `CanonicalValidator` | Expose ordered `validate_integrity` and `validate_completion` profiles used by every consumer |
-| `RecoveryEngine` | Classify evidence-derived resume phases and apply only declared, projection-checked compensating actions |
-| `PublicCLI` | Own run/resume `PublicResult` JSON, export bundles, and exit-code behavior |
+| Public CLI | repeated inputs, run/resume/inspect/export, one JSON result |
+| RunStore | private snapshots, immutable artifacts, hash-chained events, replay |
+| Worktree | source identity, isolated branch, clean writer handoffs |
+| ChildLauncher | fixed role request, sanitized environment, timeout, process group, outbox |
+| QueueEngine | map generations, dependencies, writer serialization, recovery, final closure |
+| contracts | strict structural validation without prose interpretation |
+| Fresh Codex roles | mapping, product reasoning, TDD, review, investigation, fixes, audits, integration |
 
-```mermaid
-flowchart LR
-  Input["internal input snapshot: plan, spec, docs"] --> Preflight["PlanCompiler"]
-  Preflight --> Manifest["immutable run manifest"]
-  Manifest --> Packet["PacketStore"]
-  Packet --> Attempt["AttemptController"]
-  Attempt --> Kernel["RunKernel"]
-  Kernel --> Events["authoritative events.jsonl"]
-  Kernel --> Evidence["content-addressed evidence"]
-  Events --> Projector["pure projector"]
-  Manifest --> Projector
-  Projector --> State["rebuildable state.json"]
-  Events --> Consumers["CanonicalValidator, RecoveryEngine, PublicCLI"]
-  Evidence --> Consumers
-```
+CPE validates IDs, schemas, digests, commits, paths, state transitions, and
+process results. It does not infer natural-language requirements, judge product
+quality, or retain a model conversation between queue items.
 
-## Boundaries
+## Data Flow
 
-- `cpe.py` is the `PublicCLI` adapter for run, resume, and prompt/handoff export.
-- `cpe_runtime.model_policy` owns the closed Sol/high core and Terra/high scout
-  routes and launcher attestation.
-- `plan_compiler` captures source bytes before allocation. Later parsing and
-  packet slicing use this internal input snapshot, not mutable source paths.
-- `packets` exports each task packet once; every role verifies the indexed path
-  and `packet_sha256` before launch.
-- `manifest`, `events`, `evidence`, `projector`, and `kernel` implement
-  `RunKernel` durable state ownership.
-- `worker` launches Codex; `scheduler` serializes write-capable tasks and may
-  bound concurrency for read-only scouts.
-- `validation` is `CanonicalValidator`. `validate_integrity` admits healthy
-  incomplete runs; `validate_completion` additionally requires current
-  acceptance, task review, verification, repository check, final review, and
-  an exact completion audit.
-- `reconciliation` detects drift. `repair` plans safe actions before applying
-  an explicit action. `inspection` is read-only derived reporting.
+    source specs/plans
+      -> immutable snapshots
+      -> one document mapper per snapshot
+      -> one program mapper
+      -> content-addressed accepted map publication
+      -> durable dependency queue
+      -> task agent -> reviewer -> optional investigator/fixer
+      -> document auditors
+      -> Program Final Integrator
+      -> result.json
 
-The worktree contains product changes only. The run directory contains the
-manifest, event stream, state projection, and immutable artifacts. A successful
-transition appends and syncs an event before atomically replacing the state
-projection. Replay therefore recovers an interrupted snapshot write without
-rewriting history.
+Each arrow crosses a file-backed contract. A child receives exact input paths,
+one role, one item ID, one outbox, one result schema, and an owned worktree
+view. The child exits after writing its compact result and detailed artifacts.
 
-## Execution
+## Mapping
 
-Core attempts always use Sol/high: coordination, implementation, review,
-verification judgment, repair, and completion. Terra/high can only produce
-bounded findings from a read-only scout. A scout cannot write files or issue a
-quality verdict.
+Document mappers are read-only and bounded to one immutable document plus
+applicable repository instructions. Their output retains exact source excerpts,
+headings, ranges, IDs, and hashes.
 
-Tasks with write claims execute one at a time. Only implementation and repair
-may write product files. The controller captures the full delta, rejects
-out-of-scope paths or Git metadata mutation, stores immutable patch evidence,
-and advances `worktree_revision`. Every semantic evidence payload binds its
-task packet, `worktree_revision`, and `worktree_patch_sha256`.
+The program mapper consumes those small maps and emits a task graph, coverage
+map, authority queue, and exact task briefs. Requirement dispositions are
+planned, preexisting_verify, explicit_non_goal, approved_deferred, conflict, or
+unmapped. Conflict and unmapped dispositions block affected execution.
 
-The ordered suffix is `acceptance -> task_review -> verification ->
-repository_check -> final_review`. A repair write invalidates evidence from the
-old revision and repeats every affected downstream gate. Completion checks
-event integrity, replay parity, evidence digests, task states, git scope,
-typed verdicts, and the exact final completion record.
+A generation publishes all program artifacts as one content-addressed batch.
+The publication manifest commits each logical path, digest, and byte length.
+Only the publication named by exactly one map.generation_created event is
+authoritative. Direct logical shadows cannot override it.
 
-V2 run directories are not migration inputs. Consumers read their schema marker,
-return `unsupported_schema`, and leave their bytes unchanged.
+## Queue And Writers
 
-## Subscription Live-Evidence Boundary
+QueueEngine replays events and the accepted publication to identify the first
+ready nonterminal task. Dependencies and open authority items determine
+readiness. A writer lifecycle combines an in-process lock with a private file
+lock, so task, fix, and integration-fix roles cannot overlap.
 
-The live migration runner under `evals/live_model_runner.py` is intentionally
-outside the seven plan-runtime owners. It compiles the checked-in treatments,
-case fixtures, hidden oracles, worker schema, and policy into one digest-bound
-32-slot manifest. Seven Terra-ineligible slots are recorded as expected policy
-failures without a provider call; the remaining 25 slots each launch one
-ephemeral, explicitly routed Codex turn in a fresh fixture worktree.
+A task agent starts at the current clean revision, follows applicable
+Superpowers skills, runs focused checks, commits, writes a report, and returns
+a compact result. CPE verifies the commit, parent, tracked cleanliness, and
+artifact digests before appending task.reported.
 
-For Sol v3 slots, the runner precomputes a bounded visible-context packet from
-tracked UTF-8 seed files and the fixture-owned baseline subprocess result. This
-keeps the oracle physically and logically separate while removing redundant
-discovery and baseline turns. Historical treatments continue to discover the
-same visible repository through their original prompt path.
+The reviewer is read-only and receives the brief, report, exact diff, and
+upstream evidence. Changes-requested findings go to one consolidated fixer,
+then a fresh reviewer. Repeated material failure requires a new investigation
+record and changed strategy; ordinary defects never become authority items.
 
-`start` requires ChatGPT login, rejects API-key environment credentials, checks
-the exact model/reasoning catalog, strips API-key variables from child
-environments, and writes only to an operator-selected evidence root outside the
-repository and fixture inputs. Each slot records prompt, fixture, oracle,
-implementation, model-catalog, event, output, and result digests in an
-append-only ledger. Timeout, subscription-limit, malformed-output, source
-drift, oracle drift, or attestation failures block the run; `resume` never
-silently retries a failed slot and requires `--retry-failed` when applicable.
+## Authority
 
-`evals/live_model_migration.py` replays a completely resolved ledger and is the
-only checked-in aggregator for subscription results. The sanitized report keeps
-`cost_usd=null` and `cost_observability=unavailable` because the runner cannot
-observe which account-side subscription or existing-credit bucket was used.
-The runner and aggregator cannot change release metadata; a separate reviewed
-follow-up may do so only after `release_gate.passed=true`.
+Standing autonomy covers safe reversible work within the approved documents
+and workspace. A durable authority item is permitted only for:
 
-The unpublished v4 release lineage also supports a privacy-safe cross-root
-predecessor attestation. The importer validates the predecessor event chain,
-stored projection, immutable manifest and child ledger, regenerated aggregate,
-privacy verdict, sanitized checkpoint artifacts, and implementation Git
-identity in place. Artifact bytes are fsynced before the append-only event, so
-same-input recovery is idempotent after a crash. The corrected root stores only
-domain-separated digests, counts, and checkpoint identity; it does not copy
-the predecessor manifest or any slot, oracle, output, session, or auth bytes.
-Projection counts the attested terminal failure toward the initial-plus-one-
-corrected cap.
+- credential_required
+- external_side_effect
+- destructive_outside_worktree
+- authoritative_document_conflict
+- material_scope_expansion
+- legal_security_policy_authority
 
-The v4 matrix compiler also emits a sealed `LaunchEnvelopeV4` for each of its
-17 credentialed slots. Each envelope is binary-safe canonical JSON containing
-base64 exact prompt/schema bytes and immutable task, case, fixture-source,
-route, model, reasoning, role, and sandbox bindings. A distinct
-`OracleBindingV4` owns the hidden oracle reference and digest. The manifest
-binds both digests separately; only the launch envelope is copied into slot
-evidence. The runner never reconstructs prompt or schema bytes. It reopens the
-content-addressed artifacts and checks source, fixture, route, schema, model,
-reasoning, task, case, and oracle bindings before `codex exec`.
+The packet records affected tasks, exact options, recommendation, excerpts, and
+evidence. Resolving it appends authority.resolved; neither the packet nor prior
+events are rewritten.
 
-The manifest's qualified sentinel is exactly
-`sol_v4_candidate/security/migration block`, not the first pending slot. The
-runner evaluates its top-level blocked status, evidence completeness, clean
-side-effect boundary, model/worktree/drift attestations, and sealed bindings
-immediately after the single result. Only a passing sentinel permits remaining
-credentialed slots; failure terminally blocks at one call, while resume reuses
-the passed slot without duplication.
+## Final Closure
 
-The runner derives one canonical credentialed semantic verdict from the hidden
-oracle comparison and persists it with the slot result. The block-ID sentinel
-passes only when `review_accurate=true`, so a blocked worker response with a
-wrong or missing required ID cannot unlock the matrix. The compiler also emits
-one sanitized top-level envelope map with exactly the 17 qualified
-`treatment/case` keys. Slot evidence, ledger indexes, aggregation, release
-packaging, and public release validation all consume that same map; policy
-slots cannot enter it.
+Each document auditor reads one original snapshot plus only its relevant maps,
+briefs, reports, reviews, and diff slices. It checks lossless coverage rather
+than repeating general code review.
 
-For v4, `aggregate` only records the recomputed child aggregate. Production
-`finalize-release` is the sole release packager. It verifies the exact proof
-profile, derives dogfood only from a real CPE run directory, and recomputes the
-implementation patch from the manifest's trusted base with the checkpoint Git
-helper. It fsyncs the exact five payloads under
-`release-generations/<sha256>.tmp`, atomically renames the generation, appends
-one `release_evidence_finalized` event, then projects state. Orphan generations
-are ignored and event-before-state crashes recover idempotently. The public
-validator reads only the terminal generation and independently recomputes the
-child counts, gates, envelope bindings, Git identity, digests, and privacy.
+The Program Final Integrator receives the program map, all auditor verdicts,
+autonomy evidence, authority state, the whole diff, and the repository's final
+verification command. It performs one full verification and returns the
+terminal artifact at the exact revision. CPE independently checks that
+artifact and publishes the launcher-owned integration handoff.
 
-The v4 transaction's root of trust is the Git-tracked canonical release policy,
-not manifest or CLI input. Compiler, runner, finalizer, and validator all load
-the same fixed base, canonical dogfood contract digest, attempt limits, and
-labels. The paid runner journals each credentialed attempt before launch,
-forbids release retries, and refuses a third critical-path attempt. A matching
-one-task CPE manifest carries a four-attempt kernel budget. Finalization copies
-the replay inputs into `dogfood/<run_id>`, binds their checkpoint digest into
-the five-file generation, and the public validator replays them from relative
-paths while enforcing a closed root allowlist.
+Any integration fix changes the revision and invalidates all affected audits,
+verification evidence, and terminal records before the closure cycle repeats.
+
+## Recovery And Integrity
+
+RunStore appends canonical JSON events under a lock, fsyncs the stream, then
+atomically replaces the event head. Replay derives lifecycle and task state
+from the manifest, input set, and events; there is no mutable state projection
+to trust.
+
+Resume checks:
+
+1. private regular-file and directory ownership;
+2. manifest and document-set digests;
+3. event IDs, previous hashes, payload contracts, and event head;
+4. artifact index parity and immutable bytes;
+5. event-selected map publication identity;
+6. worktree source, branch, head ancestry, and cleanliness where required;
+7. active child handoff evidence before deciding whether redispatch is safe.
+
+A file-before-index interruption can be reconciled only when bytes and the
+content-addressed publication commitment fully validate. An accepted child
+result without its matching durable event is reconciled; completed durable work
+is not launched again. Ambiguous or contradictory evidence fails closed.
+
+Mapping retention protects every event-selected publication and its physical
+artifacts forever. It keeps one unselected Program Mapper attempt per
+generation, including strict partial pre-manifest groups. Older groups are
+removed only after append-only tombstones are fsynced; open recovery completes
+a tombstone-before-unlink interruption.
+
+## Modules
+
+- scripts/cpe.py: public command adapter
+- contracts.py: schema and value validation
+- store.py: snapshots, artifacts, events, replay
+- worktree.py: Git ownership and handoff validation
+- launcher.py: child boundary and writer lease
+- queue.py: mapping, task/review/recovery/final lifecycle
+- legacy.py: bounded read-only schema-3 inspection
+- prompt_export.py: side-effect-free prompt and handoff rendering
+
+Schema-3 execution remains in Git history. CPE 4 never rewrites or resumes
+those run directories.

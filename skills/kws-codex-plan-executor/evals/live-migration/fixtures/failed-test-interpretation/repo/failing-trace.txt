@@ -1,4 +1,0 @@
-ERROR: test_empty_batch
-ZeroDivisionError: division by zero
-  calc.py:2 in ratio
-Input: total=0, count=0

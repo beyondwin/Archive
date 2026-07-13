@@ -10,7 +10,6 @@ import shutil
 import subprocess
 import stat
 import sys
-import tempfile
 import unittest
 from unittest import mock
 from pathlib import Path
@@ -32,6 +31,7 @@ from cpe_runtime.queue import QueueEngine  # noqa: E402
 import cpe_runtime.store as store_module  # noqa: E402
 from cpe_runtime.store import RunStore  # noqa: E402
 from cpe_runtime.worktree import Worktree  # noqa: E402
+from fake_codex import LeanEvalCase  # noqa: E402
 
 
 def sha256(data: bytes) -> str:
@@ -84,38 +84,15 @@ def empty_plan_wave_graph() -> dict[str, object]:
     return {"plans": [], "waves": [], "edges": []}
 
 
-class LeanMappingTest(unittest.TestCase):
-    def setUp(self) -> None:
-        self.temporary = tempfile.TemporaryDirectory(prefix="cpe-lean-mapping-")
-        self.root = Path(self.temporary.name)
-        self.home = self.root / "codex-home"
-        self.repo = self.root / "repo"
-        self.home.mkdir(mode=0o700)
-        self.repo.mkdir()
-        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
-        subprocess.run(
-            ["git", "-C", str(self.repo), "config", "user.email", "cpe@example.invalid"],
-            check=True,
-        )
-        subprocess.run(
-            ["git", "-C", str(self.repo), "config", "user.name", "CPE Eval"],
-            check=True,
-        )
-        for name in ("spec-a.md", "spec-b.md", "plan-a.md", "plan-b.md", "program.md"):
-            shutil.copyfile(FIXTURES / name, self.repo / name)
-        (self.repo / "AGENTS.md").write_text(
-            "# Repository Instructions\n\nPreserve exact source coverage.\n",
-            encoding="utf-8",
-        )
-        subprocess.run(["git", "-C", str(self.repo), "add", "."], check=True)
-        subprocess.run(
-            ["git", "-C", str(self.repo), "commit", "-q", "-m", "fixture base"],
-            check=True,
-        )
-        self.invocation_log = self.root / "mapping-invocations.jsonl"
+class LeanMappingTest(LeanEvalCase):
+    fixture_prefix = "cpe-lean-mapping-"
+    repository_instructions = (
+        "# Repository Instructions\n\nPreserve exact source coverage.\n"
+    )
 
-    def tearDown(self) -> None:
-        self.temporary.cleanup()
+    def setUp(self) -> None:
+        super().setUp()
+        self.invocation_log = self.root / "mapping-invocations.jsonl"
 
     def create_store(self) -> RunStore:
         return RunStore.create(
@@ -127,14 +104,7 @@ class LeanMappingTest(unittest.TestCase):
         )
 
     def create_launcher(self, *, scenario: str = "mapping_success") -> ChildLauncher:
-        bin_dir = self.root / f"fake-bin-{scenario}"
-        bin_dir.mkdir(exist_ok=True)
-        fake_codex = bin_dir / "codex"
-        source = (SKILL_ROOT / "evals" / "fake_codex.py").read_text(encoding="utf-8")
-        lines = source.splitlines()
-        lines[0] = f"#!{sys.executable}"
-        fake_codex.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        fake_codex.chmod(0o700)
+        bin_dir = self.install_fake_codex(f"fake-bin-{scenario}")
         return ChildLauncher(
             schema_path=SKILL_ROOT / "templates" / "child-result-schema.json",
             timeout_seconds=10,
@@ -164,6 +134,67 @@ class LeanMappingTest(unittest.TestCase):
             json.loads(line)
             for line in self.invocation_log.read_text(encoding="utf-8").splitlines()
         ]
+
+    def install_unselected_publication(
+        self, store: RunStore, label: str
+    ) -> tuple[str, str, bytes]:
+        program_path = "maps/generation-0001/program-map.json"
+        program_bytes = canonical_json({"label": label})
+        artifacts = {program_path: program_bytes}
+        publication_id = QueueEngine._publication_id(artifacts)
+        prefix = (
+            f"maps/generation-0001/attempts/{publication_id}/artifacts"
+        )
+        physical_path = f"{prefix}/{program_path}"
+        store.put_artifact(physical_path, program_bytes)
+        manifest = {
+            "schema_version": 1,
+            "generation_id": "generation-0001",
+            "publication_id": publication_id,
+            "program_map_sha256": sha256(program_bytes),
+            "artifacts": {
+                program_path: {
+                    "relative_path": physical_path,
+                    "sha256": sha256(program_bytes),
+                    "byte_length": len(program_bytes),
+                }
+            },
+        }
+        manifest_bytes = canonical_json(manifest)
+        manifest_path = (
+            f"maps/generation-0001/attempts/{publication_id}/accepted.json"
+        )
+        store.put_artifact(manifest_path, manifest_bytes)
+        return manifest_path, sha256(manifest_bytes), program_bytes
+
+    @staticmethod
+    def live_attempt_manifests(store: RunStore) -> tuple[str, ...]:
+        return tuple(
+            str(record["relative_path"])
+            for record in store._artifact_records()
+            if str(record["relative_path"]).endswith("/accepted.json")
+            and "/attempts/" in str(record["relative_path"])
+        )
+
+    @staticmethod
+    def install_partial_publication(store: RunStore, label: str) -> str:
+        publication_id = sha256(label.encode("utf-8"))
+        relative_path = (
+            f"maps/generation-0001/attempts/{publication_id}/artifacts/"
+            f"briefs/{label}.json"
+        )
+        store.put_artifact(relative_path, canonical_json({"label": label}))
+        return relative_path
+
+    @staticmethod
+    def live_attempt_ids(store: RunStore) -> set[str]:
+        return {
+            Path(str(record["relative_path"])).parts[3]
+            for record in store._artifact_records()
+            if str(record["relative_path"]).startswith(
+                "maps/generation-0001/attempts/"
+            )
+        }
 
     def test_maps_each_snapshot_once_then_program_from_maps_and_instructions(self) -> None:
         store = self.create_store()
@@ -899,6 +930,130 @@ class LeanMappingTest(unittest.TestCase):
         self.assertEqual(
             brief["expected_report_path"], "reports/retry-plan-01-T1.md"
         )
+
+    def test_unselected_mapping_publications_are_pruned_to_one_per_generation(
+        self,
+    ) -> None:
+        store = self.create_store()
+        attempts = [
+            self.install_unselected_publication(store, f"attempt-{index}")
+            for index in range(3)
+        ]
+
+        pruned = store.prune_unselected_mapping_publications("generation-0001")
+
+        self.assertEqual(pruned, 2)
+        self.assertEqual(len(self.live_attempt_manifests(store)), 1)
+        for manifest_path, _digest, _program in attempts[:2]:
+            self.assertFalse((store.paths.root / manifest_path).exists())
+            with self.assertRaisesRegex(ValueError, "durable digest"):
+                store.read_artifact(manifest_path)
+        store._validate_artifacts()
+        self.assertEqual(store.replay()["status"], "mapping")
+
+    def test_partial_mapping_attempts_are_also_bounded_to_one(self) -> None:
+        store = self.create_store()
+        paths = [
+            self.install_partial_publication(store, f"partial-{index}")
+            for index in range(3)
+        ]
+
+        self.assertEqual(
+            store.prune_unselected_mapping_publications("generation-0001"), 2
+        )
+        self.assertEqual(len(self.live_attempt_ids(store)), 1)
+        for relative_path in paths[:2]:
+            self.assertFalse((store.paths.root / relative_path).exists())
+            with self.assertRaisesRegex(ValueError, "durable digest"):
+                store.read_artifact(relative_path)
+        store._validate_artifacts()
+        self.assertEqual(store.replay()["status"], "mapping")
+
+    def test_selected_oldest_mapping_publication_is_never_pruned(self) -> None:
+        store = self.create_store()
+        selected_path, selected_digest, selected_program = (
+            self.install_unselected_publication(store, "selected-oldest")
+        )
+        store.append_event(
+            "map.generation_created",
+            {
+                "generation_id": "generation-0001",
+                "map_sha256": sha256(selected_program),
+                "publication_manifest_path": selected_path,
+                "publication_manifest_sha256": selected_digest,
+                "authority_ids": [],
+                "task_ids": [],
+            },
+        )
+        self.install_unselected_publication(store, "unselected-middle")
+        self.install_unselected_publication(store, "unselected-newest")
+
+        self.assertEqual(
+            store.prune_unselected_mapping_publications("generation-0001"), 1
+        )
+        self.assertTrue((store.paths.root / selected_path).is_file())
+        self.assertEqual(
+            store.read_accepted_publication(selected_path, selected_digest)[0][
+                "program_map_sha256"
+            ],
+            sha256(selected_program),
+        )
+        self.assertEqual(len(self.live_attempt_manifests(store)), 2)
+        store._validate_artifacts()
+        store.replay()
+
+    def test_tombstone_before_unlink_interruption_recovers_on_open(self) -> None:
+        store = self.create_store()
+        oldest_path, _digest, _program = self.install_unselected_publication(
+            store, "oldest"
+        )
+        self.install_unselected_publication(store, "newest")
+        original_unlink = store._unlink_tombstoned_artifacts
+
+        def interrupt_before_unlink(*_args: object, **_kwargs: object) -> None:
+            raise RuntimeError("simulated tombstone-before-unlink interruption")
+
+        store._unlink_tombstoned_artifacts = interrupt_before_unlink
+        with self.assertRaisesRegex(RuntimeError, "tombstone-before-unlink"):
+            store.prune_unselected_mapping_publications("generation-0001")
+        self.assertTrue((store.paths.root / oldest_path).is_file())
+        with self.assertRaisesRegex(ValueError, "durable digest"):
+            store.read_artifact(oldest_path)
+        store._unlink_tombstoned_artifacts = original_unlink
+
+        reopened = RunStore.open(codex_home=self.home, run_id=store.run_id)
+        self.assertFalse((reopened.paths.root / oldest_path).exists())
+        reopened._validate_artifacts()
+        self.assertEqual(reopened.replay()["status"], "mapping")
+
+    def test_mapping_retention_fails_closed_on_selected_tamper_or_ambiguity(
+        self,
+    ) -> None:
+        for failure in ("tamper", "ambiguous"):
+            with self.subTest(failure=failure):
+                store = self.create_store()
+                selected_path, selected_digest, selected_program = (
+                    self.install_unselected_publication(store, "selected")
+                )
+                payload = {
+                    "generation_id": "generation-0001",
+                    "map_sha256": sha256(selected_program),
+                    "publication_manifest_path": selected_path,
+                    "publication_manifest_sha256": selected_digest,
+                    "authority_ids": [],
+                    "task_ids": [],
+                }
+                store.append_event("map.generation_created", payload)
+                if failure == "tamper":
+                    manifest = store.paths.root / selected_path
+                    manifest.write_bytes(b"x" + manifest.read_bytes()[1:])
+                    manifest.chmod(0o600)
+                    expected = "digest"
+                else:
+                    store.append_event("map.generation_created", payload)
+                    expected = "ambiguous"
+                with self.assertRaisesRegex(ValueError, expected):
+                    store.prune_unselected_mapping_publications("generation-0001")
 
     def test_accepted_manifest_install_before_index_recovers_and_retry_selects_new_bytes(
         self,

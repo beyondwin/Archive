@@ -1,75 +1,83 @@
-# V3 State Schema
+# Schema 4 State And Replay
 
-The run directory contains four classes of artifact:
+## Run Root
 
-```text
-run_manifest.json  immutable run inputs and hashes
-events.jsonl       authoritative ordered history
-state.json         rebuildable current-state projection
-artifacts/         immutable evidence and derived reports
-```
+A run owns private files beneath CODEX_HOME/orchestrator/RUN_ID:
 
-## Manifest
+| Path | Contract |
+| --- | --- |
+| run.json | immutable schema, run ID, workspace, status seed, document-set digest |
+| inputs/ | immutable source snapshots and generation document sets |
+| events.jsonl | authoritative canonical hash-chained transition stream |
+| events.head.json | synced event count and terminal event hash |
+| artifacts.jsonl | append-only logical path, SHA-256, and byte-length index |
+| autonomy-decisions.jsonl | append-only structured technical choices |
+| writer.lease | cross-process exclusive writer ownership |
+| maps/ | document maps and content-addressed program publications |
+| briefs/, reports/, reviews/ | role-scoped immutable evidence |
+| verification/ | audit, whole-diff, integration, and terminal evidence |
+| outbox/ | untrusted per-attempt staging, never authoritative |
+| result.json | terminal artifact, absent before completion |
 
-`schema_version` is exactly `"3"`. The manifest pins the run ID, mode,
-workspace and execution-worktree refs, plan and optional spec hashes, task graph
-and hash, fixed model policy and hash, and pricing snapshot and hash. It is
-created once. The compiler's plan/spec/docs internal input snapshots are hashed
-before allocation; the manifest also indexes every immutable task packet by
-task ID, run-relative path, media type, and `packet_sha256`. A changed manifest
-is integrity drift, not an update.
+All managed files and directories use private permissions and reject symlinks.
 
 ## Events
 
-Each event has a monotonic `seq`, unique `event_id`, UTC timestamp, runtime
-actor, type, payload, optional task/attempt IDs, `previous_hash`, and `hash`.
-The hash is SHA-256 over canonical event JSON without the `hash` field.
+The allowlisted events are run.created, documents.snapshotted,
+map.generation_created, task.started, task.reported, review.reported,
+autonomy.recorded, authority.opened, authority.resolved, run.interrupted,
+audit.reported, integration.reported, run.completed, and run.failed.
 
-The active projector consumes run and task status, typed attempt and verdict,
-worktree revision, blocker lifecycle, retry, evidence, context, completion,
-and repair events. Historical `attempt.recorded` remains readable but is not a
-writable event. Unknown or invalid transitions are not accepted as successful
-state changes.
+Each event has a contiguous ID, strict payload, previous-event hash, and its own
+SHA-256. Appending fsyncs events.jsonl before atomically replacing the head.
+Replay validates both. A partial tail, head mismatch, altered payload, unknown
+event, or broken previous hash fails closed.
 
-## Projection
+## Artifacts And Publications
 
-`state.json` includes:
+An artifact index record binds one normalized logical path to immutable regular
+file bytes. Existing bytes may be reused only when their digest and length are
+identical.
 
-- `schema_version`, `run_id`, and run lifecycle;
-- current task and projected task statuses;
-- `worktree_revision` and `worktree_patch_sha256` for the current real delta;
-- projected attempt summaries, verdicts, and evidence index;
-- `active_blockers`, `blocker_history`, and the explicit `retry_queue`;
-- context health, repairs, and completion audit when emitted;
-- the last applied event sequence and hash.
+A program-map generation is published beneath:
 
-Typed evidence for acceptance, task review, verification, repository check,
-and final review records the task and attempt identity, `packet_sha256`,
-`worktree_revision`, and `worktree_patch_sha256`. These records become stale
-after any later product write. `completion_audit` is a candidate payload only
-while validating the exact prospective `completion.recorded` transition; it
-cannot replace authoritative replay state.
+    maps/GENERATION/attempts/PUBLICATION_SHA256/
 
-Blockers are projected by stable ID. Open and update events change both the
-active record and its history record. Resolution removes the blocker from
-`active_blockers` while retaining the resolved record and evidence in
-`blocker_history`. A retry phase moves a blocked task to that phase's entry
-state; blocked tasks do not have a generic transition back to ready.
+Its accepted.json commits every logical artifact path, physical path, digest,
+and length. Exactly one map.generation_created event selects an accepted
+manifest and its program-map digest. Logical shadow files and unselected
+attempts cannot replace event-selected state.
 
-No agent writes this file. The transition kernel replays the manifest and event
-stream and atomically replaces the projection. Validation compares stored bytes
-with a fresh projection.
+Event-selected publications and every physical artifact they reach are
+permanent run evidence. For each generation, CPE retains one live unselected
+Program Mapper attempt. Older complete or strict partial groups receive
+append-only index tombstones, the index is fsynced, and only then are matching
+files unlinked. On open, live tombstones reconcile stale bytes from an
+interruption. A tombstoned path is unreadable. A partial group is eligible only
+when every live path has the exact mapping-attempt namespace and valid indexed
+bytes; any other identity fails closed.
 
-## Evidence
+## Replay
 
-Evidence refs are run-relative and content-addressed. A ref records kind, path,
-digest, and media type. Absolute paths, parent traversal, symlinked ancestors,
-missing or contradictory objects, and digest mismatches are integrity failures.
-Patch evidence is immutable and must describe the measured current delta, not
-a worker-reported file list.
+Replay validates the manifest, current generation document set, event chain,
+autonomy ledger, indexed artifact parity, accepted publication, and terminal
+artifact. It derives mapping, task, review, authority, audit, integration, and
+run status without trusting a mutable projection.
 
-## Compatibility
+Resume additionally verifies the isolated worktree identity and that every
+recorded commit is an ancestor of its current head. Active writer handoffs are
+reconciled from exact outbox/result/event evidence. Ambiguity fails closed; a
+durably completed item is never redispatched.
 
-Only schema `3` participates in execution. A v2 marker yields
-`unsupported_schema`; validation, reconciliation, repair, resume, and inspection
-must not reinterpret or mutate that run.
+## Input Refresh
+
+Source paths are inert after snapshot. Explicit --refresh-inputs creates the
+next generation with new snapshot hashes. Prior generations remain immutable.
+Task identity, brief digest, governing document, and dependency closure
+determine invalidation.
+
+## Schema 3
+
+A schema-3 root has run_manifest.json rather than run.json. CPE 4 inspect reads
+only a bounded summary and does not modify timestamps, permissions, or bytes.
+Resume is rejected. No schema conversion exists.

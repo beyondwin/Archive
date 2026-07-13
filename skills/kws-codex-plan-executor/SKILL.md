@@ -1,168 +1,134 @@
 ---
 name: kws-codex-plan-executor
-description: Use when executing an implementation plan in Codex from a plan path and optional spec or design documents, resuming or inspecting a v3 run, or exporting a prompt or handoff launcher.
+description: Use when executing one or many approved Superpowers implementation plans as a durable schema-4 queue with fresh bounded Codex roles, interruption recovery, and multi-document coverage.
 metadata:
-  version: "3.1.0"
-  updated_at: "2026-07-12"
-  release_status: "deterministic-ready; paid-live-verified"
+  version: "4.0.0"
+  updated_at: "2026-07-13"
 ---
 
 # KWS Codex Plan Executor
 
-CPE v3 is an independent, event-sourced Codex plan executor. Its audited
-deterministic integrity closure and reviewed subscription live-migration matrix
-are complete, so the published tuple is
-`deterministic-ready; paid-live-verified`.
+CPE 4 is a durable, non-LLM queue for large approved Superpowers programs. Use
+direct Superpowers for bounded same-session work. Use CPE when execution must
+survive context compaction, process interruption, multiple days, or several
+specification and plan documents.
 
-The checked-in subscription live-matrix runner is a guarded release-evidence
-tool, not an execution route for normal CPE plans. It dry-runs, starts, and
-resumes the exact 32-slot matrix with ChatGPT subscription authentication,
-isolated fixture worktrees, an immutable ledger, and fail-closed aggregation.
-The complete reviewed report has `release_gate.passed=true`; the privacy audit
-also passed, so version 3.1.0 publishes `release_ready=true`. Direct USD cost
-remains unobservable at the account-side subscription boundary.
+CPE owns immutable snapshots, dependency state, one isolated worktree, bounded
+child launch, durable events, authority waiting, resume, inspection, and final
+revision binding. Fresh Codex roles own mapping, TDD implementation, focused
+tests, code review, investigation, fixes, document coverage audits, and final
+integration. No long-lived model controller retains the run history.
 
-## Public Commands
+## Commands
 
-```bash
-python3 scripts/cpe.py run --plan PLAN [--spec SPEC] --workspace REPO --mode interactive
-python3 scripts/cpe.py resume --run-id RUN_ID
-python3 scripts/cpe.py export --plan PLAN --workspace REPO --mode prompt
-python3 scripts/cpe.py export --plan PLAN --workspace REPO --mode handoff
+At least one plan is required. Spec and plan flags repeat; program-plan appears
+at most once. Paths must be absolute.
 
-python3 scripts/validate_state.py RUN_DIR
-python3 scripts/reconcile_state.py --run-dir RUN_DIR --check
-python3 scripts/repair_runs.py --run-dir RUN_DIR --dry-run
-python3 scripts/repair_runs.py --run-dir RUN_DIR --action ACTION \
-  --details '{...}' --expected-projection-delta '{...}' --apply
-python3 scripts/inspect_runs.py --codex-home ~/.codex --all-plans
-python3 scripts/analyze_recent_runs.py --codex-home ~/.codex --recent 20
+    python3 scripts/cpe.py run \
+      --spec /abs/spec-a.md --spec /abs/spec-b.md \
+      --plan /abs/plan-a.md --plan /abs/plan-b.md \
+      --program-plan /abs/program.md --workspace /abs/repo
 
-python3 evals/live_model_runner.py dry-run \
-  --billing-mode chatgpt_subscription --output /tmp/cpe-live-plan.json
-python3 evals/live_model_runner.py attest-predecessor \
-  --predecessor-root /absolute/failed-evidence-root \
-  --evidence-root /absolute/corrected-evidence-root
-python3 evals/live_model_runner.py finalize-release \
-  --evidence-root /absolute/evidence-root \
-  --run-dir /absolute/evidence-root/current-run \
-  --dogfood-run-dir /absolute/cpe-v4-dogfood-run
-```
+    python3 scripts/cpe.py resume --run-id RUN_ID
+    python3 scripts/cpe.py resume --run-id RUN_ID \
+      --authority-id AUTHORITY_ID --authority-answer ANSWER
+    python3 scripts/cpe.py resume --run-id RUN_ID --refresh-inputs
+    python3 scripts/cpe.py inspect --run-id RUN_ID
 
-`run` and `resume` are execution surfaces. `export` in `prompt` or `handoff`
-mode is export-only and creates no worktree or run artifacts. Validation,
-reconciliation, repair, inspect, and recent-run inspection consume v3 run
-artifacts. A v2 schema is reported as `unsupported_schema` and never rewritten.
-`evals/live_model_runner.py` is separate from those public plan-execution
-surfaces and requires explicit subscription-usage confirmation before any
-credentialed call.
+    python3 scripts/cpe.py export \
+      --spec /abs/spec.md --plan /abs/plan.md \
+      --workspace /abs/repo --mode prompt
+    python3 scripts/cpe.py export \
+      --plan /abs/plan.md --workspace /abs/repo --mode handoff
 
-The v4-only `attest-predecessor` maintenance command is cost-free. It validates
-one terminal failed predecessor root in place, then stores only a
-domain-separated digest attestation in a fresh corrected root. It never copies
-the predecessor manifest, slot evidence, output, session, authentication, or
-oracle-bearing path bytes.
+Run and resume execute. Inspect is read-only. Export only renders text; it
+creates no run root or worktree.
 
-The unpublished v4 quality path is risk-first. Its immutable manifest names
-`sol_v4_candidate` plus `security/migration block` as the only qualified
-sentinel, independent of slot order. Every credentialed slot launches only
-from a content-addressed `LaunchEnvelopeV4` containing the exact prompt and
-output-schema bytes. Hidden oracle material stays in a separate runner-owned
-`OracleBindingV4`; any envelope, route, source, fixture, schema, or oracle
-binding drift blocks before a provider invocation. A sentinel semantic/oracle
-failure terminally protects all remaining credentialed slots. For the block-ID
-sentinel, semantic pass requires `review_accurate=true`; top-level blocked alone
-is insufficient. The merge-gate `critical_path_live` profile contains exactly
-that sentinel, one candidate single-file success regression, and seven
-deterministic no-call policy outcomes. `full_paid_matrix` retains the 17-entry
-map as optional certification, not as the merge gate.
+## Fresh Role Ownership
 
-The tracked `evals/live-migration/release-policy-v4.json` is the sole release
-trust anchor. It fixes the implementation base to
-`344f6112a7254b87cfa25fe0f6d6f3acbc964487`, binds the canonical tracked
-dogfood task contract, caps critical/dogfood/combined attempts at `2/4/6`, and
-supplies the exact release labels. CLI checkpoint arguments cannot select
-another base or override this policy. Finalization retains replayable dogfood
-manifest, event, state, task-contract, and checkpoint evidence under
-`evidence_root/dogfood/<run_id>`; validation rejects mutable root summaries and
-unexpected root entries.
+- Document mappers read one immutable document each and emit exact references.
+- The program mapper composes the task, coverage, dependency, and authority
+  graph without resolving conflicts by CLI order.
+- Task agents use Superpowers TDD and focused verification, commit one clean
+  handoff, and exit.
+- Reviewers inspect the exact task diff and do not repeat an identical focused
+  test at the same revision.
+- Investigators and consolidated fix agents change strategy for ordinary
+  failures while preserving evidence.
+- Document auditors check one source document against relevant briefs, reports,
+  reviews, and diff slices.
+- The Program Final Integrator reviews the whole program, runs the single final
+  verification, and owns the terminal quality artifact.
+- An integration fix invalidates affected audits and final evidence.
 
-`aggregate` cannot publish a release package or terminal event. After an
-actual one-task CPE v4 dogfood run, `finalize-release` replays both ledgers,
-recomputes the trusted-base Git patch, and publishes one content-addressed
-five-file generation followed by one terminal event. The validator trusts only
-that terminal generation. A pass is labeled exactly `critical-path-live
-verified`; absent optional certification is labeled exactly `full paid-live
-certification deferred`.
+Only one write-capable role runs at a time. Every successful writer handoff is
+commit-bound and must leave the tracked worktree clean.
 
-## Fixed Routing
+## Standing Autonomy And Authority
 
-- Core coordination, implementation, review, verification, repair, and
-  completion use `gpt-5.6-sol` with reasoning `high`.
-- Only bounded read-only scouts may use `gpt-5.6-terra` with reasoning `high`.
-- Model, reasoning, profile, alias, and fallback overrides are unsupported.
-- Launcher arguments enforce the route; prompts do not select models.
-- Missing or conflicting attestation blocks completion.
+The queue continues through product defects, test failures, review findings,
+technical choices, safe refactors, recoverable local setup problems, and
+interrupted children. The tie-break order is: approved requirements, repository
+architecture, smallest reversible change, lowest operational risk, strongest
+testability, then least new machinery. Nontrivial choices are appended to the
+autonomy ledger.
 
-## Run Contract
+Waiting for the user is allowed only for these six authority codes:
 
-Execution uses an isolated git worktree at
-`~/.codex/worktrees/<run_id>` and durable artifacts at
-`~/.codex/orchestrator/<run_id>`:
+- credential_required
+- external_side_effect
+- destructive_outside_worktree
+- authoritative_document_conflict
+- material_scope_expansion
+- legal_security_policy_authority
 
-```text
-run_manifest.json  immutable plan, spec, graph, model, and pricing hashes
-events.jsonl       authoritative hash-chained transition history
-state.json         rebuildable projection of manifest plus events
-artifacts/         immutable task packets, evidence, prompts, and reports
-```
+An authority answer must be one offered option. It is appended as a durable
+event; the original packet is not rewritten.
 
-Each executable task declares dependencies, file claims, acceptance commands,
-and evidence requirements. When a spec is supplied, every task needs explicit `spec_refs`;
-a missing or conflicting mapping blocks before edits. Every
-`scout`, `implementation`, `task_review`, `verification`, `repair`, and
-`final_review` request consumes the manifest-indexed task packet and verifies
-its `packet_sha256`. Write-capable tasks execute sequentially. Independent
-read-only scouts may run concurrently. Models never edit the manifest, events,
-evidence index, or state projection.
+## Durable Boundary
 
-Implementation starts only in the isolated worktree after the
-`using-superpowers` and `test-driven-development` gates; the source checkout
-and `main` branch are never used as the edit target.
+CPE snapshots every input before child launch and stores private state beneath
+CODEX_HOME/orchestrator/RUN_ID. The isolated worktree is beneath
+CODEX_HOME/worktrees/RUN_ID. The run manifest, input snapshots, artifact index,
+hash-chained event stream, autonomy ledger, reports, reviews, verification
+evidence, and terminal result are file-backed.
 
-Implementation and repair are the only product-writing roles. Their measured
-Git delta records `worktree_revision` and `worktree_patch_sha256`; every later
-`acceptance`, `task_review`, `verification`, `repository_check`, and
-`final_review` record is valid only at that revision. A later write invalidates
-the earlier suffix and schedules it again.
+Resume validates the manifest, event head and chain, selected map publication,
+worktree identity, and recorded commits before continuing the first nonterminal
+item. Completed work is not redispatched. Source changes affect a run only
+through explicit --refresh-inputs, which creates a new immutable generation.
 
-Completion first passes canonical integrity validation, then canonical
-completion validation. It requires a valid manifest and event chain, snapshot
-replay parity, all task and whole-diff reviews, in-scope git evidence,
-acceptance evidence, fixed-route attestations, resolved blockers, and
-repository-specific checks. The resulting projection records a structured
-`completion_audit`; missing or stale completion evidence is a blocker.
+A terminal completed status means the terminal integration artifact exists at
+the exact worktree revision. That artifact separately records its quality
+verdict, verification command and exit status, auditor verdicts, and
+limitations.
+
+Schema-3 run directories are never rewritten. Inspect returns a bounded
+read-only summary; resume returns legacy_run_requires_historical_cpe. Git
+history contains the historical implementation.
+
+## Verification
+
+The complete deterministic suite is standard-library-only, network-free,
+credential-free, and bounded to six checks:
+
+    ./evals/run.sh
+    python3 -m py_compile scripts/cpe.py scripts/cpe_runtime/*.py evals/*.py
+    bash -n evals/run.sh
+    python3 scripts/cpe.py --help
+    python3 scripts/cpe.py run --help
+    python3 scripts/cpe.py export --help
+
+The six checks cover contracts, mapping, queue execution, final closure,
+recovery, and CLI/export behavior. The development-machine target is under 60
+seconds.
 
 ## References
 
-- [Architecture](ARCHITECTURE.md)
-- [State and event contract](references/state-schema.md)
-- [Execution cycle](references/execution-cycle.md)
-- [Modes](references/mode-contracts.md)
-- [Reconciliation and repair](references/drift-reconciliation.md)
-- [Eval and release status](docs/evals-and-verification.md)
-
-## Maintenance
-
-Before changing this skill, follow [change-protocol.md](references/change-protocol.md),
-[doc-update-protocol.md](docs/doc-update-protocol.md), and
-[release-process.md](docs/release-process.md).
-
-The immediately preceding published release was version 3.0.1 with
-`deterministic-ready; paid-live-pending`; it remains historical compatibility
-context only.
-
-The older initial candidate metadata is retained solely for compatibility with
-maintained contract scanners and historical readers. It never describes the
-current release, current readiness, or an active routing decision. That literal
-was `version: "3.0.0"`.
+- Architecture: ARCHITECTURE.md
+- Usage and artifacts: README.md
+- State and replay: references/state-schema.md
+- Execution cycle: references/execution-cycle.md
+- Verification: docs/evals-and-verification.md
+- Risks: docs/risks-limitations-deferrals.md
+- Change protocol: references/change-protocol.md

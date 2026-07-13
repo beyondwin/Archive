@@ -474,6 +474,7 @@ class QueueEngine:
     def _publish_program_artifacts(
         self, artifacts: Mapping[str, bytes], *, program_path: str
     ) -> tuple[dict[str, object], str, str]:
+        self.store.prune_unselected_mapping_publications(self._generation_id)
         publication_id = self._publication_id(artifacts)
         prefix = (
             f"{self._generation_root}/attempts/{publication_id}/artifacts"
@@ -499,6 +500,7 @@ class QueueEngine:
             f"{self._generation_root}/attempts/{publication_id}/accepted.json"
         )
         self.store.put_artifact(manifest_path, manifest_bytes)
+        self.store.prune_unselected_mapping_publications(self._generation_id)
         return manifest, manifest_path, _sha256(manifest_bytes)
 
     def _accepted_program_artifacts(

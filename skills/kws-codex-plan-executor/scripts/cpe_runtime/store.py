@@ -46,6 +46,17 @@ _EVENT_HEAD_KEYS = frozenset({"event_count", "last_event_sha256"})
 _ARTIFACT_RECORD_KEYS = frozenset(
     {"artifact_id", "relative_path", "sha256", "byte_length"}
 )
+_ARTIFACT_TOMBSTONE_KEYS = frozenset(
+    {
+        "artifact_id",
+        "record_type",
+        "relative_path",
+        "prior_artifact_id",
+        "sha256",
+        "byte_length",
+    }
+)
+UNSELECTED_MAPPING_PUBLICATION_CAP = 1
 _ARTIFACT_ROOTS = frozenset(
     {"maps", "briefs", "reports", "reviews", "verification", "logs", "result.json"}
 )
@@ -472,7 +483,9 @@ class RunStore:
         store.autonomy_decisions()
         if not read_only:
             store.reconcile_autonomy_events()
+            store.reconcile_artifact_tombstones()
             store._reconcile_content_addressed_publication_manifests()
+            store.prune_unselected_mapping_publications()
         store._validate_artifacts()
         for event in store.validate_event_chain():
             if (
@@ -1147,11 +1160,18 @@ class RunStore:
                 os.close(descriptor)
 
     @staticmethod
-    def _parse_artifact_index(raw: bytes) -> tuple[dict[str, object], ...]:
+    def _parse_artifact_index_state(
+        raw: bytes,
+    ) -> tuple[
+        tuple[dict[str, object], ...],
+        tuple[dict[str, object], ...],
+        dict[str, dict[str, object]],
+    ]:
         if not raw:
-            return ()
-        records: list[dict[str, object]] = []
-        paths: set[str] = set()
+            return (), (), {}
+        history: list[dict[str, object]] = []
+        live: dict[str, dict[str, object]] = {}
+        tombstoned: dict[str, dict[str, object]] = {}
         for index, line in enumerate(raw.splitlines(keepends=True), 1):
             if not line.endswith(b"\n"):
                 raise ValueError("artifact index ends with a partial record")
@@ -1160,12 +1180,12 @@ class RunStore:
                 record = json.loads(content.decode("utf-8"))
             except (UnicodeDecodeError, json.JSONDecodeError) as exc:
                 raise ValueError("artifact index contains invalid JSON") from exc
-            if (
-                not isinstance(record, dict)
-                or frozenset(record) != _ARTIFACT_RECORD_KEYS
-                or content != canonical_json(record)
-                or record.get("artifact_id") != f"A{index:06d}"
-            ):
+            if not isinstance(record, dict) or (
+                frozenset(record)
+                not in {_ARTIFACT_RECORD_KEYS, _ARTIFACT_TOMBSTONE_KEYS}
+            ) or content != canonical_json(record) or record.get(
+                "artifact_id"
+            ) != f"A{index:06d}":
                 raise ValueError("artifact index record is invalid")
             relative_path = record.get("relative_path")
             digest = record.get("sha256")
@@ -1173,7 +1193,6 @@ class RunStore:
             if (
                 not isinstance(relative_path, str)
                 or normalize_relative_path(relative_path) != relative_path
-                or relative_path in paths
                 or not isinstance(digest, str)
                 or len(digest) != 64
                 or not isinstance(byte_length, int)
@@ -1186,9 +1205,55 @@ class RunStore:
                 artifact_root == "result.json" and relative_path != "result.json"
             ):
                 raise ValueError("artifact index path is outside managed artifacts")
-            paths.add(relative_path)
-            records.append(record)
-        return tuple(records)
+            if frozenset(record) == _ARTIFACT_RECORD_KEYS:
+                if relative_path in live:
+                    raise ValueError("artifact index path is already live")
+                live[relative_path] = record
+                tombstoned.pop(relative_path, None)
+            else:
+                prior = live.get(relative_path)
+                if (
+                    record.get("record_type") != "tombstone"
+                    or prior is None
+                    or record.get("prior_artifact_id") != prior["artifact_id"]
+                    or digest != prior["sha256"]
+                    or byte_length != prior["byte_length"]
+                ):
+                    raise ValueError("artifact tombstone is invalid")
+                del live[relative_path]
+                tombstoned[relative_path] = record
+            history.append(record)
+        return tuple(history), tuple(live.values()), tombstoned
+
+    @staticmethod
+    def _parse_artifact_index(raw: bytes) -> tuple[dict[str, object], ...]:
+        return RunStore._parse_artifact_index_state(raw)[1]
+
+    def _artifact_index_state(
+        self,
+    ) -> tuple[
+        tuple[dict[str, object], ...],
+        tuple[dict[str, object], ...],
+        dict[str, dict[str, object]],
+    ]:
+        descriptor = os.open(
+            self.paths.artifact_index,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+        )
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_SH)
+            chunks: list[bytes] = []
+            while True:
+                chunk = os.read(descriptor, 64 * 1024)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            return self._parse_artifact_index_state(b"".join(chunks))
+        finally:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+            finally:
+                os.close(descriptor)
 
     def _artifact_records(self) -> tuple[dict[str, object], ...]:
         descriptor = os.open(
@@ -1512,6 +1577,228 @@ class RunStore:
                 for record in self._artifact_records()
             }
 
+    def _append_artifact_tombstones(
+        self, records_to_remove: Mapping[str, Mapping[str, object]]
+    ) -> dict[str, dict[str, object]]:
+        descriptor = os.open(
+            self.paths.artifact_index,
+            os.O_RDWR | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0),
+        )
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            os.lseek(descriptor, 0, os.SEEK_SET)
+            chunks: list[bytes] = []
+            while True:
+                chunk = os.read(descriptor, 64 * 1024)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            history, live_records, _ = self._parse_artifact_index_state(
+                b"".join(chunks)
+            )
+            live = {
+                str(record["relative_path"]): record for record in live_records
+            }
+            tombstones: dict[str, dict[str, object]] = {}
+            for relative_path in sorted(records_to_remove):
+                expected = records_to_remove[relative_path]
+                current = live.get(relative_path)
+                if current != expected:
+                    raise ValueError("artifact changed before retention tombstone")
+                tombstone: dict[str, object] = {
+                    "artifact_id": f"A{len(history) + len(tombstones) + 1:06d}",
+                    "record_type": "tombstone",
+                    "relative_path": relative_path,
+                    "prior_artifact_id": current["artifact_id"],
+                    "sha256": current["sha256"],
+                    "byte_length": current["byte_length"],
+                }
+                line = canonical_json(tombstone) + b"\n"
+                view = memoryview(line)
+                while view:
+                    written = os.write(descriptor, view)
+                    if written <= 0:
+                        raise OSError("short artifact tombstone append")
+                    view = view[written:]
+                tombstones[relative_path] = tombstone
+            os.fsync(descriptor)
+            return tombstones
+        finally:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+            finally:
+                os.close(descriptor)
+
+    def _unlink_tombstoned_artifacts(
+        self, tombstones: Mapping[str, Mapping[str, object]]
+    ) -> None:
+        for relative_path in sorted(tombstones):
+            tombstone = tombstones[relative_path]
+            target = self.paths.root / relative_path
+            try:
+                metadata = target.lstat()
+            except FileNotFoundError:
+                continue
+            if (
+                stat.S_ISLNK(metadata.st_mode)
+                or not stat.S_ISREG(metadata.st_mode)
+                or stat.S_IMODE(metadata.st_mode) != 0o600
+            ):
+                raise ValueError("tombstoned artifact is not a private regular file")
+            data = _read_private_installed_file(target)
+            if (
+                len(data) != tombstone["byte_length"]
+                or _sha256(data) != tombstone["sha256"]
+            ):
+                raise ValueError("tombstoned artifact digest does not match")
+            target.unlink()
+            _fsync_directory(target.parent)
+            parent = target.parent
+            while parent != self.paths.maps:
+                try:
+                    parent.rmdir()
+                except OSError:
+                    break
+                _fsync_directory(parent.parent)
+                parent = parent.parent
+
+    def reconcile_artifact_tombstones(self) -> None:
+        """Finish durable tombstone-before-unlink retention after interruption."""
+
+        _history, _live, tombstones = self._artifact_index_state()
+        self._unlink_tombstoned_artifacts(tombstones)
+
+    def prune_unselected_mapping_publications(
+        self, generation_id: str | None = None
+    ) -> int:
+        """Keep one live unselected program-mapper publication per generation."""
+
+        if generation_id is not None and (
+            len(generation_id) != len("generation-0001")
+            or not generation_id.startswith("generation-")
+            or not generation_id.removeprefix("generation-").isdigit()
+            or int(generation_id.removeprefix("generation-")) < 1
+        ):
+            raise ValueError("mapping retention generation ID is invalid")
+        records = self._artifact_records()
+        indexed = {str(record["relative_path"]): record for record in records}
+        selected_by_generation: dict[str, str] = {}
+        protected: set[str] = set()
+        for event in self.validate_event_chain():
+            if event["event_type"] != "map.generation_created":
+                continue
+            payload = event["payload"]
+            selected_generation = payload.get("generation_id")
+            manifest_path = payload.get("publication_manifest_path")
+            manifest_digest = payload.get("publication_manifest_sha256")
+            if (
+                not isinstance(selected_generation, str)
+                or not isinstance(manifest_path, str)
+                or not isinstance(manifest_digest, str)
+            ):
+                raise ValueError("selected mapping reachability is invalid")
+            if selected_generation in selected_by_generation:
+                raise ValueError("selected mapping reachability is ambiguous")
+            raw = self._read_physical_indexed_artifact(manifest_path, indexed)
+            if _sha256(raw) != manifest_digest:
+                raise ValueError("selected mapping manifest digest does not match")
+            manifest = self._validate_publication_manifest(raw, manifest_path)
+            if (
+                manifest.get("generation_id") != selected_generation
+                or manifest.get("program_map_sha256") != payload.get("map_sha256")
+            ):
+                raise ValueError("selected mapping identity is invalid")
+            descriptors = manifest["artifacts"]
+            assert isinstance(descriptors, dict)
+            self._read_publication_artifact_batch(descriptors, indexed)
+            selected_by_generation[selected_generation] = manifest_path
+            protected.add(manifest_path)
+            protected.update(
+                str(descriptor["relative_path"])
+                for descriptor in descriptors.values()
+                if isinstance(descriptor, Mapping)
+            )
+
+        groups: dict[tuple[str, str], dict[str, Mapping[str, object]]] = {}
+        for relative_path, record in indexed.items():
+            parts = Path(relative_path).parts
+            if len(parts) < 4 or parts[0] != "maps" or parts[2] != "attempts":
+                continue
+            current_generation, publication_id = parts[1], parts[3]
+            if generation_id is not None and current_generation != generation_id:
+                continue
+            if (
+                not current_generation.startswith("generation-")
+                or len(publication_id) != 64
+                or any(character not in "0123456789abcdef" for character in publication_id)
+            ):
+                raise ValueError("mapping publication identity is ambiguous")
+            groups.setdefault((current_generation, publication_id), {})[
+                relative_path
+            ] = record
+
+        unselected: dict[
+            str, list[tuple[int, dict[str, Mapping[str, object]]]]
+        ] = {}
+        for (current_generation, publication_id), group in groups.items():
+            manifest_path = (
+                f"maps/{current_generation}/attempts/{publication_id}/accepted.json"
+            )
+            manifest_record = group.get(manifest_path)
+            if manifest_record is None:
+                for relative_path, record in group.items():
+                    parts = Path(relative_path).parts
+                    if (
+                        len(parts) < 6
+                        or parts[:4]
+                        != ("maps", current_generation, "attempts", publication_id)
+                        or parts[4] != "artifacts"
+                        or parts[5] not in {"maps", "briefs"}
+                    ):
+                        raise ValueError("mapping attempt identity is ambiguous")
+                    self._read_indexed_artifact(relative_path, record)
+                order = max(
+                    int(str(record["artifact_id"])[1:])
+                    for record in group.values()
+                )
+                unselected.setdefault(current_generation, []).append((order, group))
+                continue
+            raw = self._read_indexed_artifact(manifest_path, manifest_record)
+            manifest = self._validate_publication_manifest(raw, manifest_path)
+            descriptors = manifest["artifacts"]
+            assert isinstance(descriptors, dict)
+            expected_paths = {
+                manifest_path,
+                *(
+                    str(descriptor["relative_path"])
+                    for descriptor in descriptors.values()
+                    if isinstance(descriptor, Mapping)
+                ),
+            }
+            if expected_paths != set(group):
+                raise ValueError("mapping publication reachability is ambiguous")
+            self._read_publication_artifact_batch(descriptors, indexed)
+            if manifest_path in protected:
+                if not set(group) <= protected:
+                    raise ValueError("selected mapping reachability is ambiguous")
+                continue
+            if set(group) & protected:
+                raise ValueError("mapping publication reachability is ambiguous")
+            order = int(str(manifest_record["artifact_id"])[1:])
+            unselected.setdefault(current_generation, []).append((order, group))
+
+        prunable: dict[str, Mapping[str, object]] = {}
+        pruned_groups = 0
+        for attempts in unselected.values():
+            attempts.sort(key=lambda item: item[0])
+            for _order, group in attempts[:-UNSELECTED_MAPPING_PUBLICATION_CAP]:
+                prunable.update(group)
+                pruned_groups += 1
+        if prunable:
+            tombstones = self._append_artifact_tombstones(prunable)
+            self._unlink_tombstoned_artifacts(tombstones)
+        return pruned_groups
+
     def put_artifact(self, relative_path: str, data: bytes) -> Path:
         if not isinstance(data, bytes):
             raise ValueError("artifact data must be bytes")
@@ -1529,18 +1816,24 @@ class RunStore:
                 if not chunk:
                     break
                 chunks.append(chunk)
-            records = self._parse_artifact_index(b"".join(chunks))
+            history, records, tombstoned = self._parse_artifact_index_state(
+                b"".join(chunks)
+            )
             indexed = {str(record["relative_path"]): record for record in records}
             if target.exists() or target.is_symlink():
                 record = indexed.get(normalized)
                 if record is None:
+                    if normalized in tombstoned:
+                        raise ValueError(
+                            "tombstoned artifact awaits unlink reconciliation"
+                        )
                     current = _read_private_installed_file(target)
                     if current != data:
                         raise ValueError(
                             "unindexed artifact already exists with different bytes"
                         )
                     record = {
-                        "artifact_id": f"A{len(records) + 1:06d}",
+                        "artifact_id": f"A{len(history) + 1:06d}",
                         "relative_path": normalized,
                         "sha256": _sha256(data),
                         "byte_length": len(data),
@@ -1563,7 +1856,7 @@ class RunStore:
             _mkdir_artifact_parents(self.paths.root, target.parent)
             _atomic_write_new(target, data)
             record: dict[str, object] = {
-                "artifact_id": f"A{len(records) + 1:06d}",
+                "artifact_id": f"A{len(history) + 1:06d}",
                 "relative_path": normalized,
                 "sha256": _sha256(data),
                 "byte_length": len(data),

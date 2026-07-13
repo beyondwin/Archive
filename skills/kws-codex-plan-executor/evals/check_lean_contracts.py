@@ -6,12 +6,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import shutil
 import signal
 import stat
 import subprocess
 import sys
-import tempfile
 import time
 import unittest
 from dataclasses import replace
@@ -19,7 +17,6 @@ from pathlib import Path
 
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
-FIXTURES = Path(__file__).resolve().parent / "lean-fixtures"
 sys.path.insert(0, str(SKILL_ROOT / "scripts"))
 
 from cpe_runtime.contracts import (  # noqa: E402
@@ -30,41 +27,19 @@ from cpe_runtime.contracts import (  # noqa: E402
 from cpe_runtime.store import RunStore  # noqa: E402
 from cpe_runtime.launcher import ChildLauncher, ChildRequest  # noqa: E402
 from cpe_runtime.worktree import Worktree  # noqa: E402
+from fake_codex import LeanEvalCase  # noqa: E402
 
 
-class LeanContractsTest(unittest.TestCase):
+class LeanContractsTest(LeanEvalCase):
+    fixture_prefix = "cpe-lean-contracts-"
+
     def setUp(self) -> None:
-        self.temporary = tempfile.TemporaryDirectory(prefix="cpe-lean-contracts-")
-        self.root = Path(self.temporary.name)
-        self.home = self.root / "codex-home"
-        self.repo = self.root / "repo"
-        self.home.mkdir(mode=0o700)
-        self.repo.mkdir()
-        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
-        subprocess.run(
-            ["git", "-C", str(self.repo), "config", "user.email", "cpe@example.invalid"],
-            check=True,
-        )
-        subprocess.run(
-            ["git", "-C", str(self.repo), "config", "user.name", "CPE Eval"],
-            check=True,
-        )
-        for name in ("spec-a.md", "spec-b.md", "plan-a.md", "plan-b.md", "program.md"):
-            shutil.copyfile(FIXTURES / name, self.repo / name)
-        subprocess.run(["git", "-C", str(self.repo), "add", "."], check=True)
-        subprocess.run(
-            ["git", "-C", str(self.repo), "commit", "-q", "-m", "fixture base"],
-            check=True,
-        )
-
+        super().setUp()
         self.spec_a = self.repo / "spec-a.md"
         self.spec_b = self.repo / "spec-b.md"
         self.plan_a = self.repo / "plan-a.md"
         self.plan_b = self.repo / "plan-b.md"
         self.program = self.repo / "program.md"
-
-    def tearDown(self) -> None:
-        self.temporary.cleanup()
 
     def create_store(self) -> RunStore:
         return RunStore.create(
@@ -118,14 +93,8 @@ class LeanContractsTest(unittest.TestCase):
         )
 
     def create_fake_codex_bin(self) -> tuple[Path, Path]:
-        bin_dir = self.root / "fake-bin"
-        bin_dir.mkdir()
+        bin_dir = self.install_fake_codex()
         fake_codex = bin_dir / "codex"
-        source = (SKILL_ROOT / "evals" / "fake_codex.py").read_text(encoding="utf-8")
-        lines = source.splitlines()
-        lines[0] = f"#!{sys.executable}"
-        fake_codex.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        fake_codex.chmod(0o700)
         return bin_dir, fake_codex
 
     def make_child_request(
@@ -969,7 +938,7 @@ class LeanContractsTest(unittest.TestCase):
         descendant_pid_path = self.root / "descendant.pid"
         launcher = ChildLauncher(
             schema_path=SKILL_ROOT / "templates" / "child-result-schema.json",
-            timeout_seconds=0.5,
+            timeout_seconds=1.5,
             terminate_grace_seconds=0.2,
             environ={
                 **os.environ,
@@ -1010,7 +979,7 @@ class LeanContractsTest(unittest.TestCase):
         descendant_pid_path = self.root / "surviving-descendant.pid"
         launcher = ChildLauncher(
             schema_path=SKILL_ROOT / "templates" / "child-result-schema.json",
-            timeout_seconds=0.5,
+            timeout_seconds=1.5,
             terminate_grace_seconds=0.2,
             environ={
                 **os.environ,

@@ -5,10 +5,8 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 import unittest
@@ -17,7 +15,6 @@ from pathlib import Path
 
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
-FIXTURES = Path(__file__).resolve().parent / "lean-fixtures"
 sys.path.insert(0, str(SKILL_ROOT / "scripts"))
 
 from cpe_runtime.launcher import ChildLauncher, ChildRequest  # noqa: E402
@@ -25,49 +22,20 @@ from cpe_runtime.contracts import ChildResult  # noqa: E402
 from cpe_runtime.queue import QueueEngine  # noqa: E402
 from cpe_runtime.store import RunStore  # noqa: E402
 from cpe_runtime.worktree import Worktree  # noqa: E402
+from fake_codex import LeanEvalCase  # noqa: E402
 
 
-class LeanQueueTest(unittest.TestCase):
+class LeanQueueTest(LeanEvalCase):
+    fixture_prefix = "cpe-lean-queue-"
+    repository_instructions = (
+        "# Repository Instructions\n\nUse strict TDD and commit clean handoffs.\n"
+    )
+
     def setUp(self) -> None:
-        self.temporary = tempfile.TemporaryDirectory(prefix="cpe-lean-queue-")
-        self.root = Path(self.temporary.name)
-        self.home = self.root / "codex-home"
-        self.repo = self.root / "repo"
-        self.home.mkdir(mode=0o700)
-        self.repo.mkdir()
-        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
-        subprocess.run(
-            ["git", "-C", str(self.repo), "config", "user.email", "cpe@example.invalid"],
-            check=True,
-        )
-        subprocess.run(
-            ["git", "-C", str(self.repo), "config", "user.name", "CPE Eval"],
-            check=True,
-        )
-        for name in ("spec-a.md", "spec-b.md", "plan-a.md", "plan-b.md", "program.md"):
-            shutil.copyfile(FIXTURES / name, self.repo / name)
-        (self.repo / "AGENTS.md").write_text(
-            "# Repository Instructions\n\nUse strict TDD and commit clean handoffs.\n",
-            encoding="utf-8",
-        )
-        subprocess.run(["git", "-C", str(self.repo), "add", "."], check=True)
-        subprocess.run(
-            ["git", "-C", str(self.repo), "commit", "-q", "-m", "fixture base"],
-            check=True,
-        )
+        super().setUp()
         self.invocation_log = self.root / "queue-invocations.jsonl"
         self.fake_state = self.root / "queue-state.json"
-        self.bin_dir = self.root / "fake-bin"
-        self.bin_dir.mkdir()
-        fake_codex = self.bin_dir / "codex"
-        source = (SKILL_ROOT / "evals" / "fake_codex.py").read_text(encoding="utf-8")
-        lines = source.splitlines()
-        lines[0] = f"#!{sys.executable}"
-        fake_codex.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        fake_codex.chmod(0o700)
-
-    def tearDown(self) -> None:
-        self.temporary.cleanup()
+        self.bin_dir = self.install_fake_codex()
 
     def create_engine(
         self, scenario: str, *, mapping_scenario: str = "mapping_success"

@@ -6,17 +6,15 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import shutil
 import subprocess
 import sys
-import tempfile
+import time
 import unittest
 from pathlib import Path
 
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 CLI = SKILL_ROOT / "scripts" / "cpe.py"
-FIXTURES = Path(__file__).resolve().parent / "lean-fixtures"
 PUBLIC_FIELDS = {
     "status",
     "run_id",
@@ -27,36 +25,15 @@ PUBLIC_FIELDS = {
     "authority_items",
     "terminal_artifact",
 }
+from fake_codex import LeanEvalCase  # noqa: E402
 
 
-class LeanCliTest(unittest.TestCase):
+class LeanCliTest(LeanEvalCase):
+    fixture_prefix = "cpe-lean-cli-"
+
     def setUp(self) -> None:
-        self.temporary = tempfile.TemporaryDirectory(prefix="cpe-lean-cli-")
-        self.root = Path(self.temporary.name)
-        self.home = self.root / "codex-home"
-        self.repo = self.root / "repo"
-        self.home.mkdir(mode=0o700)
-        self.repo.mkdir()
-        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
-        subprocess.run(
-            ["git", "-C", str(self.repo), "config", "user.email", "cpe@example.invalid"],
-            check=True,
-        )
-        subprocess.run(
-            ["git", "-C", str(self.repo), "config", "user.name", "CPE Eval"],
-            check=True,
-        )
-        for name in ("spec-a.md", "spec-b.md", "plan-a.md", "plan-b.md", "program.md"):
-            shutil.copyfile(FIXTURES / name, self.repo / name)
-        subprocess.run(["git", "-C", str(self.repo), "add", "."], check=True)
-        subprocess.run(
-            ["git", "-C", str(self.repo), "commit", "-q", "-m", "fixture base"],
-            check=True,
-        )
+        super().setUp()
         self.env = {**os.environ, "CODEX_HOME": str(self.home)}
-
-    def tearDown(self) -> None:
-        self.temporary.cleanup()
 
     def cli(self, *arguments: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
@@ -192,6 +169,114 @@ class LeanCliTest(unittest.TestCase):
         self.assertEqual(set(payload), PUBLIC_FIELDS)
         self.assertEqual(payload["status"], "failed")
         self.assertEqual(payload["failure_code"], "run_not_found")
+
+    def test_eval_runner_timeout_kills_sigterm_ignoring_descendant(self) -> None:
+        descendant_pid = self.root / "runner-descendant.pid"
+        env = {
+            **os.environ,
+            "CPE_EVAL_RUNNER_SELF_TEST": "hang-descendant",
+            "CPE_EVAL_SELF_TEST_PID": str(descendant_pid),
+            "CPE_EVAL_CASE_TIMEOUT": "0.4",
+            "CPE_EVAL_TERM_GRACE": "0.1",
+            "CPE_EVAL_JOBS": "1",
+        }
+        started = time.monotonic()
+        result = subprocess.run(
+            ["bash", str(SKILL_ROOT / "evals" / "run.sh")],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env,
+            timeout=5,
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertLess(time.monotonic() - started, 4)
+        self.assertIn("TIMEOUT synthetic::hang-descendant", result.stderr)
+        self.assertTrue(descendant_pid.is_file())
+        pid = int(descendant_pid.read_text(encoding="utf-8"))
+        for _ in range(80):
+            status = subprocess.run(
+                ["ps", "-p", str(pid), "-o", "stat="],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+            if status.returncode != 0 or status.stdout.strip().startswith("Z"):
+                break
+            time.sleep(0.025)
+        else:
+            self.fail(f"runner descendant survived timeout: {pid}")
+
+        for variable, invalid in (
+            ("CPE_EVAL_JOBS", "9"),
+            ("CPE_EVAL_CASE_TIMEOUT", "31"),
+            ("CPE_EVAL_TERM_GRACE", "6"),
+        ):
+            rejected = subprocess.run(
+                ["bash", str(SKILL_ROOT / "evals" / "run.sh")],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env={**env, variable: invalid},
+                timeout=2,
+                check=False,
+            )
+            self.assertNotEqual(rejected.returncode, 0)
+
+    def test_active_skill_inventory_is_exact(self) -> None:
+        expected = {
+            "ARCHITECTURE.md",
+            "HISTORY.md",
+            "README.md",
+            "SKILL.md",
+            "docs/doc-update-protocol.md",
+            "docs/evals-and-verification.md",
+            "docs/risks-limitations-deferrals.md",
+            "docs/user-guide.ko.md",
+            "evals/check_lean_cli.py",
+            "evals/check_lean_contracts.py",
+            "evals/check_lean_final.py",
+            "evals/check_lean_mapping.py",
+            "evals/check_lean_queue.py",
+            "evals/check_lean_recovery.py",
+            "evals/fake_codex.py",
+            "evals/lean-fixtures/plan-a.md",
+            "evals/lean-fixtures/plan-b.md",
+            "evals/lean-fixtures/program.md",
+            "evals/lean-fixtures/spec-a.md",
+            "evals/lean-fixtures/spec-b.md",
+            "evals/run.sh",
+            "references/change-protocol.md",
+            "references/common-mistakes.md",
+            "references/execution-cycle.md",
+            "references/prompt-export-checklist.md",
+            "references/state-schema.md",
+            "scripts/cpe.py",
+            "scripts/cpe_runtime/__init__.py",
+            "scripts/cpe_runtime/contracts.py",
+            "scripts/cpe_runtime/launcher.py",
+            "scripts/cpe_runtime/legacy.py",
+            "scripts/cpe_runtime/prompt_export.py",
+            "scripts/cpe_runtime/queue.py",
+            "scripts/cpe_runtime/store.py",
+            "scripts/cpe_runtime/worktree.py",
+            "templates/child-result-schema.json",
+        }
+        actual = {
+            path.relative_to(SKILL_ROOT).as_posix()
+            for path in SKILL_ROOT.rglob("*")
+            if path.is_file() and "__pycache__" not in path.parts
+        }
+        self.assertEqual(actual, expected)
+        self.assertFalse(
+            any(
+                path
+                for name in ("agents", "data")
+                for path in (SKILL_ROOT / name).glob("*")
+            )
+        )
 
 
 if __name__ == "__main__":

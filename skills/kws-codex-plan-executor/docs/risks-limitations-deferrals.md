@@ -1,77 +1,115 @@
 # Risks, Limitations, And Deferrals
 
-The current v4 mainline risk register, release blockers, and ordered follow-up
-work are tracked in
-[v4-main-residual-risks-and-follow-up.md](v4-main-residual-risks-and-follow-up.md).
-The v3 statements below remain historical release context unless explicitly
-marked as v4.
+## Mapper Omission
 
-## vNext Program Risk Status
+A model can omit or distort source material. Document maps retain exact
+excerpts and hashes, program coverage rejects unmapped normative requirements,
+task briefs are lossless, document auditors reread original snapshots, and the
+final integrator sees all verdicts. These controls reduce but do not eliminate
+semantic model error.
 
-- **R1 - closed by current cost-free Plan 1 evidence.** Fixed production paths
-  load the release policy and dogfood contract from exact Git objects, and the
-  resulting immutable `TrustRoot` is checked across manifest, ledger, dogfood,
-  terminal generation, lineage, and public validation. The exact checkpoint
-  identity is recorded in the durable Task 4 report after the checkpoint commit
-  to avoid a self-referential tracked document.
-- **R2 - Program Final Gate pending.** No credentialed critical-path live proof
-  was authorized or run in Plan 1. It may run only against the frozen final
-  vNext checkpoint after the complete cost-free gate and a fresh explicit
-  authority decision.
-- **R3 - Program Final Gate pending.** Plan 1 supplies the exact four-lane
-  schemas, reducer, checkpoint binding, disposition ordering, and one repair-
-  wave ceiling, but it does not issue the final integrated verdict. That verdict
-  must cover the exact post-Plan-3 checkpoint before R2.
+## Conflicting Authorities
 
-R1 closure is therefore an implementation and deterministic-evidence result,
-not a vNext release-readiness claim. Existing v3 publication status remains
-historical context and does not satisfy vNext R2 or R3.
+CLI order never grants precedence. Explicit supersession or one offered user
+answer is required. This can pause affected tasks even when an implementer has
+a technically reasonable preference.
 
-- Published evidence state is **deterministic-ready; paid-live-verified**.
-  Audited deterministic integrity gaps are closed by the current cost-free
-  suite, and the reviewed four-treatment, eight-case subscription matrix passed
-  the unchanged release gate. The tracked privacy audit passed and
-  `release_ready=true`.
-- That 3.1.0 state is historical v3 evidence. The unpublished v4 merge gate can
-  claim `critical-path-live verified` only from a terminal generation; optional
-  17-call certification remains `full paid-live certification deferred` until
-  its own terminal pass.
-- The v3 deterministic harness uses a maintained inventory, public CLI fixture
-  repositories, fake providers, and an isolated oracle. This covers behavior,
-  not real provider quality or latency; the reviewed live matrix supplies the
-  release evidence for version 3.1.0.
-- The live runner can verify ChatGPT login and remove API-key credentials from
-  child environments, but it cannot prove which account-side subscription or
-  existing-credit bucket a call consumed. Subscription reports therefore keep
-  `cost_usd=null` and `cost_observability=unavailable`; operators must inspect
-  account billing settings independently.
-- A timeout, subscription limit, malformed result, missing digest, source or
-  oracle drift, unavailable exact model route, or incomplete slot ledger blocks
-  aggregation. Resume is explicit, and failed slots are not retried without
-  `--retry-failed`.
-- Live evidence is stored outside the repository and is not a release claim by
-  itself. Version 3.1.0 was published only after independent implementation and
-  sanitized-report review plus a tracked privacy audit; future evidence must
-  repeat those gates before changing version, status, or `release_ready`.
-- Raw per-slot transcripts, user-home paths, temporary execution paths, and
-  oracle paths remain external and untracked; sanitized release evidence
-  contains none of them.
-- The v4 corrected-run predecessor importer proves continuity only from the
-  exact filesystem root it validates at import time. It is not a signature or
-  remote transparency service. A tampered root fails validation, while the new
-  root retains only source digests and implementation identity needed to
-  enforce the one-corrected-run cap.
-- V2 runs cannot resume or migrate. Consumers preserve them and return
-  `unsupported_schema`; operators must start a new v3 run.
-- Sol/high unavailability or missing actual-model attestation blocks core work;
-  there is no downgrade route.
-- Terra/high scouts are advisory read-only evidence collectors. Sol must reopen
-  critical evidence before implementation or a verdict.
-- Safe repair is deliberately narrow. Invalid event history, changed source
-  identity, evidence corruption, or diff-scope violations require operator
-  resolution rather than automatic rewriting.
-- Repair can legitimately return `applied=false` when the declared projection
-  delta is not observed. Blocked work is resumable only when evidence identifies
-  an exact retry phase; neither outcome is equivalent to success.
-- Dependency preflight reports preparation commands but does not install or
-  mutate operator environments.
+## Autonomous Technical Choices
+
+Standing autonomy can choose the wrong reversible implementation. Decisions
+are constrained by approved requirements, repository conventions, reversibility,
+risk, testability, and maintenance cost; every material choice is durable
+evidence and remains reviewable. Legal, security, policy, and material scope
+authority remain user-owned.
+
+## Persistent Recovery
+
+There is no arbitrary product-failure attempt limit. A repeated material
+failure must change investigator or strategy and preserve evidence. A genuine
+runner-integrity contradiction fails closed. Long difficult programs can
+therefore consume substantial local time and disk before reaching a terminal
+state.
+
+## Unselected Mapping Attempt Retention
+
+Program-map publications are content-addressed and indexed before the
+map.generation_created selection event. A crash followed by different valid
+mapper bytes can leave multiple unselected attempts.
+
+CPE 4.0.0 keeps exactly one live unselected Program Mapper attempt per logical
+map generation, whether the attempt reached accepted.json or stopped after
+writing a strict physical artifact path. Document Mapper outboxes are not
+content-addressed attempts and are outside this policy. Every
+map.generation_created manifest, every physical artifact it reaches, and all
+non-mapping evidence are permanently protected.
+
+Pruning validates all selected reachability first, appends strict artifact
+index tombstones under the writer lock, fsyncs them, and only then unlinks
+matching private files. Open recovery finishes a tombstone-before-unlink crash.
+Tombstoned reads fail and a selected digest, identity, or reachability
+ambiguity fails closed.
+
+A partial group has no publication commitment yet, so retention permits only
+strict maps/GENERATION/attempts/SHA/artifacts/{maps,briefs}/... paths whose
+indexed bytes still validate. Any other identity is ambiguous and fails
+closed. Operators must not manually remove indexed paths; remove an abandoned
+run only as a whole after deciding it is no longer evidence.
+
+## Schema 3
+
+CPE 4 reads only a bounded schema-3 summary. It does not migrate or resume old
+runs. Historical execution requires an explicit checkout of the pre-4.0 code;
+the old run and worktree must remain untouched.
+
+## Python Size
+
+Python remains because child and Git latency dominate interpreter cost. The
+4.0.0 runtime is split into the public CLI and eight focused runtime files, but
+strict lossless mapping, crash-safe storage, recovery, process-group control,
+and final-evidence validation remain substantial. Active line counts are
+measured at release. The Task 7 review-fix count is 15,989 lines against the
+directional 5,000-line target: 9,686 runtime lines and 6,303 eval lines.
+
+| Active file | Lines | Necessary retained responsibility |
+| --- | ---: | --- |
+| scripts/cpe.py | 571 | four-command parsing, public result, authority and resume adapter |
+| contracts.py | 2,085 | lossless map, brief, event, audit, terminal, and child validation |
+| store.py | 2,277 | private snapshots, crash-safe append, tombstone retention, publication, replay |
+| queue.py | 3,725 | mapping, dependency execution, recovery, audits, final integration |
+| launcher.py | 680 | strict child boundary, writer lease, timeout and process-group cleanup |
+| worktree.py | 207 | source identity, branch, commit and clean-handoff checks |
+| legacy.py | 63 | bounded read-only schema-3 inspection |
+| prompt_export.py | 77 | side-effect-free prompt and handoff rendering |
+| __init__.py | 1 | package marker |
+| six checks plus fake_codex.py | 6,303 | 124 semantic cases and deterministic child behavior |
+
+The excess is an explicit maintenance risk. Task 7 removed more than 65,000
+superseded lines and consolidated the repeated six-check Git fixture, but did
+not compress formatting or remove semantic assertions merely to improve wc.
+Further safe reduction needs its own behavior-preserving plan:
+
+1. replace repeated map field validators in contracts.py with one declarative
+   strict-record vocabulary while retaining exact error and cross-reference
+   tests;
+2. factor store.py event, autonomy-ledger, and artifact-index locked I/O into
+   one crash-safe append/read transaction primitive with fault injection;
+3. separate queue.py generation, task recovery, and final-evidence walkers
+   behind pure state helpers, then prove replay parity before deleting the old
+   paths;
+4. extend the shared eval fixture with typed map/result builders so the 124
+   cases keep their assertions without repeating payload construction.
+
+Any later Bun proposal must demonstrate measured packaging, maintenance, or
+latency benefit and implement only the lean queue contract. It may not port
+deleted surfaces.
+
+## Scope Limits
+
+CPE 4 does not:
+
+- optimize small-task execution;
+- merge, push, deploy, publish, or send external messages without authority;
+- modify installed Superpowers skills or Waygent;
+- migrate schema-3 state;
+- clean external worktrees;
+- synthesize product quality beyond the terminal artifact.
