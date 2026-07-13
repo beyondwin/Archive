@@ -12,6 +12,7 @@ from audit_superpowers_compatibility import assert_superpowers_compatible
 from build_spec_manifest import build_manifest as build_spec_manifest
 from parse_plan import parse_plan
 
+from .document_set import DocumentSet, DocumentSetBlocked, compile_document_set
 from .manifest import sha256_bytes, sha256_file
 from .task_contracts import compile_task_contract
 
@@ -40,6 +41,7 @@ class CompiledRun:
     sources: tuple[InputSource, ...]
     source_head: str
     source_status: tuple[str, ...]
+    document_set: DocumentSet
 
 
 class CompileBlocked(ValueError):
@@ -270,47 +272,66 @@ def assert_clean_claimed_scope(
         )
 
 
-def snapshot_source_bytes(plan: Path, spec: Path | None, docs: tuple[Path, ...]) -> tuple[InputSource, ...]:
-    ordered = [("plan", plan)]
-    if spec is not None:
-        ordered.append(("spec", spec))
-    ordered.extend(("doc", path) for path in docs)
-    snapshots: list[InputSource] = []
-    for role, source_path in ordered:
-        resolved = source_path.expanduser().resolve()
-        try:
-            content = resolved.read_bytes()
-        except OSError as exc:
-            raise CompileBlocked(
-                "source_unreadable",
-                f"{role} source is unreadable",
-                {"role": role, "source_path": str(resolved), "error": str(exc)},
-            ) from None
-        snapshots.append(InputSource(role, resolved, sha256_bytes(content), content))
-    return tuple(snapshots)
+def snapshot_source_bytes(document_set: DocumentSet) -> tuple[InputSource, ...]:
+    """Adapt immutable vNext documents for current packet/manifest consumers."""
+
+    role_order = {"plan": 0, "spec": 1, "program": 2, "doc": 3}
+    ordered = sorted(
+        enumerate(document_set.documents),
+        key=lambda item: (role_order[item[1].kind], item[0]),
+    )
+    return tuple(
+        InputSource(document.kind, document.path, document.sha256, document.content)
+        for _, document in ordered
+    )
 
 
 def compile_run(
     *,
-    plan: Path,
+    plans: tuple[Path, ...] | None = None,
+    program_plan: Path | None = None,
     spec: Path | None,
     docs: tuple[Path, ...],
     workspace: Path,
     mode: str,
+    **legacy: object,
 ) -> CompiledRun:
+    legacy_plan = legacy.pop("plan", None)
+    if legacy:
+        unexpected = next(iter(legacy))
+        raise TypeError(f"compile_run() got an unexpected keyword argument {unexpected!r}")
+    if legacy_plan is not None:
+        if plans is not None:
+            raise TypeError("compile_run() accepts either plans or legacy plan, not both")
+        if not isinstance(legacy_plan, Path):
+            raise TypeError("compile_run() legacy plan must be a pathlib.Path")
+        plans = (legacy_plan,)
+    if plans is None:
+        raise TypeError("compile_run() missing required keyword-only argument: 'plans'")
     workspace = workspace.expanduser().resolve()
-    plan = plan.expanduser().resolve()
+    plans = tuple(plan.expanduser().resolve() for plan in plans)
+    program_plan = program_plan.expanduser().resolve() if program_plan else None
     spec = spec.expanduser().resolve() if spec else None
     docs = tuple(path.expanduser().resolve() for path in docs)
-    head, status = read_git_basis(workspace)
     try:
-        parsed = parse_plan(plan, workspace, mode)
-    except SystemExit as exc:
+        document_set = compile_document_set(spec, plans, program_plan, docs)
+    except DocumentSetBlocked as exc:
         raise CompileBlocked(
-            "plan_parse_failed",
-            "plan could not be parsed for execution",
-            {"plan": str(plan), "exit_code": exc.code},
+            "document_set_invalid",
+            exc.summary,
+            {"reason": exc.category, **exc.evidence},
         ) from None
+    head, status = read_git_basis(workspace)
+    parsed_plans: list[tuple[Path, dict[str, object]]] = []
+    for plan in plans:
+        try:
+            parsed_plans.append((plan, parse_plan(plan, workspace, mode)))
+        except SystemExit as exc:
+            raise CompileBlocked(
+                "plan_parse_failed",
+                "plan could not be parsed for execution",
+                {"plan": str(plan), "exit_code": exc.code},
+            ) from None
     try:
         spec_manifest = build_spec_manifest(spec) if spec else None
     except SystemExit as exc:
@@ -319,11 +340,16 @@ def compile_run(
             "specification could not be compiled",
             {"spec": str(spec), "exit_code": exc.code},
         ) from None
-    sources = snapshot_source_bytes(plan, spec, docs)
+    sources = snapshot_source_bytes(document_set)
     spec_content = next((source.content for source in sources if source.role == "spec"), None)
-    tasks = compile_tasks(parsed, spec_manifest, spec_content)
+    tasks = tuple(
+        task
+        for _, parsed in parsed_plans
+        for task in compile_tasks(parsed, spec_manifest, spec_content)
+    )
     assert_safe_commands(tasks)
     assert_clean_claimed_scope(status, tasks)
-    assert_superpowers_compatible(plan, workspace)
-    assert_plan_executable(plan, spec, workspace)
-    return CompiledRun(tasks, spec_manifest, sources, head, status)
+    for plan, _ in parsed_plans:
+        assert_superpowers_compatible(plan, workspace)
+        assert_plan_executable(plan, spec, workspace)
+    return CompiledRun(tasks, spec_manifest, sources, head, status, document_set)

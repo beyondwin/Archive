@@ -330,16 +330,24 @@ def _cleanup_unpublished_worktree(
 
 def execute_run(args: argparse.Namespace) -> int:
     workspace = Path(args.workspace).expanduser().resolve()
-    plan = Path(args.plan).expanduser().resolve()
+    plans = tuple(Path(value).expanduser().resolve() for value in args.plan)
+    program_plan = Path(args.program_plan).expanduser().resolve() if args.program_plan else None
     spec = Path(args.spec).expanduser().resolve() if args.spec else None
     docs = [Path(value).expanduser().resolve() for value in (args.docs or [])]
-    if not workspace.is_dir() or not plan.is_file() or (spec and not spec.is_file()) or any(not path.is_file() for path in docs):
-        raise PreflightError("workspace, plan, spec, or docs path is unreadable")
+    if (
+        not workspace.is_dir()
+        or any(not plan.is_file() for plan in plans)
+        or (program_plan and not program_plan.is_file())
+        or (spec and not spec.is_file())
+        or any(not path.is_file() for path in docs)
+    ):
+        raise PreflightError("workspace, plan, program plan, spec, or docs path is unreadable")
     dependency_report = check_requirements()
     if not dependency_report["passed"]:
         raise PreflightError(json.dumps(dependency_report, ensure_ascii=False))
     compiled = compile_run(
-        plan=plan,
+        plans=plans,
+        program_plan=program_plan,
         spec=spec,
         docs=tuple(docs),
         workspace=workspace,
@@ -347,7 +355,7 @@ def execute_run(args: argparse.Namespace) -> int:
     )
     tasks = list(compiled.tasks)
     head = compiled.source_head
-    run_id, run_dir, worktree = _allocate_paths(plan)
+    run_id, run_dir, worktree = _allocate_paths(plans[0])
     pricing = Path(__file__).resolve().parents[1] / "data" / "pricing-snapshot.json"
     try:
         manifest = _compiled_manifest(run_id, args.mode, workspace, worktree, run_dir, compiled, pricing)
@@ -940,7 +948,14 @@ def run_v4_fixture(
         if cloned.returncode:
             raise RuntimeError("fixture_repository_clone_failed")
 
-    compiled = compile_run(plan=plan.resolve(), spec=None, docs=(), workspace=workspace, mode="interactive")
+    compiled = compile_run(
+        plans=(plan.resolve(),),
+        program_plan=None,
+        spec=None,
+        docs=(),
+        workspace=workspace,
+        mode="interactive",
+    )
     run_id = "cpe-v4-ten-task-fixture"
     run_dir = codex_home / "orchestrator" / run_id
     worktree = codex_home / "worktrees" / run_id
@@ -1405,7 +1420,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     run = sub.add_parser("run")
-    run.add_argument("--plan", required=True)
+    run.add_argument("--plan", action="append", required=True)
+    run.add_argument("--program-plan")
     run.add_argument("--spec")
     run.add_argument("--docs", action="append", default=[])
     run.add_argument("--workspace", required=True)
