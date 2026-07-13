@@ -46,7 +46,7 @@ operator_decision: Approved local trust-boundary implementation; provider calls,
 
 **Files:** Create the four files listed above.
 
-**Interfaces:** Produces `GitObjectSource.read_blob(commit: str, path: str) -> GitBlob`, `TrustRoot`, `load_trust_root(repository: Path, reviewed_commit: str) -> TrustRoot`, and `TrustRoot.body() -> dict[str, str]`.
+**Interfaces:** Produces `GitObjectSource.read_blob(commit: str, path: str) -> GitBlob`, `TrustRoot`, `load_trust_root(repository: Path, reviewed_commit: str) -> TrustRoot`, and `TrustRoot.body() -> TrustRootBody`. `TrustRootBody` is the explicit JSON-compatible schema below; tuple-valued labels serialize as arrays and attempt ceilings serialize as an object of integer values.
 
 - [ ] **Step 1: Write the failing trust-source check**
 
@@ -57,6 +57,8 @@ assert root.policy.blob_oid == git(repo, "rev-parse", f"{reviewed_commit}:{root.
 assert root.policy.sha256 == hashlib.sha256(git_bytes(repo, "show", f"{reviewed_commit}:{root.policy.path}")).hexdigest()
 assert root.dogfood_contract.path == DOGFOOD_CONTRACT_PATH
 assert root.repository_identity == canonical_repository_identity(repo)
+assert root.trusted_base_tree == git(repo, "rev-parse", f"{root.trusted_base_commit}^{{tree}}")
+assert root.body()["trusted_base_tree"] == root.trusted_base_tree
 assert root.patch_sha256 == committed_patch_digest(repo, root.trusted_base_commit, reviewed_commit)
 assert root.trust_root_sha256 == sha256_bytes(canonical_json(root.body()))
 ```
@@ -77,12 +79,30 @@ class GitBlob:
     sha256: str
     content: bytes
 
+class GitBlobBody(TypedDict):
+    path: str
+    blob_oid: str
+    sha256: str
+
+class TrustRootBody(TypedDict):
+    repository_identity: str
+    reviewed_commit: str
+    reviewed_tree: str
+    trusted_base_commit: str
+    trusted_base_tree: str
+    patch_sha256: str
+    policy: GitBlobBody
+    dogfood_contract: GitBlobBody
+    release_labels: list[str]
+    attempt_ceilings: dict[str, int]
+
 @dataclass(frozen=True)
 class TrustRoot:
     repository_identity: str
     reviewed_commit: str
     reviewed_tree: str
     trusted_base_commit: str
+    trusted_base_tree: str
     patch_sha256: str
     policy: GitBlob
     dogfood_contract: GitBlob
@@ -90,24 +110,33 @@ class TrustRoot:
     attempt_ceilings: Mapping[str, int]
     trust_root_sha256: str
 
+    def body(self) -> TrustRootBody: ...
+
 def load_trust_root(repository: Path, reviewed_commit: str) -> TrustRoot:
     source = GitObjectSource(repository)
     policy = source.read_blob(reviewed_commit, POLICY_PATH)
     payload = validate_policy_bytes(policy.content)
     contract = source.read_blob(reviewed_commit, DOGFOOD_CONTRACT_PATH)
-    return TrustRoot.build(repository, reviewed_commit, source.tree(reviewed_commit), policy, contract, payload)
+    trusted_base_commit = validate_trusted_base_commit(payload["trusted_base_commit"])
+    trusted_base_tree = source.tree(trusted_base_commit)
+    return TrustRoot.build(repository, reviewed_commit, source.tree(reviewed_commit), trusted_base_commit, trusted_base_tree, policy, contract, payload)
 ```
 
 `POLICY_PATH` and `DOGFOOD_CONTRACT_PATH` are fixed repository-relative code
 constants. The tracked JSON keeps only reviewed policy values such as the
 trusted base, `2/4/6` ceilings, and exact release labels; it may not choose a
-trusted path.
+trusted path. The loader derives `trusted_base_tree` from the validated trusted
+base commit's Git tree object and includes both values in the canonical
+`TrustRootBody`; the eval must reject a substituted base commit/tree pair.
 
 - [ ] **Step 4: Run GREEN and mutation cases**
 
 Run: `python3 skills/kws-codex-plan-executor/evals/check_release_trust_vnext.py`
 
-Expected: PASS for clean objects and pre-call rejection of dirty, staged, alternate-path, wrong-commit, missing-object, and post-load worktree mutation cases.
+Expected: PASS for clean objects, including exact trusted-base commit/tree
+derivation and canonical body binding, and pre-call rejection of dirty, staged,
+alternate-path, wrong-commit, substituted-base-tree, missing-object, and
+post-load worktree mutation cases.
 
 - [ ] **Step 5: Commit**
 

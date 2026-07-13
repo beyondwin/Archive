@@ -1,5 +1,25 @@
 # Verification Log
 
+## 2026-07-13 Asia/Seoul - vNext pre-task review fixes
+
+- Branch: `codex/cpe-vnext-quality-first-workflow`; reviewed base `6777f9c`;
+  follow-up commit recorded in the pre-task alignment report.
+- Scope: added the trusted-base tree and explicit JSON-compatible `TrustRoot`
+  body contract, made Plan 2 Task 5's quality-suite decomposition executable,
+  and added missing/malformed `CPE_SUPERPOWERS_ROOT` fail-closed regressions.
+- RED: the focused plan-contract probe exited 1 with all six reviewed contract
+  checks false before the plan edits.
+- Focused GREEN: plan-contract probe, semantic compatibility positive case,
+  missing/malformed environment-root negative cases, docs contract, and Python
+  compile exited 0.
+- `./evals/run.sh`: exit 0; all 36 recorded checks passed and
+  `paid_execution=skipped_not_approved`.
+- Provider, network, model, credentialed, billing, remote-write, push, and live
+  calls: zero. Package version/status were unchanged because runtime and public
+  behavior did not change.
+- Residual risk: none for these review findings; the contracts remain planned
+  implementation work.
+
 ## 2026-07-13 Asia/Seoul - vNext pre-task contract alignment and hermetic baseline
 
 - Branch: `codex/cpe-vnext-quality-first-workflow`; checkpoint commit pending.
