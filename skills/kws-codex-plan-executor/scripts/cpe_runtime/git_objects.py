@@ -206,7 +206,7 @@ class GitObjectSource:
 
     def _tree_entries(self, commit: str) -> dict[bytes, dict[str, str]]:
         tree = self.tree(commit)
-        raw = bytes(self._git("ls-tree", "-r", "-t", "-z", "--full-tree", tree))
+        raw = bytes(self._git("ls-tree", "-r", "-z", "--full-tree", tree))
         entries: dict[bytes, dict[str, str]] = {}
         for record in raw.split(b"\0"):
             if not record:
