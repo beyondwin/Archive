@@ -6,13 +6,15 @@ import hashlib
 import json
 import os
 import stat
-from collections.abc import Callable, Mapping
+import subprocess
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
 from .contracts import (
     AUTHORITY_CODES,
+    ChildResult,
     InputDocument,
     canonical_json,
     validate_document_map,
@@ -1046,9 +1048,623 @@ class QueueEngine:
         self._append_authority_events(program, authority_path)
         return program_path
 
+    @staticmethod
+    def _task_slug(task_id: str) -> str:
+        return task_id.replace(":", "-")
+
+    def _program_context(
+        self,
+    ) -> tuple[dict[str, object], dict[str, Path]]:
+        generation_events = [
+            event
+            for event in self.store.validate_event_chain()
+            if event["event_type"] == "map.generation_created"
+            and event["payload"]["generation_id"] == _GENERATION_ID
+        ]
+        if len(generation_events) != 1:
+            raise ValueError("task queue requires one accepted map generation")
+        payload = generation_events[0]["payload"]
+        manifest_path = payload["publication_manifest_path"]
+        manifest_sha256 = payload["publication_manifest_sha256"]
+        if not isinstance(manifest_path, str) or not isinstance(manifest_sha256, str):
+            raise ValueError("accepted map generation binding is invalid")
+        manifest, artifacts = self.store.read_accepted_publication(
+            manifest_path, manifest_sha256
+        )
+        program, _, _ = self._validate_program_artifacts(
+            self._validated_document_maps(), reader=artifacts.__getitem__
+        )
+        descriptors = manifest["artifacts"]
+        assert isinstance(descriptors, Mapping)
+        physical: dict[str, Path] = {}
+        for logical_path, descriptor in descriptors.items():
+            if not isinstance(logical_path, str) or not isinstance(descriptor, Mapping):
+                raise ValueError("accepted program artifact binding is invalid")
+            relative_path = descriptor.get("relative_path")
+            if not isinstance(relative_path, str):
+                raise ValueError("accepted program artifact path is invalid")
+            path = self.store.paths.root / relative_path
+            if path.is_symlink() or not path.is_file():
+                raise ValueError("accepted program artifact is unavailable")
+            physical[logical_path] = path.resolve(strict=True)
+        return program, physical
+
+    def _artifact_input(self, relative_path: str, selected: Mapping[str, Path]) -> Path:
+        if relative_path in selected:
+            return selected[relative_path]
+        self.store.read_artifact(relative_path)
+        path = self.store.paths.root / relative_path
+        if path.is_symlink() or not path.is_file():
+            raise ValueError("queue input artifact is unavailable")
+        return path.resolve(strict=True)
+
+    @staticmethod
+    def _dedupe_paths(paths: Sequence[Path]) -> tuple[Path, ...]:
+        result: list[Path] = []
+        for path in paths:
+            if path not in result:
+                result.append(path)
+        return tuple(result)
+
+    @staticmethod
+    def _result_digest(result: ChildResult, store: RunStore) -> str:
+        artifact_hashes = []
+        for relative_path in result.artifact_paths:
+            artifact_hashes.append(_sha256(store.read_artifact(relative_path)))
+        payload = {
+            "role": result.role,
+            "status": result.status,
+            "item_id": result.item_id,
+            "commit": result.commit,
+            "verdict": result.verdict,
+            "failure_code": result.failure_code,
+            "authority_id": result.authority_id,
+            "strategy_key": result.strategy_key,
+            "artifact_sha256s": artifact_hashes,
+        }
+        return _sha256(canonical_json(payload))
+
+    def _task_by_id(self, task_id: str) -> dict[str, object]:
+        program, _ = self._program_context()
+        for task in program["tasks"]:
+            if task["task_id"] == task_id:
+                return task
+        raise ValueError(f"unknown queue task: {task_id}")
+
+    def _blocked_task_ids(self, state: Mapping[str, object]) -> set[str]:
+        authorities = state.get("authorities", {})
+        if not isinstance(authorities, Mapping):
+            raise ValueError("replayed authority state is invalid")
+        return {
+            str(task_id)
+            for authority in authorities.values()
+            if isinstance(authority, Mapping)
+            and authority.get("status") == "waiting_authority"
+            for task_id in authority.get("task_ids", [])
+        }
+
+    def _next_ready_task(
+        self, state: Mapping[str, object]
+    ) -> dict[str, object] | None:
+        program, _ = self._program_context()
+        replayed_tasks = state.get("tasks", {})
+        if not isinstance(replayed_tasks, Mapping):
+            raise ValueError("replayed task state is invalid")
+        blocked = self._blocked_task_ids(state)
+        for task in program["tasks"]:
+            task_id = str(task["task_id"])
+            current = replayed_tasks.get(task_id, {})
+            if isinstance(current, Mapping) and current.get("review_verdict") == "pass":
+                continue
+            if task_id in blocked:
+                continue
+            dependencies = [str(item) for item in task["dependencies"]]
+            if all(
+                isinstance(replayed_tasks.get(dependency), Mapping)
+                and replayed_tasks[dependency].get("review_verdict") == "pass"
+                for dependency in dependencies
+            ):
+                return task
+        return None
+
+    def _dependency_report_paths(
+        self, task: Mapping[str, object], state: Mapping[str, object]
+    ) -> tuple[str, ...]:
+        replayed_tasks = state.get("tasks", {})
+        assert isinstance(replayed_tasks, Mapping)
+        paths: list[str] = []
+        for dependency in task["dependencies"]:
+            dependency_state = replayed_tasks.get(str(dependency))
+            if not isinstance(dependency_state, Mapping):
+                raise ValueError("ready task dependency has no durable state")
+            reports = dependency_state.get("report_paths", [])
+            if not isinstance(reports, list) or not reports:
+                raise ValueError("ready task dependency has no interface report")
+            for path in reports:
+                if isinstance(path, str) and path not in paths:
+                    paths.append(path)
+        return tuple(paths)
+
+    def _attempt_number(self, task_id: str) -> int:
+        return len(
+            [
+                event
+                for event in self.store.validate_event_chain()
+                if event["event_type"] == "task.started"
+                and event["payload"]["task_id"] == task_id
+            ]
+        ) + 1
+
+    def _review_number(self, task_id: str) -> int:
+        state = self.store.replay()
+        task = state["tasks"].get(task_id, {})
+        reviews = task.get("reviews", []) if isinstance(task, Mapping) else []
+        return len(reviews) + 1
+
+    def _launch_role(
+        self,
+        *,
+        role: str,
+        item_id: str,
+        goal: str,
+        input_paths: Sequence[Path],
+        report_path: str,
+        skills: tuple[str, ...],
+        done_when: tuple[str, ...],
+        attempt_id: str,
+    ) -> LaunchOutcome:
+        _, outbox = self._allocate_attempt(attempt_id)
+        request = ChildRequest(
+            role=role,
+            item_id=item_id,
+            goal=goal,
+            input_paths=self._dedupe_paths(input_paths),
+            repository=self.worktree.source,
+            worktree=self.worktree.root,
+            outbox=outbox,
+            report_path=report_path,
+            applicable_skills=skills,
+            done_when=done_when,
+        )
+        try:
+            return self.launcher.launch(
+                request,
+                worktree=self.worktree,
+                store=self.store,
+            )
+        finally:
+            self.store.discard_outbox(outbox.name)
+
+    def _append_task_result(
+        self,
+        result: ChildResult,
+        *,
+        task_id: str,
+        attempt_id: str,
+        strategy_key: str,
+    ) -> None:
+        if result.strategy_key != strategy_key:
+            raise ValueError("child result strategy_key differs from its dispatch")
+        self.store.append_event(
+            "task.reported",
+            {
+                "task_id": task_id,
+                "attempt_id": attempt_id,
+                "status": result.status,
+                "commit": result.commit,
+                "strategy_key": strategy_key,
+                "result_sha256": self._result_digest(result, self.store),
+                "artifact_paths": list(result.artifact_paths),
+            },
+        )
+
+    def _open_authority(self, result: ChildResult, task_id: str) -> None:
+        if result.status != "waiting_authority" or result.authority_id not in AUTHORITY_CODES:
+            raise ValueError("non-authority child result cannot open authority")
+        existing = [
+            event
+            for event in self.store.validate_event_chain()
+            if event["event_type"] == "authority.opened"
+        ]
+        authority_id = f"A{len(existing) + 1:04d}"
+        self.store.append_event(
+            "authority.opened",
+            {
+                "authority_id": authority_id,
+                "authority_code": result.authority_id,
+                "status": "waiting_authority",
+                "task_ids": [task_id],
+                "artifact_paths": list(result.artifact_paths),
+            },
+        )
+
+    def _run_task(self, task: Mapping[str, object]) -> None:
+        task_id = str(task["task_id"])
+        state = self.store.replay()
+        _, selected = self._program_context()
+        attempt_number = self._attempt_number(task_id)
+        attempt_id = f"{self._task_slug(task_id)}-attempt-{attempt_number:04d}"
+        strategy_key = "initial"
+        report_path = f"reports/{self._task_slug(task_id)}/attempt-{attempt_number}.md"
+        start_commit = self.worktree.head()
+        dependency_reports = self._dependency_report_paths(task, state)
+        inputs = [
+            selected[str(task["brief_path"])],
+            *(self._artifact_input(path, selected) for path in dependency_reports),
+        ]
+        self.store.append_event(
+            "task.started",
+            {
+                "task_id": task_id,
+                "attempt_id": attempt_id,
+                "role": "task_agent",
+                "strategy_key": strategy_key,
+            },
+        )
+        outcome = self._launch_role(
+            role="task_agent",
+            item_id=task_id,
+            goal=(
+                f"Strategy key: {strategy_key}\n"
+                "Implement exactly the immutable task brief and produce a commit-bound "
+                "clean handoff."
+            ),
+            input_paths=inputs,
+            report_path=report_path,
+            skills=("using-superpowers", "test-driven-development"),
+            done_when=(
+                "focused covering tests pass",
+                "one real commit equals clean worktree HEAD",
+            ),
+            attempt_id=attempt_id,
+        )
+        self._append_task_result(
+            outcome.result,
+            task_id=task_id,
+            attempt_id=attempt_id,
+            strategy_key=strategy_key,
+        )
+        if outcome.result.status == "completed":
+            assert outcome.result.commit is not None
+            self._run_review(task, start_commit, outcome.result.commit)
+        elif outcome.result.status == "waiting_authority":
+            self._open_authority(outcome.result, task_id)
+        else:
+            commit = self._handle_child_failure(outcome.result, task_id)
+            if commit is not None:
+                self._run_review(task, start_commit, commit)
+
+    def _run_review(
+        self, task: Mapping[str, object], start_commit: str, end_commit: str
+    ) -> None:
+        task_id = str(task["task_id"])
+        while True:
+            review_number = self._review_number(task_id)
+            review_id = f"{self._task_slug(task_id)}-review-{review_number:04d}"
+            report_path = f"reviews/{self._task_slug(task_id)}/review-{review_number}.md"
+            diff_path = f"reports/{self._task_slug(task_id)}/diff-{review_number}.patch"
+            self.store.put_artifact(
+                diff_path, self.worktree.diff(start_commit, end_commit).encode("utf-8")
+            )
+            state = self.store.replay()
+            _, selected = self._program_context()
+            task_state = state["tasks"][task_id]
+            input_paths = [
+                selected[str(task["brief_path"])],
+                *(self._artifact_input(path, selected) for path in task_state["report_paths"]),
+                *(
+                    self._artifact_input(path, selected)
+                    for path in self._dependency_report_paths(task, state)
+                ),
+                self._artifact_input(diff_path, selected),
+            ]
+            outcome = self._launch_role(
+                role="reviewer",
+                item_id=task_id,
+                goal=(
+                    f"Review the exact immutable task range {start_commit}..{end_commit}; "
+                    "use the supplied focused-test evidence and do not rerun the identical command."
+                ),
+                input_paths=input_paths,
+                report_path=report_path,
+                skills=("using-superpowers", "requesting-code-review"),
+                done_when=("all Critical and Important findings are reported together",),
+                attempt_id=review_id,
+            )
+            result = outcome.result
+            self.store.append_event(
+                "review.reported",
+                {
+                    "task_id": task_id,
+                    "review_id": review_id,
+                    "status": result.status,
+                    "commit": end_commit,
+                    "verdict": result.verdict,
+                    "result_sha256": self._result_digest(result, self.store),
+                    "artifact_paths": list(result.artifact_paths),
+                },
+            )
+            if result.status == "completed" and result.verdict == "pass":
+                return
+            if result.status == "waiting_authority":
+                self._open_authority(result, task_id)
+                return
+            if result.status == "changes_requested" and result.verdict == "changes_requested":
+                fixed_commit = self._run_consolidated_fix(
+                    task, result.artifact_paths, strategy_key=f"review-consolidated-{review_number}"
+                )
+                if fixed_commit is None:
+                    return
+                end_commit = fixed_commit
+                continue
+            commit = self._handle_child_failure(result, task_id)
+            if commit is None:
+                return
+            end_commit = commit
+
+    def _run_consolidated_fix(
+        self,
+        task: Mapping[str, object],
+        finding_paths: Sequence[str],
+        *,
+        strategy_key: str,
+    ) -> str | None:
+        task_id = str(task["task_id"])
+        attempt_number = self._attempt_number(task_id)
+        attempt_id = f"{self._task_slug(task_id)}-attempt-{attempt_number:04d}"
+        report_path = f"reports/{self._task_slug(task_id)}/attempt-{attempt_number}.md"
+        state = self.store.replay()
+        _, selected = self._program_context()
+        inputs = [
+            selected[str(task["brief_path"])],
+            *(self._artifact_input(path, selected) for path in finding_paths),
+            *(
+                self._artifact_input(path, selected)
+                for path in self._dependency_report_paths(task, state)
+            ),
+        ]
+        self.store.append_event(
+            "task.started",
+            {
+                "task_id": task_id,
+                "attempt_id": attempt_id,
+                "role": "fix_agent",
+                "strategy_key": strategy_key,
+            },
+        )
+        outcome = self._launch_role(
+            role="fix_agent",
+            item_id=task_id,
+            goal=(
+                f"Strategy key: {strategy_key}\n"
+                "Fix every supplied Critical and Important finding in one consolidated commit."
+            ),
+            input_paths=inputs,
+            report_path=report_path,
+            skills=("using-superpowers", "systematic-debugging", "test-driven-development"),
+            done_when=("covering checks pass and one clean fix commit equals HEAD",),
+            attempt_id=attempt_id,
+        )
+        self._append_task_result(
+            outcome.result,
+            task_id=task_id,
+            attempt_id=attempt_id,
+            strategy_key=strategy_key,
+        )
+        if outcome.result.status == "completed":
+            assert outcome.result.commit is not None
+            return outcome.result.commit
+        if outcome.result.status == "waiting_authority":
+            self._open_authority(outcome.result, task_id)
+            return None
+        recovered = self._handle_child_failure(outcome.result, task_id)
+        if recovered is None:
+            return None
+        return recovered
+
+    def _run_investigation(
+        self,
+        task: Mapping[str, object],
+        evidence_paths: Sequence[str],
+        *,
+        previous_strategy: str,
+    ) -> tuple[str, tuple[str, ...]]:
+        task_id = str(task["task_id"])
+        state = self.store.replay()
+        investigation_number = len(
+            [
+                event
+                for event in self.store.validate_event_chain()
+                if event["event_type"] == "autonomy.recorded"
+                and task_id in event["payload"].get("task_ids", [])
+            ]
+        ) + 1
+        investigation_id = f"{self._task_slug(task_id)}-investigation-{investigation_number:04d}"
+        report_path = f"reports/{self._task_slug(task_id)}/investigation-{investigation_number}.md"
+        _, selected = self._program_context()
+        inputs = [
+            selected[str(task["brief_path"])],
+            *(self._artifact_input(path, selected) for path in evidence_paths),
+            *(
+                self._artifact_input(path, selected)
+                for path in self._dependency_report_paths(task, state)
+            ),
+        ]
+        outcome = self._launch_role(
+            role="investigator",
+            item_id=task_id,
+            goal=(
+                "Reproduce the failure, identify the root cause, and select a "
+                "materially changed recovery strategy."
+            ),
+            input_paths=inputs,
+            report_path=report_path,
+            skills=("using-superpowers", "systematic-debugging"),
+            done_when=("the root cause and a changed strategy are recorded",),
+            attempt_id=investigation_id,
+        )
+        result = outcome.result
+        if result.status != "completed" or not result.strategy_key:
+            raise ValueError("investigator did not return a usable changed strategy")
+        if result.strategy_key == previous_strategy:
+            raise ValueError("unchanged strategy_key cannot be redispatched")
+        decision = self.store.append_autonomy_decision(
+            issue="focused test or child evidence failed under the previous strategy",
+            alternatives=["repeat patch", "fresh root-cause investigation"],
+            selected="fresh root-cause investigation",
+            rationale="same strategy and evidence made no progress",
+            evidence_paths=list(evidence_paths),
+            affected_tasks=[task_id],
+            reversible=True,
+        )
+        decision_sha256 = _sha256(canonical_json(decision))
+        self.store.append_event(
+            "autonomy.recorded",
+            {
+                "decision_id": decision["decision_id"],
+                "strategy_key": result.strategy_key,
+                "decision_sha256": decision_sha256,
+                "task_ids": [task_id],
+                "artifact_paths": ["autonomy-decisions.jsonl", *result.artifact_paths],
+            },
+        )
+        return result.strategy_key, result.artifact_paths
+
+    def _handle_child_failure(self, result: ChildResult, task_id: str) -> str | None:
+        if result.status == "waiting_authority":
+            self._open_authority(result, task_id)
+            return None
+        task = self._task_by_id(task_id)
+        previous_strategy = result.strategy_key or "initial"
+        strategy_key, investigation_paths = self._run_investigation(
+            task,
+            result.artifact_paths,
+            previous_strategy=previous_strategy,
+        )
+        return self._run_consolidated_fix(
+            task,
+            (*result.artifact_paths, *investigation_paths),
+            strategy_key=strategy_key,
+        )
+
+    def _commit_parent(self, commit: str) -> str:
+        completed = subprocess.run(
+            ["git", "-C", str(self.worktree.root), "rev-parse", f"{commit}^{{commit}}^"],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if completed.returncode != 0:
+            raise ValueError("completed task commit has no valid parent")
+        parent = completed.stdout.strip()
+        if len(parent) != 40:
+            raise ValueError("completed task parent is not a full commit")
+        return parent
+
+    def _resume_task(
+        self, task: Mapping[str, object], task_state: Mapping[str, object]
+    ) -> None:
+        task_id = str(task["task_id"])
+        attempts = task_state.get("attempts", [])
+        if not isinstance(attempts, list):
+            raise ValueError("replayed task attempts are invalid")
+        completed = [
+            attempt
+            for attempt in attempts
+            if isinstance(attempt, Mapping)
+            and attempt.get("status") == "completed"
+            and isinstance(attempt.get("commit"), str)
+        ]
+        if not completed:
+            failed = attempts[-1] if attempts else None
+            if isinstance(failed, Mapping) and failed.get("status") == "failed":
+                evidence_paths = failed.get("artifact_paths", [])
+                previous_strategy = failed.get("strategy_key") or "initial"
+                if not isinstance(evidence_paths, list) or not all(
+                    isinstance(path, str) for path in evidence_paths
+                ):
+                    raise ValueError("failed task evidence is invalid")
+                strategy, investigation_paths = self._run_investigation(
+                    task,
+                    evidence_paths,
+                    previous_strategy=str(previous_strategy),
+                )
+                start_commit = self.worktree.head()
+                recovered = self._run_consolidated_fix(
+                    task,
+                    (*evidence_paths, *investigation_paths),
+                    strategy_key=strategy,
+                )
+                if recovered is not None:
+                    self._run_review(task, start_commit, recovered)
+                return
+            self._run_task(task)
+            return
+
+        first_commit = str(completed[0]["commit"])
+        end_commit = str(completed[-1]["commit"])
+        start_commit = self._commit_parent(first_commit)
+        reviews = task_state.get("reviews", [])
+        if not isinstance(reviews, list):
+            raise ValueError("replayed task reviews are invalid")
+        last_review = reviews[-1] if reviews else None
+        if isinstance(last_review, Mapping) and last_review.get("verdict") == "changes_requested":
+            finding_paths = last_review.get("artifact_paths", [])
+            if not isinstance(finding_paths, list) or not all(
+                isinstance(path, str) for path in finding_paths
+            ):
+                raise ValueError("review finding paths are invalid")
+            end_commit = self._run_consolidated_fix(
+                task,
+                finding_paths,
+                strategy_key=f"review-consolidated-{len(reviews)}",
+            )
+            if end_commit is None:
+                return
+        elif isinstance(last_review, Mapping) and last_review.get("status") == "failed":
+            evidence_paths = last_review.get("artifact_paths", [])
+            if not isinstance(evidence_paths, list) or not all(
+                isinstance(path, str) for path in evidence_paths
+            ):
+                raise ValueError("failed review evidence is invalid")
+            strategy, investigation_paths = self._run_investigation(
+                task,
+                evidence_paths,
+                previous_strategy="review-failed",
+            )
+            recovered = self._run_consolidated_fix(
+                task,
+                (*evidence_paths, *investigation_paths),
+                strategy_key=strategy,
+            )
+            if recovered is None:
+                return
+            end_commit = recovered
+        self._run_review(task, start_commit, end_commit)
+
+    def tick(self) -> str | None:
+        """Advance exactly one ready task through a fresh review or durable wait."""
+
+        self.worktree.verify_identity()
+        self.map_program()
+        state = self.store.replay()
+        task = self._next_ready_task(state)
+        if task is None:
+            return None
+        task_id = str(task["task_id"])
+        task_state = state["tasks"].get(task_id)
+        if isinstance(task_state, Mapping) and task_state.get("attempts"):
+            self._resume_task(task, task_state)
+        else:
+            self._run_task(task)
+        return task_id
+
     def run_until_terminal(self) -> dict[str, object]:
-        """Advance through the mapping boundary; later tasks own task dispatch."""
+        """Run every currently ready task without redispatching clean reviews."""
 
         self.map_documents()
         self.map_program()
+        while self.tick() is not None:
+            pass
         return self.store.replay()

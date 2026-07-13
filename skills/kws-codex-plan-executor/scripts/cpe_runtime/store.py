@@ -49,6 +49,19 @@ _ARTIFACT_RECORD_KEYS = frozenset(
 _ARTIFACT_ROOTS = frozenset(
     {"maps", "briefs", "reports", "reviews", "verification", "logs", "result.json"}
 )
+_AUTONOMY_DECISION_KEYS = frozenset(
+    {
+        "decision_id",
+        "issue",
+        "alternatives",
+        "selected",
+        "rationale",
+        "evidence_paths",
+        "affected_tasks",
+        "reversible",
+        "created_at",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -58,6 +71,8 @@ class RunPaths:
     events: Path
     event_head: Path
     artifact_index: Path
+    autonomy_decisions: Path
+    writer_lease: Path
     result: Path
     inputs: Path
     maps: Path
@@ -76,6 +91,8 @@ def _run_paths(root: Path) -> RunPaths:
         events=root / "events.jsonl",
         event_head=root / "events.head.json",
         artifact_index=root / "artifacts.jsonl",
+        autonomy_decisions=root / "autonomy-decisions.jsonl",
+        writer_lease=root / "writer.lease",
         result=root / "result.json",
         inputs=root / "inputs",
         maps=root / "maps",
@@ -406,6 +423,8 @@ class RunStore:
             canonical_json({"event_count": 0, "last_event_sha256": None}),
         )
         _atomic_write_new(paths.artifact_index, b"")
+        _atomic_write_new(paths.autonomy_decisions, b"")
+        _atomic_write_new(paths.writer_lease, b"")
 
         manifest_body: dict[str, object] = {
             "schema_version": SCHEMA_VERSION,
@@ -447,6 +466,7 @@ class RunStore:
         store._load_manifest()
         store.document_set()
         store.validate_event_chain()
+        store.autonomy_decisions()
         store._reconcile_content_addressed_publication_manifests()
         store._validate_artifacts()
         return store
@@ -715,6 +735,159 @@ class RunStore:
             events = self._parse_events(b"".join(chunks))
             self._validate_event_head(events)
             return events
+        finally:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+            finally:
+                os.close(descriptor)
+
+    @staticmethod
+    def _validate_autonomy_decision(
+        payload: Mapping[str, object], *, expected_id: str
+    ) -> dict[str, object]:
+        if (
+            not isinstance(payload, Mapping)
+            or frozenset(payload) != _AUTONOMY_DECISION_KEYS
+        ):
+            raise ValueError("autonomy decision fields are invalid")
+        decision = dict(payload)
+        if decision.get("decision_id") != expected_id:
+            raise ValueError("autonomy decision IDs are not contiguous")
+        for field, limit in (
+            ("issue", 4000),
+            ("selected", 1000),
+            ("rationale", 4000),
+            ("created_at", 128),
+        ):
+            value = decision.get(field)
+            if not isinstance(value, str) or not value or len(value) > limit:
+                raise ValueError(f"autonomy decision {field} is invalid")
+        for field, limit in (
+            ("alternatives", 16),
+            ("evidence_paths", 64),
+            ("affected_tasks", 64),
+        ):
+            value = decision.get(field)
+            if (
+                not isinstance(value, list)
+                or not value
+                or len(value) > limit
+                or not all(
+                    isinstance(item, str) and item and len(item) <= 512
+                    for item in value
+                )
+                or len(set(value)) != len(value)
+            ):
+                raise ValueError(f"autonomy decision {field} is invalid")
+        if decision["selected"] not in decision["alternatives"]:
+            raise ValueError("autonomy decision selection is not an alternative")
+        for path in decision["evidence_paths"]:
+            normalize_relative_path(path)
+        if not isinstance(decision.get("reversible"), bool):
+            raise ValueError("autonomy decision reversible flag is invalid")
+        try:
+            datetime.fromisoformat(str(decision["created_at"]).replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("autonomy decision created_at is invalid") from exc
+        return decision
+
+    @classmethod
+    def _parse_autonomy_decisions(cls, raw: bytes) -> tuple[dict[str, object], ...]:
+        if not raw:
+            return ()
+        decisions: list[dict[str, object]] = []
+        for index, line in enumerate(raw.splitlines(keepends=True), 1):
+            if not line.endswith(b"\n"):
+                raise ValueError("autonomy decision ledger ends with a partial record")
+            content = line[:-1]
+            try:
+                payload = json.loads(content.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise ValueError("autonomy decision ledger contains invalid JSON") from exc
+            decision = cls._validate_autonomy_decision(
+                payload, expected_id=f"D{index:04d}"
+            )
+            if content != canonical_json(decision):
+                raise ValueError("autonomy decision is not canonical JSON")
+            decisions.append(decision)
+        return tuple(decisions)
+
+    def autonomy_decisions(self) -> tuple[dict[str, object], ...]:
+        descriptor = os.open(
+            self.paths.autonomy_decisions,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+        )
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_SH)
+            metadata = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or stat.S_IMODE(metadata.st_mode) != 0o600
+            ):
+                raise ValueError("autonomy decision ledger must remain private")
+            chunks: list[bytes] = []
+            while True:
+                chunk = os.read(descriptor, 64 * 1024)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            return self._parse_autonomy_decisions(b"".join(chunks))
+        finally:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+            finally:
+                os.close(descriptor)
+
+    def append_autonomy_decision(
+        self,
+        *,
+        issue: str,
+        alternatives: Sequence[str],
+        selected: str,
+        rationale: str,
+        evidence_paths: Sequence[str],
+        affected_tasks: Sequence[str],
+        reversible: bool,
+    ) -> dict[str, object]:
+        descriptor = os.open(
+            self.paths.autonomy_decisions,
+            os.O_RDWR | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0),
+        )
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            os.lseek(descriptor, 0, os.SEEK_SET)
+            chunks: list[bytes] = []
+            while True:
+                chunk = os.read(descriptor, 64 * 1024)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            existing = self._parse_autonomy_decisions(b"".join(chunks))
+            decision = self._validate_autonomy_decision(
+                {
+                    "decision_id": f"D{len(existing) + 1:04d}",
+                    "issue": issue,
+                    "alternatives": list(alternatives),
+                    "selected": selected,
+                    "rationale": rationale,
+                    "evidence_paths": list(evidence_paths),
+                    "affected_tasks": list(affected_tasks),
+                    "reversible": reversible,
+                    "created_at": datetime.now(timezone.utc)
+                    .isoformat()
+                    .replace("+00:00", "Z"),
+                },
+                expected_id=f"D{len(existing) + 1:04d}",
+            )
+            line = canonical_json(decision) + b"\n"
+            view = memoryview(line)
+            while view:
+                written = os.write(descriptor, view)
+                if written <= 0:
+                    raise OSError("short autonomy decision append")
+                view = view[written:]
+            os.fsync(descriptor)
+            return decision
         finally:
             try:
                 fcntl.flock(descriptor, fcntl.LOCK_UN)
@@ -1333,8 +1506,11 @@ class RunStore:
         events = self.validate_event_chain()
         self._validate_artifacts()
         status = manifest["status"]
+        tasks: dict[str, dict[str, object]] = {}
+        authorities: dict[str, dict[str, object]] = {}
         for event in events:
             event_type = event["event_type"]
+            payload = event["payload"]
             if event_type == "map.generation_created":
                 status = (
                     "waiting_authority"
@@ -1343,8 +1519,65 @@ class RunStore:
                 )
             elif event_type == "authority.opened":
                 status = "waiting_authority"
+                authorities[str(payload["authority_id"])] = {
+                    "authority_code": payload["authority_code"],
+                    "status": "waiting_authority",
+                    "task_ids": list(payload.get("task_ids", [])),
+                    "artifact_paths": list(payload["artifact_paths"]),
+                }
             elif event_type == "authority.resolved":
                 status = "running"
+                authority = authorities.setdefault(str(payload["authority_id"]), {})
+                authority["status"] = "resolved"
+            elif event_type == "task.started":
+                task = tasks.setdefault(
+                    str(payload["task_id"]),
+                    {"attempts": [], "reviews": [], "report_paths": []},
+                )
+                task["active_attempt"] = {
+                    "attempt_id": payload["attempt_id"],
+                    "role": payload.get("role", "task_agent"),
+                    "strategy_key": payload["strategy_key"],
+                }
+            elif event_type == "task.reported":
+                task = tasks.setdefault(
+                    str(payload["task_id"]),
+                    {"attempts": [], "reviews": [], "report_paths": []},
+                )
+                attempt = {
+                    "attempt_id": payload["attempt_id"],
+                    "role": payload.get(
+                        "role",
+                        task.get("active_attempt", {}).get("role", "task_agent"),
+                    ),
+                    "status": payload["status"],
+                    "commit": payload.get("commit"),
+                    "strategy_key": payload.get("strategy_key"),
+                    "result_sha256": payload.get("result_sha256"),
+                    "artifact_paths": list(payload["artifact_paths"]),
+                }
+                task["attempts"].append(attempt)
+                task["report_paths"].extend(payload["artifact_paths"])
+                task["task_status"] = payload["status"]
+                task["latest_strategy_key"] = payload.get("strategy_key")
+                if payload.get("commit") is not None:
+                    task["latest_commit"] = payload["commit"]
+                task.pop("active_attempt", None)
+            elif event_type == "review.reported":
+                task = tasks.setdefault(
+                    str(payload["task_id"]),
+                    {"attempts": [], "reviews": [], "report_paths": []},
+                )
+                review = {
+                    "review_id": payload["review_id"],
+                    "status": payload["status"],
+                    "commit": payload.get("commit"),
+                    "verdict": payload["verdict"],
+                    "artifact_paths": list(payload["artifact_paths"]),
+                }
+                task["reviews"].append(review)
+                task["review_status"] = payload["status"]
+                task["review_verdict"] = payload["verdict"]
             elif event_type == "run.interrupted":
                 status = "interrupted"
             elif event_type == "audit.reported":
@@ -1359,4 +1592,7 @@ class RunStore:
             "status": status,
             "event_count": len(events),
             "last_event_sha256": events[-1]["event_sha256"] if events else None,
+            "tasks": tasks,
+            "authorities": authorities,
+            "autonomy_decision_count": len(self.autonomy_decisions()),
         }
