@@ -72,6 +72,7 @@ class PlanGraph:
     plan_documents: tuple[str, ...]
     plan_ids: tuple[str, ...]
     document_hashes: Mapping[str, str]
+    spec_section_hashes: Mapping[str, str]
     tasks: Mapping[str, Mapping[str, object]]
     edges: tuple[tuple[str, str], ...]
     spec_coverage: Mapping[str, tuple[str, ...]]
@@ -169,6 +170,10 @@ def _document_plan_id(document: InputDocument) -> str:
     return parts[1] if len(parts) == 3 else document.document_id
 
 
+def _path_plan_id(document: InputDocument) -> str:
+    return re.sub(r"^\d{4}-\d{2}-\d{2}-", "", document.path.stem)
+
+
 def _list(value: object, *, field: str, document_id: str) -> list[object]:
     if not isinstance(value, list):
         _blocked(
@@ -199,7 +204,7 @@ def _fallback_plan_contract(document: InputDocument) -> dict[str, object]:
         yaml_body = yaml_match.group("body") if yaml_match else ""
         dependencies = _inline_yaml_list(yaml_body, "dependencies")
         spec_refs = _inline_yaml_list(yaml_body, "spec_refs") or SPEC_REF_RE.findall(body)
-        file_claims = _yaml_block_list(yaml_body, "file_claims")
+        file_claims = _yaml_block_list(yaml_body, "file_claims") or _markdown_file_claims(body)
         task_id = "task_" + match.group("number").replace(".", "_")
         tasks.append(
             {
@@ -212,7 +217,7 @@ def _fallback_plan_contract(document: InputDocument) -> dict[str, object]:
                 ).hexdigest(),
             }
         )
-    return {"plan_id": _document_plan_id(document), "tasks": tasks}
+    return {"plan_id": _path_plan_id(document), "tasks": tasks}
 
 
 def _inline_yaml_list(body: str, key: str) -> list[str]:
@@ -237,6 +242,180 @@ def _yaml_block_list(body: str, key: str) -> list[str]:
         for line in match.group("items").splitlines()
         if "-" in line
     ]
+
+
+def _markdown_file_claims(body: str) -> list[str]:
+    heading = re.search(r"(?mi)^\*\*Files:\*\*[ \t]*$", body)
+    if not heading:
+        return []
+    claims: list[str] = []
+    for line in body[heading.end() :].splitlines():
+        stripped = line.strip()
+        if not stripped:
+            if claims:
+                break
+            continue
+        if not stripped.startswith("-"):
+            if claims:
+                break
+            continue
+        path_match = re.search(r"`([^`]+)`", stripped)
+        if path_match:
+            claims.append(path_match.group(1).strip())
+    return list(dict.fromkeys(claims))
+
+
+def _markdown_section(text: str, heading: str) -> str:
+    match = re.search(rf"(?mi)^##[ \t]+{re.escape(heading)}[ \t]*$", text)
+    if not match:
+        _blocked(
+            "program_contract_missing",
+            "natural-language program is missing a required section",
+            heading=heading,
+        )
+    following = re.search(r"(?m)^##[ \t]+", text[match.end() :])
+    end = match.end() + following.start() if following else len(text)
+    return text[match.end() : end]
+
+
+def _stage_alias(document: InputDocument) -> str | None:
+    match = re.search(r"(?:^|-)wave-([a-c]\d|\d+)(?:-|$)", _path_plan_id(document), re.I)
+    return match.group(1).upper() if match else None
+
+
+def _natural_program_contract(
+    document: InputDocument,
+    plans: Mapping[str, tuple[InputDocument, dict[str, object]]],
+) -> dict[str, object]:
+    """Parse the reviewed Canvas-style program tables without heuristic ordering."""
+
+    text = document.content.decode("utf-8")
+    order_section = _markdown_section(text, "Authoritative Execution Order")
+    by_name = {item.path.name: plan_id for plan_id, (item, _) in plans.items()}
+    staged: list[tuple[int, str]] = []
+    for line in order_section.splitlines():
+        match = re.match(r"^\|\s*(\d+)\s*\|\s*`([^`]+)`\s*\|", line)
+        if not match:
+            continue
+        source_name = match.group(2)
+        if source_name not in by_name:
+            _blocked(
+                "plan_order_invalid",
+                "program order references a missing implementation plan",
+                source_path=source_name,
+            )
+        staged.append((int(match.group(1)), by_name[source_name]))
+    if not staged or [stage for stage, _ in staged] != list(range(1, len(staged) + 1)):
+        _blocked(
+            "plan_order_invalid",
+            "program stage table must be contiguous and start at one",
+            stages=[stage for stage, _ in staged],
+        )
+    plan_order = [plan_id for _, plan_id in staged]
+
+    aliases = {
+        alias: plan_id
+        for plan_id, (plan_document, _) in plans.items()
+        if (alias := _stage_alias(plan_document)) is not None
+    }
+    coverage_section = _markdown_section(text, "Spec Coverage Map")
+    ownership_section = _markdown_section(text, "File Ownership Map")
+    coverage: dict[str, list[str]] = {}
+    for line in coverage_section.splitlines():
+        if not line.startswith("|") or re.match(r"^\|[- |]+$", line):
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if len(cells) != 2 or cells[0] == "Design sections":
+            continue
+        owner_aliases = re.findall(r"\b([A-C]\d)\b", cells[1], re.I)
+        owner_aliases.extend(re.findall(r"\bWave\s+(\d+)\b", cells[1], re.I))
+        owner_ids = list(dict.fromkeys(aliases.get(alias.upper()) for alias in owner_aliases))
+        if not owner_ids or any(owner is None for owner in owner_ids):
+            _blocked(
+                "missing_spec_coverage",
+                "program coverage owner cannot be resolved to a plan",
+                spec_section=cells[0],
+                owner=cells[1],
+            )
+        coverage[cells[0]] = [
+            str(QualifiedTaskId(owner, str(task.get("task_id") or task.get("id"))))
+            for owner in owner_ids
+            for task in plans[owner][1]["tasks"]
+        ]
+
+    claimed: dict[str, list[str]] = defaultdict(list)
+    for plan_id in plan_order:
+        for task in plans[plan_id][1]["tasks"]:
+            task_id = str(QualifiedTaskId(plan_id, str(task.get("task_id") or task.get("id"))))
+            for path in task.get("file_claims", []):
+                claimed[str(path)].append(task_id)
+    ownership = {
+        path: list(dict.fromkeys(writers))
+        for path, writers in claimed.items()
+        if len({writer.split("::", 1)[0] for writer in writers}) > 1
+    }
+    if ownership and not re.search(
+        r"A new wave may change an existing owner only through an interface explicitly named in that wave's plan\.",
+        ownership_section,
+    ):
+        _blocked(
+            "ambiguous_file_ownership",
+            "natural-language program does not authorize its repeated file claims",
+            paths=sorted(ownership),
+        )
+
+    final_plan = plan_order[-1]
+    if _stage_alias(plans[final_plan][0]) != "6" or not re.search(
+        r"Wave 6 remains the only final evidence gate", text, re.I
+    ):
+        _blocked(
+            "global_gate_missing",
+            "natural-language program must identify final Wave 6 as its only gate",
+            final_plan=final_plan,
+        )
+    final_tasks = plans[final_plan][1]["tasks"]
+    final_task_id = str(final_tasks[-1].get("task_id") or final_tasks[-1].get("id"))
+    return {
+        "plan_order": plan_order,
+        "required_spec_sections": list(coverage),
+        "spec_coverage": coverage,
+        "cross_plan_dependencies": [],
+        "file_ownership": ownership,
+        "ownership_transfers": [
+            {"path": path, "from": first, "to": second}
+            for path, writers in ownership.items()
+            for first, second in zip(writers, writers[1:])
+        ],
+        "shared_interfaces": [],
+        "global_integration_gate": str(QualifiedTaskId(final_plan, final_task_id)),
+    }
+
+
+def _spec_section_hashes(document: InputDocument | None) -> dict[str, str]:
+    if document is None:
+        return {}
+    lines = document.content.splitlines(keepends=True)
+    headings: list[tuple[int, int, str]] = []
+    for index, line in enumerate(lines):
+        match = re.match(rb"^(#{2,6})[ \t]+(S\d+(?:\.\d+)*)\b", line)
+        if match:
+            headings.append((index, len(match.group(1)), match.group(2).decode("ascii")))
+    hashes: dict[str, str] = {}
+    for offset, (start, level, section_id) in enumerate(headings):
+        if section_id in hashes:
+            _blocked(
+                "spec_section_ambiguous",
+                "specification section IDs must be unique",
+                spec_section=section_id,
+            )
+        end = len(lines)
+        for next_start, next_level, _ in headings[offset + 1 :]:
+            if next_level <= level:
+                end = next_start
+                break
+        canonical_section = b"".join(lines[start:end]).rstrip(b"\r\n") + b"\n"
+        hashes[section_id] = hashlib.sha256(canonical_section).hexdigest()
+    return hashes
 
 
 def _qualified(reference: object, current_plan: str) -> str:
@@ -323,11 +502,7 @@ def compile_plan_graph(document_set: DocumentSet) -> PlanGraph:
 
     program_contract = _json_contract(programs[0], "cpe-program") if programs else None
     if programs and program_contract is None:
-        _blocked(
-            "program_contract_missing",
-            "a program document must declare cross-plan authority",
-            document_id=programs[0].document_id,
-        )
+        program_contract = _natural_program_contract(programs[0], parsed_plans)
     if program_contract is not None and "tasks" in program_contract:
         _blocked(
             "program_redefines_task",
@@ -565,35 +740,80 @@ def compile_plan_graph(document_set: DocumentSet) -> PlanGraph:
             document_id=programs[0].document_id if programs else "fallback",
         )
     }
+    invalid_shared = sorted(shared_interfaces - set(claimed))
+    if invalid_shared:
+        _blocked(
+            "ambiguous_file_ownership",
+            "shared interfaces can name only claimed paths",
+            paths=invalid_shared,
+        )
+    for path, first, second in transfers:
+        actual_writers = set(claimed[path])
+        if first not in actual_writers or second not in actual_writers or first == second:
+            _blocked(
+                "ambiguous_file_ownership",
+                "ownership transfer endpoints must be distinct actual writers",
+                path=path,
+                transfer=[first, second],
+                writers=claimed[path],
+            )
     ownership: dict[str, tuple[str, ...]] = {}
     for path, writers in claimed.items():
         writer_plans = {str(task_records[writer]["plan_id"]) for writer in writers}
-        if len(writer_plans) == 1:
-            ownership[path] = tuple(writers)
-            continue
         raw_owners = declared_ownership.get(path)
-        owners = tuple(str(item) for item in raw_owners) if isinstance(raw_owners, list) else ()
-        if len(owners) != len(set(owners)) or set(owners) != set(writers):
+        if raw_owners is not None and not isinstance(raw_owners, list):
             _blocked(
                 "ambiguous_file_ownership",
-                "cross-plan writers need one exact ownership order",
+                "file ownership entry must be an ordered writer list",
+                path=path,
+                declared=raw_owners,
+            )
+        owners = tuple(str(item) for item in raw_owners) if raw_owners is not None else tuple(writers)
+        if (
+            len(owners) != len(set(owners))
+            or set(owners) != set(writers)
+            or (len(writer_plans) > 1 and raw_owners is None)
+        ):
+            _blocked(
+                "ambiguous_file_ownership",
+                "declared ownership must exactly order every actual writer",
                 path=path,
                 writers=writers,
                 declared=list(owners),
             )
-        if path not in shared_interfaces:
-            missing_transfers = [
-                [first, second]
-                for first, second in zip(owners, owners[1:])
-                if (path, first, second) not in transfers
-            ]
-            if missing_transfers:
+        if path in shared_interfaces and len(writer_plans) < 2:
+            _blocked(
+                "ambiguous_file_ownership",
+                "shared interface requires writers from at least two plans",
+                path=path,
+                writers=writers,
+            )
+        required_transfers = {(path, first, second) for first, second in zip(owners, owners[1:])}
+        declared_transfers = {transfer for transfer in transfers if transfer[0] == path}
+        if path in shared_interfaces:
+            unexpected = declared_transfers - required_transfers
+            if unexpected:
                 _blocked(
                     "ambiguous_file_ownership",
-                    "cross-plan writers need explicit ownership transfers",
+                    "shared-interface transfer does not follow writer order",
                     path=path,
-                    missing_transfers=missing_transfers,
+                    transfers=[list(item[1:]) for item in sorted(unexpected)],
                 )
+        elif len(writer_plans) > 1 and declared_transfers != required_transfers:
+            _blocked(
+                "ambiguous_file_ownership",
+                "cross-plan writers need exactly the adjacent ownership transfers",
+                path=path,
+                required=[list(item[1:]) for item in sorted(required_transfers)],
+                declared=[list(item[1:]) for item in sorted(declared_transfers)],
+            )
+        elif len(writer_plans) == 1 and declared_transfers:
+            _blocked(
+                "ambiguous_file_ownership",
+                "single-plan ownership cannot declare a transfer",
+                path=path,
+                transfers=[list(item[1:]) for item in sorted(declared_transfers)],
+            )
         edges.update((first, second) for first, second in zip(owners, owners[1:]))
         ownership[path] = owners
 
@@ -641,6 +861,7 @@ def compile_plan_graph(document_set: DocumentSet) -> PlanGraph:
         qualified_task_id=gate_id,
     )
     document_hashes = {item.document_id: item.sha256 for item in document_set.documents}
+    spec_section_hashes = _spec_section_hashes(specs[0] if specs else None)
     canonical = {
         "schema_version": SCHEMA_VERSION,
         "spec_document_id": specs[0].document_id if specs else None,
@@ -648,6 +869,7 @@ def compile_plan_graph(document_set: DocumentSet) -> PlanGraph:
         "plan_documents": [parsed_plans[plan_id][0].document_id for plan_id in plan_order],
         "plan_ids": list(plan_order),
         "document_hashes": document_hashes,
+        "spec_section_hashes": spec_section_hashes,
         "tasks": task_records,
         "edges": sorted(edges),
         "spec_coverage": coverage,
@@ -665,6 +887,7 @@ def compile_plan_graph(document_set: DocumentSet) -> PlanGraph:
         plan_documents=tuple(canonical["plan_documents"]),
         plan_ids=plan_order,
         document_hashes=_freeze(document_hashes),
+        spec_section_hashes=_freeze(spec_section_hashes),
         tasks=_freeze(task_records),
         edges=tuple(sorted(edges)),
         spec_coverage=_freeze(coverage),
@@ -698,11 +921,26 @@ def invalidated_nodes(old: PlanGraph, new: PlanGraph) -> tuple[str, ...]:
             seeds.update(new.file_ownership.get(path, ()))
     if old.global_integration_gate != new.global_integration_gate:
         seeds.add(new.global_integration_gate.qualified_task_id)
-    if old.spec_document_id and new.spec_document_id:
-        if old.document_hashes.get(old.spec_document_id) != new.document_hashes.get(
-            new.spec_document_id
-        ):
-            seeds.update(task for tasks in new.spec_coverage.values() for task in tasks)
+    changed_sections = {
+        section
+        for section in set(old.spec_section_hashes) | set(new.spec_section_hashes)
+        if old.spec_section_hashes.get(section) != new.spec_section_hashes.get(section)
+    }
+    all_covered_tasks = {
+        task
+        for graph in (old, new)
+        for task_ids in graph.spec_coverage.values()
+        for task in task_ids
+        if task in new.tasks
+    }
+    for section in changed_sections:
+        related = {
+            task
+            for graph in (old, new)
+            for task in graph.spec_coverage.get(section, ())
+            if task in new.tasks
+        }
+        seeds.update(related or all_covered_tasks)
     affected: set[str] = set()
     for seed in seeds:
         affected.update(new.downstream_of(seed))

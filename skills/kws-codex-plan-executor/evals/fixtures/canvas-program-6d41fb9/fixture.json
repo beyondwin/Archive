@@ -3,6 +3,7 @@
   "source": {
     "repository": "https://github.com/beyondwin/Canvas-clone",
     "commit": "6d41fb96aa34d4522a8af5bfd911680c2548be3e",
+    "tracked_sources_root": "sources",
     "program_path": "docs/superpowers/plans/2026-07-12-editable-project-files-program.md",
     "program_blob_sha1": "c62805d5b15b9f21d3bc7eab7e05c9153e734278"
   },
