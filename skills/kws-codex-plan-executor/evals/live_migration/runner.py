@@ -28,7 +28,7 @@ from .contracts import (
     sha256_bytes,
     worker_prompt_bytes,
 )
-from .compiler import v4_case_prompt_bundles, v4_worker_output_schema_bytes
+from .compiler import require_trust_root, v4_case_prompt_bundles, v4_worker_output_schema_bytes
 from .envelopes import open_launch_envelope, open_oracle_binding
 from .fixtures import MaterializedFixture, materialize_fixture
 from .ledger import LiveRun, append_event, commit_slot, replay_run
@@ -246,6 +246,7 @@ def execute_v4_slots(
     invoke_provider: FakeProvider,
     *,
     sentinel_only: bool = False,
+    expected_trust_root=None,
 ) -> dict[str, int]:
     """Execute only pending v4 slots, with deterministic policy outcomes inline."""
 
@@ -255,6 +256,22 @@ def execute_v4_slots(
         raise LiveRunnerError("invalid_matrix", "execute_v4_slots requires a v4 manifest")
     if not callable(invoke_provider):
         raise LiveRunnerError("invalid_provider", "provider callback must be callable")
+    if expected_trust_root is not None:
+        try:
+            require_trust_root(run.manifest, expected_trust_root)
+        except ValueError as exc:
+            raise LiveRunnerError(
+                "release_trust_root_mismatch", "release manifest changed trust root"
+            ) from exc
+        if any(
+            not isinstance(slot, dict)
+            or slot.get("trust_root_sha256")
+            != expected_trust_root.trust_root_sha256
+            for slot in run.manifest.get("slots", ())
+        ):
+            raise LiveRunnerError(
+                "release_trust_root_mismatch", "release slot changed trust root"
+            )
     projection = replay_run(run.run_dir)
     pending = {
         SlotKey(str(item["treatment_id"]), str(item["case_id"]))

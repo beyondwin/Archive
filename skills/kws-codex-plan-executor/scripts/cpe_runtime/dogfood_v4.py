@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import tempfile
 import subprocess
@@ -55,6 +56,7 @@ def verify_v4_dogfood_run(
     expected_implementation_commit: str,
     expected_implementation_tree: str,
     expected_task_contract_sha256: str,
+    expected_trust_root_sha256: str | None = None,
 ) -> dict[str, object]:
     """Verify and field-select one production CPE v4 dogfood run."""
 
@@ -153,7 +155,7 @@ def verify_v4_dogfood_run(
         raise ValueError("dogfood_repair_limit_invalid")
     if any(event.get("type") in {"merge.applied", "patch.applied"} for event in events):
         raise ValueError("dogfood_apply_forbidden")
-    return {
+    result: dict[str, object] = {
         "schema_version": "cpe.dogfood-result.v4",
         "status": "passed",
         "run_ids_created": 1,
@@ -164,6 +166,11 @@ def verify_v4_dogfood_run(
         "source_checkout_unchanged": True,
         "runtime_patch_required": False,
     }
+    if expected_trust_root_sha256 is not None:
+        if not re.fullmatch(r"[0-9a-f]{64}", expected_trust_root_sha256):
+            raise ValueError("dogfood_trust_root_invalid")
+        result["trust_root_sha256"] = expected_trust_root_sha256
+    return result
 
 
 def retain_v4_dogfood_run(
@@ -174,6 +181,7 @@ def retain_v4_dogfood_run(
     expected_implementation_tree: str,
     expected_task_contract_sha256: str,
     task_contract_path: Path,
+    expected_trust_root_sha256: str | None = None,
 ) -> dict[str, object]:
     """Publish the replayable dogfood trust evidence beneath the release root."""
 
@@ -182,6 +190,7 @@ def retain_v4_dogfood_run(
         expected_implementation_commit=expected_implementation_commit,
         expected_implementation_tree=expected_implementation_tree,
         expected_task_contract_sha256=expected_task_contract_sha256,
+        expected_trust_root_sha256=expected_trust_root_sha256,
     )
     source = run_dir.expanduser().resolve()
     raw = {
@@ -235,6 +244,7 @@ def verify_retained_v4_dogfood_run(
     expected_implementation_commit: str,
     expected_implementation_tree: str,
     expected_task_contract_sha256: str,
+    expected_trust_root_sha256: str | None = None,
 ) -> dict[str, object]:
     """Replay the retained relative artifacts without trusting the original run path."""
 
@@ -277,6 +287,13 @@ def verify_retained_v4_dogfood_run(
     ):
         raise ValueError("dogfood_retained_artifact_invalid")
     result = checkpoint.get("result")
-    if not isinstance(result, dict) or result.get("model_attempts") != len(attempts):
+    if (
+        not isinstance(result, dict)
+        or result.get("model_attempts") != len(attempts)
+        or (
+            expected_trust_root_sha256 is not None
+            and result.get("trust_root_sha256") != expected_trust_root_sha256
+        )
+    ):
         raise ValueError("dogfood_retained_artifact_invalid")
     return result
