@@ -50,20 +50,20 @@ the old run and worktree must remain untouched.
 
 Python remains because child and Git latency dominate interpreter cost. The
 4.0.0 runtime is the public CLI plus eight focused runtime files. The final
-lean pass measures 6,290 runtime lines and 2,035 eval/runner lines.
+lean pass measures 6,271 runtime lines and 2,117 eval/runner lines.
 
 | Active file | Lines | Necessary retained responsibility |
 | --- | ---: | --- |
-| scripts/cpe.py | 571 | four-command parsing, public result, authority and resume adapter |
+| scripts/cpe.py | 567 | four-command parsing, public result, authority and resume adapter |
 | contracts.py | 2,071 | lossless map, brief, event, audit, terminal, and child validation |
 | store.py | 925 | private snapshots, immutable artifacts, hash-chain, replay |
-| queue.py | 1,695 | mapping, dependency execution, recovery, audits, final integration |
+| queue.py | 1,680 | mapping, dependency execution, recovery, audits, final integration |
 | launcher.py | 680 | strict child boundary, writer lease, timeout and process-group cleanup |
 | worktree.py | 207 | source identity, branch, commit and clean-handoff checks |
 | legacy.py | 63 | bounded read-only schema-3 inspection |
 | prompt_export.py | 77 | side-effect-free prompt and handoff rendering |
 | __init__.py | 1 | package marker |
-| six checks plus fake_codex.py and run.sh | 2,035 | 19 high-signal scenarios and deterministic child behavior |
+| six checks plus fake_codex.py and run.sh | 2,117 | 19 high-signal scenarios and deterministic child behavior |
 
 The runtime is below the approved 6,500-line ceiling but remains above the
 directional 5,000-line aspiration because strict map and terminal validation,

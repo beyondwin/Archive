@@ -11,6 +11,11 @@ import unittest
 from pathlib import Path
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 CLI = SKILL_ROOT / 'scripts' / 'cpe.py'
+sys.path.insert(0, str(SKILL_ROOT / 'scripts'))
+from cpe_runtime.launcher import ChildLauncher
+from cpe_runtime.queue import QueueEngine
+from cpe_runtime.store import RunStore
+from cpe_runtime.worktree import Worktree
 PUBLIC_FIELDS = {'status', 'run_id', 'state_path', 'summary', 'next_action', 'failure_code', 'authority_items', 'terminal_artifact'}
 from fake_codex import LeanEvalCase
 
@@ -61,6 +66,25 @@ class LeanCliTest(LeanEvalCase):
                 base.extend(('--run-id', 'missing'))
             repeated = [flag, *([] if value is None else [value])] * 2
             self.assertEqual(self.cli(*base, *repeated).returncode, 2)
+        missing = self.cli('resume', '--run-id', 'absent')
+        self.assertEqual(missing.returncode, 1)
+        missing_payload = json.loads(missing.stdout)
+        self.assertEqual(set(missing_payload), PUBLIC_FIELDS)
+        self.assertEqual(missing_payload['failure_code'], 'run_not_found')
+        bin_dir = self.install_fake_codex('inspect-bin')
+        invocations = self.root / 'inspect-invocations.jsonl'
+        store = RunStore.create(codex_home=self.home, workspace=self.repo, specs=[self.repo / 'spec-a.md', self.repo / 'spec-b.md'], plans=[self.repo / 'plan-a.md', self.repo / 'plan-b.md'], program_plan=self.repo / 'program.md')
+        (self.home / 'worktrees').mkdir()
+        worktree = Worktree.create(source=self.repo, root=self.home / 'worktrees' / store.run_id, run_id=store.run_id)
+        launcher = ChildLauncher(schema_path=SKILL_ROOT / 'templates' / 'child-result-schema.json', timeout_seconds=10, environ={**self.env, 'PATH': str(bin_dir), 'CPE_FAKE_SCENARIO': 'mapping_success', 'CPE_FAKE_INVOCATION_LOG': str(invocations)})
+        QueueEngine(store, worktree, launcher).map_program()
+        inspected = self.cli('inspect', '--run-id', store.run_id)
+        self.assertEqual(inspected.returncode, 0, inspected.stderr)
+        payload = json.loads(inspected.stdout)
+        self.assertEqual(set(payload), {'schema_version', 'run_id', 'status', 'generation', 'current_item', 'current_role', 'completed_tasks', 'total_tasks', 'open_authority_ids', 'worktree_head', 'last_event_type', 'terminal_artifact'})
+        self.assertEqual((payload['schema_version'], payload['generation']), (4, 'generation-0001'))
+        self.assertEqual((payload['completed_tasks'], payload['total_tasks']), (0, 3))
+        self.assertLessEqual(len(payload['open_authority_ids']), 100)
 
     def test_export_preserves_order_hashes_and_creates_no_state(self) -> None:
         home_before = self.inventory(self.home)

@@ -47,8 +47,16 @@ class LeanFinalTest(LeanEvalCase):
     def test_each_document_audits_scoped_evidence_before_one_terminal_pass(self) -> None:
         store, engine = self.create_engine('final_success')
         base = engine.worktree.base_commit
+        while engine.tick() is not None:
+            pass
+        revision = engine.worktree.head()
+        engine._run_document_audits(revision)
+        before_resume = len(self.invocations())
+        store.append_event('run.interrupted', {'status': 'interrupted', 'failure_code': 'signal'})
         state = engine.run_until_terminal()
         self.assertEqual(state['status'], 'completed')
+        self.assertEqual(len([item for item in self.invocations()[:before_resume] if item['role'] == 'document_auditor']), 5)
+        self.assertEqual(len([item for item in self.invocations()[before_resume:] if item['role'] == 'document_auditor']), 0)
         self.assertTrue(store.paths.result.is_file())
         documents = store.document_set()
         invocations = self.invocations()
@@ -74,7 +82,6 @@ class LeanFinalTest(LeanEvalCase):
         self.assertEqual(len(integrators), 1)
         whole = [Path(path) for path in integrators[0]['input_paths'] if 'whole.patch' in path]
         self.assertEqual(len(whole), 1)
-        revision = engine.worktree.head()
         self.assertEqual(whole[0].read_text(encoding='utf-8'), engine.worktree.diff(base, revision))
         terminal = json.loads(store.paths.result.read_text(encoding='utf-8'))
         self.assertEqual(terminal['revision'], revision)

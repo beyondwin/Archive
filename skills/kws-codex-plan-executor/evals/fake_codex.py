@@ -692,7 +692,7 @@ def _mapping_document_result(
                     "authority_ids": [],
                 }
             ]
-            if role == "spec"
+            if role == "spec" and item_id == "spec-01"
             else []
         ),
     }
