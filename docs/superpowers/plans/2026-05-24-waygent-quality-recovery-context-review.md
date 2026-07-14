@@ -29,7 +29,7 @@ context the main coordinator must carry.
 scheduler behavior, so task order matters.
 
 **Plan safety:** The fenced `waygent-task` blocks use only safe verification
-commands. Mutating maintenance commands such as Graphify refresh and git commit
+commands. Mutating maintenance commands such as retired repository-map tooling refresh and git commit
 belong to the operator after implementation, outside Waygent verification.
 
 ## File Structure
@@ -48,7 +48,7 @@ belong to the operator after implementation, outside Waygent verification.
 
 **Modified files:**
 
-- `packages/orchestrator/src/planAdapters/verificationPolicy.ts` - classify install, formatter, codegen, Graphify, and git mutation as implementation-only.
+- `packages/orchestrator/src/planAdapters/verificationPolicy.ts` - classify install, formatter, codegen, retired repository-map tooling, and git mutation as implementation-only.
 - `packages/orchestrator/src/planNormalizer.ts` - preserve implementation-only command instructions while keeping `verify` safe.
 - `packages/orchestrator/src/intakeRecovery.ts` - recover memory-second-brain-style plans without decision prompts when commands are safe.
 - `packages/orchestrator/tests/planNormalizer.test.ts` - regression coverage for safe normalization.
@@ -134,7 +134,7 @@ Run:
 ```bash
 npm run build
 npm run validate
-graphify update .
+git diff --check
 ```
 ````
 
@@ -148,7 +148,7 @@ function isImplementationOnlyCommand(segment: string): boolean {
   if (/^(npm|bun|pnpm|yarn)\s+install\b/.test(segment)) return true;
   if (/^(npm|bun|pnpm|yarn)\s+run\s+(format|fmt|generate|codegen)\b/.test(segment)) return true;
   if (/^prettier\s+--write\b/.test(segment)) return true;
-  if (segment === "graphify update ." || segment.startsWith("graphify update ")) return true;
+  if (segment === "git diff --check" || segment.startsWith("repository_map update ")) return true;
   return /^git\s+(add|commit|push|checkout|merge|rebase|stash|worktree|cherry-pick)\b/.test(segment);
 }
 ```
@@ -191,9 +191,9 @@ test("normalizes memory-second-brain style plans and strips implementation-only 
     "npm run validate"
   ]);
   expect(parsed.tasks[0]?.instructions.join("\n")).toContain("npm install");
-  expect(parsed.tasks[1]?.instructions.join("\n")).toContain("graphify update .");
+  expect(parsed.tasks[1]?.instructions.join("\n")).toContain("git diff --check");
   expect(normalized.markdown).not.toContain("verify:\n  - npm install");
-  expect(normalized.markdown).not.toContain("verify:\n  - graphify update .");
+  expect(normalized.markdown).not.toContain("verify:\n  - git diff --check");
 });
 ```
 
@@ -271,7 +271,7 @@ In `docs/operations/plan-authoring.md`, add a short subsection under
 When a Superpowers-style implementation plan includes task headings, file
 claims, and safe verification commands, Waygent normalizes it into executable
 `yaml waygent-task` blocks during intake. Commands that install dependencies,
-format files, generate code, update Graphify output, or mutate git state are
+format files, generate code, update retired repository-map tooling output, or mutate git state are
 preserved as implementation instructions and removed from `verify`.
 
 Waygent asks for a decision only when the command is destructive, escapes the
@@ -1166,9 +1166,9 @@ file_claims:
     mode: owned
   - path: docs/operations/plan-authoring.md
     mode: owned
-  - path: graphify-out/GRAPH_REPORT.md
+  - path: removed-repository-map/REPORT.md
     mode: owned
-  - path: graphify-out/graph.json
+  - path: removed-repository-map/graph.json
     mode: owned
 risk: medium
 verify:
@@ -1195,15 +1195,15 @@ Ensure `docs/operations/plan-authoring.md` states that `verify` must contain
 only non-mutating checks and that implementation-only commands are preserved as
 task instructions during normalization.
 
-- [ ] **Step 2: Refresh Graphify output after implementation.**
+- [ ] **Step 2: Refresh retired repository-map tooling output after implementation.**
 
 Run this outside the `verify` list because it mutates generated files:
 
 ```bash
-graphify update .
+git diff --check
 ```
 
-Expected: `graphify-out/GRAPH_REPORT.md` and `graphify-out/graph.json` update
+Expected: `removed-repository-map/REPORT.md` and `removed-repository-map/graph.json` update
 successfully.
 
 - [ ] **Step 3: Run full verification.**
@@ -1227,7 +1227,7 @@ Run:
 git status --short --branch --untracked-files=all
 ```
 
-Expected: only intentional code, docs, tests, and Graphify output files are
+Expected: only intentional code, docs, tests, and retired repository-map tooling output files are
 dirty.
 
 ---

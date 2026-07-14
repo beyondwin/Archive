@@ -43,7 +43,7 @@ shows the current gap:
 
 The dry-run evidence included concrete `git apply --check` failures for
 `docs/operations/verification.md`, `docs/operations/waygent.md`, and
-`graphify-out/*`. The runtime should preserve that evidence and report the
+`removed-repository-map/*`. The runtime should preserve that evidence and report the
 blocker as a recoverable checkpoint/source-basis conflict, not as a missing
 checkpoint.
 
@@ -294,7 +294,7 @@ The implementation plan should be phased:
 3. shared run-read/status model;
 4. API and console parity;
 5. provider cost/noise projection refinements;
-6. docs, scenario fixtures, dogfood, and Graphify refresh.
+6. docs, scenario fixtures, dogfood, and retired repository-map tooling refresh.
 
 Parallel work is safe only after the checkpoint reason model is stable.
 Surface work can split across API and console if they both consume the shared

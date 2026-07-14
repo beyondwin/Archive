@@ -6,7 +6,7 @@
 
 **Architecture:** Keep `waygent.run_state.v2` as the runtime source of truth and add pure read-only projection modules in `packages/lens-projectors`. Wire those projections outward through `packages/orchestrator/src/runCommands.ts`, `apps/api/src/server.ts`, and `apps/console/src/uiModel.ts` / `App.tsx`, while keeping apply readiness owned by the existing completion-audit, checkpoint, combined-patch, reconciliation, and clean-checkout gates.
 
-**Tech Stack:** Bun, TypeScript, React, Vite, `bun:test`, Waygent contracts, Waygent lens projectors, Waygent orchestrator, Graphify.
+**Tech Stack:** Bun, TypeScript, React, Vite, `bun:test`, Waygent contracts, Waygent lens projectors, Waygent orchestrator, retired repository-map tooling.
 
 ---
 
@@ -51,7 +51,7 @@ Out of scope:
 - `tests/integration/waygent-dogfood-evidence.test.ts`: fake-provider dogfood integration gate.
 - `package.json`: make `waygent:dogfood` run the dogfood evidence gate.
 - `docs/operations/waygent.md`, `docs/architecture/waygent.md`, `docs/operations/verification.md`: document the loop and verification command.
-- `graphify-out/GRAPH_REPORT.md`, `graphify-out/graph.json`: refresh after code and docs structure changes.
+- `removed-repository-map/REPORT.md`, `removed-repository-map/graph.json`: refresh after code and docs structure changes.
 
 ## Waygent Task Packet
 
@@ -104,9 +104,9 @@ file_claims:
     mode: owned
   - path: docs/architecture/waygent.md
     mode: owned
-  - path: graphify-out/GRAPH_REPORT.md
+  - path: removed-repository-map/REPORT.md
     mode: owned
-  - path: graphify-out/graph.json
+  - path: removed-repository-map/graph.json
     mode: owned
 risk: medium
 verify:
@@ -1900,9 +1900,9 @@ files:
     mode: edit
   - path: docs/architecture/waygent.md
     mode: edit
-  - path: graphify-out/GRAPH_REPORT.md
+  - path: removed-repository-map/REPORT.md
     mode: edit
-  - path: graphify-out/graph.json
+  - path: removed-repository-map/graph.json
     mode: edit
 acceptance:
   - command: bun run check && bun run platform:demo && bun run waygent:scenarios && bun run waygent:dogfood && bun run check:legacy && bun run --cwd apps/console build && git diff --check
@@ -1917,8 +1917,8 @@ risks:
 - Modify: `docs/operations/waygent.md`
 - Modify: `docs/operations/verification.md`
 - Modify: `docs/architecture/waygent.md`
-- Modify: `graphify-out/GRAPH_REPORT.md`
-- Modify: `graphify-out/graph.json`
+- Modify: `removed-repository-map/REPORT.md`
+- Modify: `removed-repository-map/graph.json`
 
 - [ ] **Step 1: Update operations docs**
 
@@ -2002,22 +2002,22 @@ git diff --check
 
 Expected: PASS.
 
-- [ ] **Step 5: Refresh Graphify**
+- [ ] **Step 5: Refresh retired repository-map tooling**
 
 Run:
 
 ```bash
-graphify update .
+git diff --check
 ```
 
-Expected: `graphify-out/GRAPH_REPORT.md` and `graphify-out/graph.json` are updated or Graphify reports no topology changes.
+Expected: `removed-repository-map/REPORT.md` and `removed-repository-map/graph.json` are updated or retired repository-map tooling reports no topology changes.
 
 - [ ] **Step 6: Commit docs and final graph**
 
 Run:
 
 ```bash
-git add docs/operations/waygent.md docs/operations/verification.md docs/architecture/waygent.md graphify-out/GRAPH_REPORT.md graphify-out/graph.json
+git add docs/operations/waygent.md docs/operations/verification.md docs/architecture/waygent.md removed-repository-map/REPORT.md removed-repository-map/graph.json
 git commit -m "docs: document Waygent maturity loop"
 ```
 
@@ -2036,7 +2036,7 @@ Parallel notes:
 
 - Task 3 and Task 4 both depend on Task 1. They should not run concurrently in the same worktree because both can touch response shapes consumed by the console.
 - Task 5 depends on Task 2 because the dogfood helper asserts `inspectRun` and `explainRun` maturity fields.
-- Task 6 runs last because it documents final command behavior and refreshes Graphify.
+- Task 6 runs last because it documents final command behavior and refreshes retired repository-map tooling.
 
 Human approval gates:
 
@@ -2076,4 +2076,4 @@ Do not report optional live smoke as failed if the provider CLI is not installed
 - Apply button state still comes only from `apply_readiness`.
 - Dogfood gate uses fake provider by default and does not require live provider auth.
 - Default verification passes.
-- `graphify update .` has been run after code and docs changes.
+- `git diff --check` has been run after code and docs changes.

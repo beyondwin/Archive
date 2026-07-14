@@ -51,7 +51,7 @@ file_claims:
     mode: owned
   - path: docs/contracts/**
     mode: owned
-  - path: graphify-out/**
+  - path: removed-repository-map/**
     mode: owned
   - path: package.json
     mode: owned
@@ -69,7 +69,7 @@ instructions:
   - Read docs/superpowers/plans/2026-05-22-waygent-runtime-improvements-implementation.md and implement the detailed Task 1 through Task 12 sections.
   - Use docs/superpowers/specs/2026-05-22-waygent-runtime-improvements-design.md as the source-audited design spec.
   - Keep current Waygent boundaries: no legacy AgentLens Python tree, no KWS executor dependency, and additive waygent.run_state.v2 fields unless the chain boundary explicitly requires more.
-  - Refresh graphify-out with graphify update . if graphify-out exists and code or documentation structure changes.
+  - Refresh removed-repository-map with git diff --check if removed-repository-map exists and code or documentation structure changes.
   - Preserve user edits and keep generated runtime state out of git.
 ```
 

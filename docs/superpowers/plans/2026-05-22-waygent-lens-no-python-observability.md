@@ -80,7 +80,7 @@ Resolved by the final cutoff:
    projectors.
 4. Audit KWS executor telemetry and choose deletion behavior.
 5. Delete `components/agentlens` only after blockers are resolved.
-6. Run full no-Python verification and refresh Graphify if structure changed.
+6. Run full no-Python verification and refresh retired repository-map tooling if structure changed.
 
 Human approval gates:
 
@@ -262,7 +262,7 @@ or scheduled for a separate skill-local migration.
 **Files:**
 
 - Delete: `components/agentlens/`
-- Modify any active docs, CI, package scripts, ignore rules, or Graphify output
+- Modify any active docs, CI, package scripts, ignore rules, or retired repository-map tooling output
   that still point to the deleted tree.
 
 Preconditions:
@@ -301,18 +301,18 @@ Use native kernel checks if native files changed.
 
 ---
 
-### Task 6: Refresh Graphify And Close Documentation
+### Task 6: Refresh retired repository-map tooling And Close Documentation
 
 **Files:**
 
-- Modify if present: `graphify-out/GRAPH_REPORT.md`
-- Modify if present: `graphify-out/graph.json`
+- Modify if present: `removed-repository-map/REPORT.md`
+- Modify if present: `removed-repository-map/graph.json`
 - Modify: `docs/architecture/waygent.md`
 - Modify: `docs/operations/waygent.md`
 - Modify: `docs/operations/verification.md`
 - Modify: this plan if any task ordering changed during execution.
 
-- [x] Run `graphify update .` after meaningful structure deletion or movement.
+- [x] Run `git diff --check` after meaningful structure deletion or movement.
 - [x] Confirm `GRAPH_REPORT.md` built commit matches current `HEAD` at
   generation time.
 - [x] Update architecture and operations docs with the final no-Python state.
@@ -322,11 +322,11 @@ Verify:
 
 ```bash
 git rev-parse HEAD
-rg -n "Graph Freshness|Built from commit" graphify-out/GRAPH_REPORT.md
+rg -n "Graph Freshness|Built from commit" removed-repository-map/REPORT.md
 git diff --check
 ```
 
-Expected: Graphify output is fresh if retained.
+Expected: retired repository-map tooling output is fresh if retained.
 
 ## Final Verification Set
 

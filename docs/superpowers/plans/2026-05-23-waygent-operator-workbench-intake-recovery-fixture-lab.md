@@ -1773,9 +1773,9 @@ file_claims:
     mode: owned
   - path: skills/waygent/evals/check_skill_contract.py
     mode: owned
-  - path: graphify-out/GRAPH_REPORT.md
+  - path: removed-repository-map/REPORT.md
     mode: owned
-  - path: graphify-out/graph.json
+  - path: removed-repository-map/graph.json
     mode: owned
 risk: medium
 verify:
@@ -1793,8 +1793,8 @@ verify:
 - Modify: `docs/operations/verification.md`
 - Modify: `skills/waygent/SKILL.md`
 - Modify: `skills/waygent/evals/check_skill_contract.py`
-- Modify: `graphify-out/GRAPH_REPORT.md`
-- Modify: `graphify-out/graph.json`
+- Modify: `removed-repository-map/REPORT.md`
+- Modify: `removed-repository-map/graph.json`
 
 - [ ] **Step 1: Document operator intake behavior**
 
@@ -1866,11 +1866,11 @@ required_skill_phrases.extend([
 
 If the file uses a tuple instead of a list, add those three strings to the same literal.
 
-- [ ] **Step 6: Refresh Graphify**
+- [ ] **Step 6: Refresh retired repository-map tooling**
 
-Run: `graphify update .`
+Run: `git diff --check`
 
-Expected: command exits 0 and updates `graphify-out/GRAPH_REPORT.md` and `graphify-out/graph.json`.
+Expected: command exits 0 and updates `removed-repository-map/REPORT.md` and `removed-repository-map/graph.json`.
 
 - [ ] **Step 7: Run final verification**
 
@@ -1892,7 +1892,7 @@ Expected: every command exits 0.
 Commit:
 
 ```bash
-git add docs/operations/waygent.md docs/contracts/run-state.md docs/operations/verification.md skills/waygent/SKILL.md skills/waygent/evals/check_skill_contract.py graphify-out/GRAPH_REPORT.md graphify-out/graph.json
+git add docs/operations/waygent.md docs/contracts/run-state.md docs/operations/verification.md skills/waygent/SKILL.md skills/waygent/evals/check_skill_contract.py removed-repository-map/REPORT.md removed-repository-map/graph.json
 git commit -m "docs: document Waygent intake recovery"
 ```
 
@@ -1914,7 +1914,7 @@ bun run check
 git diff --check
 ```
 
-Expected: every command exits 0. If `graphify update .` changes tracked graph files after verification, restage those files and rerun `git diff --check` before the final commit.
+Expected: every command exits 0. If `git diff --check` changes tracked graph files after verification, restage those files and rerun `git diff --check` before the final commit.
 
 ## Self-Review Notes
 

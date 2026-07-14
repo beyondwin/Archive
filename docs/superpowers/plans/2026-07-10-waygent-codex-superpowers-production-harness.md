@@ -91,7 +91,7 @@ complete dogfood execution.
 - Console gate: `cd apps/console && bun test src && bun run build`.
 - Native gate: `cd native/kernel && cargo test --workspace`.
 - Skill gate: `skills/waygent/evals/run.sh`.
-- Graph audit: `graphify update .` after structural changes.
+- Graph audit: `git diff --check` after structural changes.
 - Patch hygiene: `git diff --check` and clean intentional status.
 
 ## Review

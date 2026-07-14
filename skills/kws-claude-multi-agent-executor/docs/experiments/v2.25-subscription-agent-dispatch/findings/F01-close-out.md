@@ -46,13 +46,7 @@ Reviewer — so a bare invocation runs every role on the Max/Pro subscription wi
 
 ## Caveats
 
-1. **`bun run check:legacy` fails — pre-existing and unrelated (verified).** The
-   failure is limited to 6 `packages/orchestrator/*` Graphify-dependency flags.
-   ZERO changed files are outside `skills/kws-claude-multi-agent-executor/`, and
-   the identical 6 failures reproduce at base commit `e079bbc` (pre-run). This
-   failure predates v2.25 and is not caused by it; resolving it is a separate
-   Graphify-removal effort in an unrelated product tree, out of scope here.
-2. **Eval-harness smoke — deterministic preflight RUN (PASS); live fixture loop
+1. **Eval-harness smoke — deterministic preflight RUN (PASS); live fixture loop
    DEFERRED.** The free, deterministic portion of `./evals/run.sh` was executed
    directly and passed: `compare_agentlens_events.py --self-test` (6 cases),
    `check_skill_contract.py` (all 46 contract checks), and

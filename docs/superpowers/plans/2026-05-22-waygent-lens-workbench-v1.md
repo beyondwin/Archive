@@ -62,8 +62,8 @@ Durable constraints:
   - Render Run Board, Sticky Outcome Strip, Operator Timeline, and Decision/Evidence Rail.
 - `apps/console/src/styles.css`
   - Product-grade Workbench layout, responsive narrow layout, stable row dimensions, and disabled-action affordances.
-- `graphify-out/GRAPH_REPORT.md`, `graphify-out/graph.json`
-  - Refresh after code/doc structure changes with `graphify update .`.
+- `removed-repository-map/REPORT.md`, `removed-repository-map/graph.json`
+  - Refresh after code/doc structure changes with `git diff --check`.
 
 ### Do Not Touch
 
@@ -84,7 +84,7 @@ Sequential path:
 3. Task 3: API and CLI parity.
 4. Task 4: Console UI model.
 5. Task 5: Console product surface and browser QA.
-6. Task 6: Full verification, Graphify, review, commit.
+6. Task 6: Full verification, retired repository-map tooling, review, commit.
 
 Parallel policy:
 
@@ -2175,12 +2175,12 @@ git add apps/console/src/App.tsx apps/console/src/styles.css apps/console/src/ui
 git commit -m "feat: build Lens Workbench console surface"
 ```
 
-## Task 6: Full Verification, Graphify, Review, Commit
+## Task 6: Full Verification, retired repository-map tooling, Review, Commit
 
 **Files:**
 
-- Modify: `graphify-out/GRAPH_REPORT.md`
-- Modify: `graphify-out/graph.json`
+- Modify: `removed-repository-map/REPORT.md`
+- Modify: `removed-repository-map/graph.json`
 - Read: `code_review.md`
 
 - [ ] **Step 1: Run targeted tests**
@@ -2231,15 +2231,15 @@ git diff --check
 
 Expected: no output and exit 0.
 
-- [ ] **Step 5: Refresh Graphify**
+- [ ] **Step 5: Refresh retired repository-map tooling**
 
 Run:
 
 ```bash
-graphify update .
+git diff --check
 ```
 
-Expected: `graphify-out/GRAPH_REPORT.md` and `graphify-out/graph.json` update and include `operatorDecision.ts` plus this plan/spec path.
+Expected: `removed-repository-map/REPORT.md` and `removed-repository-map/graph.json` update and include `operatorDecision.ts` plus this plan/spec path.
 
 - [ ] **Step 6: Read review checklist and perform focused self-review**
 
@@ -2293,4 +2293,4 @@ Expected:
 - [ ] `bun run check` passes.
 - [ ] `cd apps/console && bun run build` passes.
 - [ ] `git diff --check` passes.
-- [ ] `graphify update .` has been run after source changes.
+- [ ] `git diff --check` has been run after source changes.
