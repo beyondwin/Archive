@@ -130,15 +130,12 @@ Closeout loop:
 - After a Waygent run, apply, resume, or implementation-producing command
   changes code or docs, inspect `git status --short --branch --untracked-files=all`
   before declaring the work complete.
-- If code or documentation structure changed and `graphify-out/` exists, run
-  `graphify update .` before the final status check. Treat resulting graph
-  files as generated audit evidence, not runtime state.
 - Run the smallest verification gate that proves the changed surface. Use
   `git diff --check` for docs-only changes, add the offline Waygent gates for
   runtime changes, and add console or native gates only when those surfaces
   changed.
-- If verification or Graphify mutates tracked files after staging, restage the
-  generated changes and rerun `git diff --check` before any commit or final
+- If verification mutates tracked files after staging, restage the generated
+  changes and rerun `git diff --check` before any commit or final
   completion claim.
 - Report unresolved dirty state explicitly, separating pre-existing user
   changes from the current Waygent work.

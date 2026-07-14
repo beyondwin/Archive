@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { describe, expect, test } from "bun:test";
 import { buildRepoMap } from "../src";
 
-describe("Graphify-free repo map", () => {
-  test("discovers files without reading graphify-out", () => {
+describe("repository map", () => {
+  test("discovers source files", () => {
     const root = mkdtempSync(join(tmpdir(), "waygent-map-"));
     writeFileSync(join(root, "a.ts"), "export const a = 1;");
     const map = buildRepoMap(root);

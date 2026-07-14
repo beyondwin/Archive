@@ -46,18 +46,6 @@ Use `waygent resume --last` only after inspecting the last run. Use
 `waygent apply --run <run_id>` only when the source checkout is clean and the
 apply projection is ready.
 
-## Graphify Refresh
-
-Refresh the repository map after meaningful code or documentation structure
-changes:
-
-```bash
-graphify update .
-graphify query "how does Waygent decide apply readiness?" --graph graphify-out/graph.json
-```
-
-Graphify output is navigation and audit evidence, not product runtime state.
-
 ## Live Provider Checks
 
 Live smoke checks are opt-in because they consume local provider CLIs and may

@@ -79,37 +79,6 @@ durable state and TypeScript projections, not from chat context.
 - State root migration: [docs/operations/state-root-migration.md](docs/operations/state-root-migration.md)
 - Waygent skill: [skills/waygent/README.md](skills/waygent/README.md)
 
-## Graphify Repository Map
-
-[Graphify](https://github.com/safishamsi/graphify) is an approved development
-and documentation-audit tool for this repository. Use it to build a queryable
-repo map, find cross-file relationships, and check whether documentation still
-matches the current Waygent and Lens structure.
-
-Refresh the local graph after meaningful code or documentation structure
-changes:
-
-```bash
-graphify update .
-```
-
-Query the graph when exploring cross-cutting architecture:
-
-```bash
-graphify query "how does Waygent decide apply readiness?"
-graphify path "ProviderResult" "Lens"
-graphify explain "safe wave"
-```
-
-Committed Graphify outputs may include `graphify-out/graph.json`,
-`graphify-out/GRAPH_REPORT.md`, and, for smaller graphs,
-`graphify-out/graph.html`. Large graphs may skip the HTML view; in that case
-use `GRAPH_REPORT.md`, `graph.json`, and `graphify query`. Local-only Graphify
-files such as `manifest.json`, `cost.json`, `cache/`, and machine-path metadata
-stay ignored. Graphify is not a product runtime dependency and must not replace
-the canonical contracts under `docs/`, `packages/`, `native/`, and
-`skills/`.
-
 ## Working Rules
 
 Read [AGENTS.md](AGENTS.md) before changing this checkout. For complex plans,

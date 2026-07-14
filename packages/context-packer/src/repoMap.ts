@@ -8,7 +8,7 @@ export interface RepoMapEntry {
   symbols: string[];
 }
 
-const ignored = new Set(["node_modules", "target", ".git", "graphify-out", "dist", "build"]);
+const ignored = new Set(["node_modules", "target", ".git", "dist", "build"]);
 
 export function buildRepoMap(root: string, limit = 500): RepoMapEntry[] {
   const files = discoverFiles(root).slice(0, limit);
@@ -26,7 +26,7 @@ export function buildRepoMap(root: string, limit = 500): RepoMapEntry[] {
 export function discoverFiles(root: string): string[] {
   const rg = Bun.spawnSync(["rg", "--files"], { cwd: root, stdout: "pipe", stderr: "ignore" });
   if (rg.success) {
-    return new TextDecoder().decode(rg.stdout).split("\n").filter((path) => path && !path.startsWith("graphify-out/")).sort();
+    return new TextDecoder().decode(rg.stdout).split("\n").filter(Boolean).sort();
   }
   const result: string[] = [];
   walk(root, root, result);

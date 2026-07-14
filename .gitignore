@@ -82,11 +82,6 @@ index.db-*
 *.db-journal
 
 # Generated navigation/search layers
-graphify-out/manifest.json
-graphify-out/cost.json
-graphify-out/cache/
-graphify-out/.graphify_root
-graphify-out/.graphify_labels.json
 docs/wiki/*
 !docs/wiki/README.md
 docs/_graph/*

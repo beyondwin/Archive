@@ -92,27 +92,19 @@ describe("verification policy", () => {
     });
   });
 
-  test("treats installs, write-mode maintenance, and graph updates as implementation-only", () => {
+  test("treats installs and write-mode maintenance as implementation-only", () => {
     for (const command of [
       "npm install",
       "bun install",
       "pnpm run format",
       "yarn run generate",
-      "prettier --write src/index.ts",
-      "graphify update ."
+      "prettier --write src/index.ts"
     ]) {
       expect(classify(command)).toMatchObject({
         status: "ignored",
         reason: "implementation_only"
       });
     }
-  });
-
-  test("does not treat a workspace cd plus implementation-only command as verification", () => {
-    expect(classify("cd packages/orchestrator && graphify update .")).toMatchObject({
-      status: "ignored",
-      reason: "implementation_only"
-    });
   });
 
   test("classifies read-only diagnostics as ignored evidence", () => {

@@ -106,8 +106,8 @@ and rerun with explicit ownership for the generated files.
 When a Superpowers-style implementation plan includes task headings, file
 claims, and safe verification commands, Waygent normalizes it into executable
 `yaml waygent-task` blocks during intake. Commands that install dependencies,
-format files, generate code, update Graphify output, or mutate git state are
-preserved as implementation instructions and removed from `verify`.
+format files, generate code, or mutate git state are preserved as
+implementation instructions and removed from `verify`.
 
 Waygent also reads the `writing-plans` convention of pairing `Run:` commands
 with `Expected:` lines. If a task only contains safe commands whose expected

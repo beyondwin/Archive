@@ -307,7 +307,7 @@ function isNonVerificationIntentLine(line: string): boolean {
 }
 
 function isNonVerificationStepLine(line: string): boolean {
-  return /\b(commit|checkpoint|example|optional|when checkout exists|external smoke|graphify|refresh graphify|post-apply)\b/i.test(line);
+  return /\b(commit|checkpoint|example|optional|when checkout exists|external smoke|post-apply)\b/i.test(line);
 }
 
 function lineNumberAtIndex(text: string, index: number): number {
