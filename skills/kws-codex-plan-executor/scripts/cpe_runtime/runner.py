@@ -75,9 +75,14 @@ class SequentialRunner:
         try:
             return self._execute(store, explicit_retry=False)
         except KeyboardInterrupt:
+            index = store.state["current_plan_index"]
+            if index < len(store.state["plans"]):
+                current = store.state["plans"][index]
+                if current["status"] == "running":
+                    current["status"] = "interrupted"
             store.state["status"] = "interrupted"
             store.save()
-            store.append_event("run.interrupted", plan_index=store.state["current_plan_index"])
+            store.append_event("run.interrupted", plan_index=index)
             return self._summary(store)
 
     def resume(self, *, run_id: str, retry_failed: bool = False) -> dict[str, Any]:
@@ -95,15 +100,18 @@ class SequentialRunner:
                 raise ValueError("failed run requires --retry-failed")
             if retry_failed:
                 raise ValueError("retry-failed requires a failed run")
-        store.state["status"] = "running"
-        store.save()
         store.append_event("run.resumed", retry_failed=retry_failed)
         try:
             return self._execute(store, explicit_retry=retry_failed)
         except KeyboardInterrupt:
+            index = store.state["current_plan_index"]
+            if index < len(store.state["plans"]):
+                current = store.state["plans"][index]
+                if current["status"] == "running":
+                    current["status"] = "interrupted"
             store.state["status"] = "interrupted"
             store.save()
-            store.append_event("run.interrupted", plan_index=store.state["current_plan_index"])
+            store.append_event("run.interrupted", plan_index=index)
             return self._summary(store)
 
     def inspect(self, *, run_id: str) -> dict[str, Any]:
@@ -131,6 +139,18 @@ class SequentialRunner:
                 prior_result = Path(plan["result_path"]) if plan["result_path"] else None
                 prior_log = self._latest_log(store, plan["plan_id"])
                 plan["attempt_count"] += 1
+                result_path = (
+                    store.root
+                    / "results"
+                    / f"{plan['plan_id']}-attempt-{plan['attempt_count']}.json"
+                )
+                descriptor = os.open(
+                    result_path,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                    0o600,
+                )
+                os.close(descriptor)
+                plan["result_path"] = str(result_path.resolve())
                 plan["status"] = "running"
                 state["status"] = "running"
                 store.save()
@@ -143,7 +163,11 @@ class SequentialRunner:
                     results_directory=store.root / "results", logs_directory=store.root / "logs",
                     attempt=plan["attempt_count"], prior_result=prior_result, prior_log=prior_log,
                 )
-                plan["result_path"] = str(outcome.result_path.resolve()) if outcome.result_path.exists() else str(self._synthetic_result(store, plan, outcome))
+                plan["result_path"] = (
+                    str(outcome.result_path.resolve())
+                    if outcome.payload is not None
+                    else str(self._synthetic_result(store, plan, outcome))
+                )
                 integrity_error = self._handoff_error(store, plan, outcome)
                 if integrity_error is not None:
                     plan["status"] = "failed"
@@ -158,12 +182,17 @@ class SequentialRunner:
                     plan["status"] = "completed"
                     plan["accepted_commit"] = payload["head_commit"]
                     state["current_plan_index"] += 1
+                    state["status"] = (
+                        "completed"
+                        if state["current_plan_index"] == len(state["plans"])
+                        else "running"
+                    )
                     store.save()
                     store.append_event("plan.completed", plan_id=plan["plan_id"], head=payload["head_commit"])
                     break
                 plan["status"] = status
+                state["status"] = status
                 if status == "blocked":
-                    state["status"] = "blocked"
                     store.save()
                     store.append_event("plan.blocked", plan_id=plan["plan_id"])
                     return self._summary(store)

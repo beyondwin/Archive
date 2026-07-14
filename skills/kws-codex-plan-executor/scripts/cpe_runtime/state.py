@@ -13,7 +13,14 @@ from pathlib import Path
 from typing import Any, Sequence
 
 
-RUN_STATUSES = {"running", "completed", "blocked", "failed", "interrupted"}
+RUN_STATUSES = {
+    "initializing",
+    "running",
+    "completed",
+    "blocked",
+    "failed",
+    "interrupted",
+}
 PLAN_STATUSES = {"pending", "running", "completed", "blocked", "failed", "interrupted"}
 _SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 _DIGEST_PATTERN = re.compile(r"^[0-9a-f]{64}$")
@@ -230,6 +237,8 @@ class StateStore:
             if record["role"] == "plan":
                 plan_ids.append(record["document_id"])
 
+        if len(plan_ids) != len(state["plans"]):
+            raise ValueError("plan input count does not match plan state")
         for position, record in enumerate(state["plans"]):
             if not isinstance(record, dict) or set(record) != {
                 "plan_id", "status", "starting_commit", "accepted_commit", "attempt_count", "result_path"
@@ -244,7 +253,75 @@ class StateStore:
                 if value is not None and not _SHA_PATTERN.fullmatch(str(value)):
                     raise ValueError(f"plan {name} is invalid")
             if record["result_path"] is not None:
-                _inside(Path(record["result_path"]), results_root, "result")
+                declared_result = Path(record["result_path"])
+                if declared_result.is_symlink():
+                    raise ValueError("result must not be a symlink")
+                result = _inside(declared_result, results_root, "result")
+                if not result.is_file():
+                    raise ValueError("result must be a regular file")
+
+        self._validate_semantics(plan_ids)
+
+    def _validate_semantics(self, plan_ids: list[str]) -> None:
+        state = self.state
+        plans = state["plans"]
+        if len(plan_ids) != len(plans):
+            raise ValueError("plan input count does not match plan state")
+
+        completed_prefix = 0
+        for plan in plans:
+            if plan["status"] != "completed":
+                break
+            completed_prefix += 1
+        if state["current_plan_index"] != completed_prefix:
+            raise ValueError("current plan index does not match completed prefix")
+
+        pristine_fields = {
+            "status": "pending",
+            "starting_commit": None,
+            "accepted_commit": None,
+            "attempt_count": 0,
+            "result_path": None,
+        }
+        for position, plan in enumerate(plans):
+            if position < completed_prefix:
+                if not all(
+                    plan[name] is not None
+                    for name in ("starting_commit", "accepted_commit", "result_path")
+                ):
+                    raise ValueError("completed plan evidence is incomplete")
+            elif position > completed_prefix:
+                expected = {"plan_id": plan["plan_id"], **pristine_fields}
+                if plan != expected:
+                    raise ValueError("future plan is not pristine")
+
+        if completed_prefix == len(plans):
+            if state["status"] != "completed":
+                raise ValueError("all plans complete but run is not completed")
+            return
+
+        current = plans[completed_prefix]
+        if current["status"] == "pending":
+            expected = {"plan_id": current["plan_id"], **pristine_fields}
+            if current != expected:
+                raise ValueError("pending current plan is not pristine")
+        elif (
+            current["attempt_count"] < 1
+            or current["starting_commit"] is None
+            or current["result_path"] is None
+            or current["accepted_commit"] is not None
+        ):
+            raise ValueError("active current plan evidence is incomplete")
+
+        allowed = {
+            "initializing": {"pending"},
+            "running": {"pending", "running"},
+            "blocked": {"blocked"},
+            "failed": {"failed", "pending"},
+            "interrupted": {"pending", "interrupted"},
+        }
+        if current["status"] not in allowed.get(state["status"], set()):
+            raise ValueError("run and current plan statuses disagree")
 
     def save(self) -> None:
         self._validate()
