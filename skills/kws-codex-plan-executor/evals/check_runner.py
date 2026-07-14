@@ -88,6 +88,10 @@ class SequentialRunnerTest(unittest.TestCase):
         self.assertEqual([item["source_path"] for item in inputs], [str(path.resolve()) for path in self.specs + plans])
         self.assertEqual([item["document_id"] for item in inputs], ["spec-01", "spec-02", "plan-01", "plan-02"])
         self.assertEqual([Path(item["snapshot_path"]).read_text() for item in inputs], [path.read_text() for path in self.specs + plans])
+        inputs[2]["document_id"] = "../plan-01"
+        store.state["plans"][0]["plan_id"] = "../plan-01"
+        with self.assertRaisesRegex(ValueError, "input identity"):
+            store.save()
 
     def test_two_plans_execute_sequentially_in_one_worktree(self) -> None:
         result = self.runner().run(workspace=self.repo, specs=self.specs, plans=[self.plan(1, "completed"), self.plan(2, "completed")], run_id="two-plans")

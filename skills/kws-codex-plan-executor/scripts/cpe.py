@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 from pathlib import Path
 from typing import Sequence
 
@@ -73,7 +74,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _emit(result, 0)
     except KeyboardInterrupt:
         return _emit({"status": "interrupted", "error": "invocation interrupted"})
-    except (CliUsageError, OSError, RuntimeError, ValueError) as exc:
+    except (CliUsageError, OSError, RuntimeError, TypeError, ValueError, subprocess.SubprocessError) as exc:
         return _emit({"status": "failed", "error": _bounded_error(exc)}, 1)
 
 

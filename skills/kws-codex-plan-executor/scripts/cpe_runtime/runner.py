@@ -213,8 +213,17 @@ class SequentialRunner:
     def _verify_worktree(self, store: StateStore) -> None:
         state = store.state
         worktree = Path(state["worktree"])
+        source = Path(state["source_repository"])
         if not worktree.is_dir() or _git(worktree, "rev-parse", "--show-toplevel") != str(worktree.resolve()):
             raise ValueError("recorded worktree is missing or changed")
+        source_common = Path(_git(source, "rev-parse", "--git-common-dir"))
+        worktree_common = Path(_git(worktree, "rev-parse", "--git-common-dir"))
+        if not source_common.is_absolute():
+            source_common = source / source_common
+        if not worktree_common.is_absolute():
+            worktree_common = worktree / worktree_common
+        if source_common.resolve(strict=True) != worktree_common.resolve(strict=True):
+            raise ValueError("recorded worktree belongs to a different repository")
         if _git(worktree, "branch", "--show-current") != state["branch"]:
             raise ValueError("recorded worktree branch changed")
         current_head = _git(worktree, "rev-parse", "HEAD")
@@ -257,13 +266,16 @@ class SequentialRunner:
         state = store.state
         worktree = Path(state["worktree"])
         head = _git(worktree, "rev-parse", "HEAD") if worktree.is_dir() else state["source_commit"]
+        visible_plans = state["plans"][:100]
         result = {
             "run_id": state["run_id"], "status": state["status"], "source_commit": state["source_commit"],
             "worktree": state["worktree"], "branch": state["branch"], "head_commit": head,
             "current_plan_index": state["current_plan_index"],
+            "plan_count": len(state["plans"]),
+            "plans_truncated": len(state["plans"]) > len(visible_plans),
             "plans": [
                 {key: plan[key] for key in ("plan_id", "status", "starting_commit", "accepted_commit", "attempt_count", "result_path")}
-                for plan in state["plans"]
+                for plan in visible_plans
             ],
         }
         if error:
