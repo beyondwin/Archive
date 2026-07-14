@@ -1,156 +1,105 @@
-# KWS Codex Plan Executor 4.0.0
+# KWS Codex Plan Executor
 
-CPE is a durable schema-4 queue for executing one or many approved
-Superpowers implementation plans. It snapshots the source documents, maps them
-with fresh bounded roles, serializes writers in one isolated worktree, and
-resumes from immutable file-backed evidence. It does not keep a coordinating
-model session alive.
-
-Use direct Superpowers for a small task that fits one session. Use CPE for a
-large, multi-document, interruptible program.
+CPE is a small sequential runner for approved Superpowers implementation
+plans. It snapshots ordered inputs, creates one isolated worktree, launches one
+fresh Codex process per plan, and resumes at the first incomplete plan.
 
 ## Requirements
 
-- Python 3 using only the standard library
+- Python 3 standard library
 - Git
-- Codex available as codex on PATH
-- a clean Git workspace for the source repository
-- absolute input and workspace paths
+- `codex` on `PATH`
+- a Git workspace without tracked changes
+- absolute, readable UTF-8 specification and plan paths
+- at least one plan
 
-No package install, network access, credential, or provider call is needed for
-the deterministic eval suite.
+The deterministic evals use no network, provider credential, or model call.
 
-## Start A Run
+## Commands
 
-Spec and plan options may repeat. At least one plan is required. A program plan
-is optional and singular.
+```bash
+python3 scripts/cpe.py run \
+  --spec /abs/spec-a.md --spec /abs/spec-b.md \
+  --plan /abs/plan-01.md --plan /abs/plan-02.md \
+  --workspace /abs/repository
 
-    cd skills/kws-codex-plan-executor
-    python3 scripts/cpe.py run \
-      --spec /abs/product-spec.md \
-      --spec /abs/security-spec.md \
-      --plan /abs/foundation-plan.md \
-      --plan /abs/integration-plan.md \
-      --program-plan /abs/program-plan.md \
-      --workspace /abs/repository
+python3 scripts/cpe.py resume --run-id RUN_ID
+python3 scripts/cpe.py resume --run-id RUN_ID --retry-failed
+python3 scripts/cpe.py inspect --run-id RUN_ID
+```
 
-CLI order records input order; it does not grant one document authority over
-another. Explicit supersession or a recorded authority answer is required for
-incompatible approved requirements.
+Plan flag order is execution order. Every plan session receives all immutable
+specification snapshot paths and its current plan snapshot. Later plans start
+from the accepted commit of the preceding plan in the same worktree.
 
-Every command prints one JSON result. Public statuses and exit codes are:
+## State And Results
 
-| Status | Exit | Meaning |
-| --- | ---: | --- |
-| completed | 0 | terminal integration artifact was published |
-| failed | 1 | invocation or integrity failure cannot continue safely |
-| waiting_authority | 2 | one of six user-owned decisions blocks affected work |
-| interrupted | 3 | durable state is valid and resume is available |
+```text
+CODEX_HOME/orchestrator/RUN_ID/
+  state.json
+  events.jsonl
+  inputs/
+  results/
+  logs/
 
-The terminal artifact contains the separate quality verdict. Do not interpret
-completed alone as a stronger product-quality claim.
+CODEX_HOME/worktrees/RUN_ID/
+```
 
-## Resume, Authority, And Refresh
+`state.json` format version 1 is authoritative and atomically replaced.
+`events.jsonl` records concise transitions; child output remains in `logs/`.
+Inputs are copied before launch with their SHA-256 digest, size, role, and
+role-local order. Private state uses `0700` directories and `0600` files.
 
-    python3 scripts/cpe.py resume --run-id RUN_ID
-    python3 scripts/cpe.py inspect --run-id RUN_ID
+A child result has exactly `plan_id`, `status`, `head_commit`, `verification`,
+and `summary`. Completed is accepted only when the reported commit is the exact
+clean worktree `HEAD`, descends from the plan start, and every non-empty
+verification entry has exit code zero.
 
-Inspect is read-only. Resume validates the run and worktree before continuing.
-A completed task, clean review, accepted audit, or accepted final record is not
-redispatched.
+## Completion, Failure, And Recovery
 
-When inspect reports an open authority item, choose one of that packet's exact
-options:
+- `completed` (exit 0): every ordered plan has an accepted clean commit.
+- `failed` (exit 1): invocation failure, runner-integrity failure, or exhausted
+  plan attempts.
+- `blocked` (exit 2): the current plan requires operator-owned resolution.
+- `interrupted` (exit 3): durable state remains available for resume.
 
-    python3 scripts/cpe.py resume --run-id RUN_ID \
-      --authority-id AUTHORITY_ID \
-      --authority-answer OFFERED_OPTION
+An initial attempt and one recovery attempt are automatic. Invalid output,
+wrong commit, broken ancestry, or a dirty successful handoff fails immediately.
+`resume --retry-failed` grants exactly one additional attempt to the failed
+current plan. Repeating it is a new explicit operator action.
 
-Changed source documents are ignored until an explicit refresh:
-
-    python3 scripts/cpe.py resume --run-id RUN_ID --refresh-inputs
-
-Refresh snapshots the current declared source paths into a new generation. It
-preserves earlier generations and invalidates only work whose task identity,
-brief, dependency closure, or governing document changed.
-
-## Export Without Execution
-
-    python3 scripts/cpe.py export \
-      --spec /abs/spec.md \
-      --plan /abs/plan.md \
-      --workspace /abs/repository \
-      --mode prompt
-
-    python3 scripts/cpe.py export \
-      --plan /abs/plan.md \
-      --workspace /abs/repository \
-      --mode handoff
-
-Export validates paths and renders a launcher document to stdout. It does not
-create CODEX_HOME, a run directory, events, or a worktree.
-
-## Artifacts
-
-By default a run owns:
-
-    ~/.codex/orchestrator/RUN_ID/
-      run.json
-      events.jsonl
-      artifacts.jsonl
-      autonomy-decisions.jsonl
-      writer.lease
-      inputs/
-      maps/
-      briefs/
-      reports/
-      reviews/
-      verification/
-      logs/
-      outbox/
-      result.json
-
-    ~/.codex/worktrees/RUN_ID/
-
-All durable files are private. Input snapshots and accepted artifacts are
-digest-bound. events.jsonl is the authoritative hash-chained transition
-history. artifacts.jsonl binds each immutable logical path to its bytes.
-Each generation has one content-addressed mapping bundle selected by one
-map.generation_created event. Untrusted attempt output stays in outbox until
-the complete bundle validates. result.json exists only after integration.
-
-## Execution Shape
-
-1. One fresh mapper reads each immutable document.
-2. One fresh program mapper composes lossless briefs, dependencies, coverage,
-   hotspots, and authority items.
-3. The non-LLM queue launches one ready task agent at a time.
-4. A fresh reviewer checks the exact task handoff; one consolidated fixer and
-   a changed-strategy investigator handle ordinary defects.
-5. Fresh document auditors verify source coverage at the final revision.
-6. One Program Final Integrator performs cross-program review and one full
-   verification.
-7. Any later write invalidates affected final evidence before closure repeats.
-
-Superpowers owns TDD, code review, and verification-before-completion inside
-the applicable fresh role. CPE owns only durable orchestration and strict
-contract validation.
-
-## Schema 3
-
-CPE 4 inspect can summarize an existing schema-3 directory without mutation.
-CPE 4 does not migrate or resume it. Use the pre-4.0 Git revision only after an
-explicit decision to operate the historical implementation.
+Recovery is plan-level. A fresh process inspects Git, prior result and log
+paths, and any Superpowers progress artifact. CPE does not maintain task-level
+checkpoints, interpret plan prose, own product quality policy, merge, or push.
 
 ## Verify
 
-    ./evals/run.sh
-    python3 -m py_compile scripts/cpe.py scripts/cpe_runtime/*.py evals/*.py
-    bash -n evals/run.sh
-    python3 scripts/cpe.py --help
-    python3 scripts/cpe.py run --help
-    python3 scripts/cpe.py export --help
+```bash
+./evals/run.sh
+python3 -m py_compile scripts/cpe.py scripts/cpe_runtime/*.py evals/*.py
+bash -n evals/run.sh
+python3 scripts/cpe.py --help
+python3 scripts/cpe.py run --help
+python3 scripts/cpe.py resume --help
+python3 scripts/cpe.py inspect --help
+```
 
-The runner executes exactly six deterministic checks and must finish under 60
-seconds on the development machine. See docs/evals-and-verification.md for the
-coverage boundary and docs/risks-limitations-deferrals.md for known risks.
+The eval suite is sequential, network-free, credential-free, and must remain
+below 15 seconds on the development machine.
+
+## Tracked Inventory
+
+```text
+README.md
+SKILL.md
+evals/check_cli.py
+evals/check_runner.py
+evals/fake_codex.py
+evals/run.sh
+scripts/cpe.py
+scripts/cpe_runtime/__init__.py
+scripts/cpe_runtime/launcher.py
+scripts/cpe_runtime/runner.py
+scripts/cpe_runtime/state.py
+templates/plan-result-schema.json
+```

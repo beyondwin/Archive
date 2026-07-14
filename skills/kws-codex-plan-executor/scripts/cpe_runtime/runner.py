@@ -72,7 +72,13 @@ class SequentialRunner:
             check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )
         store.append_event("worktree.created", head=source_commit)
-        return self._execute(store, explicit_retry=False)
+        try:
+            return self._execute(store, explicit_retry=False)
+        except KeyboardInterrupt:
+            store.state["status"] = "interrupted"
+            store.save()
+            store.append_event("run.interrupted", plan_index=store.state["current_plan_index"])
+            return self._summary(store)
 
     def resume(self, *, run_id: str, retry_failed: bool = False) -> dict[str, Any]:
         if not _RUN_ID.fullmatch(run_id):
@@ -92,7 +98,13 @@ class SequentialRunner:
         store.state["status"] = "running"
         store.save()
         store.append_event("run.resumed", retry_failed=retry_failed)
-        return self._execute(store, explicit_retry=retry_failed)
+        try:
+            return self._execute(store, explicit_retry=retry_failed)
+        except KeyboardInterrupt:
+            store.state["status"] = "interrupted"
+            store.save()
+            store.append_event("run.interrupted", plan_index=store.state["current_plan_index"])
+            return self._summary(store)
 
     def inspect(self, *, run_id: str) -> dict[str, Any]:
         if not _RUN_ID.fullmatch(run_id):
