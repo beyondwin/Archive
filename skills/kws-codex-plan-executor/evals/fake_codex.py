@@ -8,6 +8,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 
@@ -19,6 +20,7 @@ SCENARIOS = {
     "wrong_commit",
     "dirty_handoff",
     "resume_completed",
+    "blocking_completed",
 }
 
 
@@ -47,7 +49,11 @@ def git(worktree: Path, *arguments: str) -> str:
     return result.stdout.strip()
 
 
-def invocation_number(plan_id: str, worktree: Path) -> int:
+def invocation_number(
+    plan_id: str,
+    worktree: Path,
+    prior_log: str | None,
+) -> int:
     declared = os.environ.get("CPE_FAKE_INVOCATION_LOG")
     if not declared:
         return 1
@@ -56,7 +62,14 @@ def invocation_number(plan_id: str, worktree: Path) -> int:
     if path.exists():
         entries = [json.loads(line) for line in path.read_text().splitlines()]
     count = sum(entry["plan_id"] == plan_id for entry in entries) + 1
-    entries.append({"plan_id": plan_id, "worktree": str(worktree), "number": count})
+    entries.append(
+        {
+            "plan_id": plan_id,
+            "worktree": str(worktree),
+            "number": count,
+            "prior_log": prior_log,
+        }
+    )
     path.write_text("".join(json.dumps(entry) + "\n" for entry in entries))
     return count
 
@@ -80,7 +93,9 @@ def main() -> int:
     scenario = plan_path.read_text(encoding="utf-8").splitlines()[0].split(":", 1)[1]
     if scenario not in SCENARIOS:
         raise SystemExit(f"unsupported scenario {scenario}")
-    attempt = invocation_number(plan_id, worktree)
+    prior_log_match = re.search(r"^PRIOR_LOG: (.+)$", prompt, re.MULTILINE)
+    prior_log = prior_log_match.group(1).strip() if prior_log_match else None
+    attempt = invocation_number(plan_id, worktree, prior_log)
     head = git(worktree, "rev-parse", "HEAD")
     status = scenario
 
@@ -101,6 +116,20 @@ def main() -> int:
     elif scenario == "dirty_handoff":
         head = commit_plan(worktree, plan_id)
         (worktree / "left-untracked.txt").write_text("dirty\n", encoding="utf-8")
+        status = "completed"
+    elif scenario == "blocking_completed":
+        ready = Path(os.environ["CPE_FAKE_READY"])
+        release = Path(os.environ["CPE_FAKE_RELEASE"])
+        ready.write_text(str(os.getpid()), encoding="utf-8")
+        deadline = time.monotonic() + 5
+        while not release.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        if not release.exists():
+            raise SystemExit("blocking fixture was not released")
+        if attempt == 1:
+            head = commit_plan(worktree, plan_id)
+        else:
+            head = git(worktree, "rev-parse", "HEAD")
         status = "completed"
 
     payload = {
