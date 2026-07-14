@@ -1,8 +1,8 @@
 # Project-scoped Codex defaults for Archive.
 # User, profile, CLI, and managed configuration can override these values.
 
-approval_policy = "on-request"
-sandbox_mode = "workspace-write"
+# Approval and sandbox policy intentionally inherit the user's global
+# ~/.codex/config.toml defaults.
 web_search = "cached"
 model_reasoning_effort = "high"
 
