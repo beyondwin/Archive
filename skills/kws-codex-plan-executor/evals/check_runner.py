@@ -261,6 +261,12 @@ print(json.dumps(result, sort_keys=True), flush=True)
         store.state["status"] = "completed"
         self.assert_state_rejected(store, "completed plan evidence is incomplete")
 
+        result_path = store.root / "results" / "plan-01-attempt-0.json"
+        result_path.write_text("{}", encoding="utf-8")
+        result_path.chmod(0o600)
+        plan["result_path"] = str(result_path.resolve())
+        self.assert_state_rejected(store, "completed plan attempt count")
+
     def test_state_rejects_nonpristine_future_plan(self) -> None:
         store = StateStore.create(
             run_root=self.home / "orchestrator" / "future-plan",
@@ -274,6 +280,42 @@ print(json.dumps(result, sort_keys=True), flush=True)
         )
         store.state["plans"][1]["attempt_count"] = 1
         self.assert_state_rejected(store, "future plan is not pristine")
+
+    def test_late_interrupt_preserves_durable_terminal_state(self) -> None:
+        for terminal in ("completed", "blocked"):
+            with self.subTest(terminal=terminal):
+                store = StateStore.create(
+                    run_root=self.home / "orchestrator" / f"late-{terminal}",
+                    run_id=f"late-{terminal}",
+                    source_repository=self.repo,
+                    source_commit=git(self.repo, "rev-parse", "HEAD"),
+                    worktree=self.home / "worktrees" / f"late-{terminal}",
+                    branch=f"codex/late-{terminal}",
+                    specs=[],
+                    plans=[self.plan(1, "completed")],
+                )
+                result_path = (
+                    store.root / "results" / "plan-01-attempt-1.json"
+                )
+                result_path.write_text("{}", encoding="utf-8")
+                result_path.chmod(0o600)
+                plan = store.state["plans"][0]
+                plan.update(
+                    status=terminal,
+                    starting_commit=store.state["source_commit"],
+                    attempt_count=1,
+                    result_path=str(result_path.resolve()),
+                )
+                if terminal == "completed":
+                    plan["accepted_commit"] = store.state["source_commit"]
+                    store.state["current_plan_index"] = 1
+                store.state["status"] = terminal
+                store.save()
+
+                summary = self.runner()._record_interrupted(store)
+                self.assertEqual(summary["status"], terminal)
+                reopened = StateStore.open(store.root)
+                self.assertEqual(reopened.state["status"], terminal)
 
     def test_worktree_creation_failure_never_leaves_running_state(self) -> None:
         runner = FailingCreateRunner(

@@ -590,6 +590,17 @@ class SequentialRunner:
         return result
 
     def _record_interrupted(self, store: StateStore) -> dict[str, Any]:
+        try:
+            store = StateStore.open(store.root)
+        except ValueError:
+            pass
+        if store.state["status"] in {
+            "completed",
+            "blocked",
+            "failed",
+            "interrupted",
+        }:
+            return self._summary(store)
         index = store.state["current_plan_index"]
         if index < len(store.state["plans"]):
             current = store.state["plans"][index]
