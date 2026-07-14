@@ -49,29 +49,24 @@ class SequentialRunner:
         identifier = run_id or f"cpe-{uuid.uuid4().hex[:16]}"
         if not _RUN_ID.fullmatch(identifier):
             raise ValueError("run ID contains unsupported characters")
-        repository = workspace.resolve(strict=True)
-        if not repository.is_dir() or _git(repository, "rev-parse", "--is-inside-work-tree") != "true":
-            raise ValueError("workspace must be a Git repository")
-        if _git(repository, "status", "--porcelain", "--untracked-files=no"):
-            raise ValueError("workspace has tracked changes")
-        source_commit = _git(repository, "rev-parse", "HEAD")
-        run_root = self.codex_home / "orchestrator" / identifier
-        worktree = self.codex_home / "worktrees" / identifier
-        branch = f"codex/{identifier}"
-        store = StateStore.create(
-            run_root=run_root, run_id=identifier, source_repository=repository,
-            source_commit=source_commit, worktree=worktree, branch=branch,
-            specs=specs, plans=plans,
+        store = self._initialize_run(
+            workspace=workspace,
+            specs=specs,
+            plans=plans,
+            run_id=identifier,
         )
-        worktree.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        worktree.parent.chmod(0o700)
-        if worktree.exists():
-            raise ValueError("run worktree already exists")
-        subprocess.run(
-            ["git", "-C", str(repository), "worktree", "add", "-q", "-b", branch, str(worktree), source_commit],
-            check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-        )
-        store.append_event("worktree.created", head=source_commit)
+        try:
+            self._create_or_reconcile_worktree(store)
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            try:
+                self._cleanup_created_worktree(store)
+            except (OSError, ValueError, subprocess.SubprocessError):
+                pass
+            store.state["status"] = "failed"
+            store.save()
+            reason = (str(exc).strip() or type(exc).__name__)[:2000]
+            store.append_event("run.creation_failed", reason=reason)
+            return self._summary(store, error=reason)
         try:
             return self._execute(store, explicit_retry=False)
         except KeyboardInterrupt:
@@ -89,7 +84,10 @@ class SequentialRunner:
         if not _RUN_ID.fullmatch(run_id):
             raise ValueError("run ID contains unsupported characters")
         store = StateStore.open(self.codex_home / "orchestrator" / run_id)
-        self._verify_worktree(store)
+        if store.state["status"] == "initializing":
+            self._create_or_reconcile_worktree(store)
+        else:
+            self._verify_worktree(store)
         status = store.state["status"]
         if status == "completed":
             if retry_failed:
@@ -119,6 +117,166 @@ class SequentialRunner:
             raise ValueError("run ID contains unsupported characters")
         store = StateStore.open(self.codex_home / "orchestrator" / run_id)
         return self._summary(store)
+
+    @staticmethod
+    def _validate_workspace(repository: Path) -> None:
+        if (
+            not repository.is_dir()
+            or _git(repository, "rev-parse", "--is-inside-work-tree") != "true"
+        ):
+            raise ValueError("workspace must be a Git repository")
+        if _git(repository, "status", "--porcelain", "--untracked-files=no"):
+            raise ValueError("workspace has tracked changes")
+
+    def _initialize_run(
+        self,
+        *,
+        workspace: Path,
+        specs: Sequence[Path],
+        plans: Sequence[Path],
+        run_id: str,
+    ) -> StateStore:
+        repository = workspace.resolve(strict=True)
+        self._validate_workspace(repository)
+        source_commit = _git(repository, "rev-parse", "HEAD")
+        run_root = self.codex_home / "orchestrator" / run_id
+        worktree = self.codex_home / "worktrees" / run_id
+        branch = f"codex/{run_id}"
+        if run_root.exists():
+            raise ValueError("run root already exists")
+        if worktree.exists() or worktree.is_symlink():
+            raise ValueError("run worktree already exists")
+        branch_exists = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(repository),
+                "show-ref",
+                "--verify",
+                "--quiet",
+                f"refs/heads/{branch}",
+            ],
+            check=False,
+        ).returncode == 0
+        if branch_exists:
+            raise ValueError("run branch already exists")
+        return StateStore.create(
+            run_root=run_root,
+            run_id=run_id,
+            source_repository=repository,
+            source_commit=source_commit,
+            worktree=worktree,
+            branch=branch,
+            specs=specs,
+            plans=plans,
+            initial_status="initializing",
+        )
+
+    def _add_new_worktree(self, store: StateStore) -> None:
+        state = store.state
+        worktree = Path(state["worktree"])
+        worktree.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        worktree.parent.chmod(0o700)
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                state["source_repository"],
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                state["branch"],
+                str(worktree),
+                state["source_commit"],
+            ],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+    def _cleanup_created_worktree(self, store: StateStore) -> None:
+        state = store.state
+        source = Path(state["source_repository"])
+        worktree = Path(state["worktree"])
+        if worktree.exists() or worktree.is_symlink():
+            try:
+                self._verify_worktree(store, allow_initializing=True)
+            except (OSError, ValueError, subprocess.SubprocessError):
+                return
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(source),
+                    "worktree",
+                    "remove",
+                    "--force",
+                    str(worktree),
+                ],
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+        branch_head = _git(
+            source,
+            "rev-parse",
+            "--verify",
+            f"refs/heads/{state['branch']}",
+            check=False,
+        )
+        if branch_head == state["source_commit"]:
+            subprocess.run(
+                ["git", "-C", str(source), "branch", "-D", state["branch"]],
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+
+    def _create_or_reconcile_worktree(self, store: StateStore) -> None:
+        state = store.state
+        worktree = Path(state["worktree"])
+        if worktree.is_symlink():
+            raise ValueError("recorded worktree must not be a symlink")
+        if not worktree.exists():
+            source = Path(state["source_repository"])
+            branch_head = _git(
+                source,
+                "rev-parse",
+                "--verify",
+                f"refs/heads/{state['branch']}",
+                check=False,
+            )
+            if branch_head and branch_head != state["source_commit"]:
+                raise ValueError("initializing branch is not at the source commit")
+            if branch_head:
+                worktree.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                worktree.parent.chmod(0o700)
+                subprocess.run(
+                    [
+                        "git",
+                        "-C",
+                        str(source),
+                        "worktree",
+                        "add",
+                        "-q",
+                        str(worktree),
+                        state["branch"],
+                    ],
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+            else:
+                self._add_new_worktree(store)
+        self._verify_worktree(store, allow_initializing=True)
+        state["status"] = "running"
+        store.save()
+        store.append_event("worktree.ready", head=state["source_commit"])
 
     def _execute(self, store: StateStore, *, explicit_retry: bool) -> dict[str, Any]:
         state = store.state
@@ -239,11 +397,21 @@ class SequentialRunner:
             return "verification_failed"
         return None
 
-    def _verify_worktree(self, store: StateStore) -> None:
+    def _verify_worktree(
+        self,
+        store: StateStore,
+        *,
+        allow_initializing: bool = False,
+    ) -> None:
         state = store.state
         worktree = Path(state["worktree"])
         source = Path(state["source_repository"])
-        if not worktree.is_dir() or _git(worktree, "rev-parse", "--show-toplevel") != str(worktree.resolve()):
+        if (
+            worktree.is_symlink()
+            or not worktree.is_dir()
+            or _git(worktree, "rev-parse", "--show-toplevel")
+            != str(worktree.resolve())
+        ):
             raise ValueError("recorded worktree is missing or changed")
         source_common = Path(_git(source, "rev-parse", "--git-common-dir"))
         worktree_common = Path(_git(worktree, "rev-parse", "--git-common-dir"))
@@ -256,6 +424,8 @@ class SequentialRunner:
         if _git(worktree, "branch", "--show-current") != state["branch"]:
             raise ValueError("recorded worktree branch changed")
         current_head = _git(worktree, "rev-parse", "HEAD")
+        if allow_initializing and current_head != state["source_commit"]:
+            raise ValueError("initializing worktree is not at the source commit")
         if subprocess.run(
             ["git", "-C", str(worktree), "merge-base", "--is-ancestor", state["source_commit"], current_head],
             check=False,

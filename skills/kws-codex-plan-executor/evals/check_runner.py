@@ -31,6 +31,11 @@ def git(repository: Path, *arguments: str) -> str:
     return result.stdout.strip()
 
 
+class FailingCreateRunner(SequentialRunner):
+    def _add_new_worktree(self, store: StateStore) -> None:
+        raise subprocess.CalledProcessError(128, ["git", "worktree", "add"])
+
+
 class SequentialRunnerTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory(prefix="cpe-sequential-")
@@ -129,6 +134,100 @@ class SequentialRunnerTest(unittest.TestCase):
         )
         store.state["plans"][1]["attempt_count"] = 1
         self.assert_state_rejected(store, "future plan is not pristine")
+
+    def test_worktree_creation_failure_never_leaves_running_state(self) -> None:
+        runner = FailingCreateRunner(
+            codex_home=self.home,
+            launcher=self.runner().launcher,
+        )
+        result = runner.run(
+            workspace=self.repo,
+            specs=[],
+            plans=[self.plan(1, "completed")],
+            run_id="create-failure",
+        )
+        self.assertEqual(result["status"], "failed")
+        state = json.loads(
+            (
+                self.home
+                / "orchestrator"
+                / "create-failure"
+                / "state.json"
+            ).read_text()
+        )
+        self.assertEqual(state["status"], "failed")
+        self.assertFalse((self.home / "worktrees" / "create-failure").exists())
+
+    def test_resume_reconciles_verified_initializing_worktree(self) -> None:
+        runner = self.runner()
+        store = runner._initialize_run(
+            workspace=self.repo,
+            specs=[],
+            plans=[self.plan(1, "completed")],
+            run_id="reconcile-create",
+        )
+        runner._add_new_worktree(store)
+        self.assertEqual(store.state["status"], "initializing")
+        result = runner.resume(run_id="reconcile-create")
+        self.assertEqual(result["status"], "completed")
+
+    def test_resume_recreates_absent_initializing_worktree(self) -> None:
+        runner = self.runner()
+        runner._initialize_run(
+            workspace=self.repo,
+            specs=[],
+            plans=[self.plan(1, "completed")],
+            run_id="recreate-initializing",
+        )
+        result = runner.resume(run_id="recreate-initializing")
+        self.assertEqual(result["status"], "completed")
+
+    def test_initializing_commit_mismatch_fails_closed_without_deletion(self) -> None:
+        runner = self.runner()
+        store = runner._initialize_run(
+            workspace=self.repo,
+            specs=[],
+            plans=[self.plan(1, "completed")],
+            run_id="mismatched-initializing",
+        )
+        runner._add_new_worktree(store)
+        worktree = Path(store.state["worktree"])
+        (worktree / "unexpected.txt").write_text("unexpected\n", encoding="utf-8")
+        git(worktree, "add", "unexpected.txt")
+        git(worktree, "commit", "-q", "-m", "unexpected initializing change")
+        with self.assertRaisesRegex(ValueError, "source commit"):
+            runner.resume(run_id="mismatched-initializing")
+        self.assertTrue(worktree.is_dir())
+
+    def test_existing_run_branch_is_rejected_before_state_creation(self) -> None:
+        git(self.repo, "branch", "codex/branch-collision")
+        with self.assertRaisesRegex(ValueError, "branch already exists"):
+            self.runner().run(
+                workspace=self.repo,
+                specs=[],
+                plans=[self.plan(1, "completed")],
+                run_id="branch-collision",
+            )
+        self.assertFalse(
+            (self.home / "orchestrator" / "branch-collision").exists()
+        )
+
+    def test_broken_worktree_symlink_is_rejected_before_state_creation(self) -> None:
+        worktrees = self.home / "worktrees"
+        worktrees.mkdir(mode=0o700)
+        (worktrees / "symlink-worktree").symlink_to(
+            self.root / "missing-external-target"
+        )
+        with self.assertRaisesRegex(ValueError, "worktree already exists"):
+            self.runner().run(
+                workspace=self.repo,
+                specs=[],
+                plans=[self.plan(1, "completed")],
+                run_id="symlink-worktree",
+            )
+        self.assertFalse(
+            (self.home / "orchestrator" / "symlink-worktree").exists()
+        )
 
     def test_snapshots_preserve_spec_and_plan_order(self) -> None:
         plans = [self.plan(2, "completed"), self.plan(1, "completed")]
