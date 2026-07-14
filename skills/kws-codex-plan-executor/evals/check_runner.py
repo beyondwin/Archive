@@ -5,10 +5,12 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -65,17 +67,95 @@ class SequentialRunnerTest(unittest.TestCase):
         path.write_text(f"scenario:{scenario}\nplan {number}\n", encoding="utf-8")
         return path
 
-    def runner(self) -> SequentialRunner:
+    def runner(self, **extra_environment: str) -> SequentialRunner:
+        environment = {
+            "PATH": os.environ["PATH"],
+            "CODEX_HOME": str(self.home),
+            "CPE_FAKE_INVOCATION_LOG": str(self.log),
+            **extra_environment,
+        }
         launcher = CodexLauncher(
             schema_path=ROOT / "templates" / "plan-result-schema.json",
             codex_bin=str(self.fake),
             timeout_seconds=5,
-            environ={"PATH": os.environ["PATH"], "CODEX_HOME": str(self.home), "CPE_FAKE_INVOCATION_LOG": str(self.log)},
+            environ=environment,
         )
         return SequentialRunner(codex_home=self.home, launcher=launcher)
 
     def invocations(self) -> list[dict[str, object]]:
         return [json.loads(line) for line in self.log.read_text().splitlines()]
+
+    def start_run_process(
+        self,
+        *,
+        run_id: str,
+        plan: Path,
+        extra_environment: dict[str, str],
+    ) -> subprocess.Popen[str]:
+        environment = dict(os.environ)
+        environment.update(
+            {
+                "PYTHONPATH": str(ROOT / "scripts"),
+                "CPE_TEST_HOME": str(self.home),
+                "CPE_TEST_REPO": str(self.repo),
+                "CPE_TEST_PLAN": str(plan),
+                "CPE_TEST_RUN_ID": run_id,
+                "CPE_TEST_CODEX": str(self.fake),
+                "CPE_TEST_SCHEMA": str(
+                    ROOT / "templates" / "plan-result-schema.json"
+                ),
+                "CPE_FAKE_INVOCATION_LOG": str(self.log),
+                **extra_environment,
+            }
+        )
+        program = """
+import json
+import os
+from pathlib import Path
+from cpe_runtime.launcher import CodexLauncher
+from cpe_runtime.runner import SequentialRunner
+
+launcher = CodexLauncher(
+    schema_path=Path(os.environ["CPE_TEST_SCHEMA"]),
+    codex_bin=os.environ["CPE_TEST_CODEX"],
+    timeout_seconds=5,
+    environ=dict(os.environ),
+)
+runner = SequentialRunner(
+    codex_home=Path(os.environ["CPE_TEST_HOME"]),
+    launcher=launcher,
+)
+result = runner.run(
+    workspace=Path(os.environ["CPE_TEST_REPO"]),
+    specs=[],
+    plans=[Path(os.environ["CPE_TEST_PLAN"])],
+    run_id=os.environ["CPE_TEST_RUN_ID"],
+)
+print(json.dumps(result, sort_keys=True), flush=True)
+"""
+        return subprocess.Popen(
+            [sys.executable, "-c", program],
+            env=environment,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+    def wait_for_path(self, path: Path, timeout: float = 3) -> None:
+        deadline = time.monotonic() + timeout
+        while not path.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        self.assertTrue(path.exists(), f"timed out waiting for {path}")
+
+    def wait_for_process_exit(self, pid: int, timeout: float = 3) -> None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return
+            time.sleep(0.02)
+        self.fail(f"process {pid} did not exit")
 
     def assert_state_rejected(self, store: StateStore, message: str) -> None:
         with self.assertRaisesRegex(ValueError, message):
@@ -228,6 +308,108 @@ class SequentialRunnerTest(unittest.TestCase):
         self.assertFalse(
             (self.home / "orchestrator" / "symlink-worktree").exists()
         )
+
+    def test_concurrent_resume_does_not_launch_a_second_child(self) -> None:
+        ready = self.root / "blocking-ready"
+        release = self.root / "blocking-release"
+        environment = {
+            "CPE_FAKE_READY": str(ready),
+            "CPE_FAKE_RELEASE": str(release),
+        }
+        process = self.start_run_process(
+            run_id="concurrent-resume",
+            plan=self.plan(1, "blocking_completed"),
+            extra_environment=environment,
+        )
+        try:
+            self.wait_for_path(ready)
+            state = json.loads(
+                (
+                    self.home
+                    / "orchestrator"
+                    / "concurrent-resume"
+                    / "state.json"
+                ).read_text()
+            )
+            self.assertEqual(state["plans"][0]["attempt_count"], 1)
+            result_path = Path(state["plans"][0]["result_path"])
+            self.assertTrue(result_path.is_file())
+
+            second = self.runner(**environment).resume(
+                run_id="concurrent-resume"
+            )
+            self.assertEqual(second["status"], "interrupted")
+            self.assertEqual(second["error"], "run_busy")
+            self.assertEqual(len(self.invocations()), 1)
+            unchanged = json.loads(
+                (
+                    self.home
+                    / "orchestrator"
+                    / "concurrent-resume"
+                    / "state.json"
+                ).read_text()
+            )
+            self.assertEqual(unchanged["plans"][0]["attempt_count"], 1)
+        finally:
+            release.touch()
+            stdout, stderr = process.communicate(timeout=4)
+        self.assertEqual(process.returncode, 0, stderr)
+        self.assertEqual(json.loads(stdout)["status"], "completed")
+
+    def test_coordinator_loss_keeps_the_child_lock(self) -> None:
+        ready = self.root / "loss-ready"
+        release = self.root / "loss-release"
+        environment = {
+            "CPE_FAKE_READY": str(ready),
+            "CPE_FAKE_RELEASE": str(release),
+        }
+        process = self.start_run_process(
+            run_id="coordinator-loss",
+            plan=self.plan(1, "blocking_completed"),
+            extra_environment=environment,
+        )
+        self.wait_for_path(ready)
+        child_pid = int(ready.read_text())
+        os.kill(process.pid, signal.SIGKILL)
+        process.communicate(timeout=2)
+
+        second = self.runner(**environment).resume(run_id="coordinator-loss")
+        self.assertEqual(second["status"], "interrupted")
+        self.assertEqual(second["error"], "run_busy")
+        self.assertEqual(len(self.invocations()), 1)
+
+        release.touch()
+        self.wait_for_process_exit(child_pid)
+        recovered = self.runner(**environment).resume(run_id="coordinator-loss")
+        self.assertEqual(recovered["status"], "completed")
+        self.assertEqual(len(self.invocations()), 2)
+
+    def test_attempts_above_ten_use_numeric_prior_log_identity(self) -> None:
+        runner = self.runner()
+        runner.run(
+            workspace=self.repo,
+            specs=[],
+            plans=[self.plan(1, "failed")],
+            run_id="numeric-attempts",
+        )
+        store = StateStore.open(
+            self.home / "orchestrator" / "numeric-attempts"
+        )
+        result_path = store.root / "results" / "plan-01-attempt-10.json"
+        result_path.write_text("{}", encoding="utf-8")
+        result_path.chmod(0o600)
+        for attempt in (9, 10):
+            log_path = store.root / "logs" / f"plan-01-attempt-{attempt}.log"
+            log_path.write_text(f"attempt {attempt}\n", encoding="utf-8")
+            log_path.chmod(0o600)
+        plan = store.state["plans"][0]
+        plan["attempt_count"] = 10
+        plan["result_path"] = str(result_path.resolve())
+        store.save()
+
+        runner.resume(run_id="numeric-attempts", retry_failed=True)
+        prior_log = self.invocations()[-1]["prior_log"]
+        self.assertTrue(str(prior_log).endswith("plan-01-attempt-10.log"))
 
     def test_snapshots_preserve_spec_and_plan_order(self) -> None:
         plans = [self.plan(2, "completed"), self.plan(1, "completed")]

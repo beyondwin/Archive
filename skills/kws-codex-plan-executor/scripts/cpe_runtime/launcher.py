@@ -50,6 +50,18 @@ class CodexLauncher:
         self.log_limit_bytes = log_limit_bytes
 
     @staticmethod
+    def attempt_paths(
+        results_directory: Path,
+        logs_directory: Path,
+        plan_id: str,
+        attempt: int,
+    ) -> tuple[Path, Path]:
+        return (
+            results_directory / f"{plan_id}-attempt-{attempt}.json",
+            logs_directory / f"{plan_id}-attempt-{attempt}.log",
+        )
+
+    @staticmethod
     def _prompt(
         *,
         worktree: Path,
@@ -98,18 +110,17 @@ class CodexLauncher:
         spec_paths: Sequence[Path],
         starting_commit: str,
         current_commit: str,
-        results_directory: Path,
-        logs_directory: Path,
-        attempt: int,
+        result_path: Path,
+        log_path: Path,
+        lock_fd: int,
         prior_result: Path | None = None,
         prior_log: Path | None = None,
     ) -> LaunchResult:
-        result_path = results_directory / f"{plan_id}-attempt-{attempt}.json"
-        log_path = logs_directory / f"{plan_id}-attempt-{attempt}.log"
+        """Launch one attempt using caller-owned paths and the held run lock."""
         command = [
             self.codex_bin, "exec", "--ignore-user-config", "--json",
             "--sandbox", "workspace-write", "-C", str(worktree),
-            "--add-dir", str(results_directory), "--output-schema", str(self.schema_path),
+            "--add-dir", str(result_path.parent), "--output-schema", str(self.schema_path),
             "--output-last-message", str(result_path), "-",
         ]
         prompt = self._prompt(
@@ -126,7 +137,7 @@ class CodexLauncher:
                 completed = subprocess.run(
                     command, input=prompt, text=True, stdout=log, stderr=subprocess.STDOUT,
                     timeout=self.timeout_seconds, start_new_session=True, env=environment,
-                    check=False,
+                    pass_fds=(lock_fd,), check=False,
                 )
                 returncode = completed.returncode
             except subprocess.TimeoutExpired:

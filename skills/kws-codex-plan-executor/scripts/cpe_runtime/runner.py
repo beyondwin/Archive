@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import re
+import stat
 import subprocess
 import uuid
 from pathlib import Path
@@ -25,6 +27,42 @@ def _git(repository: Path, *arguments: str, check: bool = True) -> str:
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     )
     return completed.stdout.strip()
+
+
+class RunBusyError(RuntimeError):
+    pass
+
+
+class _RunLock:
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.descriptor: int | None = None
+
+    def __enter__(self) -> int:
+        descriptor = os.open(
+            self.path,
+            os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        try:
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                raise ValueError("run lock must be a regular file")
+            os.fchmod(descriptor, 0o600)
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            os.close(descriptor)
+            raise RunBusyError("run_busy") from exc
+        except BaseException:
+            os.close(descriptor)
+            raise
+        self.descriptor = descriptor
+        return descriptor
+
+    def __exit__(self, *_: object) -> None:
+        if self.descriptor is not None:
+            fcntl.flock(self.descriptor, fcntl.LOCK_UN)
+            os.close(self.descriptor)
+            self.descriptor = None
 
 
 class SequentialRunner:
@@ -56,61 +94,62 @@ class SequentialRunner:
             run_id=identifier,
         )
         try:
-            self._create_or_reconcile_worktree(store)
-        except (OSError, ValueError, subprocess.SubprocessError) as exc:
-            try:
-                self._cleanup_created_worktree(store)
-            except (OSError, ValueError, subprocess.SubprocessError):
-                pass
-            store.state["status"] = "failed"
-            store.save()
-            reason = (str(exc).strip() or type(exc).__name__)[:2000]
-            store.append_event("run.creation_failed", reason=reason)
-            return self._summary(store, error=reason)
-        try:
-            return self._execute(store, explicit_retry=False)
-        except KeyboardInterrupt:
-            index = store.state["current_plan_index"]
-            if index < len(store.state["plans"]):
-                current = store.state["plans"][index]
-                if current["status"] == "running":
-                    current["status"] = "interrupted"
-            store.state["status"] = "interrupted"
-            store.save()
-            store.append_event("run.interrupted", plan_index=index)
-            return self._summary(store)
+            with _RunLock(store.root / "run.lock") as lock_fd:
+                try:
+                    self._create_or_reconcile_worktree(store)
+                except (OSError, ValueError, subprocess.SubprocessError) as exc:
+                    try:
+                        self._cleanup_created_worktree(store)
+                    except (OSError, ValueError, subprocess.SubprocessError):
+                        pass
+                    store.state["status"] = "failed"
+                    store.save()
+                    reason = (str(exc).strip() or type(exc).__name__)[:2000]
+                    store.append_event("run.creation_failed", reason=reason)
+                    return self._summary(store, error=reason)
+                try:
+                    return self._execute(
+                        store,
+                        explicit_retry=False,
+                        lock_fd=lock_fd,
+                    )
+                except KeyboardInterrupt:
+                    return self._record_interrupted(store)
+        except RunBusyError:
+            return self._busy_summary(store)
 
     def resume(self, *, run_id: str, retry_failed: bool = False) -> dict[str, Any]:
         if not _RUN_ID.fullmatch(run_id):
             raise ValueError("run ID contains unsupported characters")
         store = StateStore.open(self.codex_home / "orchestrator" / run_id)
-        if store.state["status"] == "initializing":
-            self._create_or_reconcile_worktree(store)
-        else:
-            self._verify_worktree(store)
-        status = store.state["status"]
-        if status == "completed":
-            if retry_failed:
-                raise ValueError("retry-failed requires a failed run")
-            return self._summary(store)
-        if retry_failed != (status == "failed"):
-            if status == "failed":
-                raise ValueError("failed run requires --retry-failed")
-            if retry_failed:
-                raise ValueError("retry-failed requires a failed run")
-        store.append_event("run.resumed", retry_failed=retry_failed)
         try:
-            return self._execute(store, explicit_retry=retry_failed)
-        except KeyboardInterrupt:
-            index = store.state["current_plan_index"]
-            if index < len(store.state["plans"]):
-                current = store.state["plans"][index]
-                if current["status"] == "running":
-                    current["status"] = "interrupted"
-            store.state["status"] = "interrupted"
-            store.save()
-            store.append_event("run.interrupted", plan_index=index)
-            return self._summary(store)
+            with _RunLock(store.root / "run.lock") as lock_fd:
+                store = StateStore.open(store.root)
+                if store.state["status"] == "initializing":
+                    self._create_or_reconcile_worktree(store)
+                else:
+                    self._verify_worktree(store)
+                status = store.state["status"]
+                if status == "completed":
+                    if retry_failed:
+                        raise ValueError("retry-failed requires a failed run")
+                    return self._summary(store)
+                if retry_failed != (status == "failed"):
+                    if status == "failed":
+                        raise ValueError("failed run requires --retry-failed")
+                    if retry_failed:
+                        raise ValueError("retry-failed requires a failed run")
+                store.append_event("run.resumed", retry_failed=retry_failed)
+                try:
+                    return self._execute(
+                        store,
+                        explicit_retry=retry_failed,
+                        lock_fd=lock_fd,
+                    )
+                except KeyboardInterrupt:
+                    return self._record_interrupted(store)
+        except RunBusyError:
+            return self._busy_summary(store)
 
     def inspect(self, *, run_id: str) -> dict[str, Any]:
         if not _RUN_ID.fullmatch(run_id):
@@ -278,7 +317,13 @@ class SequentialRunner:
         store.save()
         store.append_event("worktree.ready", head=state["source_commit"])
 
-    def _execute(self, store: StateStore, *, explicit_retry: bool) -> dict[str, Any]:
+    def _execute(
+        self,
+        store: StateStore,
+        *,
+        explicit_retry: bool,
+        lock_fd: int,
+    ) -> dict[str, Any]:
         state = store.state
         while state["current_plan_index"] < len(state["plans"]):
             index = state["current_plan_index"]
@@ -294,20 +339,42 @@ class SequentialRunner:
                 current_head = _git(worktree, "rev-parse", "HEAD")
                 if plan["starting_commit"] is None:
                     plan["starting_commit"] = current_head
-                prior_result = Path(plan["result_path"]) if plan["result_path"] else None
-                prior_log = self._latest_log(store, plan["plan_id"])
+                previous_attempt = plan["attempt_count"]
+                prior_result = (
+                    Path(plan["result_path"])
+                    if plan["result_path"]
+                    else None
+                )
+                prior_log = None
+                if previous_attempt:
+                    candidate = (
+                        store.root
+                        / "logs"
+                        / f"{plan['plan_id']}-attempt-{previous_attempt}.log"
+                    )
+                    if candidate.is_file() and not candidate.is_symlink():
+                        prior_log = candidate
                 plan["attempt_count"] += 1
-                result_path = (
-                    store.root
-                    / "results"
-                    / f"{plan['plan_id']}-attempt-{plan['attempt_count']}.json"
+                result_path, log_path = self.launcher.attempt_paths(
+                    store.root / "results",
+                    store.root / "logs",
+                    plan["plan_id"],
+                    plan["attempt_count"],
                 )
                 descriptor = os.open(
                     result_path,
                     os.O_WRONLY | os.O_CREAT | os.O_EXCL,
                     0o600,
                 )
-                os.close(descriptor)
+                try:
+                    os.fsync(descriptor)
+                finally:
+                    os.close(descriptor)
+                result_directory = os.open(result_path.parent, os.O_RDONLY)
+                try:
+                    os.fsync(result_directory)
+                finally:
+                    os.close(result_directory)
                 plan["result_path"] = str(result_path.resolve())
                 plan["status"] = "running"
                 state["status"] = "running"
@@ -318,8 +385,8 @@ class SequentialRunner:
                 outcome = self.launcher.launch(
                     worktree=worktree, plan_id=plan["plan_id"], plan_path=Path(plan_input["snapshot_path"]),
                     spec_paths=spec_paths, starting_commit=plan["starting_commit"], current_commit=current_head,
-                    results_directory=store.root / "results", logs_directory=store.root / "logs",
-                    attempt=plan["attempt_count"], prior_result=prior_result, prior_log=prior_log,
+                    result_path=result_path, log_path=log_path, lock_fd=lock_fd,
+                    prior_result=prior_result, prior_log=prior_log,
                 )
                 plan["result_path"] = (
                     str(outcome.result_path.resolve())
@@ -442,11 +509,6 @@ class SequentialRunner:
                 raise ValueError("current plan history no longer descends from its starting commit")
 
     @staticmethod
-    def _latest_log(store: StateStore, plan_id: str) -> Path | None:
-        matches = sorted((store.root / "logs").glob(f"{plan_id}-attempt-*.log"))
-        return matches[-1] if matches else None
-
-    @staticmethod
     def _synthetic_result(store: StateStore, plan: dict[str, Any], outcome: LaunchResult) -> Path:
         target = store.root / "results" / f"{plan['plan_id']}-attempt-{plan['attempt_count']}-synthetic.json"
         worktree = Path(store.state["worktree"])
@@ -480,3 +542,19 @@ class SequentialRunner:
         if error:
             result["error"] = error
         return result
+
+    def _busy_summary(self, store: StateStore) -> dict[str, Any]:
+        result = self._summary(store, error="run_busy")
+        result["status"] = "interrupted"
+        return result
+
+    def _record_interrupted(self, store: StateStore) -> dict[str, Any]:
+        index = store.state["current_plan_index"]
+        if index < len(store.state["plans"]):
+            current = store.state["plans"][index]
+            if current["status"] == "running":
+                current["status"] = "interrupted"
+        store.state["status"] = "interrupted"
+        store.save()
+        store.append_event("run.interrupted", plan_index=index)
+        return self._summary(store)
