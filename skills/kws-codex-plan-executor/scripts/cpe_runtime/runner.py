@@ -424,6 +424,7 @@ class SequentialRunner:
                 assert payload is not None
                 status = payload["status"]
                 if status == "completed":
+                    self._seal_result(outcome.result_path)
                     plan["status"] = "completed"
                     plan["accepted_commit"] = payload["head_commit"]
                     state["current_plan_index"] += 1
@@ -469,10 +470,6 @@ class SequentialRunner:
         for item in verification:
             if not isinstance(item, dict) or set(item) != {"command", "exit_code"} or not isinstance(item["command"], str) or not item["command"].strip() or not isinstance(item["exit_code"], int) or isinstance(item["exit_code"], bool):
                 return "invalid_result"
-        if payload["status"] != "completed":
-            return None
-        if outcome.forced_cleanup:
-            return "forced_cleanup"
         worktree = Path(store.state["worktree"])
         observed = _git(worktree, "rev-parse", "HEAD")
         if head != observed:
@@ -480,11 +477,33 @@ class SequentialRunner:
         ancestry = subprocess.run(["git", "-C", str(worktree), "merge-base", "--is-ancestor", plan["starting_commit"], head], check=False).returncode
         if ancestry != 0:
             return "broken_ancestry"
+        if payload["status"] != "completed":
+            return None
+        if outcome.returncode != 0:
+            return "nonzero_exit"
+        if outcome.timed_out:
+            return "timed_out"
+        if outcome.forced_cleanup:
+            return "forced_cleanup"
         if _git(worktree, "status", "--porcelain", "--untracked-files=all"):
             return "dirty_handoff"
         if not verification or any(item["exit_code"] != 0 for item in verification):
             return "verification_failed"
         return None
+
+    @staticmethod
+    def _seal_result(path: Path) -> None:
+        descriptor = os.open(
+            path,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+        )
+        try:
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                raise ValueError("accepted result must be a regular file")
+            os.fchmod(descriptor, 0o400)
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
 
     def _verify_worktree(
         self,

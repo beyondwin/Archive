@@ -181,6 +181,23 @@ class CodexLauncher:
             logs_directory / f"{plan_id}-attempt-{attempt}.log",
         )
 
+    def _command(self, worktree: Path, result_path: Path) -> list[str]:
+        return [
+            self.codex_bin,
+            "exec",
+            "--ignore-user-config",
+            "--ephemeral",
+            "--sandbox",
+            "workspace-write",
+            "-C",
+            str(worktree),
+            "--output-schema",
+            str(self.schema_path),
+            "--output-last-message",
+            str(result_path),
+            "-",
+        ]
+
     @staticmethod
     def _prompt(
         *,
@@ -190,19 +207,16 @@ class CodexLauncher:
         spec_paths: Sequence[Path],
         starting_commit: str,
         current_commit: str,
-        result_path: Path,
         prior_result: Path | None,
         prior_log: Path | None,
     ) -> str:
         lines = [
             "Execute one approved implementation plan in the isolated worktree.",
-            f"REPOSITORY: {worktree}",
             f"WORKTREE: {worktree}",
             f"PLAN_ID: {plan_id}",
             f"CURRENT_PLAN: {plan_path}",
             f"STARTING_COMMIT: {starting_commit}",
             f"CURRENT_COMMIT: {current_commit}",
-            f"RESULT_PATH: {result_path}",
             "SPECIFICATIONS_IN_ORDER:",
         ]
         lines.extend(f"- {path}" for path in spec_paths)
@@ -216,7 +230,7 @@ class CodexLauncher:
                 "Discover and follow repository AGENTS.md instructions from root to the edited subtree.",
                 "Use the Superpowers workflow declared by the plan. Complete implementation, review, fixes, verification, and commits before reporting completed.",
                 "For completed, leave the worktree fully clean, report its exact HEAD, and include at least one successful verification command.",
-                "Write only the fixed schema result to RESULT_PATH. Do not merge, push, deploy, or modify files outside the worktree and result directory.",
+                "Return only the fixed schema object as the final response. Do not merge, push, deploy, or modify files outside the worktree.",
             ]
         )
         return "\n".join(lines) + "\n"
@@ -237,16 +251,11 @@ class CodexLauncher:
         prior_log: Path | None = None,
     ) -> LaunchResult:
         """Launch one attempt using caller-owned paths and the held run lock."""
-        command = [
-            self.codex_bin, "exec", "--ignore-user-config", "--json",
-            "--sandbox", "workspace-write", "-C", str(worktree),
-            "--add-dir", str(result_path.parent), "--output-schema", str(self.schema_path),
-            "--output-last-message", str(result_path), "-",
-        ]
+        command = self._command(worktree, result_path)
         prompt = self._prompt(
             worktree=worktree, plan_id=plan_id, plan_path=plan_path,
             spec_paths=spec_paths, starting_commit=starting_commit,
-            current_commit=current_commit, result_path=result_path,
+            current_commit=current_commit,
             prior_result=prior_result, prior_log=prior_log,
         )
         environment = {key: value for key, value in self.environ.items() if key not in _SECRETS}

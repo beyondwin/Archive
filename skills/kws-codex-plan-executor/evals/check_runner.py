@@ -17,7 +17,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from cpe_runtime.launcher import CodexLauncher
+from cpe_runtime.launcher import CodexLauncher, LaunchResult
 from cpe_runtime.runner import SequentialRunner
 from cpe_runtime.state import StateStore
 
@@ -39,21 +39,36 @@ class FailingCreateRunner(SequentialRunner):
 
 
 class SequentialRunnerTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.fixture_temporary = tempfile.TemporaryDirectory(
+            prefix="cpe-sequential-base-"
+        )
+        cls.fixture_repo = Path(cls.fixture_temporary.name) / "repo"
+        cls.fixture_repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(cls.fixture_repo)], check=True)
+        git(cls.fixture_repo, "config", "user.email", "cpe@example.invalid")
+        git(cls.fixture_repo, "config", "user.name", "CPE Eval")
+        for index, name in enumerate(("spec-b.md", "spec-a.md"), 1):
+            (cls.fixture_repo / name).write_text(
+                f"spec {index}\n",
+                encoding="utf-8",
+            )
+        git(cls.fixture_repo, "add", ".")
+        git(cls.fixture_repo, "commit", "-q", "-m", "fixture base")
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.fixture_temporary.cleanup()
+
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory(prefix="cpe-sequential-")
         self.root = Path(self.temporary.name)
         self.home = self.root / "codex-home"
         self.repo = self.root / "repo"
         self.home.mkdir(mode=0o700)
-        self.repo.mkdir()
-        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
-        git(self.repo, "config", "user.email", "cpe@example.invalid")
-        git(self.repo, "config", "user.name", "CPE Eval")
+        shutil.copytree(self.fixture_repo, self.repo)
         self.specs = [self.repo / "spec-b.md", self.repo / "spec-a.md"]
-        for index, path in enumerate(self.specs, 1):
-            path.write_text(f"spec {index}\n", encoding="utf-8")
-        git(self.repo, "add", ".")
-        git(self.repo, "commit", "-q", "-m", "fixture base")
         self.log = self.root / "invocations.jsonl"
         self.fake = self.root / "codex"
         shutil.copyfile(ROOT / "evals" / "fake_codex.py", self.fake)
@@ -574,6 +589,131 @@ print(json.dumps(result, sort_keys=True), flush=True)
         )
         self.assertIn("[cpe spawn failed:", log_path.read_text())
 
+    def test_launcher_command_and_prompt_are_minimal_and_ephemeral(self) -> None:
+        launcher = self.runner().launcher
+        result_path = self.root / "result.json"
+        command = launcher._command(self.repo, result_path)
+        prompt = launcher._prompt(
+            worktree=self.repo,
+            plan_id="plan-01",
+            plan_path=self.plan(1, "completed"),
+            spec_paths=[],
+            starting_commit=git(self.repo, "rev-parse", "HEAD"),
+            current_commit=git(self.repo, "rev-parse", "HEAD"),
+            prior_result=None,
+            prior_log=None,
+        )
+        self.assertIn("--ephemeral", command)
+        self.assertNotIn("--json", command)
+        self.assertNotIn("--add-dir", command)
+        self.assertEqual(command.count("--output-last-message"), 1)
+        self.assertNotIn("REPOSITORY:", prompt)
+        self.assertIn("WORKTREE:", prompt)
+        self.assertNotIn(
+            "Write only the fixed schema result to RESULT_PATH",
+            prompt,
+        )
+
+    def test_handoff_acceptance_and_result_isolation(self) -> None:
+        runner = self.runner()
+        result = runner.run(
+            workspace=self.repo,
+            specs=[],
+            plans=[
+                self.plan(1, "completed"),
+                self.plan(2, "mutate_prior_nonzero_completed"),
+            ],
+            run_id="handoff-contract",
+        )
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error"], "nonzero_exit")
+        first_result = Path(result["plans"][0]["result_path"])
+        first_payload = json.loads(first_result.read_text())
+        self.assertEqual(first_payload["plan_id"], "plan-01")
+        self.assertEqual(first_result.stat().st_mode & 0o777, 0o400)
+
+        store = StateStore.open(
+            self.home / "orchestrator" / "handoff-contract"
+        )
+        plan = store.state["plans"][1]
+        result_path = Path(plan["result_path"])
+        payload = json.loads(result_path.read_text())
+        log_path = store.root / "logs" / "plan-02-attempt-1.log"
+
+        def outcome(
+            candidate: dict[str, object],
+            *,
+            returncode: int = 0,
+        ) -> LaunchResult:
+            return LaunchResult(
+                payload=candidate,
+                returncode=returncode,
+                timed_out=False,
+                forced_cleanup=False,
+                discarded_log_bytes=0,
+                result_path=result_path,
+                log_path=log_path,
+            )
+
+        self.assertIsNone(runner._handoff_error(store, plan, outcome(payload)))
+
+        wrong_head = dict(payload, head_commit="0" * 40)
+        self.assertEqual(
+            runner._handoff_error(store, plan, outcome(wrong_head)),
+            "wrong_head",
+        )
+        wrong_incomplete = dict(
+            wrong_head,
+            status="interrupted",
+            verification=[],
+        )
+        self.assertEqual(
+            runner._handoff_error(store, plan, outcome(wrong_incomplete)),
+            "wrong_head",
+        )
+
+        failed_verification = dict(
+            payload,
+            verification=[{"command": "fake verify", "exit_code": 1}],
+        )
+        self.assertEqual(
+            runner._handoff_error(
+                store,
+                plan,
+                outcome(failed_verification),
+            ),
+            "verification_failed",
+        )
+        self.assertEqual(
+            runner._handoff_error(store, plan, outcome(payload, returncode=1)),
+            "nonzero_exit",
+        )
+
+        worktree = Path(store.state["worktree"])
+        dirty = worktree / "untracked-handoff.txt"
+        dirty.write_text("dirty\n", encoding="utf-8")
+        self.assertEqual(
+            runner._handoff_error(store, plan, outcome(payload)),
+            "dirty_handoff",
+        )
+        dirty.unlink()
+
+        git(worktree, "checkout", "-q", "--orphan", "handoff-unrelated")
+        git(worktree, "rm", "-q", "-rf", ".")
+        unrelated = worktree / "unrelated.txt"
+        unrelated.write_text("unrelated\n", encoding="utf-8")
+        git(worktree, "add", "unrelated.txt")
+        git(worktree, "commit", "-q", "-m", "unrelated handoff")
+        unrelated_payload = dict(payload, head_commit=git(worktree, "rev-parse", "HEAD"))
+        self.assertEqual(
+            runner._handoff_error(
+                store,
+                plan,
+                outcome(unrelated_payload),
+            ),
+            "broken_ancestry",
+        )
+
     def test_snapshots_preserve_spec_and_plan_order(self) -> None:
         plans = [self.plan(2, "completed"), self.plan(1, "completed")]
         store = StateStore.create(
@@ -613,13 +753,6 @@ print(json.dumps(result, sort_keys=True), flush=True)
         self.assertEqual(resumed["status"], "completed")
         self.assertNotEqual(resumed["head_commit"], prior_head)
         self.assertEqual([call["plan_id"] for call in self.invocations()], ["plan-01", "plan-02", "plan-02"])
-
-    def test_completed_requires_exact_head_ancestry_cleanliness_and_verification(self) -> None:
-        for scenario in ("completed", "wrong_commit", "dirty_handoff"):
-            with self.subTest(scenario=scenario):
-                runner = self.runner()
-                result = runner.run(workspace=self.repo, specs=[], plans=[self.plan(1, scenario)], run_id=f"handoff-{scenario}")
-                self.assertEqual(result["status"], "completed" if scenario == "completed" else "failed")
 
     def test_initial_plus_one_recovery_attempt_is_the_automatic_limit(self) -> None:
         result = self.runner().run(workspace=self.repo, specs=[], plans=[self.plan(1, "interrupted")], run_id="attempt-limit")
