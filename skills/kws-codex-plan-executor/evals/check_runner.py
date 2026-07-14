@@ -67,7 +67,12 @@ class SequentialRunnerTest(unittest.TestCase):
         path.write_text(f"scenario:{scenario}\nplan {number}\n", encoding="utf-8")
         return path
 
-    def runner(self, **extra_environment: str) -> SequentialRunner:
+    def runner(
+        self,
+        *,
+        timeout_seconds: float = 5,
+        **extra_environment: str,
+    ) -> SequentialRunner:
         environment = {
             "PATH": os.environ["PATH"],
             "CODEX_HOME": str(self.home),
@@ -77,7 +82,7 @@ class SequentialRunnerTest(unittest.TestCase):
         launcher = CodexLauncher(
             schema_path=ROOT / "templates" / "plan-result-schema.json",
             codex_bin=str(self.fake),
-            timeout_seconds=5,
+            timeout_seconds=timeout_seconds,
             environ=environment,
         )
         return SequentialRunner(codex_home=self.home, launcher=launcher)
@@ -156,6 +161,46 @@ print(json.dumps(result, sort_keys=True), flush=True)
                 return
             time.sleep(0.02)
         self.fail(f"process {pid} did not exit")
+
+    def cleanup_fixture_processes(self, pid_path: Path) -> None:
+        if not pid_path.exists():
+            return
+        for line in pid_path.read_text().splitlines():
+            try:
+                os.kill(int(line), signal.SIGKILL)
+            except (ProcessLookupError, ValueError):
+                pass
+
+    def start_cli_process(
+        self,
+        *,
+        plan: Path,
+        extra_environment: dict[str, str],
+    ) -> subprocess.Popen[str]:
+        environment = dict(os.environ)
+        environment.update(
+            {
+                "CODEX_HOME": str(self.home),
+                "PATH": f"{self.root}{os.pathsep}{os.environ['PATH']}",
+                "CPE_FAKE_INVOCATION_LOG": str(self.log),
+                **extra_environment,
+            }
+        )
+        return subprocess.Popen(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "cpe.py"),
+                "run",
+                "--plan",
+                str(plan),
+                "--workspace",
+                str(self.repo),
+            ],
+            env=environment,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
 
     def assert_state_rejected(self, store: StateStore, message: str) -> None:
         with self.assertRaisesRegex(ValueError, message):
@@ -410,6 +455,124 @@ print(json.dumps(result, sort_keys=True), flush=True)
         runner.resume(run_id="numeric-attempts", retry_failed=True)
         prior_log = self.invocations()[-1]["prior_log"]
         self.assertTrue(str(prior_log).endswith("plan-01-attempt-10.log"))
+
+    def test_timeout_kills_the_complete_process_group(self) -> None:
+        pid_path = self.root / "timeout-grandchildren"
+        try:
+            result = self.runner(
+                timeout_seconds=0.4,
+                CPE_FAKE_GRANDCHILD_PID=str(pid_path),
+            ).run(
+                workspace=self.repo,
+                specs=[],
+                plans=[self.plan(1, "timeout_grandchild")],
+                run_id="timeout-group",
+            )
+            self.assertEqual(result["status"], "failed")
+            self.assertEqual(len(self.invocations()), 2)
+            pids = [int(line) for line in pid_path.read_text().splitlines()]
+            self.assertGreaterEqual(len(pids), 1)
+            for pid in pids:
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(pid, 0)
+        finally:
+            self.cleanup_fixture_processes(pid_path)
+
+    def assert_signal_kills_complete_process_group(self, signum: int) -> None:
+        pid_path = self.root / f"signal-grandchild-{signum}"
+        process = self.start_cli_process(
+            plan=self.plan(1, "timeout_grandchild"),
+            extra_environment={"CPE_FAKE_GRANDCHILD_PID": str(pid_path)},
+        )
+        try:
+            self.wait_for_path(pid_path)
+            process.send_signal(signum)
+            stdout, stderr = process.communicate(timeout=3)
+            self.assertEqual(process.returncode, 3, stderr)
+            self.assertEqual(json.loads(stdout)["status"], "interrupted")
+            for line in pid_path.read_text().splitlines():
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(int(line), 0)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate(timeout=2)
+            self.cleanup_fixture_processes(pid_path)
+
+    def test_keyboard_interrupt_kills_the_complete_process_group(self) -> None:
+        self.assert_signal_kills_complete_process_group(signal.SIGINT)
+
+    def test_sigterm_kills_the_complete_process_group(self) -> None:
+        self.assert_signal_kills_complete_process_group(signal.SIGTERM)
+
+    def test_completed_child_with_live_descendant_is_rejected_and_cleaned(self) -> None:
+        pid_path = self.root / "completed-grandchild"
+        try:
+            result = self.runner(
+                CPE_FAKE_GRANDCHILD_PID=str(pid_path)
+            ).run(
+                workspace=self.repo,
+                specs=[],
+                plans=[self.plan(1, "completed_with_grandchild")],
+                run_id="completed-descendant",
+            )
+            self.assertEqual(result["status"], "failed")
+            self.assertEqual(result["error"], "forced_cleanup")
+            pid = int(pid_path.read_text())
+            with self.assertRaises(ProcessLookupError):
+                os.kill(pid, 0)
+        finally:
+            self.cleanup_fixture_processes(pid_path)
+
+    def test_large_log_retains_only_a_bounded_tail(self) -> None:
+        result = self.runner().run(
+            workspace=self.repo,
+            specs=[],
+            plans=[self.plan(1, "large_log")],
+            run_id="large-log",
+        )
+        self.assertEqual(result["status"], "completed")
+        log_path = (
+            self.home
+            / "orchestrator"
+            / "large-log"
+            / "logs"
+            / "plan-01-attempt-1.log"
+        )
+        payload = log_path.read_bytes()
+        self.assertLessEqual(len(payload), 1_048_576)
+        self.assertIn(b"CPE_FINAL_LOG_MARKER", payload)
+        self.assertIn(b"[cpe log truncated; discarded_bytes=", payload)
+
+    def test_spawn_failure_is_recorded_as_a_durable_failed_attempt(self) -> None:
+        launcher = CodexLauncher(
+            schema_path=ROOT / "templates" / "plan-result-schema.json",
+            codex_bin=str(self.root / "missing-codex"),
+            timeout_seconds=1,
+            environ={"PATH": os.environ["PATH"]},
+        )
+        runner = SequentialRunner(codex_home=self.home, launcher=launcher)
+        result = runner.run(
+            workspace=self.repo,
+            specs=[],
+            plans=[self.plan(1, "completed")],
+            run_id="spawn-failure",
+        )
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error"], "invalid_result")
+        self.assertEqual(result["plans"][0]["attempt_count"], 1)
+        state = json.loads(
+            (self.home / "orchestrator" / "spawn-failure" / "state.json").read_text()
+        )
+        self.assertEqual(state["status"], "failed")
+        log_path = (
+            self.home
+            / "orchestrator"
+            / "spawn-failure"
+            / "logs"
+            / "plan-01-attempt-1.log"
+        )
+        self.assertIn("[cpe spawn failed:", log_path.read_text())
 
     def test_snapshots_preserve_spec_and_plan_order(self) -> None:
         plans = [self.plan(2, "completed"), self.plan(1, "completed")]

@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import json
 import os
+import selectors
+import signal
 import subprocess
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Sequence
@@ -14,6 +18,116 @@ _SECRETS = {
     "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "AWS_SECRET_ACCESS_KEY",
     "AWS_SESSION_TOKEN", "GITHUB_TOKEN",
 }
+_RETAINED_LOG_BYTES = 1_048_576
+_COMPACT_AT_BYTES = 2_097_152
+
+
+class _BoundedLog:
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        descriptor = os.open(
+            path,
+            os.O_RDWR
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        self.stream = os.fdopen(descriptor, "w+b", buffering=0)
+        self.total_bytes = 0
+        self.discarded_bytes = 0
+
+    def write(self, chunk: bytes) -> None:
+        remaining = memoryview(chunk)
+        while remaining:
+            end = self.stream.seek(0, os.SEEK_END)
+            capacity = _COMPACT_AT_BYTES - end
+            if capacity <= 0:
+                self._compact()
+                continue
+            portion = remaining[:capacity]
+            self.stream.write(portion)
+            self.total_bytes += len(portion)
+            remaining = remaining[len(portion) :]
+            if self.stream.tell() >= _COMPACT_AT_BYTES:
+                self._compact()
+
+    def _compact(self) -> None:
+        end = self.stream.seek(0, os.SEEK_END)
+        marker_budget = 96
+        tail_size = max(0, _RETAINED_LOG_BYTES - marker_budget)
+        self.stream.seek(max(0, end - tail_size))
+        tail = self.stream.read(tail_size)
+        self.discarded_bytes = max(0, self.total_bytes - len(tail))
+        marker = (
+            f"[cpe log truncated; discarded_bytes={self.discarded_bytes}]\n"
+        ).encode("ascii")
+        self.stream.seek(0)
+        self.stream.truncate()
+        self.stream.write(
+            marker + tail[-(_RETAINED_LOG_BYTES - len(marker)) :]
+        )
+
+    def close(self) -> None:
+        if self.stream.closed:
+            return
+        if self.stream.seek(0, os.SEEK_END) > _RETAINED_LOG_BYTES:
+            self._compact()
+        os.fsync(self.stream.fileno())
+        self.stream.close()
+        self.path.chmod(0o600)
+
+
+def _group_exists(process_group: int) -> bool:
+    try:
+        os.killpg(process_group, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # macOS may transiently report EPERM after TERM and before the group
+        # leader has been reaped. The group still exists during that window.
+        return True
+
+
+def _terminate_group(
+    process: subprocess.Popen[bytes],
+    grace_seconds: float,
+) -> bool:
+    process_group = process.pid
+    forced = False
+    if _group_exists(process_group):
+        try:
+            os.killpg(process_group, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        deadline = time.monotonic() + grace_seconds
+        while _group_exists(process_group) and time.monotonic() < deadline:
+            process.poll()
+            time.sleep(0.02)
+        if _group_exists(process_group):
+            forced = True
+            try:
+                os.killpg(process_group, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            deadline = time.monotonic() + max(1.0, grace_seconds)
+            while _group_exists(process_group) and time.monotonic() < deadline:
+                process.poll()
+                time.sleep(0.02)
+    process.wait()
+    if _group_exists(process_group):
+        raise RuntimeError("child process group did not terminate")
+    return forced
+
+
+def _drain_pipe(pipe: object, log: _BoundedLog) -> None:
+    descriptor = pipe.fileno()  # type: ignore[attr-defined]
+    while True:
+        chunk = os.read(descriptor, 65_536)
+        if not chunk:
+            return
+        log.write(chunk)
 
 
 @dataclass(frozen=True)
@@ -21,6 +135,8 @@ class LaunchResult:
     payload: dict[str, object] | None
     returncode: int | None
     timed_out: bool
+    forced_cleanup: bool
+    discarded_log_bytes: int
     result_path: Path
     log_path: Path
 
@@ -33,7 +149,7 @@ class CodexLauncher:
         codex_bin: str = "codex",
         timeout_seconds: float = 3600,
         environ: Mapping[str, str] | None = None,
-        log_limit_bytes: int = 1_000_000,
+        termination_grace_seconds: float = 0.1,
     ) -> None:
         try:
             self.schema_path = schema_path.resolve(strict=True)
@@ -42,12 +158,16 @@ class CodexLauncher:
             raise ValueError("plan result schema is unavailable or invalid") from exc
         if not self.schema_path.is_file() or self.schema_path.is_symlink() or schema.get("additionalProperties") is not False:
             raise ValueError("plan result schema must be a strict regular file")
-        if not codex_bin or timeout_seconds <= 0 or log_limit_bytes <= 0:
+        if (
+            not codex_bin
+            or timeout_seconds <= 0
+            or termination_grace_seconds <= 0
+        ):
             raise ValueError("launcher configuration is invalid")
         self.codex_bin = codex_bin
         self.timeout_seconds = float(timeout_seconds)
+        self.termination_grace_seconds = float(termination_grace_seconds)
         self.environ = dict(os.environ if environ is None else environ)
-        self.log_limit_bytes = log_limit_bytes
 
     @staticmethod
     def attempt_paths(
@@ -132,21 +252,98 @@ class CodexLauncher:
         environment = {key: value for key, value in self.environ.items() if key not in _SECRETS}
         returncode: int | None = None
         timed_out = False
-        with log_path.open("wb") as log:
+        forced_cleanup = False
+        log = _BoundedLog(log_path)
+        process: subprocess.Popen[bytes] | None = None
+        selector = selectors.DefaultSelector()
+        previous_sigterm: object | None = None
+        manages_sigterm = threading.current_thread() is threading.main_thread()
+        if manages_sigterm:
+            previous_sigterm = signal.getsignal(signal.SIGTERM)
+
+            def interrupt_on_sigterm(_signum: int, _frame: object) -> None:
+                raise KeyboardInterrupt
+
+            signal.signal(signal.SIGTERM, interrupt_on_sigterm)
+        spawn_error: OSError | None = None
+        pipe_open = False
+        try:
             try:
-                completed = subprocess.run(
-                    command, input=prompt, text=True, stdout=log, stderr=subprocess.STDOUT,
-                    timeout=self.timeout_seconds, start_new_session=True, env=environment,
-                    pass_fds=(lock_fd,), check=False,
+                process = subprocess.Popen(
+                    command,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                    env=environment,
+                    pass_fds=(lock_fd,),
                 )
-                returncode = completed.returncode
-            except subprocess.TimeoutExpired:
-                timed_out = True
-        log_path.chmod(0o600)
-        if log_path.stat().st_size > self.log_limit_bytes:
-            tail = log_path.read_bytes()[-self.log_limit_bytes :]
-            log_path.write_bytes(tail)
-            log_path.chmod(0o600)
+            except OSError as exc:
+                spawn_error = exc
+                log.write(
+                    f"[cpe spawn failed: {(str(exc).strip() or type(exc).__name__)[:2000]}]\n".encode(
+                        "utf-8", errors="replace"
+                    )
+                )
+            if process is not None:
+                assert process.stdin is not None and process.stdout is not None
+                try:
+                    process.stdin.write(prompt.encode("utf-8"))
+                    process.stdin.close()
+                except BrokenPipeError:
+                    process.stdin.close()
+                selector.register(process.stdout, selectors.EVENT_READ)
+                pipe_open = True
+                deadline = time.monotonic() + self.timeout_seconds
+                while True:
+                    remaining = deadline - time.monotonic()
+                    if process.poll() is None and remaining <= 0:
+                        timed_out = True
+                        _terminate_group(process, self.termination_grace_seconds)
+                        returncode = process.returncode
+                        if pipe_open:
+                            _drain_pipe(process.stdout, log)
+                            pipe_open = False
+                        break
+                    events = selector.select(
+                        min(0.02, max(0.0, remaining))
+                        if process.poll() is None
+                        else 0
+                    )
+                    for key, _ in events:
+                        chunk = os.read(key.fd, 65_536)
+                        if chunk:
+                            log.write(chunk)
+                        else:
+                            selector.unregister(key.fileobj)
+                            pipe_open = False
+                    observed = process.poll()
+                    if observed is not None:
+                        returncode = observed
+                        if _group_exists(process.pid):
+                            forced_cleanup = True
+                            _terminate_group(
+                                process,
+                                self.termination_grace_seconds,
+                            )
+                        if pipe_open:
+                            _drain_pipe(process.stdout, log)
+                            pipe_open = False
+                        break
+        except BaseException:
+            if process is not None:
+                _terminate_group(process, self.termination_grace_seconds)
+                if pipe_open and process.stdout is not None:
+                    _drain_pipe(process.stdout, log)
+                    pipe_open = False
+            raise
+        finally:
+            selector.close()
+            if process is not None and process.stdout is not None:
+                process.stdout.close()
+            log.close()
+            if manages_sigterm and previous_sigterm is not None:
+                signal.signal(signal.SIGTERM, previous_sigterm)
 
         payload = None
         if result_path.is_file() and not result_path.is_symlink():
@@ -157,4 +354,14 @@ class CodexLauncher:
                 result_path.chmod(0o600)
             except (OSError, UnicodeDecodeError, json.JSONDecodeError):
                 payload = None
-        return LaunchResult(payload, returncode, timed_out, result_path, log_path)
+        if spawn_error is not None:
+            returncode = None
+        return LaunchResult(
+            payload=payload,
+            returncode=returncode,
+            timed_out=timed_out,
+            forced_cleanup=forced_cleanup,
+            discarded_log_bytes=log.discarded_bytes,
+            result_path=result_path,
+            log_path=log_path,
+        )
