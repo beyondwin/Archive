@@ -103,10 +103,6 @@ class SequentialCliTest(unittest.TestCase):
             text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
         )
 
-    def require_cutover(self) -> None:
-        if "export" in CLI.read_text(encoding="utf-8"):
-            self.skipTest("sequential CLI cutover not implemented")
-
     def test_help_exposes_only_run_resume_and_inspect(self) -> None:
         source = CLI.read_text(encoding="utf-8")
         self.assertNotIn("export", source)
@@ -116,7 +112,6 @@ class SequentialCliTest(unittest.TestCase):
         self.assertNotIn("export", result.stdout)
 
     def test_run_requires_absolute_workspace_and_at_least_one_plan(self) -> None:
-        self.require_cutover()
         missing = self.command("run", "--workspace", str(self.repo))
         self.assertEqual(missing.returncode, 1)
         self.assertEqual(json.loads(missing.stdout)["status"], "failed")
@@ -125,7 +120,6 @@ class SequentialCliTest(unittest.TestCase):
         self.assertEqual(json.loads(relative.stdout)["status"], "failed")
 
     def test_repeated_spec_and_plan_flags_preserve_order(self) -> None:
-        self.require_cutover()
         result = self.command(
             "run", "--spec", str(self.specs[0]), "--spec", str(self.specs[1]),
             "--plan", str(self.plans[0]), "--plan", str(self.plans[1]),
@@ -140,7 +134,6 @@ class SequentialCliTest(unittest.TestCase):
         )
 
     def test_inspect_is_read_only_and_historical_format_is_rejected(self) -> None:
-        self.require_cutover()
         run_id = "inspect-only"
         source_commit = subprocess.run(
             ["git", "-C", str(self.repo), "rev-parse", "HEAD"],
@@ -189,6 +182,21 @@ class SequentialCliTest(unittest.TestCase):
             "--output-last-message",
         ):
             self.assertIn(flag, help_text)
+
+    def test_skill_docs_match_hardened_public_contract(self) -> None:
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn('version: "1.1.0"', skill)
+        for phrase in (
+            "process group",
+            "bounded",
+            "run_busy",
+            "initializing",
+            "Change Protocol",
+        ):
+            self.assertIn(phrase, skill + readme)
+        root_index = (ROOT.parent / "README.md").read_text(encoding="utf-8")
+        self.assertNotIn("내보내기", root_index)
 
 
 if __name__ == "__main__":

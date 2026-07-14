@@ -2,7 +2,7 @@
 name: kws-codex-plan-executor
 description: Execute one or more approved Superpowers implementation plans sequentially in one durable isolated worktree.
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
   updated_at: "2026-07-14"
 ---
 
@@ -32,6 +32,19 @@ process launch, plan checkpoints, bounded retry, resume, and inspection.
 Each plan gets an initial attempt and one automatic recovery attempt. A failed
 plan can receive one additional attempt per explicit `--retry-failed`
 invocation. Blocked plans stop the current invocation without automatic retry.
+
+## Operational Safety
+
+Only one mutating `run` or `resume` owns a run at a time; a competitor returns
+an interrupted `run_busy` result without launching another child. CPE starts
+each child in one POSIX process group, cleans the complete group on timeout,
+interrupt, or termination, and retains a bounded one-MiB attempt-log tail.
+
+Run creation persists `initializing` before worktree creation. Resume verifies
+or recreates only the exact recorded worktree before continuing. Attempt
+identity and its private result placeholder are durable before launch. Codex
+returns the strict result object as its final response, and accepted results
+become read-only evidence.
 
 Run the deterministic gate with `./evals/run.sh`. See [README.md](README.md)
 for requirements, state and result contracts, failure meanings, limitations,
