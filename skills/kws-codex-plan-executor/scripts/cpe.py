@@ -277,17 +277,13 @@ def inspect_schema4(store: RunStore) -> dict[str, object]:
         program_path = f"maps/{generation_id}/program-map.json"
         artifacts = manifest.get("artifacts")
         record = artifacts.get(program_path) if isinstance(artifacts, dict) else None
-        publication_id = manifest.get("publication_id")
         if not isinstance(record, dict) or set(record) != {
             "relative_path",
             "sha256",
             "byte_length",
-        } or not isinstance(publication_id, str) or len(publication_id) != 64:
+        }:
             raise ValueError("accepted generation has no bound program map")
-        expected_path = (
-            f"maps/{generation_id}/attempts/{publication_id}/artifacts/{program_path}"
-        )
-        if record["relative_path"] != expected_path:
+        if record["relative_path"] != program_path:
             raise ValueError("accepted generation program map path is invalid")
         program_raw = store.read_artifact(str(record["relative_path"]))
         program_digest = hashlib.sha256(program_raw).hexdigest()

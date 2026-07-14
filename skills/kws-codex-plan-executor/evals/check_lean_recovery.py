@@ -85,17 +85,27 @@ class LeanRecoveryTest(LeanEvalCase):
         store, engine = self.create_engine()
         engine.map_program()
         first_program = store.read_artifact('maps/generation-0001/program-map.json')
-        (self.repo / 'spec-a.md').write_text((self.repo / 'spec-a.md').read_text(encoding='utf-8') + '\nNew constraint.\n', encoding='utf-8')
+        engine.launcher.environ['CPE_FAKE_SCENARIO'] = 'queue_success'
+        self.assertEqual(engine.tick(), 'plan-01:T1')
+        retained_brief = json.loads(store.read_artifact('briefs/plan-01-T1.json'))
+        retained_brief.pop('program_map_sha256')
+        (self.repo / 'spec-b.md').write_text((self.repo / 'spec-b.md').read_text(encoding='utf-8') + '\nNew constraint.\n', encoding='utf-8')
         self.env['CPE_FAKE_SCENARIO'] = 'refresh_success'
         refreshed = self.cli('resume', '--run-id', store.run_id, '--refresh-inputs')
         self.assertIn(refreshed.returncode, {0, 2, 3}, refreshed.stderr or refreshed.stdout)
         reopened = RunStore.open(codex_home=self.home, run_id=store.run_id)
         generation_ids = [event['payload']['generation_id'] for event in reopened.validate_event_chain() if event['event_type'] == 'map.generation_created']
         self.assertEqual(generation_ids, ['generation-0001', 'generation-0002'])
+        latest_map = [event for event in reopened.validate_event_chain() if event['event_type'] == 'map.generation_created'][-1]
+        self.assertEqual(latest_map['payload']['invalidated_task_ids'], ['plan-01:T2', 'plan-02:T1'])
         self.assertEqual(reopened.read_artifact('maps/generation-0001/program-map.json'), first_program)
         self.assertTrue(reopened.read_artifact('maps/generation-0002/program-map.json'))
+        refreshed_brief = json.loads(reopened.read_artifact('briefs/generation-0002/plan-01-T1.json'))
+        refreshed_brief.pop('program_map_sha256')
+        self.assertEqual(refreshed_brief, retained_brief)
         invocations = [json.loads(line) for line in self.invocations.read_text(encoding='utf-8').splitlines()]
         self.assertEqual(len([item for item in invocations if item['role'] == 'document_mapper']), 6)
+        self.assertEqual(len([item for item in invocations if item['role'] == 'task_agent' and item['item_id'] == 'plan-01:T1']), 1)
 
     def test_resume_rejects_branch_reset_that_discards_completed_commit(self) -> None:
         store, engine = self.create_engine()

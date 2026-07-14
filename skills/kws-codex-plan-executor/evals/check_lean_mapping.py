@@ -98,6 +98,9 @@ class LeanMappingTest(LeanEvalCase):
         engine = self.create_engine(store=store)
         document_paths = engine.map_documents()
         self.assertEqual(document_paths, tuple((f'maps/generation-0001/documents/{document.document_id}.json' for document in store.document_set())))
+        self.assertEqual([item['role'] for item in self.invocations()], ['document_mapper'] * 5)
+        store.append_event('run.interrupted', {'status': 'interrupted', 'failure_code': 'signal'})
+        engine = QueueEngine(RunStore.open(codex_home=self.home, run_id=store.run_id), engine.worktree, engine.launcher)
         program_path = engine.map_program()
         self.assertEqual(program_path, 'maps/generation-0001/program-map.json')
         invocations = self.invocations()
@@ -127,6 +130,10 @@ class LeanMappingTest(LeanEvalCase):
         brief = json.loads(store.read_artifact('briefs/plan-01-T2.json'))
         self.assertEqual(brief['dependency_edges'][0]['task_id'], 'plan-01:T1')
         self.assertTrue(brief['upstream_interface_commitments'])
+        before_resume = len(self.invocations())
+        resumed = QueueEngine(RunStore.open(codex_home=self.home, run_id=store.run_id), engine.worktree, engine.launcher)
+        self.assertEqual(resumed.map_program(), program_path)
+        self.assertEqual(len(self.invocations()), before_resume)
 
     def valid_program_map(self) -> dict[str, object]:
         map_hashes = {'spec-01': '1' * 64, 'spec-02': '2' * 64, 'plan-01': '3' * 64, 'plan-02': '4' * 64, 'program-plan': '5' * 64}

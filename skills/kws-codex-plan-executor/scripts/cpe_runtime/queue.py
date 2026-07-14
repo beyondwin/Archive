@@ -14,7 +14,6 @@ from .launcher import ChildInterruption, ChildLauncher, ChildProcessInterrupted,
 from .store import RunStore
 from .worktree import Worktree
 _INITIAL_GENERATION_ID = 'generation-0001'
-_INVESTIGATION_RECOVERY_METHODS = ('root_cause_reanalysis', 'architecture_synthesis')
 
 class RunInterrupted(ValueError):
     """The durable queue is valid but needs a later resume."""
@@ -632,7 +631,7 @@ class QueueEngine:
         expected_id = f'{QueueEngine._task_slug(task_id)}-investigation-{sequence:04d}'
         if value['task_id'] != task_id or value['investigation_id'] != expected_id:
             raise ValueError('investigation launch identity is invalid')
-        if value['recovery_method'] not in _INVESTIGATION_RECOVERY_METHODS:
+        if value['recovery_method'] != f'investigation-{sequence}':
             raise ValueError('investigation recovery method is invalid')
         for field in ('previous_strategy', 'dispatch_evidence_sha256', 'report_path'):
             if not isinstance(value[field], str) or not value[field]:
@@ -974,26 +973,17 @@ class QueueEngine:
         evidence_records = tuple(((launch, outcome) for launch, outcome in records if launch['dispatch_evidence_sha256'] == selection_evidence))
         attempted_history = set(self._attempted_strategies(task_id, selection_evidence))
         attempted_history.update((str(outcome['strategy_key']) for _, outcome in evidence_records if outcome is not None and outcome['strategy_key'] is not None))
-        recovery_method = _INVESTIGATION_RECOVERY_METHODS[0]
         if evidence_records:
             latest_launch, latest_outcome = evidence_records[-1]
-            latest_method = str(latest_launch['recovery_method'])
             if latest_outcome is not None and latest_outcome['selection'] == 'accepted':
                 accepted_state = self._accepted_investigation_state(task_id=task_id, launch=latest_launch, outcome=latest_outcome)
                 if accepted_state == 'pending_decision':
                     self._append_investigation_decision(task_id=task_id, evidence_paths=evidence_paths, outcome=latest_outcome)
                 if accepted_state != 'consumed':
                     return (str(latest_outcome['strategy_key']), tuple((str(path) for path in latest_outcome['artifact_paths'])))
-            try:
-                recovery_index = _INVESTIGATION_RECOVERY_METHODS.index(latest_method)
-            except ValueError as error:
-                raise ValueError('investigation recovery history is invalid') from error
-            if recovery_index + 1 >= len(_INVESTIGATION_RECOVERY_METHODS):
-                self._record_interrupted('investigator_recovery_methods_exhausted')
-                raise ValueError('investigator recovery methods exhausted')
-            recovery_method = _INVESTIGATION_RECOVERY_METHODS[recovery_index + 1]
         while True:
             investigation_number = len(records) + 1
+            recovery_method = f'investigation-{investigation_number}'
             investigation_id = f'{self._task_slug(task_id)}-investigation-{investigation_number:04d}'
             report_path = f'reports/{self._task_slug(task_id)}/investigation-{investigation_number}.md'
             launch = {'schema_version': 1, 'investigation_id': investigation_id, 'task_id': task_id, 'sequence': investigation_number, 'recovery_method': recovery_method, 'previous_strategy': previous_strategy, 'dispatch_evidence_sha256': selection_evidence, 'attempted_strategies': sorted(attempted_history), 'report_path': report_path}
@@ -1022,11 +1012,6 @@ class QueueEngine:
                 return (result.strategy_key, result.artifact_paths)
             if result.strategy_key:
                 attempted_history.add(result.strategy_key)
-            recovery_index = _INVESTIGATION_RECOVERY_METHODS.index(recovery_method)
-            if recovery_index + 1 >= len(_INVESTIGATION_RECOVERY_METHODS):
-                self._record_interrupted('investigator_recovery_methods_exhausted')
-                raise ValueError('investigator recovery methods exhausted')
-            recovery_method = _INVESTIGATION_RECOVERY_METHODS[recovery_index + 1]
 
     def _handle_child_failure(self, result: ChildResult, task_id: str) -> str | None:
         if result.status == 'waiting_authority':
