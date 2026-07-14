@@ -7,6 +7,7 @@ import json
 import os
 import re
 import stat
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
@@ -15,6 +16,17 @@ from typing import Any, Sequence
 RUN_STATUSES = {"running", "completed", "blocked", "failed", "interrupted"}
 PLAN_STATUSES = {"pending", "running", "completed", "blocked", "failed", "interrupted"}
 _SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+_DIGEST_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+_RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+
+
+def _write_all(descriptor: int, payload: bytes) -> None:
+    remaining = memoryview(payload)
+    while remaining:
+        written = os.write(descriptor, remaining)
+        if written <= 0:
+            raise OSError("short write while persisting run state")
+        remaining = remaining[written:]
 
 
 def _private_directory(path: Path) -> None:
@@ -72,17 +84,14 @@ class StateStore:
             raise ValueError("at least one plan is required")
         if run_root.exists():
             raise ValueError("run root already exists")
+        if not _RUN_ID_PATTERN.fullmatch(run_id) or branch != f"codex/{run_id}":
+            raise ValueError("run identity is invalid")
         if not _SHA_PATTERN.fullmatch(source_commit):
             raise ValueError("source commit must be a full Git object ID")
         repository = source_repository.resolve(strict=True)
         if not repository.is_dir() or repository.is_symlink():
             raise ValueError("source repository must be a real directory")
-        _private_directory(run_root.parent)
-        _private_directory(run_root)
-        for name in ("inputs", "results", "logs"):
-            _private_directory(run_root / name)
-
-        records: list[dict[str, Any]] = []
+        prepared: list[tuple[str, int, Path, bytes]] = []
         seen: set[Path] = set()
         for role, paths in (("spec", specs), ("plan", plans)):
             for order, declared in enumerate(paths):
@@ -90,22 +99,31 @@ class StateStore:
                 if source in seen:
                     raise ValueError("duplicate input paths are not allowed")
                 seen.add(source)
-                document_id = f"{role}-{order + 1:02d}"
-                suffix = source.suffix if source.suffix else ".txt"
-                snapshot = run_root / "inputs" / f"{document_id}{suffix}"
-                snapshot.write_bytes(payload)
-                snapshot.chmod(0o600)
-                records.append(
-                    {
-                        "document_id": document_id,
-                        "role": role,
-                        "source_path": str(source),
-                        "snapshot_path": str(snapshot.resolve()),
-                        "sha256": hashlib.sha256(payload).hexdigest(),
-                        "byte_length": len(payload),
-                        "input_order": order,
-                    }
-                )
+                prepared.append((role, order, source, payload))
+
+        _private_directory(run_root.parent)
+        _private_directory(run_root)
+        for name in ("inputs", "results", "logs"):
+            _private_directory(run_root / name)
+
+        records: list[dict[str, Any]] = []
+        for role, order, source, payload in prepared:
+            document_id = f"{role}-{order + 1:02d}"
+            suffix = source.suffix if source.suffix else ".txt"
+            snapshot = run_root / "inputs" / f"{document_id}{suffix}"
+            snapshot.write_bytes(payload)
+            snapshot.chmod(0o600)
+            records.append(
+                {
+                    "document_id": document_id,
+                    "role": role,
+                    "source_path": str(source),
+                    "snapshot_path": str(snapshot.resolve()),
+                    "sha256": hashlib.sha256(payload).hexdigest(),
+                    "byte_length": len(payload),
+                    "input_order": order,
+                }
+            )
 
         plan_records = [
             {
@@ -162,6 +180,10 @@ class StateStore:
         }
         if set(state) != required or state.get("format_version") != 1:
             raise ValueError("invalid format-version-1 state")
+        if not isinstance(state["run_id"], str) or not _RUN_ID_PATTERN.fullmatch(state["run_id"]) or state["branch"] != f"codex/{state['run_id']}":
+            raise ValueError("run identity is invalid")
+        if not all(isinstance(state[name], str) and Path(state[name]).is_absolute() for name in ("source_repository", "worktree")):
+            raise ValueError("recorded repository paths are invalid")
         if state["status"] not in RUN_STATUSES:
             raise ValueError("unknown run status")
         if not _SHA_PATTERN.fullmatch(str(state["source_commit"])):
@@ -172,20 +194,37 @@ class StateStore:
         if not isinstance(index, int) or isinstance(index, bool) or not 0 <= index <= len(state["plans"]):
             raise ValueError("current plan index is invalid")
 
-        inputs_root = self.root / "inputs"
-        results_root = self.root / "results"
+        owned_directories = [self.root / name for name in ("inputs", "results", "logs")]
+        for directory in owned_directories:
+            if directory.is_symlink() or not directory.is_dir():
+                raise ValueError("private run directory is missing or redirected")
+            _inside(directory, self.root, "private run directory")
+        inputs_root, results_root, _ = owned_directories
         plan_ids = []
+        role_orders = {"spec": 0, "plan": 0}
         for record in state["inputs"]:
             if not isinstance(record, dict) or set(record) != {
                 "document_id", "role", "source_path", "snapshot_path", "sha256", "byte_length", "input_order"
             }:
                 raise ValueError("input record is invalid")
-            if record["role"] not in {"spec", "plan"}:
+            if not isinstance(record["role"], str) or record["role"] not in {"spec", "plan"}:
                 raise ValueError("input role is invalid")
+            expected_order = role_orders[record["role"]]
+            expected_id = f"{record['role']}-{expected_order + 1:02d}"
+            if record["document_id"] != expected_id or record["input_order"] != expected_order:
+                raise ValueError("input identity or order is invalid")
+            role_orders[record["role"]] += 1
+            source_path = Path(record["source_path"])
+            if not source_path.is_absolute() or not isinstance(record["byte_length"], int) or isinstance(record["byte_length"], bool) or record["byte_length"] < 0 or not isinstance(record["sha256"], str) or not _DIGEST_PATTERN.fullmatch(record["sha256"]):
+                raise ValueError("input metadata is invalid")
             snapshot = _inside(Path(record["snapshot_path"]), inputs_root, "snapshot")
             if not snapshot.is_file() or snapshot.is_symlink():
                 raise ValueError("snapshot is not a regular file")
             payload = snapshot.read_bytes()
+            try:
+                payload.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise ValueError("snapshot is not UTF-8") from exc
             if hashlib.sha256(payload).hexdigest() != record["sha256"] or len(payload) != record["byte_length"]:
                 raise ValueError("snapshot digest or size changed")
             if record["role"] == "plan":
@@ -209,11 +248,11 @@ class StateStore:
 
     def save(self) -> None:
         self._validate()
-        temporary = self.root / f".state.{os.getpid()}.tmp"
+        temporary = self.root / f".state.{os.getpid()}.{uuid.uuid4().hex}.tmp"
         descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         try:
             payload = json.dumps(self.state, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
-            os.write(descriptor, payload)
+            _write_all(descriptor, payload)
             os.fsync(descriptor)
         finally:
             os.close(descriptor)
@@ -230,9 +269,17 @@ class StateStore:
             raise ValueError("event kind must be bounded")
         event = {"at": datetime.now(timezone.utc).isoformat(), "kind": kind, **details}
         line = json.dumps(event, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
-        descriptor = os.open(self.events_path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        if len(line) > 16_384:
+            raise ValueError("event record exceeds the bounded event contract")
+        descriptor = os.open(
+            self.events_path,
+            os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
         try:
-            os.write(descriptor, line.encode("utf-8"))
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                raise ValueError("event stream must be a regular file")
+            _write_all(descriptor, line.encode("utf-8"))
             os.fsync(descriptor)
         finally:
             os.close(descriptor)
