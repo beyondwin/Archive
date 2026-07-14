@@ -238,7 +238,7 @@ Docs:
   rerun;
 - document how to read dogfood evidence and runtime cost;
 - keep live provider smoke clearly opt-in;
-- refresh Graphify output after meaningful structure changes.
+- refresh retired repository-map tooling output after meaningful structure changes.
 
 ## Data Flow
 
@@ -419,7 +419,7 @@ WAYGENT_LIVE_PROVIDER=claude bun run waygent:live-smoke
 Graph refresh after meaningful structure changes:
 
 ```bash
-graphify update .
+git diff --check
 ```
 
 ## Acceptance Criteria
@@ -441,7 +441,7 @@ The design is implemented when all of the following are true:
 - Apply readiness remains governed only by existing v2 completion audit,
   checkpoint, combined patch, reconciliation, and clean-checkout rules.
 - Default verification commands pass.
-- Graphify output is refreshed if the implementation changes meaningful code or
+- retired repository-map tooling output is refreshed if the implementation changes meaningful code or
   documentation structure.
 
 ## Review Checklist

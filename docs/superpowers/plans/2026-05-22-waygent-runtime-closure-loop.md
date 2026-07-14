@@ -6,7 +6,7 @@
 
 **Architecture:** Keep `waygent.run_state.v2` and checkpoint evidence as the runtime source of truth. Land the shared core sequentially: checkpoint dry-run classification, task-state recovery wiring, and a pure shared run-read projector. Once that projector is stable, API and console can move in parallel while consuming the same classification. Provider cost/noise refinements remain read-only projections and must not weaken apply readiness.
 
-**Tech Stack:** Bun, TypeScript, React, Vite, `bun:test`, Waygent contracts, Waygent lens projectors, Waygent orchestrator, Waygent testkit, Graphify.
+**Tech Stack:** Bun, TypeScript, React, Vite, `bun:test`, Waygent contracts, Waygent lens projectors, Waygent orchestrator, Waygent testkit, retired repository-map tooling.
 
 ---
 
@@ -71,7 +71,7 @@ Out of scope:
 - `docs/operations/waygent.md`: operator-facing closure-loop behavior.
 - `docs/operations/verification.md`: verification commands and conflict fixture coverage.
 - `docs/architecture/waygent.md`: runtime truth source and projection boundary update if current architecture docs mention run reads.
-- `graphify-out/GRAPH_REPORT.md`, `graphify-out/graph.json`: refresh after code and docs changes.
+- `removed-repository-map/REPORT.md`, `removed-repository-map/graph.json`: refresh after code and docs changes.
 
 ## Waygent Task Packet
 
@@ -132,9 +132,9 @@ file_claims:
     mode: edit
   - path: docs/architecture/waygent.md
     mode: edit
-  - path: graphify-out/GRAPH_REPORT.md
+  - path: removed-repository-map/REPORT.md
     mode: owned
-  - path: graphify-out/graph.json
+  - path: removed-repository-map/graph.json
     mode: owned
 risk: medium
 verify:
@@ -954,8 +954,8 @@ expect(maturity.runtime_cost.recommended_next_actions.join("\n")).toContain("sta
 
 ```yaml
 id: T6
-title: Add scenario coverage, docs, Graphify refresh, and final verification
-owner_boundary: packages/testkit, integration tests, docs, Graphify output
+title: Add scenario coverage, docs, retired repository-map tooling refresh, and final verification
+owner_boundary: packages/testkit, integration tests, docs, retired repository-map tooling output
 files:
   - path: packages/testkit/src/waygentScenarioHarness.ts
     mode: edit
@@ -971,13 +971,13 @@ files:
     mode: edit
   - path: docs/architecture/waygent.md
     mode: edit
-  - path: graphify-out/GRAPH_REPORT.md
+  - path: removed-repository-map/REPORT.md
     mode: owned
-  - path: graphify-out/graph.json
+  - path: removed-repository-map/graph.json
     mode: owned
 acceptance:
   - command: bun run waygent:scenarios && bun run waygent:dogfood && git diff --check
-  - expected: checkpoint dry-run conflict fixture replays as blocked with needs_rebase and docs/Graphify are clean
+  - expected: checkpoint dry-run conflict fixture replays as blocked with needs_rebase and docs/retired repository-map tooling are clean
 risks:
   - A scenario that mutates source during the run can be flaky. Prefer a deterministic harness fault that rewrites v2 state and replay normalization from recorded checkpoint dry-run evidence.
 ```
@@ -1087,10 +1087,10 @@ checkpoint regeneration or a human decision, not apply.
 
 `docs/architecture/waygent.md` should mention that CLI, API, and console consume the shared run-read projector and prefer `waygent.run_state.v2` over event-derived status for current runs.
 
-- [ ] Refresh Graphify after docs/code structure changes:
+- [ ] Refresh retired repository-map tooling after docs/code structure changes:
 
 ```bash
-graphify update .
+git diff --check
 ```
 
 - [ ] Run final verification:
@@ -1170,4 +1170,4 @@ Before reporting implementation complete:
 - Confirm `missing_checkpoint` is still reserved for absent or unresolvable checkpoint artifacts.
 - Confirm invalid or unsupported v2 state blocks current-run readiness instead of silently trusting events.
 - Confirm provider startup noise remains diagnostic and does not override kernel verification or apply readiness.
-- Confirm Graphify was refreshed after code/docs structure changes.
+- Confirm retired repository-map tooling was refreshed after code/docs structure changes.

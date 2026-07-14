@@ -50,7 +50,7 @@ Current active source surfaces:
   verification, recovery, drift, and apply status.
 - `packages/testkit/src/legacyCheck.ts` already guards active product trees
   against Python runtime files, legacy Waygent v1 state, AgentRunway routing,
-  Graphify runtime dependencies, and active KWS event namespaces.
+  retired repository-map tooling runtime dependencies, and active KWS event namespaces.
 - `tests/waygent-scenarios/*.json` and
   `tests/integration/waygent-scenarios.test.ts` provide deterministic
   fake-provider replay coverage for readiness, blockers, provider attempts,

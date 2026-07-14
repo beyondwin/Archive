@@ -431,7 +431,7 @@ git commit -m "refactor(cpe): cut over to sequential plan execution"
 - Keep: `docs/superpowers/specs/2026-06-01-waygent-cpe-comparison-benchmark-design.md`
 - Keep: `docs/superpowers/plans/2026-06-01-waygent-cpe-comparison-benchmark.md`
 - Delete: the 52 CPE-only root artifacts listed in Step 1
-- Delete: `.graphifyignore`, `graphify-out/`
+- Delete: the retired repository-map integration's ignore file and generated output
 
 **Interfaces:**
 
@@ -544,9 +544,9 @@ Expected: no references to a deleted root CPE document.
 
 - [ ] **Step 4: Remove the retired generated-map integration**
 
-Delete `.graphifyignore`, the tracked generated-map output directory, active
-repository instructions, product special-casing, fixtures, and current user
-documentation for the retired integration. Do not regenerate the output.
+Delete the retired integration's ignore file, tracked generated-map output
+directory, active repository instructions, product special-casing, fixtures,
+and current user documentation. Do not regenerate the output.
 
 - [ ] **Step 5: Run the complete final gate exactly once**
 
@@ -588,7 +588,7 @@ Re-run the twelve-file inventory assertion from Task 2 after all documentation c
 
 ```bash
 cd /Users/kws/source/private/Archive
-git add -A -- AGENTS.md README.md .gitignore .graphifyignore graphify-out docs skills/waygent packages
+git add -A -- AGENTS.md README.md .gitignore docs skills/waygent packages
 git diff --cached --check
 git status --short
 ```

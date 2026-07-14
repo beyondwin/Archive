@@ -197,7 +197,7 @@ Mapping rules:
   `./gradlew ...`, `gradle ...`, `node --test ...`, `git diff --check`,
   known test/check runners.
 - `implementation_only`: `git add`, `git commit`, `git merge`, install
-  commands, formatters in write mode, code generators, and `graphify update .`.
+  commands, formatters in write mode, code generators, and `git diff --check`.
 - `diagnostic_readonly`: `git status --short`, `git status --short --branch`,
   `git log --oneline`, `git diff --stat`, and similar read-only inspection.
 - `optional_environment`: `command -v adb || true`, `adb devices` when used as
@@ -270,7 +270,7 @@ to keep test output readable. It must include:
 - Bash verification fences.
 - JavaScript, JSON, and Kotlin example fences.
 - `git add` and `git commit` checkpoint fences.
-- `graphify update .`.
+- `git diff --check`.
 - Read-only diagnostics such as `git status --short --branch`.
 - Optional runtime/environment commands.
 - Runtime strict/default package scripts.
@@ -357,7 +357,7 @@ Expected: `recoverWaygentPlanInput(...)` returns `status: "recovered"`.
 4. Route normalizer and recovery reports through the structured candidates.
 5. Add operator evidence ref coverage for `extract_report_ref`.
 6. Run focused tests, typecheck, and `git diff --check`.
-7. Refresh Graphify after source/doc changes and avoid staging generated
+7. Refresh retired repository-map tooling after source/doc changes and avoid staging generated
    graph output.
 
 ## 13. Open Constraints

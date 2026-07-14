@@ -3135,11 +3135,11 @@ git commit -m "test(waygent): cover closure review cost scenarios"
 
 ---
 
-### Task 11: Documentation, Graphify, and Full Verification
+### Task 11: Documentation, retired repository-map tooling, and Full Verification
 
 ```yaml waygent-task
-id: task_11_docs_graphify_full_verification
-title: Documentation, Graphify, and full verification
+id: task_11_docs_repository_map_full_verification
+title: Documentation, retired repository-map tooling, and full verification
 dependencies:
   - task_10_integration_fixtures
 file_claims:
@@ -3149,9 +3149,9 @@ file_claims:
     mode: owned
   - path: skills/waygent/SKILL.md
     mode: owned
-  - path: graphify-out/GRAPH_REPORT.md
+  - path: removed-repository-map/REPORT.md
     mode: owned
-  - path: graphify-out/graph.json
+  - path: removed-repository-map/graph.json
     mode: owned
   - path: packages/lens-projectors/src/operatorDecision.ts
     mode: owned
@@ -3220,8 +3220,8 @@ verify:
 - Modify: `docs/operations/verification.md`
 - Modify: `docs/operations/waygent.md`
 - Modify: `skills/waygent/SKILL.md`
-- Modify generated: `graphify-out/GRAPH_REPORT.md`
-- Modify generated: `graphify-out/graph.json`
+- Modify generated: `removed-repository-map/REPORT.md`
+- Modify generated: `removed-repository-map/graph.json`
 - Fix final read-model status typing if the full gate exposes a
   `review_required` mismatch in `packages/lens-projectors/src/runReadModel.ts`.
 - Fix final operator decision typing if the full gate reports that
@@ -3354,7 +3354,7 @@ verify:
   because a claimed source file is missing an export or exhaustive policy entry,
   fix the source file in the task 11 worktree before editing docs. Do not return
   a worker result that only changes `docs/operations/*`, `skills/waygent/SKILL.md`,
-  or Graphify outputs while final source verification is still failing.
+  or retired repository-map tooling outputs while final source verification is still failing.
 - Fix final scenario, fixture-lab, and dogfood expectation drift according to
   the implemented runtime contract:
   - budget-paused fixtures must still project the correct run/apply status and
@@ -3390,7 +3390,7 @@ git diff --check
 
 This task is not allowed to report "no source changes needed" while these
 documentation sections or skill mappings are absent from the worktree. It must
-produce a checkpointable diff for the docs/skill/Graphify updates, and may also
+produce a checkpointable diff for the docs/skill/retired repository-map tooling updates, and may also
 include tightly scoped full-gate type fixes from the file claims above.
 
 Expected operator behavior:
@@ -3482,13 +3482,13 @@ requirement. If verification creates ignored dependency/build outputs, leave
 them ignored and confirm with `git status --short --ignored=matching` or
 `git diff --check`; they must not be included in the checkpoint diff.
 
-- [ ] **Step 5: Refresh Graphify**
+- [ ] **Step 5: Refresh retired repository-map tooling**
 
-Run: `graphify update .`
+Run: `git diff --check`
 
-Expected: `graphify-out/GRAPH_REPORT.md` and `graphify-out/graph.json` update successfully.
+Expected: `removed-repository-map/REPORT.md` and `removed-repository-map/graph.json` update successfully.
 
-If Graphify fails only because the tool cannot be fetched or installed from the
+If retired repository-map tooling fails only because the tool cannot be fetched or installed from the
 network/PyPI/uv cache, record that as external environment evidence and continue
 to emit a valid worker result. Do not include raw install logs in the worker
 result; summarize the command, status, and short failure reason. Source
@@ -3509,7 +3509,7 @@ extra prose.
 Allowed `status` values for this task are only:
 
 - `completed` when source verification passes and checkpoint diff hygiene is
-  clean, even if Graphify recorded an external network/tooling blocker.
+  clean, even if retired repository-map tooling recorded an external network/tooling blocker.
 - `failed` when a source verification command fails or the checkpoint diff is
   dirty.
 
@@ -3518,7 +3518,7 @@ Do not return custom statuses such as `verification_failed`.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add docs/operations/verification.md docs/operations/waygent.md skills/waygent/SKILL.md graphify-out/GRAPH_REPORT.md graphify-out/graph.json
+git add docs/operations/verification.md docs/operations/waygent.md skills/waygent/SKILL.md removed-repository-map/REPORT.md removed-repository-map/graph.json
 git commit -m "docs(waygent): document closure review cost flow"
 ```
 
@@ -3554,7 +3554,7 @@ Spec coverage:
 - P1 review loop integration is covered by Tasks 1, 4, 5, and 6.
 - P2 cost and adapter hygiene is covered by Tasks 7, 8, and 9.
 - Integration fixtures and dogfood evidence are covered by Task 10.
-- Operator docs, skill mappings, Graphify, and final verification are covered by Task 11.
+- Operator docs, skill mappings, retired repository-map tooling, and final verification are covered by Task 11.
 
 Ordering:
 

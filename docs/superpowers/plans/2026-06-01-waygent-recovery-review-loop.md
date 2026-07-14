@@ -1344,9 +1344,9 @@ file_claims:
     mode: owned
   - path: docs/operations/verification.md
     mode: owned
-  - path: graphify-out/GRAPH_REPORT.md
+  - path: removed-repository-map/REPORT.md
     mode: owned
-  - path: graphify-out/graph.json
+  - path: removed-repository-map/graph.json
     mode: owned
 risk: medium
 verify_isolation: "isolated"
@@ -1363,8 +1363,8 @@ verify:
 - Create: `tests/waygent-scenarios/verification-failed-repair-reviewed.json`
 - Modify: `docs/operations/waygent.md`
 - Modify: `docs/operations/verification.md`
-- Modify after Graphify refresh: `graphify-out/GRAPH_REPORT.md`
-- Modify after Graphify refresh: `graphify-out/graph.json`
+- Modify after retired repository-map tooling refresh: `removed-repository-map/REPORT.md`
+- Modify after retired repository-map tooling refresh: `removed-repository-map/graph.json`
 
 - [ ] **Step 1: Extend scenario harness flags**
 
@@ -1572,15 +1572,15 @@ Expected behavior:
   decision fields.
 ~~~
 
-- [ ] **Step 7: Refresh Graphify**
+- [ ] **Step 7: Refresh retired repository-map tooling**
 
 Run:
 
 ```bash
-graphify update .
+git diff --check
 ```
 
-Expected: `graphify-out/GRAPH_REPORT.md` shows the current `git rev-parse HEAD` prefix in `Built from commit`.
+Expected: `removed-repository-map/REPORT.md` shows the current `git rev-parse HEAD` prefix in `Built from commit`.
 
 - [ ] **Step 8: Run the final focused gate**
 
@@ -1600,7 +1600,7 @@ Expected: PASS.
 - [ ] **Step 9: Commit**
 
 ```bash
-git add packages/testkit/src/waygentScenarioHarness.ts tests/waygent-scenarios/malformed-output-salvaged-patch.json tests/waygent-scenarios/verification-failed-repair-reviewed.json docs/operations/waygent.md docs/operations/verification.md graphify-out/GRAPH_REPORT.md graphify-out/graph.json
+git add packages/testkit/src/waygentScenarioHarness.ts tests/waygent-scenarios/malformed-output-salvaged-patch.json tests/waygent-scenarios/verification-failed-repair-reviewed.json docs/operations/waygent.md docs/operations/verification.md removed-repository-map/REPORT.md removed-repository-map/graph.json
 git commit -m "test: cover Waygent recovery review scenarios"
 ```
 
@@ -1628,4 +1628,4 @@ Expected: all commands pass. If `apps/console` build changes generated local `di
 - `review_evidence_missing` remains the precise blocker for recovered tasks lacking required review evidence.
 - `waygent repair --dry-run` can inspect salvage evidence without mutating the source checkout.
 - Scenario fixtures avoid exact event counts unless count stability is part of the behavior.
-- Graphify output is refreshed after documentation and structure changes.
+- retired repository-map tooling output is refreshed after documentation and structure changes.

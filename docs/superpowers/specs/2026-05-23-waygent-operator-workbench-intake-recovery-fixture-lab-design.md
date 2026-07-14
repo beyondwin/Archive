@@ -450,6 +450,6 @@ skills/waygent/evals/run.sh
 git diff --check
 ```
 
-After meaningful code or documentation structure changes, refresh Graphify with
-`graphify update .` and include the generated graph output only when it is part
+After meaningful code or documentation structure changes, refresh retired repository-map tooling with
+`git diff --check` and include the generated graph output only when it is part
 of the intended commit scope.

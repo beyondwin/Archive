@@ -6,7 +6,7 @@
 
 **Architecture:** Introduce shared plan extraction and verification policy modules, then refactor normalization, deterministic recovery, and preflight to use them. Add additive evidence artifacts/events around intake, provider capability, execution barriers, and contract-audit candidates without changing the native `waygent-task` format.
 
-**Tech Stack:** TypeScript, Bun test, Waygent orchestrator packages, provider adapters, Lens artifacts/events, Graphify.
+**Tech Stack:** TypeScript, Bun test, Waygent orchestrator packages, provider adapters, Lens artifacts/events, retired repository-map tooling.
 
 ---
 
@@ -2019,13 +2019,13 @@ git commit -m "test: cover Android intake trust regression"
 
 ---
 
-### Task 9: Final Verification, Docs Sync, And Graphify
+### Task 9: Final Verification, Docs Sync, And retired repository-map tooling
 
 **Files:**
 - Modify: `docs/superpowers/specs/2026-05-24-waygent-android-intake-trust-design.md`
 - Modify: `docs/operations/verification.md`
-- Modify: `graphify-out/GRAPH_REPORT.md`
-- Modify: `graphify-out/graph.json`
+- Modify: `removed-repository-map/REPORT.md`
+- Modify: `removed-repository-map/graph.json`
 
 - [ ] **Step 1: Update the design doc with final file names**
 
@@ -2087,15 +2087,15 @@ bun run waygent:fixture-lab
 
 Expected: both commands PASS.
 
-- [ ] **Step 5: Run Graphify update**
+- [ ] **Step 5: Run retired repository-map tooling update**
 
 Run:
 
 ```bash
-graphify update .
+git diff --check
 ```
 
-Expected: graph update completes and `graphify-out/GRAPH_REPORT.md` plus `graphify-out/graph.json` are refreshed.
+Expected: graph update completes and `removed-repository-map/REPORT.md` plus `removed-repository-map/graph.json` are refreshed.
 
 - [ ] **Step 6: Run patch hygiene**
 
@@ -2114,8 +2114,8 @@ Run:
 ```bash
 git add docs/superpowers/specs/2026-05-24-waygent-android-intake-trust-design.md \
   docs/operations/verification.md \
-  graphify-out/GRAPH_REPORT.md \
-  graphify-out/graph.json
+  removed-repository-map/REPORT.md \
+  removed-repository-map/graph.json
 git commit -m "docs: document Android intake trust policy"
 ```
 
@@ -2126,6 +2126,6 @@ git commit -m "docs: document Android intake trust policy"
 - [ ] `bun test packages/orchestrator/tests/verificationPolicy.test.ts packages/orchestrator/tests/planClaimExtraction.test.ts packages/orchestrator/tests/planNormalizer.test.ts packages/orchestrator/tests/intakeRepairPlanner.test.ts packages/orchestrator/tests/intakeRecovery.test.ts packages/orchestrator/tests/planPreflight.test.ts packages/orchestrator/tests/adjacentContractAudit.test.ts packages/orchestrator/tests/executionDependencyBarrier.test.ts packages/provider-adapters/tests/capabilityProbe.test.ts tests/integration/waygent-android-intake-trust.test.ts` passes.
 - [ ] `bun run typecheck` passes.
 - [ ] `bun run waygent:fixture-lab` passes.
-- [ ] `graphify update .` completes.
+- [ ] `git diff --check` completes.
 - [ ] `git diff --check` passes.
 - [ ] A fake-provider Android intake regression reaches `runway.plan_loaded` and does not emit `platform.intake_decision_required`.

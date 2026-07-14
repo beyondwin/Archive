@@ -143,7 +143,7 @@ instead of hand-managed worker orchestration.
 
 **Interfaces:**
 
-- Consumes: focused tests, repo check, Graphify freshness
+- Consumes: focused tests, repo check, retired repository-map tooling freshness
 - Produces: final verification evidence
 
 - [x] **Step 1: Run focused CLI profile tests**
@@ -164,13 +164,13 @@ bun run waygent:scenarios
 Result: `bun run check` reported `816 pass`, `10 skip`, `0 fail`;
 `bun run waygent:scenarios` reported `15 pass`, `0 fail`.
 
-- [x] **Step 3: Refresh Graphify**
+- [x] **Step 3: Refresh retired repository-map tooling**
 
 ```bash
-graphify update .
+git diff --check
 ```
 
-Result: rebuilt `graphify-out/GRAPH_REPORT.md` and `graphify-out/graph.json`
+Result: rebuilt `removed-repository-map/REPORT.md` and `removed-repository-map/graph.json`
 from the current code graph.
 
 - [x] **Step 4: Check patch hygiene**
@@ -181,5 +181,5 @@ git status --short --branch --untracked-files=all
 ```
 
 Result: `git diff --check` passed. Final status showed intentional source/doc
-changes plus tracked Graphify updates, and one unrelated untracked file:
+changes plus tracked retired repository-map tooling updates, and one unrelated untracked file:
 `docs/2026-06-23-sidabari4loop-analysis.md`.

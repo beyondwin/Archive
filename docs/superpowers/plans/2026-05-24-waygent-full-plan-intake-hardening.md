@@ -160,7 +160,7 @@ verify:
   - bun run typecheck
   - git diff --check
 instructions:
-  - Implement the detailed Task 6 section below, except keep graphify update and git status as post-apply operator actions rather than Waygent verification commands.
+  - Implement the detailed Task 6 section below, except keep repository_map update and git status as post-apply operator actions rather than Waygent verification commands.
   - Confirm focused tests, typecheck, and diff hygiene pass.
 ```
 
@@ -290,7 +290,7 @@ npm run source-matching:fixtures:test
 ./gradlew :fixthis-mcp:test --tests "*TargetEvidenceServiceTest" --tests "*RuntimeTrustFixtureRunnerTest" --no-daemon
 ./gradlew spotlessCheck --no-daemon
 git diff --check
-graphify update .
+git diff --check
 git status --short --branch
 command -v adb || true
 ```
@@ -342,7 +342,7 @@ describe("Superpowers full-plan fence extraction", () => {
       './gradlew :fixthis-mcp:test --tests "*TargetEvidenceServiceTest" --tests "*RuntimeTrustFixtureRunnerTest" --no-daemon',
       "./gradlew spotlessCheck --no-daemon",
       "git diff --check",
-      "graphify update .",
+      "git diff --check",
       "git status --short --branch",
       "command -v adb || true",
       "npm run source-matching:fixtures:runtime",
@@ -1148,16 +1148,16 @@ if (recovered.status !== "recovered" || !recovered.report.can_start) process.exi
 
 Expected: prints `status: "recovered"`, `can_start: true`, and exits 0.
 
-- [ ] **Step 4: Refresh Graphify**
+- [ ] **Step 4: Refresh retired repository-map tooling**
 
 Run:
 
 ```bash
-graphify update .
+git diff --check
 git status --short --branch
 ```
 
-Expected: Graphify completes. Do not stage `graphify-out/` files.
+Expected: retired repository-map tooling completes. Do not stage `removed-repository-map/` files.
 
 - [ ] **Step 5: Commit final cleanup if any source changes remain**
 
@@ -1177,4 +1177,4 @@ git add packages/orchestrator/src/planAdapters/planClaimExtraction.ts \
 git commit -m "fix: harden Waygent full-plan intake recovery"
 ```
 
-Expected: no source/test changes remain except ignored or unstaged `graphify-out/` updates.
+Expected: no source/test changes remain except ignored or unstaged `removed-repository-map/` updates.

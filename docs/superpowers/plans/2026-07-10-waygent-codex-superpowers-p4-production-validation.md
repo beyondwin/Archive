@@ -515,8 +515,8 @@ git commit -m "test(waygent): add live and dogfood campaigns"
 - Create: `docs/operations/production-readiness.md`
 - Modify: `docs/operations/verification.md`
 - Modify: `docs/README.md`
-- Modify: `graphify-out/GRAPH_REPORT.md`
-- Modify: `graphify-out/graph.json`
+- Modify: `removed-repository-map/REPORT.md`
+- Modify: `removed-repository-map/graph.json`
 
 **Interfaces:**
 
@@ -594,17 +594,17 @@ bun run waygent:scenarios
 bun run waygent:skill-evals
 bun run waygent:console-check
 bun run waygent:native-tests
-graphify update .
+git diff --check
 git diff --check
 git add -- packages/testkit/src/productionReadiness.ts \
   packages/testkit/tests/productionReadiness.test.ts packages/testkit/src/index.ts \
   apps/cli/src/index.ts apps/cli/tests/productionReadiness.test.ts \
   docs/operations/production-readiness.md docs/operations/verification.md docs/README.md \
-  graphify-out/GRAPH_REPORT.md graphify-out/graph.json
+  removed-repository-map/REPORT.md removed-repository-map/graph.json
 git commit -m "test(waygent): prove production readiness"
 ```
 
-This commit contains evaluator/runtime/docs/Graphify code only. Pre-commit
+This commit contains evaluator/runtime/docs/retired repository-map tooling code only. Pre-commit
 evidence is diagnostic and cannot satisfy the final current-commit criterion.
 
 - [ ] **Step 5: Independently review and evaluate the clean committed HEAD**

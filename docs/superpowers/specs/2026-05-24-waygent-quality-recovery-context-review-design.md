@@ -154,7 +154,7 @@ instructions:
 - Dependency install commands: `npm install`, `bun install`, `pnpm install`.
 - Mutating generator commands unless the generated files are explicitly owned.
 - Formatting commands in write mode.
-- `git add`, `git commit`, `graphify update .`, and apply-like mutation steps.
+- `git add`, `git commit`, `git diff --check`, and apply-like mutation steps.
 
 Waygent still stops for user decision on:
 
