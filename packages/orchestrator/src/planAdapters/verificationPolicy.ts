@@ -209,7 +209,6 @@ function isImplementationOnlyCommand(segment: string): boolean {
   if (/^(npm|bun|pnpm|yarn)\s+install\b/.test(segment)) return true;
   if (/^(npm|bun|pnpm|yarn)\s+run\s+(format|fmt|generate|codegen)\b/.test(segment)) return true;
   if (/^prettier\s+--write\b/.test(segment)) return true;
-  if (segment === "graphify update ." || segment.startsWith("graphify update ")) return true;
   return /^git\s+(add|commit|push|checkout|merge|rebase|stash|worktree|cherry-pick)\b/.test(segment);
 }
 

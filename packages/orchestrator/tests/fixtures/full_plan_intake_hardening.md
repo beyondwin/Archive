@@ -113,7 +113,7 @@ npm run source-matching:fixtures:test
 ./gradlew :fixthis-mcp:test --tests "*TargetEvidenceServiceTest" --tests "*RuntimeTrustFixtureRunnerTest" --no-daemon
 ./gradlew spotlessCheck --no-daemon
 git diff --check
-graphify update .
+npm run format
 git status --short --branch
 command -v adb || true
 ```

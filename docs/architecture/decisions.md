@@ -7,7 +7,6 @@
 | Event families | Active events use `platform.*`, `runway.*`, `kernel.*`, and `lens.*`. |
 | Legacy namespaces | New Waygent runs must not emit `agentrunway.*`, `kws-cpe.*`, or `kws-cme.*`. |
 | KWS executor telemetry | `kws-cpe.*` and `kws-cme.*` remain skill-local/external observability for KWS executor skills only. They are not active Waygent product telemetry and may degrade if no external `agentlens` CLI is installed. |
-| Graphify | Graphify is an approved development and documentation-audit tool, not a runtime dependency. |
 | Live providers | Codex and Claude live smoke checks are opt-in. |
 
 These decisions are current product guidance. Older migration records can

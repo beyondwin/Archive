@@ -77,17 +77,3 @@ the Waygent product runtime.
 Historical records preserve why the repository moved into the current Waygent
 shape. Do not treat older AgentRunway, KWS CPE, or KWS CME routing language as
 active product architecture unless a current doc explicitly says so.
-
-## Graphify Map
-
-Graphify is approved as a repository map and documentation-audit tool. When
-`graphify-out/` exists, use it as navigation and audit evidence, then refresh it
-after meaningful code or documentation structure changes:
-
-```bash
-graphify update .
-graphify query "how does Waygent decide apply readiness?" --graph graphify-out/graph.json
-```
-
-Graphify output is not runtime state and does not replace contracts, package
-code, native kernel code, tests, or AgentLens artifacts.

@@ -29,13 +29,6 @@ not assume root-level `docs/_index/` exists unless the current worktree
 actually contains it. Historical references to other pruned paths may appear
 in older skill docs or git history.
 
-Graphify is approved as a repository map and documentation-audit tool. Use
-`graphify-out/` when it exists, and refresh it with `graphify update .` after
-meaningful code or documentation structure changes. Treat Graphify output as
-navigation and audit evidence, not as the product runtime source of truth.
-Canonical contracts remain in code, tests, `docs/`, active Waygent packages,
-and `skills/`.
-
 ## Read Order
 
 1. Read this file first.
@@ -88,8 +81,13 @@ chat context when a Waygent run is requested.
 - Claude executor: `skills/kws-claude-multi-agent-executor/`
 - Codex executor: `skills/kws-codex-plan-executor/`
 
-These skills are load-bearing runtime specs. For non-trivial changes, follow
-the skill-local protocol before editing. In particular,
+The Codex executor is a small sequential wrapper for approved Superpowers plan
+documents. It snapshots ordered specs and plans, runs one plan at a time in one
+isolated worktree, and resumes at the first incomplete plan. Superpowers owns
+implementation, review, fixes, verification, and commits. The executor is not
+a Waygent product dependency and does not own task mapping or quality policy.
+
+For Claude executor changes,
 `skills/kws-claude-multi-agent-executor/AGENTS.md` has required experiment and
 history rules.
 

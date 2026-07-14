@@ -49,9 +49,6 @@ function walk(path: string, root: string, violations: string[]): void {
     }
     if (rel.endsWith(".py")) violations.push(`${rel}: Python runtime file in product tree`);
     const text = readFileSync(path, "utf8");
-    if (/(graphify\s+(update|query|build)|from\s+["'].*graphify|import\s+.*graphify)/i.test(text)) {
-      violations.push(`${rel}: Graphify runtime dependency in product tree`);
-    }
     if (/waygent\.run_state\.v1/.test(text)) {
       violations.push(`${rel}: legacy Waygent v1 state schema in product tree`);
     }

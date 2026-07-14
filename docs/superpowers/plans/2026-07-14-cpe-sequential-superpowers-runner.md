@@ -22,7 +22,7 @@
 - The deterministic suite must be sequential, credential-free, network-free, target 10 seconds, and remain below 15 real seconds on the development machine.
 - Use `apply_patch` for tracked edits and deletions. Preserve unrelated user changes.
 - Run focused tests during RED/GREEN. Run the complete deterministic gate once at the final revision.
-- Refresh `graphify-out/` once after the final code and documentation structure is stable, as required by root `AGENTS.md`; do not treat Graphify as CPE runtime behavior.
+- Remove the repository's retired generated-map integration and do not recreate it.
 
 ---
 
@@ -431,7 +431,7 @@ git commit -m "refactor(cpe): cut over to sequential plan execution"
 - Keep: `docs/superpowers/specs/2026-06-01-waygent-cpe-comparison-benchmark-design.md`
 - Keep: `docs/superpowers/plans/2026-06-01-waygent-cpe-comparison-benchmark.md`
 - Delete: the 52 CPE-only root artifacts listed in Step 1
-- Update once: `graphify-out/graph.json`, `graphify-out/graph.svg`
+- Delete: `.graphifyignore`, `graphify-out/`
 
 **Interfaces:**
 
@@ -537,21 +537,16 @@ rg -n \
   'docs/superpowers/(specs|plans)/[^ )`]*cpe[^ )`]*' \
   --glob '!docs/superpowers/specs/**' \
   --glob '!docs/superpowers/plans/**' \
-  --glob '!graphify-out/**' \
   .
 ```
 
 Expected: no references to a deleted root CPE document.
 
-- [ ] **Step 4: Refresh Graphify once at the stable structure**
+- [ ] **Step 4: Remove the retired generated-map integration**
 
-```bash
-cd /Users/kws/source/private/Archive
-graphify update .
-git status --short --branch --untracked-files=all
-```
-
-Keep the tracked `graphify-out/graph.json` and `graphify-out/graph.svg` update. Remove only newly generated dated backup or cache directories after confirming they are Graphify byproducts. Do not run Graphify again unless tracked code or documentation changes afterward.
+Delete `.graphifyignore`, the tracked generated-map output directory, active
+repository instructions, product special-casing, fixtures, and current user
+documentation for the retired integration. Do not regenerate the output.
 
 - [ ] **Step 5: Run the complete final gate exactly once**
 
@@ -587,13 +582,13 @@ test "$eval_lines" -le 600
 printf 'runtime_lines=%s eval_lines=%s\n' "$runtime_lines" "$eval_lines"
 ```
 
-Re-run the twelve-file inventory assertion from Task 2 after Graphify and all documentation changes. Do not weaken a functional check merely to meet a line budget; simplify the implementation instead.
+Re-run the twelve-file inventory assertion from Task 2 after all documentation changes. Do not weaken a functional check merely to meet a line budget; simplify the implementation instead.
 
 - [ ] **Step 6: Stage the root cleanup and verify the staged patch**
 
 ```bash
 cd /Users/kws/source/private/Archive
-git add -A -- AGENTS.md docs/superpowers graphify-out
+git add -A -- AGENTS.md README.md .gitignore .graphifyignore graphify-out docs skills/waygent packages
 git diff --cached --check
 git status --short
 ```
@@ -616,5 +611,5 @@ Expected: the commit succeeds and the worktree is clean. Do not merge or push un
 - The old skill deletion inventory and the 52 root-document deletions are explicit.
 - The two mixed Waygent comparison documents and all non-CPE product docs are preserved.
 - Product review and verification are not reimplemented by CPE.
-- There is one final full gate and one final Graphify refresh.
+- There is one final full gate and no generated-map integration.
 - No implementation step modifies installed Superpowers, Waygent, Claude executor behavior, external run data, or evidence branches.

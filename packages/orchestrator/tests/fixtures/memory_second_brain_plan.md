@@ -25,5 +25,5 @@ Run:
 ```bash
 npm run build
 npm run validate
-graphify update .
+npm run format
 ```

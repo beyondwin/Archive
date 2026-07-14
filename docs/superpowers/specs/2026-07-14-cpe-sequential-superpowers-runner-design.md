@@ -54,7 +54,6 @@ CPE will not:
 - maintain legacy CPE run compatibility;
 - export launcher prompts or handoff documents;
 - merge, push, deploy, publish, or modify Waygent;
-- update repository-root Graphify output as part of the CPE runtime;
 - delete external run roots, worktrees, evidence branches, or user data.
 
 ## 4. Public Interface
@@ -311,7 +310,7 @@ for deleted behavior, including:
 - reviewer, fixer, investigator, document auditor, or Program Final Integrator
   as CPE-owned roles;
 - writer lease, integration invalidation, release proof, live matrix,
-  compatibility scoring, or Graphify as a CPE runtime dependency;
+  compatibility scoring;
 - parallel workers, task-level CPE review, or repeated final verification.
 
 Historical Git objects and unrelated Waygent or Claude documentation are not

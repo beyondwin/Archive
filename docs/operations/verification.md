@@ -43,8 +43,8 @@ git diff --check
 
 This task is not allowed to report "no source changes needed" while these
 documentation sections or skill mappings are absent from the worktree. It must
-produce a checkpointable diff for the docs/skill/Graphify updates, and may also
-include tightly scoped full-gate type fixes from the file claims above.
+produce a checkpointable diff for the owned docs and skill updates, and may
+also include tightly scoped full-gate type fixes from the file claims above.
 
 Expected operator behavior:
 

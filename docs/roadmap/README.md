@@ -28,7 +28,6 @@ contracts, code, and verification have shipped.
 - Continue improving execution intelligence, reliability, and operator UX.
 - Keep Lens and runtime projections aligned.
 - Reduce stale legacy language in current-facing docs.
-- Refresh Graphify maps after meaningful structure changes.
 
 ## Historical Migration Records
 
