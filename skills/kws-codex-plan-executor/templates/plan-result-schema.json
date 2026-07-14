@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["plan_id", "status", "head_commit", "verification", "summary"],
+  "properties": {
+    "plan_id": {"type": "string", "minLength": 1},
+    "status": {
+      "type": "string",
+      "enum": ["completed", "interrupted", "blocked", "failed"]
+    },
+    "head_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "verification": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["command", "exit_code"],
+        "properties": {
+          "command": {"type": "string", "minLength": 1},
+          "exit_code": {"type": "integer"}
+        }
+      }
+    },
+    "summary": {"type": "string", "minLength": 1, "maxLength": 2000}
+  }
+}
