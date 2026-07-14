@@ -86,9 +86,12 @@ class StateStore:
         branch: str,
         specs: Sequence[Path],
         plans: Sequence[Path],
+        initial_status: str = "initializing",
     ) -> "StateStore":
         if not plans:
             raise ValueError("at least one plan is required")
+        if initial_status not in {"initializing", "running"}:
+            raise ValueError("initial run status is invalid")
         if run_root.exists():
             raise ValueError("run root already exists")
         if not _RUN_ID_PATTERN.fullmatch(run_id) or branch != f"codex/{run_id}":
@@ -147,7 +150,7 @@ class StateStore:
         state = {
             "format_version": 1,
             "run_id": run_id,
-            "status": "running",
+            "status": initial_status,
             "source_repository": str(repository),
             "source_commit": source_commit,
             "worktree": str(worktree.resolve()),
@@ -161,7 +164,7 @@ class StateStore:
         store.save()
         store.events_path.touch(mode=0o600)
         store.events_path.chmod(0o600)
-        store.append_event("run.created", status="running")
+        store.append_event("run.created", status=initial_status)
         return store
 
     @classmethod
