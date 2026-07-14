@@ -103,8 +103,8 @@ verification evidence, and terminal records before the closure cycle repeats.
 
 ## Recovery And Integrity
 
-RunStore appends canonical JSON events under a lock, fsyncs the stream, then
-atomically replaces the event head. Replay derives lifecycle and task state
+RunStore appends canonical hash-chained JSON events under a lock and fsyncs
+the stream. Replay derives lifecycle and task state
 from the manifest, input set, and events; there is no mutable state projection
 to trust.
 
@@ -112,22 +112,16 @@ Resume checks:
 
 1. private regular-file and directory ownership;
 2. manifest and document-set digests;
-3. event IDs, previous hashes, payload contracts, and event head;
-4. artifact index parity and immutable bytes;
+3. event IDs, previous hashes, and payload contracts;
+4. indexed immutable artifact bytes;
 5. event-selected map publication identity;
 6. worktree source, branch, head ancestry, and cleanliness where required;
 7. active child handoff evidence before deciding whether redispatch is safe.
 
-A file-before-index interruption can be reconciled only when bytes and the
-content-addressed publication commitment fully validate. An accepted child
-result without its matching durable event is reconciled; completed durable work
-is not launched again. Ambiguous or contradictory evidence fails closed.
-
-Mapping retention protects every event-selected publication and its physical
-artifacts forever. It keeps one unselected Program Mapper attempt per
-generation, including strict partial pre-manifest groups. Older groups are
-removed only after append-only tombstones are fsynced; open recovery completes
-a tombstone-before-unlink interruption.
+Untrusted attempt output is never authoritative. A complete validated mapping
+bundle is installed once under its generation and selected by one event.
+Accepted child results without matching durable events are reconciled;
+completed durable work is not launched again.
 
 ## Modules
 

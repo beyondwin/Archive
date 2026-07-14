@@ -92,12 +92,10 @@ final verification은 무효화됩니다.
 ~/.codex/worktrees/RUN_ID입니다. events.jsonl이 권위 있는 상태 기록이고,
 artifacts.jsonl이 immutable bytes를 digest와 연결합니다.
 
-map.generation_created event가 선택한 mapping publication과 후속 evidence는
-자동 삭제 대상이 아닙니다. generation마다 선택되지 않은 Program Mapper attempt는
-완전하거나 strict partial 상태인지와 관계없이 최신 하나만 유지합니다. 오래된
-attempt는 artifact index에 tombstone을 먼저 fsync한 뒤 파일을 지우며, 중간에
-멈추면 다음 open이 정리합니다. partial path identity가 모호하면 fail closed합니다.
-active run 내부 파일을 직접 개별 삭제하지 마세요.
+검증을 마친 generation mapping bundle만 immutable logical path에 설치되고
+map.generation_created event가 선택합니다. 중단되거나 거부된 mapper 출력은
+outbox에만 남아 권위 상태가 되지 않습니다. active run 내부 파일을 직접 개별
+삭제하지 마세요.
 
 schema-3 run은 inspect만 가능합니다. CPE 4 resume은 거부하며 기존 파일을
 수정하지 않습니다.

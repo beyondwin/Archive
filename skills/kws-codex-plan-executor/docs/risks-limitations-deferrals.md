@@ -30,30 +30,15 @@ runner-integrity contradiction fails closed. Long difficult programs can
 therefore consume substantial local time and disk before reaching a terminal
 state.
 
-## Unselected Mapping Attempt Retention
+## Mapping Publication Boundary
 
-Program-map publications are content-addressed and indexed before the
-map.generation_created selection event. A crash followed by different valid
-mapper bytes can leave multiple unselected attempts.
-
-CPE 4.0.0 keeps exactly one live unselected Program Mapper attempt per logical
-map generation, whether the attempt reached accepted.json or stopped after
-writing a strict physical artifact path. Document Mapper outboxes are not
-content-addressed attempts and are outside this policy. Every
-map.generation_created manifest, every physical artifact it reaches, and all
-non-mapping evidence are permanently protected.
-
-Pruning validates all selected reachability first, appends strict artifact
-index tombstones under the writer lock, fsyncs them, and only then unlinks
-matching private files. Open recovery finishes a tombstone-before-unlink crash.
-Tombstoned reads fail and a selected digest, identity, or reachability
-ambiguity fails closed.
-
-A partial group has no publication commitment yet, so retention permits only
-strict maps/GENERATION/attempts/SHA/artifacts/{maps,briefs}/... paths whose
-indexed bytes still validate. Any other identity is ambiguous and fails
-closed. Operators must not manually remove indexed paths; remove an abandoned
-run only as a whole after deciding it is no longer evidence.
+Program Mapper output remains in a private attempt outbox until the complete
+program map, coverage, authority queue, and every brief validate together.
+Only then are their logical paths installed immutably and committed by one
+content-addressed bundle plus map.generation_created event. This intentionally
+has no attempt-retention, tombstone, or garbage-collection subsystem. A run
+root may be removed only as one operator-owned unit after it is no longer
+needed as evidence.
 
 ## Schema 3
 
@@ -64,40 +49,27 @@ the old run and worktree must remain untouched.
 ## Python Size
 
 Python remains because child and Git latency dominate interpreter cost. The
-4.0.0 runtime is split into the public CLI and eight focused runtime files, but
-strict lossless mapping, crash-safe storage, recovery, process-group control,
-and final-evidence validation remain substantial. Active line counts are
-measured at release. The Task 7 review-fix count is 15,989 lines against the
-directional 5,000-line target: 9,686 runtime lines and 6,303 eval lines.
+4.0.0 runtime is the public CLI plus eight focused runtime files. The final
+lean pass measures 6,290 runtime lines and 2,035 eval/runner lines.
 
 | Active file | Lines | Necessary retained responsibility |
 | --- | ---: | --- |
 | scripts/cpe.py | 571 | four-command parsing, public result, authority and resume adapter |
-| contracts.py | 2,085 | lossless map, brief, event, audit, terminal, and child validation |
-| store.py | 2,277 | private snapshots, crash-safe append, tombstone retention, publication, replay |
-| queue.py | 3,725 | mapping, dependency execution, recovery, audits, final integration |
+| contracts.py | 2,071 | lossless map, brief, event, audit, terminal, and child validation |
+| store.py | 925 | private snapshots, immutable artifacts, hash-chain, replay |
+| queue.py | 1,695 | mapping, dependency execution, recovery, audits, final integration |
 | launcher.py | 680 | strict child boundary, writer lease, timeout and process-group cleanup |
 | worktree.py | 207 | source identity, branch, commit and clean-handoff checks |
 | legacy.py | 63 | bounded read-only schema-3 inspection |
 | prompt_export.py | 77 | side-effect-free prompt and handoff rendering |
 | __init__.py | 1 | package marker |
-| six checks plus fake_codex.py | 6,303 | 124 semantic cases and deterministic child behavior |
+| six checks plus fake_codex.py and run.sh | 2,035 | 19 high-signal scenarios and deterministic child behavior |
 
-The excess is an explicit maintenance risk. Task 7 removed more than 65,000
-superseded lines and consolidated the repeated six-check Git fixture, but did
-not compress formatting or remove semantic assertions merely to improve wc.
-Further safe reduction needs its own behavior-preserving plan:
-
-1. replace repeated map field validators in contracts.py with one declarative
-   strict-record vocabulary while retaining exact error and cross-reference
-   tests;
-2. factor store.py event, autonomy-ledger, and artifact-index locked I/O into
-   one crash-safe append/read transaction primitive with fault injection;
-3. separate queue.py generation, task recovery, and final-evidence walkers
-   behind pure state helpers, then prove replay parity before deleting the old
-   paths;
-4. extend the shared eval fixture with typed map/result builders so the 124
-   cases keep their assertions without repeating payload construction.
+The runtime is below the approved 6,500-line ceiling but remains above the
+directional 5,000-line aspiration because strict map and terminal validation,
+bounded process cleanup, refresh, and schema-3 inspection remain explicit.
+Do not reintroduce concurrency or speculative filesystem policy to reduce
+wall time.
 
 Any later Bun proposal must demonstrate measured packaging, maintenance, or
 latency benefit and implement only the lean queue contract. It may not port

@@ -93,7 +93,7 @@ CODEX_HOME/worktrees/RUN_ID. The run manifest, input snapshots, artifact index,
 hash-chained event stream, autonomy ledger, reports, reviews, verification
 evidence, and terminal result are file-backed.
 
-Resume validates the manifest, event head and chain, selected map publication,
+Resume validates the manifest, event chain, selected mapping bundle,
 worktree identity, and recorded commits before continuing the first nonterminal
 item. Completed work is not redispatched. Source changes affect a run only
 through explicit --refresh-inputs, which creates a new immutable generation.

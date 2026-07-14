@@ -6,16 +6,11 @@ network or credentials.
 
     ./evals/run.sh
 
-The runner discovers every unittest method in the six files and schedules each
-in an isolated subprocess through a bounded global pool. CPE_EVAL_JOBS may be
-set from 1 through 8; the development default is 7. Output reports one PASS per
-check and ends with 6 passed only after all methods succeed.
-Each case starts in a new process group with a 12-second default deadline.
-CPE_EVAL_CASE_TIMEOUT is bounded from 0.1 through 30 seconds and
-CPE_EVAL_TERM_GRACE from 0.05 through 5 seconds. Timeout sends SIGTERM, waits
-the grace interval, SIGKILLs a surviving process group, reaps the leader, and
-reports sorted deterministic failures. An internal synthetic regression proves
-that a descendant which ignores SIGTERM does not survive.
+The runner invokes the six check files directly and sequentially. Each file
+owns one shared temporary Git fixture and three or four high-signal scenarios.
+Output reports one PASS per check and ends with 6 passed only after all 19
+scenarios succeed. There is no discovery layer, worker pool, or per-case runner
+policy; child timeout behavior belongs to the launcher contract itself.
 
 ## Check Ownership
 
@@ -45,8 +40,7 @@ part of this skill's verification.
 
 Expected CLI help exposes only run, resume, inspect, and export. The eval target
 is under 60 real seconds on the development machine. A timing regression must
-be investigated before increasing timeouts or concurrency; preserve semantic
-coverage and keep the global pool bounded.
+be investigated in the covering check rather than hidden with concurrency.
 
 Use one focused method during RED/GREEN work, then run the full gate. Report the
 exact commands, pass counts, real time, and any platform-specific variance.

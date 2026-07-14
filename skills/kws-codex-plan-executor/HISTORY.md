@@ -18,9 +18,9 @@ CPE 4 is an intentional breaking simplification.
   and child handoffs without redispatching completed work.
 - Reduced active verification to six credential-free standard-library checks
   covering contracts, mapping, queue, final closure, recovery, and CLI/export.
-- Added bounded per-case eval process groups and TERM/grace/KILL cleanup, plus
-  crash-safe append-only tombstone retention for complete unselected mapping
-  publications while permanently protecting every event-selected artifact.
+- Replaced the parallel singleton runner with six direct sequential checks and
+  19 shared-fixture scenarios; mapping publishes one validated immutable bundle
+  per generation without retention or garbage-collection machinery.
 - Deleted the superseded release, live-provider, certification, compatibility,
   plan-parser, task-packet, projection, repair-tool, and historical eval
   surfaces from the active skill.
