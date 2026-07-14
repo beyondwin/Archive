@@ -21,6 +21,9 @@ SCENARIOS = {
     "dirty_handoff",
     "resume_completed",
     "blocking_completed",
+    "timeout_grandchild",
+    "completed_with_grandchild",
+    "large_log",
 }
 
 
@@ -130,6 +133,37 @@ def main() -> int:
             head = commit_plan(worktree, plan_id)
         else:
             head = git(worktree, "rev-parse", "HEAD")
+        status = "completed"
+    elif scenario == "timeout_grandchild":
+        pid_path = Path(os.environ["CPE_FAKE_GRANDCHILD_PID"])
+        grandchild = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        with pid_path.open("a", encoding="utf-8") as stream:
+            stream.write(f"{os.getpid()}\n{grandchild.pid}\n")
+            stream.flush()
+        while True:
+            print("waiting for timeout", flush=True)
+            time.sleep(0.05)
+    elif scenario == "completed_with_grandchild":
+        pid_path = Path(os.environ["CPE_FAKE_GRANDCHILD_PID"])
+        grandchild = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        pid_path.write_text(str(grandchild.pid), encoding="utf-8")
+        head = commit_plan(worktree, plan_id)
+        status = "completed"
+    elif scenario == "large_log":
+        sys.stdout.buffer.write(b"x" * 2_200_000)
+        sys.stdout.buffer.write(b"CPE_FINAL_LOG_MARKER\n")
+        sys.stdout.flush()
+        head = commit_plan(worktree, plan_id)
         status = "completed"
 
     payload = {

@@ -388,11 +388,31 @@ class SequentialRunner:
                     result_path=result_path, log_path=log_path, lock_fd=lock_fd,
                     prior_result=prior_result, prior_log=prior_log,
                 )
+                store.append_event(
+                    "plan.attempt_finished",
+                    plan_id=plan["plan_id"],
+                    attempt=plan["attempt_count"],
+                    returncode=outcome.returncode,
+                    timed_out=outcome.timed_out,
+                    forced_cleanup=outcome.forced_cleanup,
+                    discarded_log_bytes=outcome.discarded_log_bytes,
+                )
                 plan["result_path"] = (
                     str(outcome.result_path.resolve())
                     if outcome.payload is not None
                     else str(self._synthetic_result(store, plan, outcome))
                 )
+                if outcome.timed_out:
+                    plan["status"] = "interrupted"
+                    state["status"] = "interrupted"
+                    store.save()
+                    store.append_event(
+                        "plan.attempt_incomplete",
+                        plan_id=plan["plan_id"],
+                        status="interrupted",
+                        timed_out=True,
+                    )
+                    continue
                 integrity_error = self._handoff_error(store, plan, outcome)
                 if integrity_error is not None:
                     plan["status"] = "failed"
@@ -451,6 +471,8 @@ class SequentialRunner:
                 return "invalid_result"
         if payload["status"] != "completed":
             return None
+        if outcome.forced_cleanup:
+            return "forced_cleanup"
         worktree = Path(store.state["worktree"])
         observed = _git(worktree, "rev-parse", "HEAD")
         if head != observed:
