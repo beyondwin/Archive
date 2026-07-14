@@ -1639,18 +1639,6 @@ def validate_task_brief(
     }
 
 
-@dataclass(frozen=True, order=True)
-class DocumentRelationship:
-    relationship_type: str
-    target_document_id: str
-
-    def to_json(self) -> dict[str, str]:
-        return {
-            "relationship_type": self.relationship_type,
-            "target_document_id": self.target_document_id,
-        }
-
-
 @dataclass(frozen=True)
 class InputDocument:
     document_id: str
@@ -1660,7 +1648,6 @@ class InputDocument:
     sha256: str
     byte_length: int
     input_order: int
-    relationships: tuple[DocumentRelationship, ...] = ()
 
     def to_json(self) -> dict[str, object]:
         return {
@@ -1671,7 +1658,6 @@ class InputDocument:
             "sha256": self.sha256,
             "byte_length": self.byte_length,
             "input_order": self.input_order,
-            "relationships": [item.to_json() for item in self.relationships],
         }
 
 

@@ -56,12 +56,11 @@ runs the one full verification; CPE does not run it again.
 completed means a terminal artifact was durably published. Read that artifact's
 quality_verdict, verification exit, auditor verdicts, and limitations.
 
-## Deleting Mapping Attempts By Age
+## Editing A Mapping Bundle In Place
 
-Never delete evidence selected by map.generation_created. Unselected
-Program Mapper attempts are already bounded to one per generation
-through durable index tombstones. Removing files manually, changing the cap by
-age, or bypassing strict partial-group identity checks can corrupt replay.
+Never rewrite evidence selected by map.generation_created. Mapper output is
+installed only after the complete content-addressed bundle validates. Remove
+an abandoned run only as one operator-owned unit; do not edit indexed files.
 
 ## Resuming Schema 3 With CPE 4
 

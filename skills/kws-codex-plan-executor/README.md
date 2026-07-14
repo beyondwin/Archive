@@ -97,7 +97,6 @@ By default a run owns:
     ~/.codex/orchestrator/RUN_ID/
       run.json
       events.jsonl
-      events.head.json
       artifacts.jsonl
       autonomy-decisions.jsonl
       writer.lease
@@ -114,17 +113,11 @@ By default a run owns:
     ~/.codex/worktrees/RUN_ID/
 
 All durable files are private. Input snapshots and accepted artifacts are
-digest-bound. events.jsonl is the authoritative transition history and
-events.head.json detects truncation or unsynced tails. artifacts.jsonl binds
-logical paths to immutable bytes. result.json exists only after terminal
-integration.
-
-Mapping publications are content-addressed under a generation's attempts
-directory. One map.generation_created event uniquely selects the accepted
-publication. Event-selected evidence is never eligible for automatic deletion.
-The store retains one live unselected Program Mapper attempt per generation,
-including strict partial pre-manifest groups. It durably tombstones pruned
-index records before unlink and finishes interrupted unlinks on open.
+digest-bound. events.jsonl is the authoritative hash-chained transition
+history. artifacts.jsonl binds each immutable logical path to its bytes.
+Each generation has one content-addressed mapping bundle selected by one
+map.generation_created event. Untrusted attempt output stays in outbox until
+the complete bundle validates. result.json exists only after integration.
 
 ## Execution Shape
 
