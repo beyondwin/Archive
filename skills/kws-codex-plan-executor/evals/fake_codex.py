@@ -24,6 +24,7 @@ SCENARIOS = {
     "timeout_grandchild",
     "completed_with_grandchild",
     "large_log",
+    "mutate_prior_nonzero_completed",
 }
 
 
@@ -165,6 +166,14 @@ def main() -> int:
         sys.stdout.flush()
         head = commit_plan(worktree, plan_id)
         status = "completed"
+    elif scenario == "mutate_prior_nonzero_completed":
+        prior = next(result_path.parent.glob("plan-01-attempt-*.json"))
+        try:
+            prior.write_text("tampered\n", encoding="utf-8")
+        except PermissionError:
+            pass
+        head = commit_plan(worktree, plan_id)
+        status = "completed"
 
     payload = {
         "plan_id": plan_id,
@@ -176,6 +185,8 @@ def main() -> int:
     result_path.parent.mkdir(parents=True, exist_ok=True)
     result_path.write_text(json.dumps(payload), encoding="utf-8")
     print(json.dumps({"type": "result", "status": status}))
+    if scenario == "mutate_prior_nonzero_completed":
+        return 1
     return 0 if status == "completed" else 1
 
 

@@ -14,27 +14,78 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "scripts" / "cpe.py"
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from cpe_runtime.state import StateStore
 
 
 class SequentialCliTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.fixture_temporary = tempfile.TemporaryDirectory(prefix="cpe-cli-base-")
+        cls.fixture_repo = Path(cls.fixture_temporary.name) / "repo"
+        cls.fixture_repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(cls.fixture_repo)], check=True)
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(cls.fixture_repo),
+                "config",
+                "user.email",
+                "cpe@example.invalid",
+            ],
+            check=True,
+        )
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(cls.fixture_repo),
+                "config",
+                "user.name",
+                "CPE Eval",
+            ],
+            check=True,
+        )
+        for name in ("spec-b.md", "spec-a.md"):
+            (cls.fixture_repo / name).write_text(
+                f"# {Path(name).stem}\n",
+                encoding="utf-8",
+            )
+        subprocess.run(
+            ["git", "-C", str(cls.fixture_repo), "add", "."],
+            check=True,
+        )
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(cls.fixture_repo),
+                "commit",
+                "-q",
+                "-m",
+                "fixture",
+            ],
+            check=True,
+        )
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.fixture_temporary.cleanup()
+
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory(prefix="cpe-cli-")
         self.root = Path(self.temporary.name)
         self.home = self.root / "codex-home"
         self.repo = self.root / "repo"
         self.bin = self.root / "bin"
+        self.real_codex = shutil.which("codex", path=os.environ["PATH"])
         self.home.mkdir(mode=0o700)
-        self.repo.mkdir()
         self.bin.mkdir()
-        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
-        subprocess.run(["git", "-C", str(self.repo), "config", "user.email", "cpe@example.invalid"], check=True)
-        subprocess.run(["git", "-C", str(self.repo), "config", "user.name", "CPE Eval"], check=True)
+        shutil.copytree(self.fixture_repo, self.repo)
         self.specs = [self.repo / "spec-b.md", self.repo / "spec-a.md"]
         self.plans = [self.repo / "plan-b.md", self.repo / "plan-a.md"]
-        for path in self.specs:
-            path.write_text(f"# {path.stem}\n", encoding="utf-8")
-        subprocess.run(["git", "-C", str(self.repo), "add", "."], check=True)
-        subprocess.run(["git", "-C", str(self.repo), "commit", "-q", "-m", "fixture"], check=True)
         for path in self.plans:
             path.write_text("scenario:completed\n", encoding="utf-8")
         fake = self.bin / "codex"
@@ -90,9 +141,23 @@ class SequentialCliTest(unittest.TestCase):
 
     def test_inspect_is_read_only_and_historical_format_is_rejected(self) -> None:
         self.require_cutover()
-        created = self.command("run", "--plan", str(self.plans[0]), "--workspace", str(self.repo))
-        self.assertEqual(created.returncode, 0, created.stderr + created.stdout)
-        run_id = json.loads(created.stdout)["run_id"]
+        run_id = "inspect-only"
+        source_commit = subprocess.run(
+            ["git", "-C", str(self.repo), "rev-parse", "HEAD"],
+            check=True,
+            text=True,
+            stdout=subprocess.PIPE,
+        ).stdout.strip()
+        StateStore.create(
+            run_root=self.home / "orchestrator" / run_id,
+            run_id=run_id,
+            source_repository=self.repo,
+            source_commit=source_commit,
+            worktree=self.home / "worktrees" / run_id,
+            branch=f"codex/{run_id}",
+            specs=[],
+            plans=[self.plans[0]],
+        )
         state_path = self.home / "orchestrator" / run_id / "state.json"
         before = (state_path.read_bytes(), state_path.stat().st_mtime_ns)
         inspected = self.command("inspect", "--run-id", run_id)
@@ -105,6 +170,25 @@ class SequentialCliTest(unittest.TestCase):
         rejected = self.command("inspect", "--run-id", "legacy")
         self.assertEqual(rejected.returncode, 1)
         self.assertIn("unsupported_run_format", json.loads(rejected.stdout)["error"])
+
+    def test_installed_codex_exposes_every_launcher_flag(self) -> None:
+        self.assertIsNotNone(self.real_codex, "codex is not installed on PATH")
+        result = subprocess.run(
+            [str(self.real_codex), "exec", "--help"],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        help_text = result.stdout + result.stderr
+        for flag in (
+            "--ephemeral",
+            "--ignore-user-config",
+            "--output-schema",
+            "--output-last-message",
+        ):
+            self.assertIn(flag, help_text)
 
 
 if __name__ == "__main__":
