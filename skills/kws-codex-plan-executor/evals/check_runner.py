@@ -72,6 +72,64 @@ class SequentialRunnerTest(unittest.TestCase):
     def invocations(self) -> list[dict[str, object]]:
         return [json.loads(line) for line in self.log.read_text().splitlines()]
 
+    def assert_state_rejected(self, store: StateStore, message: str) -> None:
+        with self.assertRaisesRegex(ValueError, message):
+            store.save()
+
+    def test_state_rejects_impossible_plan_and_run_relationships(self) -> None:
+        plans = [self.plan(1, "completed"), self.plan(2, "completed")]
+        store = StateStore.create(
+            run_root=self.home / "orchestrator" / "semantic-state",
+            run_id="semantic-state",
+            source_repository=self.repo,
+            source_commit=git(self.repo, "rev-parse", "HEAD"),
+            worktree=self.home / "worktrees" / "semantic-state",
+            branch="codex/semantic-state",
+            specs=[],
+            plans=plans,
+        )
+        store.state["current_plan_index"] = 1
+        self.assert_state_rejected(store, "completed prefix")
+
+        store.state["current_plan_index"] = 0
+        store.state["plans"].append(dict(store.state["plans"][0]))
+        self.assert_state_rejected(store, "plan input count")
+
+    def test_state_rejects_incomplete_completed_evidence(self) -> None:
+        store = StateStore.create(
+            run_root=self.home / "orchestrator" / "completed-evidence",
+            run_id="completed-evidence",
+            source_repository=self.repo,
+            source_commit=git(self.repo, "rev-parse", "HEAD"),
+            worktree=self.home / "worktrees" / "completed-evidence",
+            branch="codex/completed-evidence",
+            specs=[],
+            plans=[self.plan(1, "completed")],
+        )
+        plan = store.state["plans"][0]
+        plan.update(
+            status="completed",
+            starting_commit="1" * 40,
+            accepted_commit="2" * 40,
+        )
+        store.state["current_plan_index"] = 1
+        store.state["status"] = "completed"
+        self.assert_state_rejected(store, "completed plan evidence is incomplete")
+
+    def test_state_rejects_nonpristine_future_plan(self) -> None:
+        store = StateStore.create(
+            run_root=self.home / "orchestrator" / "future-plan",
+            run_id="future-plan",
+            source_repository=self.repo,
+            source_commit=git(self.repo, "rev-parse", "HEAD"),
+            worktree=self.home / "worktrees" / "future-plan",
+            branch="codex/future-plan",
+            specs=[],
+            plans=[self.plan(1, "completed"), self.plan(2, "completed")],
+        )
+        store.state["plans"][1]["attempt_count"] = 1
+        self.assert_state_rejected(store, "future plan is not pristine")
+
     def test_snapshots_preserve_spec_and_plan_order(self) -> None:
         plans = [self.plan(2, "completed"), self.plan(1, "completed")]
         store = StateStore.create(
