@@ -293,6 +293,8 @@ class StateStore:
                     for name in ("starting_commit", "accepted_commit", "result_path")
                 ):
                     raise ValueError("completed plan evidence is incomplete")
+                if plan["attempt_count"] < 1:
+                    raise ValueError("completed plan attempt count is invalid")
             elif position > completed_prefix:
                 expected = {"plan_id": plan["plan_id"], **pristine_fields}
                 if plan != expected:
