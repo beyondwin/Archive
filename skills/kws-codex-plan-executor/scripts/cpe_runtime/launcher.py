@@ -222,7 +222,7 @@ class CodexLauncher:
             f"CURRENT_PLAN: {plan_path}",
             f"STARTING_COMMIT: {starting_commit}",
             f"CURRENT_COMMIT: {current_commit}",
-            "SPECIFICATIONS_IN_ORDER:",
+            "SPECIFICATIONS_REFERENCE_ONLY_IN_ORDER:",
         ]
         lines.extend(f"- {path}" for path in spec_paths)
         if prior_result is not None:
@@ -233,8 +233,16 @@ class CodexLauncher:
             [
                 "",
                 "Discover and follow repository AGENTS.md instructions from root to the edited subtree.",
-                "Use the Superpowers workflow declared by the plan. Complete implementation, review, fixes, verification, and commits before reporting completed.",
-                "For completed, leave the worktree fully clean, report its exact HEAD, and include at least one successful verification command.",
+                "Use superpowers:subagent-driven-development for this approved plan; CPE does not own task mapping or product quality roles.",
+                "Do not preload specification snapshots. Read only a referenced section when the plan is ambiguous or conflicts with observed code.",
+                "Use task-brief, report files, review-package, task review files, and .superpowers/sdd/progress.md as file-backed handoffs.",
+                "Implementers run plan-declared focused RED/GREEN and tests affected by fixes; there is no automatic full-suite run per task.",
+                "Reviewers reuse evidenced tests, write full findings to files, and return only verdicts, finding IDs, severities, and artifact paths.",
+                "Resolve one task finding set with one consolidated fix subagent, then review only the finding delta and affected evidence.",
+                "After all tasks, perform one cross-task final review and one full verification at the final HEAD.",
+                "Do not run the same normalized verification command twice at the same HEAD unless a transient failure is recorded.",
+                "Keep controller context to task status, commits, one-line test evidence, finding IDs, decisions, and the next action.",
+                "For completed, leave a clean worktree, report exact HEAD and successful final verification, and include workflow_receipt.",
                 "Return only the fixed schema object as the final response. Do not merge, push, deploy, or modify files outside the worktree.",
             ]
         )

@@ -87,6 +87,28 @@ def commit_plan(worktree: Path, plan_id: str, suffix: str = "") -> str:
     return git(worktree, "rev-parse", "HEAD")
 
 
+def workflow_receipt(worktree: Path) -> dict[str, str]:
+    evidence = worktree / ".superpowers" / "sdd"
+    evidence.mkdir(parents=True, exist_ok=True)
+    (evidence / ".gitignore").write_text("*\n", encoding="utf-8")
+    (evidence / "progress.md").write_text(
+        "Task 1: complete\n",
+        encoding="utf-8",
+    )
+    (evidence / "final-review.md").write_text(
+        "Verdict: approved\nFindings: none\n",
+        encoding="utf-8",
+    )
+    return {
+        "mode": "subagent-driven-lean",
+        "progress_ledger": ".superpowers/sdd/progress.md",
+        "task_reviews": "complete",
+        "final_review": "approved",
+        "final_review_artifact": ".superpowers/sdd/final-review.md",
+        "duplicate_verification": "none",
+    }
+
+
 def main() -> int:
     arguments = sys.argv[1:]
     prompt = sys.stdin.read()
@@ -182,6 +204,8 @@ def main() -> int:
         "verification": ([{"command": "fake verify", "exit_code": 0}] if status == "completed" else []),
         "summary": f"fake {scenario} attempt {attempt}",
     }
+    if status == "completed":
+        payload["workflow_receipt"] = workflow_receipt(worktree)
     result_path.parent.mkdir(parents=True, exist_ok=True)
     result_path.write_text(json.dumps(payload), encoding="utf-8")
     print(json.dumps({"type": "result", "status": status}))

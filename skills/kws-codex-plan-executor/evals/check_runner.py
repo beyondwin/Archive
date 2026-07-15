@@ -688,6 +688,16 @@ print(json.dumps(result, sort_keys=True), flush=True)
             "Write only the fixed schema result to RESULT_PATH",
             prompt,
         )
+        self.assertIn("SPECIFICATIONS_REFERENCE_ONLY_IN_ORDER:", prompt)
+        self.assertIn("Do not preload specification snapshots", prompt)
+        self.assertIn("focused RED/GREEN", prompt)
+        self.assertIn("no automatic full-suite run per task", prompt)
+        self.assertIn("review-package", prompt)
+        self.assertIn("one consolidated fix subagent", prompt)
+        self.assertIn("cross-task final review", prompt)
+        self.assertIn("same normalized verification command", prompt)
+        self.assertIn("workflow_receipt", prompt)
+        self.assertLess(len(prompt.encode("utf-8")), 2_400)
 
     def test_terminate_group_tolerates_transient_permission_errors(self) -> None:
         process = mock.Mock(pid=1234)
@@ -768,6 +778,60 @@ print(json.dumps(result, sort_keys=True), flush=True)
             )
 
         self.assertIsNone(runner._handoff_error(store, plan, outcome(payload)))
+
+        missing_receipt = dict(payload)
+        missing_receipt.pop("workflow_receipt")
+        self.assertEqual(
+            runner._handoff_error(store, plan, outcome(missing_receipt)),
+            "invalid_workflow_receipt",
+        )
+
+        receipt = dict(payload["workflow_receipt"])
+        duplicate_verification = dict(
+            payload,
+            workflow_receipt=dict(receipt, duplicate_verification="repeated"),
+        )
+        self.assertEqual(
+            runner._handoff_error(store, plan, outcome(duplicate_verification)),
+            "invalid_workflow_receipt",
+        )
+
+        failed_final_review = dict(
+            payload,
+            workflow_receipt=dict(receipt, final_review="changes_requested"),
+        )
+        self.assertEqual(
+            runner._handoff_error(store, plan, outcome(failed_final_review)),
+            "invalid_workflow_receipt",
+        )
+
+        outside_artifact = dict(
+            payload,
+            workflow_receipt=dict(
+                receipt,
+                final_review_artifact="../outside-review.md",
+            ),
+        )
+        self.assertEqual(
+            runner._handoff_error(store, plan, outcome(outside_artifact)),
+            "unsafe_workflow_artifact",
+        )
+
+        worktree = Path(store.state["worktree"])
+        symlink = worktree / ".superpowers" / "sdd" / "review-link.md"
+        symlink.symlink_to(worktree / ".superpowers" / "sdd" / "final-review.md")
+        symlink_artifact = dict(
+            payload,
+            workflow_receipt=dict(
+                receipt,
+                final_review_artifact=".superpowers/sdd/review-link.md",
+            ),
+        )
+        self.assertEqual(
+            runner._handoff_error(store, plan, outcome(symlink_artifact)),
+            "unsafe_workflow_artifact",
+        )
+        symlink.unlink()
 
         wrong_head = dict(payload, head_commit="0" * 40)
         self.assertEqual(
