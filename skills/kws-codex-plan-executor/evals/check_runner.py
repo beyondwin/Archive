@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import selectors
 import signal
 import shutil
 import subprocess
@@ -21,6 +22,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from cpe_runtime.launcher import (
     CodexLauncher,
     LaunchResult,
+    _drain_registered,
     _terminate_group,
     _UsageFilter,
 )
@@ -847,6 +849,211 @@ print(json.dumps(result, sort_keys=True), flush=True)
 
         self.assertEqual(killpg.call_count, 2)
         process.wait.assert_called_once_with(timeout=1.0)
+
+    def test_timeout_and_exception_paths_drain_both_pipes(self) -> None:
+        original_drain = _drain_registered
+
+        class FakeProcess:
+            pid = 4242
+
+            def __init__(self, stdout: object, stderr: object) -> None:
+                self.stdin = mock.Mock()
+                self.stdout = stdout
+                self.stderr = stderr
+                self.returncode: int | None = None
+
+            def poll(self) -> int | None:
+                return self.returncode
+
+        class RaisingSelector:
+            def __init__(self) -> None:
+                self.inner = selectors.DefaultSelector()
+                self.closed = False
+
+            def register(self, *args: object, **kwargs: object) -> object:
+                return self.inner.register(*args, **kwargs)
+
+            def unregister(self, fileobj: object) -> object:
+                return self.inner.unregister(fileobj)
+
+            def get_map(self) -> object:
+                return self.inner.get_map()
+
+            def select(self, _timeout: float | None = None) -> object:
+                raise RuntimeError("injected selector failure")
+
+            def close(self) -> None:
+                self.closed = True
+                self.inner.close()
+
+        def pipe_with(payload: bytes) -> object:
+            read_descriptor, write_descriptor = os.pipe()
+            os.write(write_descriptor, payload)
+            os.close(write_descriptor)
+            return os.fdopen(read_descriptor, "rb", buffering=0)
+
+        def terminate(process: FakeProcess, _grace: float) -> bool:
+            process.returncode = -signal.SIGKILL
+            return True
+
+        launcher = CodexLauncher(
+            schema_path=ROOT / "templates" / "plan-result-schema.json",
+            timeout_seconds=1e-9,
+        )
+        drain_sizes: list[int] = []
+
+        def observed_drain(selector: selectors.BaseSelector) -> None:
+            drain_sizes.append(len(selector.get_map()))
+            original_drain(selector)
+
+        timeout_process = FakeProcess(
+            pipe_with(
+                b'{"type":"turn.completed","usage":{"input_tokens":3,'
+                b'"cached_input_tokens":2,"output_tokens":1,'
+                b'"reasoning_output_tokens":1}}\n'
+            ),
+            pipe_with(b"timeout stderr tail\n"),
+        )
+        timeout_log = self.root / "timeout-drain.log"
+        with (
+            mock.patch(
+                "cpe_runtime.launcher.subprocess.Popen",
+                return_value=timeout_process,
+            ),
+            mock.patch(
+                "cpe_runtime.launcher._terminate_group",
+                side_effect=terminate,
+            ),
+            mock.patch(
+                "cpe_runtime.launcher._drain_registered",
+                side_effect=observed_drain,
+            ),
+        ):
+            outcome = launcher.launch(
+                worktree=self.repo,
+                plan_id="plan-01",
+                plan_path=self.plan(1, "completed"),
+                spec_paths=[],
+                starting_commit="0" * 40,
+                current_commit="0" * 40,
+                result_path=self.root / "timeout-drain-result.json",
+                log_path=timeout_log,
+                lock_fd=0,
+            )
+
+        self.assertTrue(outcome.timed_out)
+        self.assertEqual(drain_sizes, [2])
+        self.assertEqual(outcome.input_tokens, 3)
+        self.assertIn("timeout stderr tail", timeout_log.read_text())
+        self.assertTrue(timeout_process.stdout.closed)
+        self.assertTrue(timeout_process.stderr.closed)
+
+        drain_sizes.clear()
+        launcher.timeout_seconds = 5.0
+        exception_process = FakeProcess(
+            pipe_with(b'{"type":"turn.completed","usage":{}}\n'),
+            pipe_with(b"exception stderr tail\n"),
+        )
+        exception_selector = RaisingSelector()
+        exception_log = self.root / "exception-drain.log"
+        with (
+            mock.patch(
+                "cpe_runtime.launcher.selectors.DefaultSelector",
+                return_value=exception_selector,
+            ),
+            mock.patch(
+                "cpe_runtime.launcher.subprocess.Popen",
+                return_value=exception_process,
+            ),
+            mock.patch(
+                "cpe_runtime.launcher._terminate_group",
+                side_effect=terminate,
+            ),
+            mock.patch(
+                "cpe_runtime.launcher._drain_registered",
+                side_effect=observed_drain,
+            ),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "injected selector failure",
+            ):
+                launcher.launch(
+                    worktree=self.repo,
+                    plan_id="plan-01",
+                    plan_path=self.plan(1, "completed"),
+                    spec_paths=[],
+                    starting_commit="0" * 40,
+                    current_commit="0" * 40,
+                    result_path=self.root / "exception-drain-result.json",
+                    log_path=exception_log,
+                    lock_fd=0,
+                )
+
+        self.assertEqual(drain_sizes, [2])
+        self.assertIn("exception stderr tail", exception_log.read_text())
+        self.assertTrue(exception_selector.closed)
+        self.assertTrue(exception_process.stdout.closed)
+        self.assertTrue(exception_process.stderr.closed)
+
+    def test_recovery_field_triples_are_atomic_and_incomplete_only(self) -> None:
+        runner = self.runner()
+        store = mock.Mock(state={"worktree": str(self.repo)})
+        plan = {
+            "plan_id": "plan-01",
+            "starting_commit": git(self.repo, "rev-parse", "HEAD"),
+        }
+        base: dict[str, object] = {
+            "plan_id": "plan-01",
+            "status": "failed",
+            "head_commit": plan["starting_commit"],
+            "verification": [],
+            "summary": "focused recovery-field contract",
+        }
+        recovery = {
+            "retryable": True,
+            "failure_signature": "verification:test_failed",
+            "next_strategy": "inspect the focused failing boundary",
+        }
+
+        def outcome(payload: dict[str, object]) -> LaunchResult:
+            return LaunchResult(
+                payload=payload,
+                returncode=1,
+                timed_out=False,
+                forced_cleanup=False,
+                discarded_log_bytes=0,
+                result_path=self.root / "unused-result.json",
+                log_path=self.root / "unused.log",
+                duration_ms=0,
+                input_tokens=None,
+                cached_input_tokens=None,
+                output_tokens=None,
+                reasoning_output_tokens=None,
+                launcher_prompt_bytes=0,
+            )
+
+        names = tuple(recovery)
+        for mask in range(1, (1 << len(names)) - 1):
+            candidate = dict(base)
+            candidate.update(
+                {
+                    name: recovery[name]
+                    for index, name in enumerate(names)
+                    if mask & (1 << index)
+                }
+            )
+            with self.subTest(fields=sorted(set(candidate) - set(base))):
+                self.assertEqual(
+                    runner._handoff_error(store, plan, outcome(candidate)),
+                    "invalid_result",
+                )
+
+        completed = dict(base, status="completed", **recovery)
+        self.assertEqual(
+            runner._handoff_error(store, plan, outcome(completed)),
+            "invalid_result",
+        )
 
     def test_handoff_acceptance_and_result_isolation(self) -> None:
         runner = self.runner()
