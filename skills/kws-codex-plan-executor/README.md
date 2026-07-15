@@ -6,12 +6,14 @@ fresh Codex process per plan, and resumes at the first incomplete plan.
 
 ## Release And Installation
 
-Version 1.3.0 publishes the lean-quality contract. Focused deterministic tests
-now directly reject partial or completed recovery-field triples and exercise
-two-pipe drain behavior during timeout and exceptional launcher cleanup. Test
-fixtures avoid child processes when the contract is purely a state or decision
-boundary, while real processes remain mandatory for process groups, advisory
-locking, coordinator loss, resume continuity, and result isolation.
+Version 1.3.1 preserves the lean-quality contract and restores compatibility
+with strict Codex structured-output schemas by normalizing nullable wire-only
+optional fields before public contract validation. Focused deterministic tests
+still reject partial or completed recovery-field triples and exercise two-pipe
+drain behavior during timeout and exceptional launcher cleanup. Test fixtures
+avoid child processes when the contract is purely a state or decision boundary,
+while real processes remain mandatory for process groups, advisory locking,
+coordinator loss, resume continuity, and result isolation.
 
 The tracked skill directory is the release source of truth. Local Codex and
 Claude Code installations should be linked to this directory rather than
@@ -74,6 +76,11 @@ A child result requires exactly these base properties:
   appear together, are valid only for a non-completed result, and describe a
   structured recovery decision;
 - optional `workflow_receipt`, which is valid only for completed output.
+
+The strict structured-output wire schema declares every property as required,
+because current Codex response schemas require that shape. Logically optional
+properties are nullable on the wire and are normalized away before the public
+format-version-1 conditional-presence rules above are validated.
 
 The result schema keeps the additional properties optional so historical
 result files and completed format-1 runs remain readable. Every newly launched

@@ -856,6 +856,12 @@ class SequentialRunner:
         payload = outcome.payload
         if not isinstance(payload, dict):
             return "invalid_result"
+        # Strict structured outputs require every declared property at the wire
+        # boundary. Normalize nullable optionals back to the public format-1
+        # contract before validating their conditional presence semantics.
+        for name in _RESULT_OPTIONAL_FIELDS:
+            if payload.get(name) is None:
+                payload.pop(name, None)
         fields = set(payload)
         if (
             not _RESULT_REQUIRED_FIELDS.issubset(fields)

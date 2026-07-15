@@ -2,7 +2,17 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["plan_id", "status", "head_commit", "verification", "summary"],
+  "required": [
+    "plan_id",
+    "status",
+    "head_commit",
+    "verification",
+    "summary",
+    "retryable",
+    "failure_signature",
+    "next_strategy",
+    "workflow_receipt"
+  ],
   "properties": {
     "plan_id": {"type": "string", "minLength": 1},
     "status": {
@@ -23,40 +33,45 @@
       }
     },
     "summary": {"type": "string", "minLength": 1, "maxLength": 2000},
-    "retryable": {"type": "boolean"},
+    "retryable": {"type": ["boolean", "null"]},
     "failure_signature": {
-      "type": "string",
+      "type": ["string", "null"],
       "minLength": 1,
       "maxLength": 256
     },
     "next_strategy": {
-      "type": "string",
+      "type": ["string", "null"],
       "minLength": 1,
       "maxLength": 1000
     },
     "workflow_receipt": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "mode",
-        "progress_ledger",
-        "task_reviews",
-        "final_review",
-        "final_review_artifact",
-        "duplicate_verification"
-      ],
-      "properties": {
-        "mode": {"const": "subagent-driven-lean"},
-        "progress_ledger": {"type": "string", "minLength": 1, "maxLength": 500},
-        "task_reviews": {"const": "complete"},
-        "final_review": {"const": "approved"},
-        "final_review_artifact": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 500
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode",
+            "progress_ledger",
+            "task_reviews",
+            "final_review",
+            "final_review_artifact",
+            "duplicate_verification"
+          ],
+          "properties": {
+            "mode": {"type": "string", "const": "subagent-driven-lean"},
+            "progress_ledger": {"type": "string", "minLength": 1, "maxLength": 500},
+            "task_reviews": {"type": "string", "const": "complete"},
+            "final_review": {"type": "string", "const": "approved"},
+            "final_review_artifact": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "duplicate_verification": {"type": "string", "const": "none"}
+          }
         },
-        "duplicate_verification": {"const": "none"}
-      }
+        {"type": "null"}
+      ]
     }
   }
 }

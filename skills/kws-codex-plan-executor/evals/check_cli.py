@@ -111,6 +111,35 @@ class SequentialCliTest(unittest.TestCase):
         self.assertIn("{run,resume,inspect}", result.stdout)
         self.assertNotIn("export", result.stdout)
 
+    def test_output_schema_is_strict_structured_output_compatible(self) -> None:
+        schema = json.loads(
+            (ROOT / "templates" / "plan-result-schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        properties = schema["properties"]
+        self.assertEqual(set(schema["required"]), set(properties))
+        self.assertEqual(
+            set(properties["retryable"]["type"]),
+            {"boolean", "null"},
+        )
+        for name in ("failure_signature", "next_strategy"):
+            self.assertEqual(
+                set(properties[name]["type"]),
+                {"string", "null"},
+            )
+        receipt_variants = properties["workflow_receipt"]["anyOf"]
+        self.assertEqual(receipt_variants[-1], {"type": "null"})
+        receipt = receipt_variants[0]
+        self.assertEqual(set(receipt["required"]), set(receipt["properties"]))
+        for name in (
+            "mode",
+            "task_reviews",
+            "final_review",
+            "duplicate_verification",
+        ):
+            self.assertEqual(receipt["properties"][name]["type"], "string")
+
     def test_run_requires_absolute_workspace_and_at_least_one_plan(self) -> None:
         missing = self.command("run", "--workspace", str(self.repo))
         self.assertEqual(missing.returncode, 1)
@@ -189,7 +218,7 @@ class SequentialCliTest(unittest.TestCase):
     def test_skill_docs_match_hardened_public_contract(self) -> None:
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        self.assertIn('version: "1.3.0"', skill)
+        self.assertIn('version: "1.3.1"', skill)
         for phrase in (
             "process group",
             "bounded",
