@@ -99,7 +99,7 @@ def _terminate_group(
     if _group_exists(process_group):
         try:
             os.killpg(process_group, signal.SIGTERM)
-        except ProcessLookupError:
+        except (ProcessLookupError, PermissionError):
             pass
         deadline = time.monotonic() + grace_seconds
         while _group_exists(process_group) and time.monotonic() < deadline:
@@ -109,7 +109,7 @@ def _terminate_group(
             forced = True
             try:
                 os.killpg(process_group, signal.SIGKILL)
-            except ProcessLookupError:
+            except (ProcessLookupError, PermissionError):
                 pass
             deadline = time.monotonic() + max(1.0, grace_seconds)
             while _group_exists(process_group) and time.monotonic() < deadline:

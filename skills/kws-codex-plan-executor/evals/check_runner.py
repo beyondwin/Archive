@@ -13,11 +13,12 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from cpe_runtime.launcher import CodexLauncher, LaunchResult
+from cpe_runtime.launcher import CodexLauncher, LaunchResult, _terminate_group
 from cpe_runtime.runner import SequentialRunner
 from cpe_runtime.state import StateStore
 
@@ -98,6 +99,7 @@ class SequentialRunnerTest(unittest.TestCase):
             schema_path=ROOT / "templates" / "plan-result-schema.json",
             codex_bin=str(self.fake),
             timeout_seconds=timeout_seconds,
+            termination_grace_seconds=0.02,
             environ=environment,
         )
         return SequentialRunner(codex_home=self.home, launcher=launcher)
@@ -139,6 +141,7 @@ launcher = CodexLauncher(
     schema_path=Path(os.environ["CPE_TEST_SCHEMA"]),
     codex_bin=os.environ["CPE_TEST_CODEX"],
     timeout_seconds=5,
+    termination_grace_seconds=0.02,
     environ=dict(os.environ),
 )
 runner = SequentialRunner(
@@ -340,7 +343,7 @@ print(json.dumps(result, sort_keys=True), flush=True)
         self.assertEqual(state["status"], "failed")
         self.assertFalse((self.home / "worktrees" / "create-failure").exists())
 
-    def test_resume_reconciles_verified_initializing_worktree(self) -> None:
+    def test_reconciles_verified_initializing_worktree(self) -> None:
         runner = self.runner()
         store = runner._initialize_run(
             workspace=self.repo,
@@ -349,20 +352,33 @@ print(json.dumps(result, sort_keys=True), flush=True)
             run_id="reconcile-create",
         )
         runner._add_new_worktree(store)
-        self.assertEqual(store.state["status"], "initializing")
-        result = runner.resume(run_id="reconcile-create")
-        self.assertEqual(result["status"], "completed")
 
-    def test_resume_recreates_absent_initializing_worktree(self) -> None:
+        runner._create_or_reconcile_worktree(store)
+
+        self.assertEqual(store.state["status"], "running")
+        self.assertTrue(Path(store.state["worktree"]).is_dir())
+        self.assertEqual(
+            git(Path(store.state["worktree"]), "rev-parse", "HEAD"),
+            store.state["source_commit"],
+        )
+
+    def test_recreates_absent_initializing_worktree(self) -> None:
         runner = self.runner()
-        runner._initialize_run(
+        store = runner._initialize_run(
             workspace=self.repo,
             specs=[],
             plans=[self.plan(1, "completed")],
             run_id="recreate-initializing",
         )
-        result = runner.resume(run_id="recreate-initializing")
-        self.assertEqual(result["status"], "completed")
+
+        runner._create_or_reconcile_worktree(store)
+
+        self.assertEqual(store.state["status"], "running")
+        self.assertTrue(Path(store.state["worktree"]).is_dir())
+        self.assertEqual(
+            git(Path(store.state["worktree"]), "rev-parse", "HEAD"),
+            store.state["source_commit"],
+        )
 
     def test_initializing_commit_mismatch_fails_closed_without_deletion(self) -> None:
         runner = self.runner()
@@ -488,28 +504,45 @@ print(json.dumps(result, sort_keys=True), flush=True)
 
     def test_attempts_above_ten_use_numeric_prior_log_identity(self) -> None:
         runner = self.runner()
-        runner.run(
+        store = runner._initialize_run(
             workspace=self.repo,
             specs=[],
             plans=[self.plan(1, "failed")],
             run_id="numeric-attempts",
         )
-        store = StateStore.open(
-            self.home / "orchestrator" / "numeric-attempts"
-        )
+        runner._create_or_reconcile_worktree(store)
+        worktree = Path(store.state["worktree"])
+        head = git(worktree, "rev-parse", "HEAD")
         result_path = store.root / "results" / "plan-01-attempt-10.json"
-        result_path.write_text("{}", encoding="utf-8")
+        result_path.write_text(
+            json.dumps(
+                {
+                    "plan_id": "plan-01",
+                    "status": "failed",
+                    "head_commit": head,
+                    "verification": [],
+                    "summary": "prepared attempt ten",
+                }
+            ),
+            encoding="utf-8",
+        )
         result_path.chmod(0o600)
         for attempt in (9, 10):
             log_path = store.root / "logs" / f"plan-01-attempt-{attempt}.log"
             log_path.write_text(f"attempt {attempt}\n", encoding="utf-8")
             log_path.chmod(0o600)
         plan = store.state["plans"][0]
-        plan["attempt_count"] = 10
-        plan["result_path"] = str(result_path.resolve())
+        plan.update(
+            status="failed",
+            starting_commit=head,
+            attempt_count=10,
+            result_path=str(result_path.resolve()),
+        )
+        store.state["status"] = "failed"
         store.save()
 
         runner.resume(run_id="numeric-attempts", retry_failed=True)
+
         prior_log = self.invocations()[-1]["prior_log"]
         self.assertTrue(str(prior_log).endswith("plan-01-attempt-10.log"))
 
@@ -517,7 +550,7 @@ print(json.dumps(result, sort_keys=True), flush=True)
         pid_path = self.root / "timeout-grandchildren"
         try:
             result = self.runner(
-                timeout_seconds=0.4,
+                timeout_seconds=0.2,
                 CPE_FAKE_GRANDCHILD_PID=str(pid_path),
             ).run(
                 workspace=self.repo,
@@ -526,7 +559,7 @@ print(json.dumps(result, sort_keys=True), flush=True)
                 run_id="timeout-group",
             )
             self.assertEqual(result["status"], "failed")
-            self.assertEqual(len(self.invocations()), 2)
+            self.assertEqual(result["plans"][0]["attempt_count"], 2)
             pids = [int(line) for line in pid_path.read_text().splitlines()]
             self.assertGreaterEqual(len(pids), 1)
             for pid in pids:
@@ -655,6 +688,21 @@ print(json.dumps(result, sort_keys=True), flush=True)
             "Write only the fixed schema result to RESULT_PATH",
             prompt,
         )
+
+    def test_terminate_group_tolerates_transient_permission_errors(self) -> None:
+        process = mock.Mock(pid=1234)
+        with mock.patch(
+            "cpe_runtime.launcher._group_exists",
+            side_effect=[True, False, True, False, False],
+        ), mock.patch(
+            "cpe_runtime.launcher.os.killpg",
+            side_effect=PermissionError(1, "Operation not permitted"),
+        ) as killpg:
+            forced = _terminate_group(process, 0)
+
+        self.assertTrue(forced)
+        self.assertEqual(killpg.call_count, 2)
+        process.wait.assert_called_once_with()
 
     def test_handoff_acceptance_and_result_isolation(self) -> None:
         runner = self.runner()
