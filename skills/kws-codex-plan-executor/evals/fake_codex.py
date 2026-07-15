@@ -147,7 +147,7 @@ def main() -> int:
         worktree,
         recovery_capsule,
     )
-    head = git(worktree, "rev-parse", "HEAD")
+    head = marker(prompt, "CURRENT_COMMIT")
     status = scenario
 
     if scenario in {"completed", "oversized_usage"}:

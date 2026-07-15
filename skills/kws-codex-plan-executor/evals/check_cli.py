@@ -120,13 +120,15 @@ class SequentialCliTest(unittest.TestCase):
         self.assertEqual(json.loads(relative.stdout)["status"], "failed")
 
     def test_repeated_spec_and_plan_flags_preserve_order(self) -> None:
+        self.plans[0].write_text("scenario:blocked\n", encoding="utf-8")
         result = self.command(
             "run", "--spec", str(self.specs[0]), "--spec", str(self.specs[1]),
             "--plan", str(self.plans[0]), "--plan", str(self.plans[1]),
             "--workspace", str(self.repo),
         )
-        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertEqual(result.returncode, 2, result.stderr + result.stdout)
         public = json.loads(result.stdout)
+        self.assertEqual(public["status"], "blocked")
         state = json.loads((self.home / "orchestrator" / public["run_id"] / "state.json").read_text())
         self.assertEqual(
             [record["source_path"] for record in state["inputs"]],

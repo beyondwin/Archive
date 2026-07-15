@@ -618,22 +618,19 @@ print(json.dumps(result, sort_keys=True), flush=True)
         logs.mkdir()
         timeout_child = self.root / "timeout-codex"
         timeout_child.write_text(
-            "#!/usr/bin/env python3\n"
-            "import os, subprocess, sys, time\n"
-            "child = subprocess.Popen([sys.executable, '-c', "
-            "'import time; time.sleep(60)'])\n"
-            "with open(os.environ['CPE_FAKE_GRANDCHILD_PID'], 'w') as stream:\n"
-            "    stream.write(f'{os.getpid()}\\n{child.pid}\\n')\n"
-            "    stream.flush()\n"
-            "while True:\n"
-            "    time.sleep(0.05)\n",
+            "#!/bin/sh\n"
+            "/bin/sleep 60 &\n"
+            "child=$!\n"
+            "printf '%s\\n%s\\n' \"$$\" \"$child\" > "
+            "\"$CPE_FAKE_GRANDCHILD_PID\"\n"
+            "wait\n",
             encoding="utf-8",
         )
         timeout_child.chmod(0o700)
         launcher = CodexLauncher(
             schema_path=ROOT / "templates" / "plan-result-schema.json",
             codex_bin=str(timeout_child),
-            timeout_seconds=1.0,
+            timeout_seconds=2.0,
             termination_grace_seconds=0.02,
             environ={
                 "PATH": os.environ["PATH"],
@@ -693,50 +690,6 @@ print(json.dumps(result, sort_keys=True), flush=True)
         finally:
             os.close(lock_fd)
             self.cleanup_fixture_processes(pid_path)
-
-        runner = self.runner()
-        launch_calls: list[dict[str, object]] = []
-
-        def timeout_without_a_process(**kwargs: object) -> LaunchResult:
-            launch_calls.append(kwargs)
-            log_path = Path(kwargs["log_path"])
-            log_path.write_text("deterministic timeout\n", encoding="utf-8")
-            return LaunchResult(
-                payload=None,
-                returncode=-signal.SIGKILL,
-                timed_out=True,
-                forced_cleanup=True,
-                discarded_log_bytes=0,
-                result_path=Path(kwargs["result_path"]),
-                log_path=log_path,
-                duration_ms=0,
-                input_tokens=None,
-                cached_input_tokens=None,
-                output_tokens=None,
-                reasoning_output_tokens=None,
-                launcher_prompt_bytes=1,
-            )
-
-        runner.launcher.launch = mock.Mock(side_effect=timeout_without_a_process)
-        result = runner.run(
-            workspace=self.repo,
-            specs=[],
-            plans=[self.plan(1, "interrupted")],
-            run_id="timeout-wiring",
-        )
-        self.assertEqual(result["status"], "failed")
-        self.assertEqual(result["plans"][0]["attempt_count"], 2)
-        self.assertEqual(len(launch_calls), 2)
-        capsule = json.loads(
-            Path(launch_calls[1]["recovery_path"]).read_text()
-        )
-        self.assertEqual(capsule["failure_signature"], "timeout")
-        self.assertEqual(capsule["prior_status"], "interrupted")
-        persisted = StateStore.open(
-            self.home / "orchestrator" / "timeout-wiring"
-        ).state
-        self.assertEqual(persisted["status"], "failed")
-        self.assertEqual(persisted["plans"][0]["attempt_count"], 2)
 
     def assert_signal_kills_complete_process_group(self, signum: int) -> None:
         pid_path = self.root / f"signal-grandchild-{signum}"
@@ -1392,8 +1345,7 @@ print(json.dumps(result, sort_keys=True), flush=True)
             specs=self.specs,
             plans=[
                 self.plan(1, "oversized_usage"),
-                self.plan(2, "retryable_then_completed"),
-                self.plan(3, "mutate_prior_nonzero_completed"),
+                self.plan(2, "mutate_prior_nonzero_completed"),
             ],
             run_id="two-plans",
         )
@@ -1401,17 +1353,16 @@ print(json.dumps(result, sort_keys=True), flush=True)
         self.assertEqual(result["error"], "nonzero_exit")
         self.assertEqual(
             [plan["attempt_count"] for plan in result["plans"]],
-            [1, 2, 1],
+            [1, 1],
         )
         calls = self.invocations()
         self.assertEqual(
             [call["plan_id"] for call in calls],
-            ["plan-01", "plan-02", "plan-02", "plan-03"],
+            ["plan-01", "plan-02"],
         )
         self.assertEqual(len({call["worktree"] for call in calls}), 1)
         self.assertTrue((Path(calls[0]["worktree"]) / "plan-1.txt").is_file())
         self.assertTrue((Path(calls[0]["worktree"]) / "plan-2.txt").is_file())
-        self.assertTrue((Path(calls[0]["worktree"]) / "plan-3.txt").is_file())
         events_path = (
             self.home / "orchestrator" / "two-plans" / "events.jsonl"
         )
@@ -1423,7 +1374,7 @@ print(json.dumps(result, sort_keys=True), flush=True)
             for event in events
             if event["kind"] == "plan.attempt_finished"
         ]
-        self.assertEqual(len(finished), 4)
+        self.assertEqual(len(finished), 2)
         for event in finished:
             self.assertGreaterEqual(event["duration_ms"], 0)
             self.assertGreater(event["launcher_prompt_bytes"], 0)
@@ -1446,18 +1397,6 @@ print(json.dumps(result, sort_keys=True), flush=True)
             self.assertEqual(event["cached_input_tokens"], 31)
             self.assertEqual(event["output_tokens"], 7)
             self.assertEqual(event["reasoning_output_tokens"], 5)
-        capsule_path = Path(calls[2]["recovery_capsule"])
-        self.assertEqual(capsule_path.stat().st_mode & 0o777, 0o600)
-        capsule = json.loads(capsule_path.read_text())
-        self.assertEqual(
-            capsule["failure_signature"],
-            "verification:test_parser_failed",
-        )
-        self.assertEqual(
-            capsule["next_strategy"],
-            "inspect the parser boundary and resume Task 3",
-        )
-        self.assertEqual(capsule["dirty_files"], [])
         self.assertNotIn("RAW_EVENT_SENTINEL", events_path.read_text())
         for call in calls:
             log = (
@@ -1477,49 +1416,60 @@ print(json.dumps(result, sort_keys=True), flush=True)
         self.assert_handoff_contract(
             runner=runner,
             store=store,
-            plan=store.state["plans"][2],
+            plan=store.state["plans"][1],
         )
 
     def test_resume_skips_completed_plan_and_continues_current_git_state(self) -> None:
         runner = self.runner()
-        first = runner.run(workspace=self.repo, specs=[], plans=[self.plan(1, "completed"), self.plan(2, "resume_completed")], run_id="resume")
-        self.assertEqual(first["status"], "blocked")
-        prior_head = first["head_commit"]
-        self.assertEqual(len(self.invocations()), 2)
-        resumed = runner.resume(run_id="resume")
-        self.assertEqual(resumed["status"], "completed")
-        self.assertNotEqual(resumed["head_commit"], prior_head)
-        self.assertEqual([call["plan_id"] for call in self.invocations()], ["plan-01", "plan-02", "plan-02"])
+        real_launch = runner.launcher.launch
+        launch_plan_ids: list[str] = []
 
-    def test_initial_plus_one_recovery_attempt_is_the_automatic_limit(self) -> None:
-        runner = self.runner()
-        launch_calls: list[dict[str, object]] = []
-
-        def interrupt_without_a_process(**kwargs: object) -> LaunchResult:
-            launch_calls.append(kwargs)
+        def complete_first_plan_without_a_process(
+            **kwargs: object,
+        ) -> LaunchResult:
+            plan_id = str(kwargs["plan_id"])
+            launch_plan_ids.append(plan_id)
+            if plan_id != "plan-01":
+                return real_launch(**kwargs)
             worktree = Path(kwargs["worktree"])
             evidence = worktree / ".superpowers" / "sdd"
             evidence.mkdir(parents=True, exist_ok=True)
             (evidence / ".gitignore").write_text("*\n", encoding="utf-8")
             (evidence / "progress.md").write_text(
-                "Task 1: complete (commit 1111111)\n"
-                "Task 2: complete (commit 2222222)\n",
+                "Task 1: complete\n",
+                encoding="utf-8",
+            )
+            (evidence / "final-review.md").write_text(
+                "Verdict: approved\nFindings: none\n",
                 encoding="utf-8",
             )
             result_path = Path(kwargs["result_path"])
             log_path = Path(kwargs["log_path"])
             payload = {
-                "plan_id": kwargs["plan_id"],
-                "status": "interrupted",
+                "plan_id": plan_id,
+                "status": "completed",
                 "head_commit": kwargs["current_commit"],
-                "verification": [],
-                "summary": "deterministic interruption",
+                "verification": [
+                    {"command": "focused deterministic verify", "exit_code": 0}
+                ],
+                "summary": "deterministic first-plan completion",
+                "workflow_receipt": {
+                    "mode": "subagent-driven-lean",
+                    "progress_ledger": ".superpowers/sdd/progress.md",
+                    "task_reviews": "complete",
+                    "final_review": "approved",
+                    "final_review_artifact": ".superpowers/sdd/final-review.md",
+                    "duplicate_verification": "none",
+                },
             }
             result_path.write_text(json.dumps(payload), encoding="utf-8")
-            log_path.write_text("deterministic interruption\n", encoding="utf-8")
+            log_path.write_text(
+                "deterministic first-plan completion\n",
+                encoding="utf-8",
+            )
             return LaunchResult(
                 payload=payload,
-                returncode=1,
+                returncode=0,
                 timed_out=False,
                 forced_cleanup=False,
                 discarded_log_bytes=0,
@@ -1534,30 +1484,183 @@ print(json.dumps(result, sort_keys=True), flush=True)
             )
 
         runner.launcher.launch = mock.Mock(
-            side_effect=interrupt_without_a_process
+            side_effect=complete_first_plan_without_a_process
+        )
+        first = runner.run(workspace=self.repo, specs=[], plans=[self.plan(1, "completed"), self.plan(2, "resume_completed")], run_id="resume")
+        self.assertEqual(first["status"], "blocked")
+        prior_head = first["head_commit"]
+        self.assertEqual(launch_plan_ids, ["plan-01", "plan-02"])
+        self.assertEqual(len(self.invocations()), 1)
+        resumed = runner.resume(run_id="resume")
+        self.assertEqual(resumed["status"], "completed")
+        self.assertNotEqual(resumed["head_commit"], prior_head)
+        self.assertEqual(
+            launch_plan_ids,
+            ["plan-01", "plan-02", "plan-02"],
+        )
+        self.assertEqual(
+            [call["plan_id"] for call in self.invocations()],
+            ["plan-02", "plan-02"],
+        )
+
+    def test_recovery_attempt_limits_and_timeout_wiring(self) -> None:
+        self.assertEqual(
+            _recovery_decision(
+                payload={"status": "interrupted"},
+                timed_out=False,
+                previous_signature=None,
+                automatic_available=True,
+            ),
+            (
+                True,
+                "eligible",
+                "status:interrupted",
+                "resume the first incomplete task from durable evidence after child interruption",
+            ),
+        )
+        runner = self.runner()
+        launch_calls: list[dict[str, object]] = []
+        attempts: dict[str, int] = {}
+
+        def recovery_without_a_process(**kwargs: object) -> LaunchResult:
+            launch_calls.append(kwargs)
+            plan_id = str(kwargs["plan_id"])
+            attempts[plan_id] = attempts.get(plan_id, 0) + 1
+            worktree = Path(kwargs["worktree"])
+            evidence = worktree / ".superpowers" / "sdd"
+            evidence.mkdir(parents=True, exist_ok=True)
+            (evidence / ".gitignore").write_text("*\n", encoding="utf-8")
+            (evidence / "progress.md").write_text(
+                "Task 1: complete (commit 1111111)\n"
+                "Task 2: complete (commit 2222222)\n",
+                encoding="utf-8",
+            )
+            (evidence / "final-review.md").write_text(
+                "Verdict: approved\nFindings: none\n",
+                encoding="utf-8",
+            )
+            result_path = Path(kwargs["result_path"])
+            log_path = Path(kwargs["log_path"])
+            timed_out = plan_id == "plan-02"
+            if timed_out:
+                payload = None
+                returncode = -signal.SIGKILL
+                log_path.write_text("deterministic timeout\n", encoding="utf-8")
+            elif attempts[plan_id] == 1:
+                payload = {
+                    "plan_id": plan_id,
+                    "status": "failed",
+                    "head_commit": kwargs["current_commit"],
+                    "verification": [],
+                    "summary": "deterministic retryable failure",
+                    "retryable": True,
+                    "failure_signature": "verification:test_parser_failed",
+                    "next_strategy": "inspect the parser boundary and resume Task 3",
+                }
+                returncode = 1
+                result_path.write_text(json.dumps(payload), encoding="utf-8")
+                log_path.write_text(
+                    "deterministic retryable failure\n",
+                    encoding="utf-8",
+                )
+            else:
+                payload = {
+                    "plan_id": plan_id,
+                    "status": "completed",
+                    "head_commit": kwargs["current_commit"],
+                    "verification": [
+                        {"command": "focused deterministic verify", "exit_code": 0}
+                    ],
+                    "summary": "deterministic recovery completed",
+                    "workflow_receipt": {
+                        "mode": "subagent-driven-lean",
+                        "progress_ledger": ".superpowers/sdd/progress.md",
+                        "task_reviews": "complete",
+                        "final_review": "approved",
+                        "final_review_artifact": ".superpowers/sdd/final-review.md",
+                        "duplicate_verification": "none",
+                    },
+                }
+                returncode = 0
+                result_path.write_text(json.dumps(payload), encoding="utf-8")
+                log_path.write_text(
+                    "deterministic recovery completed\n",
+                    encoding="utf-8",
+                )
+            return LaunchResult(
+                payload=payload,
+                returncode=returncode,
+                timed_out=timed_out,
+                forced_cleanup=timed_out,
+                discarded_log_bytes=0,
+                result_path=result_path,
+                log_path=log_path,
+                duration_ms=0,
+                input_tokens=None,
+                cached_input_tokens=None,
+                output_tokens=None,
+                reasoning_output_tokens=None,
+                launcher_prompt_bytes=1,
+            )
+
+        runner.launcher.launch = mock.Mock(
+            side_effect=recovery_without_a_process
         )
         result = runner.run(
             workspace=self.repo,
             specs=[],
-            plans=[self.plan(1, "interrupted")],
-            run_id="attempt-limit",
+            plans=[
+                self.plan(1, "interrupted"),
+                self.plan(2, "interrupted"),
+            ],
+            run_id="recovery-wiring",
         )
         self.assertEqual(result["status"], "failed")
-        self.assertEqual(result["plans"][0]["attempt_count"], 2)
-        self.assertEqual(len(launch_calls), 2)
-        capsule = json.loads(
+        self.assertEqual(
+            [plan["attempt_count"] for plan in result["plans"]],
+            [2, 2],
+        )
+        self.assertEqual(
+            [plan["status"] for plan in result["plans"]],
+            ["completed", "failed"],
+        )
+        self.assertEqual(len(launch_calls), 4)
+        retryable_capsule = json.loads(
             Path(launch_calls[1]["recovery_path"]).read_text()
         )
-        self.assertEqual(capsule["completed_tasks"], ["Task 1", "Task 2"])
-        self.assertEqual(capsule["current_task"], "Task 3")
-        self.assertEqual(capsule["failure_signature"], "status:interrupted")
-        self.assertEqual(capsule["prior_status"], "interrupted")
+        self.assertEqual(
+            retryable_capsule["completed_tasks"],
+            ["Task 1", "Task 2"],
+        )
+        self.assertEqual(retryable_capsule["current_task"], "Task 3")
+        self.assertEqual(
+            retryable_capsule["failure_signature"],
+            "verification:test_parser_failed",
+        )
+        self.assertEqual(
+            retryable_capsule["next_strategy"],
+            "inspect the parser boundary and resume Task 3",
+        )
+        self.assertEqual(retryable_capsule["prior_status"], "failed")
+        timeout_capsule = json.loads(
+            Path(launch_calls[3]["recovery_path"]).read_text()
+        )
+        self.assertEqual(timeout_capsule["failure_signature"], "timeout")
+        self.assertEqual(timeout_capsule["prior_status"], "interrupted")
+        persisted = StateStore.open(
+            self.home / "orchestrator" / "recovery-wiring"
+        ).state
+        self.assertEqual(persisted["status"], "failed")
+        self.assertEqual(
+            [plan["attempt_count"] for plan in persisted["plans"]],
+            [2, 2],
+        )
         events = [
             json.loads(line)
             for line in (
                 self.home
                 / "orchestrator"
-                / "attempt-limit"
+                / "recovery-wiring"
                 / "events.jsonl"
             ).read_text().splitlines()
         ]
