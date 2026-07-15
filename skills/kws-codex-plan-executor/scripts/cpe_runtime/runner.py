@@ -58,12 +58,28 @@ def _git(repository: Path, *arguments: str, check: bool = True) -> str:
 
 def _ledger_progress(worktree: Path) -> tuple[list[str], str | None]:
     ledger = worktree / ".superpowers" / "sdd" / "progress.md"
-    if ledger.is_symlink() or not ledger.is_file():
-        return [], None
+    descriptor: int | None = None
     try:
-        text = ledger.read_bytes()[:65_536].decode("utf-8")
+        descriptor = os.open(
+            ledger,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+        )
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            return [], None
+        remaining = 65_536
+        chunks: list[bytes] = []
+        while remaining:
+            chunk = os.read(descriptor, remaining)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        text = b"".join(chunks).decode("utf-8")
     except (OSError, UnicodeDecodeError):
         return [], None
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
     numbers = sorted({int(match) for match in _COMPLETED_TASK.findall(text)})
     completed = [f"Task {number}" for number in numbers]
     current = 1
@@ -80,15 +96,83 @@ def _write_private_json(path: Path, payload: dict[str, object]) -> Path:
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
-    descriptor = os.open(
-        path,
-        os.O_WRONLY
-        | os.O_CREAT
-        | os.O_EXCL
-        | getattr(os, "O_NOFOLLOW", 0),
-        0o600,
-    )
+
+    def reuse_existing() -> Path:
+        try:
+            existing = os.open(
+                path,
+                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            )
+        except OSError as exc:
+            raise ValueError("existing recovery capsule is unsafe") from exc
+        try:
+            metadata = os.fstat(existing)
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or stat.S_IMODE(metadata.st_mode) != 0o600
+                or metadata.st_uid != os.geteuid()
+                or metadata.st_size != len(encoded)
+            ):
+                raise ValueError("existing recovery capsule is unsafe")
+            chunks: list[bytes] = []
+            remaining = len(encoded) + 1
+            while remaining:
+                chunk = os.read(existing, remaining)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            current = os.fstat(existing)
+            visible = os.lstat(path)
+            if (
+                b"".join(chunks) != encoded
+                or not stat.S_ISREG(current.st_mode)
+                or stat.S_IMODE(current.st_mode) != 0o600
+                or current.st_uid != os.geteuid()
+                or current.st_dev != metadata.st_dev
+                or current.st_ino != metadata.st_ino
+                or current.st_size != metadata.st_size
+                or not stat.S_ISREG(visible.st_mode)
+                or stat.S_IMODE(visible.st_mode) != 0o600
+                or visible.st_uid != os.geteuid()
+                or visible.st_dev != metadata.st_dev
+                or visible.st_ino != metadata.st_ino
+            ):
+                raise ValueError("existing recovery capsule does not match")
+        except OSError as exc:
+            raise ValueError("existing recovery capsule is unsafe") from exc
+        finally:
+            os.close(existing)
+        return path.resolve()
+
     try:
+        descriptor = os.open(
+            path,
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+    except FileExistsError:
+        return reuse_existing()
+
+    created = os.fstat(descriptor)
+
+    def remove_created() -> None:
+        try:
+            visible = os.lstat(path)
+            if (
+                stat.S_ISREG(visible.st_mode)
+                and visible.st_dev == created.st_dev
+                and visible.st_ino == created.st_ino
+            ):
+                os.unlink(path)
+        except OSError:
+            pass
+
+    try:
+        os.fchmod(descriptor, 0o600)
         remaining = memoryview(encoded)
         while remaining:
             written = os.write(descriptor, remaining)
@@ -96,13 +180,28 @@ def _write_private_json(path: Path, payload: dict[str, object]) -> Path:
                 raise OSError("short write while persisting recovery capsule")
             remaining = remaining[written:]
         os.fsync(descriptor)
-    finally:
         os.close(descriptor)
-    directory = os.open(path.parent, os.O_RDONLY)
+    except BaseException:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+        remove_created()
+        raise
+
+    directory: int | None = None
     try:
+        directory = os.open(path.parent, os.O_RDONLY)
         os.fsync(directory)
-    finally:
         os.close(directory)
+    except BaseException:
+        if directory is not None:
+            try:
+                os.close(directory)
+            except OSError:
+                pass
+        remove_created()
+        raise
     return path.resolve()
 
 
