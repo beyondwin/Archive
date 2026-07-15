@@ -2,8 +2,8 @@
 name: kws-codex-plan-executor
 description: Execute one or more approved Superpowers implementation plans sequentially in one durable isolated worktree.
 metadata:
-  version: "1.1.0"
-  updated_at: "2026-07-14"
+  version: "1.2.0"
+  updated_at: "2026-07-15"
 ---
 
 # KWS Codex Plan Executor
@@ -25,13 +25,28 @@ Repeated plan flags preserve execution order. All specification snapshots are
 available to each plan session. Plans share one isolated worktree, and resume
 starts at the first incomplete plan without relaunching completed plans.
 
-Superpowers owns implementation, TDD, review, fixes, product verification, and
-commits inside each fresh plan session. CPE owns snapshots, the worktree,
-process launch, plan checkpoints, bounded retry, resume, and inspection.
+CPE launches one fresh plan controller per plan. Superpowers owns task
+execution, review, fixes, the cross-task final review, final verification, and
+commits inside that session. CPE owns snapshots, the worktree, process launch,
+plan checkpoints, bounded recovery, resume, inspection, and mechanical result
+acceptance; it does not become a task mapper or product-quality role.
 
-Each plan gets an initial attempt and one automatic recovery attempt. A failed
-plan can receive one additional attempt per explicit `--retry-failed`
-invocation. Blocked plans stop the current invocation without automatic retry.
+The controller uses file-backed task briefs, reports, review packages, review
+files, and the progress ledger. Only compact status, commit, test, finding, and
+next-action returns stay in controller context. Task workers run focused
+verification, reviewers reuse recorded evidence, and full verification runs
+once at the final HEAD. A completed output requires the exact clean worktree
+HEAD, successful verification, and a valid workflow receipt.
+
+Automatic recovery is conditional and bounded: one private recovery capsule
+may drive one fresh attempt after interruption, timeout, or a structured
+retryable failure with a changed strategy. Blocked, non-retryable, integrity,
+and repeated-signature outcomes stop. An explicit `--retry-failed` grants one
+operator-initiated attempt.
+
+The existing attempt-finished event may record aggregate usage totals from the
+Codex session. Those totals can include the root controller and subagents and
+are not claimed as a root-versus-subagent split.
 
 ## Operational Safety
 

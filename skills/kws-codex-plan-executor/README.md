@@ -46,17 +46,43 @@ CODEX_HOME/orchestrator/RUN_ID/
 CODEX_HOME/worktrees/RUN_ID/
 ```
 
-`state.json` format version 1 is authoritative and atomically replaced. Run
-creation records `initializing`, verifies the exact branch, repository, path,
-and source commit, then transitions to `running`.
-`events.jsonl` records concise transitions; child output remains in `logs/`.
-Inputs are copied before launch with their SHA-256 digest, size, role, and
-role-local order. Private state uses `0700` directories and `0600` files.
+`state.json` format version 1 remains authoritative and is atomically replaced;
+no task, review, or usage records are added to it. Run creation records
+`initializing`, verifies the exact branch, repository, path, and source commit,
+then transitions to `running`. Inputs are copied before launch with their
+SHA-256 digest, size, role, and role-local order. Private state uses `0700`
+directories and `0600` files.
 
-A child result has exactly `plan_id`, `status`, `head_commit`, `verification`,
-and `summary`. Completed is accepted only when the reported commit is the exact
-clean worktree `HEAD`, descends from the plan start, and every non-empty
-verification entry has exit code zero.
+A child result requires exactly these base properties:
+
+- `plan_id`, `status`, `head_commit`, `verification`, and `summary`;
+- optional `retryable`, `failure_signature`, and `next_strategy`, which must
+  appear together, are valid only for a non-completed result, and describe a
+  structured recovery decision;
+- optional `workflow_receipt`, which is valid only for completed output.
+
+The result schema keeps the additional properties optional so historical
+result files and completed format-1 runs remain readable. Every newly launched
+completed attempt must include the workflow receipt. Its exact contract is:
+
+```json
+{
+  "mode": "subagent-driven-lean",
+  "progress_ledger": ".superpowers/sdd/progress.md",
+  "task_reviews": "complete",
+  "final_review": "approved",
+  "final_review_artifact": ".superpowers/sdd/final-review.md",
+  "duplicate_verification": "none"
+}
+```
+
+The two artifact paths must be non-empty safe relative paths to existing
+regular, non-symlink files inside the worktree; absolute paths, parent
+traversal, symlink components, and paths outside the worktree are rejected.
+The workflow receipt and top-level verification remain child-reported evidence.
+CPE binds that evidence mechanically to the exact clean worktree `HEAD`, checks
+ancestry from the plan start, requires non-empty successful verification, and
+seals an accepted result read-only.
 
 State validation also enforces the completed prefix, current index, pristine
 future plans, attempt evidence, run/plan status agreement, and private regular
@@ -72,16 +98,27 @@ before Git mutation or child launch.
   admit a second resume while that child remains alive.
 - Each child runs in a new process group. Timeout, `SIGINT`, and `SIGTERM`
   trigger group-wide `SIGTERM`, a short grace period, `SIGKILL` when needed,
-  direct-child reap, and group-quiescence confirmation.
-- Attempt output is streamed through a bounded writer. The on-disk log compacts
-  at two MiB and retains at most a one-MiB tail with an explicit discarded-byte
-  marker.
+  direct-child reap, and bounded group-quiescence confirmation. Transient
+  `EPERM` is treated as a still-live group; persistent `EPERM` fails cleanup
+  closed instead of spinning forever. Deterministic fixtures use a `0.02`
+  second cleanup grace where the case does not test the production default.
+- Codex stdout is a newline-delimited JSON event stream. CPE filters only the
+  final `turn.completed.usage` totals in bounded memory; it does not retain the
+  raw stdout JSON as an attempt log, `events.jsonl` transcript, or second
+  artifact.
+- Ordinary child diagnostics remain on stderr and pass through a bounded
+  writer. The on-disk attempt log compacts at two MiB and retains at most a
+  one-MiB stderr tail with an explicit discarded-byte marker.
 - Attempt number, result path, and a private regular placeholder are persisted
   before launch. Numeric attempt identity selects prior evidence correctly for
   attempt 10 and later.
 - Codex uses an ephemeral session and returns the strict schema object as its
   final response. `--output-last-message` persists only the current result;
   accepted result evidence is changed to read-only mode `0400`.
+- The existing `plan.attempt_finished` event may include `duration_ms`, final
+  aggregate `input_tokens`, `cached_input_tokens`, `output_tokens`,
+  `reasoning_output_tokens`, and `launcher_prompt_bytes`. Missing or malformed
+  usage is unavailable and does not affect completion.
 
 ## Completion, Failure, And Recovery
 
@@ -91,18 +128,69 @@ before Git mutation or child launch.
 - `blocked` (exit 2): the current plan requires operator-owned resolution.
 - `interrupted` (exit 3): durable state remains available for resume.
 
-An initial attempt and one recovery attempt are automatic. Invalid output,
-wrong commit, broken ancestry, or a dirty successful handoff fails immediately.
-`resume --retry-failed` grants exactly one additional attempt to the failed
-current plan. Repeating it is a new explicit operator action.
+Automatic recovery is conditional and evidence-driven:
 
-Recovery is plan-level. A fresh process inspects Git, prior result and log
-paths, and any Superpowers progress artifact. CPE does not maintain task-level
-checkpoints, interpret plan prose, own product quality policy, merge, or push.
+| Observation | Action |
+|---|---|
+| timeout or coordinator interruption | one fresh recovery attempt |
+| child-reported retryable product failure | one fresh attempt using the reported changed strategy |
+| blocked or operator-owned decision | stop without automatic retry |
+| non-retryable failure | stop without automatic retry |
+| invalid result, wrong `HEAD`, broken ancestry, or dirty completed handoff | fail closed without product retry |
+| repeated failure signature | stop without another automatic attempt |
+| explicit `resume --retry-failed` | grant one operator-initiated attempt |
+
+Before recovery CPE writes one private regular `0600` recovery capsule under
+the existing results directory. It contains only the plan ID and attempt,
+starting commit and current `HEAD`, bounded completed-task and current-task
+ledger hints, prior status, bounded failure signature and next strategy, up to
+100 dirty-file entries, and prior result/log paths. The capsule is derived from
+state, Git, prior evidence, and at most 64 KiB of the Superpowers progress
+ledger; it is not a task graph or semantic plan parser.
+
+The fresh controller reads the recovery capsule, progress ledger, Git status
+and log, and current task artifacts in that order. It reuses existing commits,
+reports, and completed-task ledger evidence and never redispatches a completed
+ledger task. Targeted prior result or bounded log evidence is read only when
+those sources are insufficient.
+
+Recovery remains plan-level. CPE does not maintain task-level checkpoints,
+interpret plan prose, own product quality policy, merge, or push.
 
 An `initializing` resume reuses a worktree only when repository, branch, path,
 and source commit all match. An absent worktree may be recreated from the
 recorded source. Ambiguous or mismatched evidence fails closed without deletion.
+
+## Lean Superpowers Contract
+
+CPE launches one fresh controller for each approved plan. Superpowers owns
+task execution, TDD, reviews, consolidated fixes, the cross-task final review,
+final product verification, and commits. CPE owns the durable plan boundary,
+bounded recovery, and mechanical handoff validation; it does not independently
+prove review quality.
+
+- The controller uses file-backed task briefs, implementer reports, review
+  packages, task review files, a final-review file, and
+  `.superpowers/sdd/progress.md`. Compact returns keep only status, commits,
+  one-line test evidence, finding IDs, decisions, and the next action in
+  controller context.
+- Implementers run plan-declared focused RED/GREEN verification and tests
+  affected by later fixes. No task gets an automatic full-suite run unless
+  broader verification is itself an approved task deliverable.
+- Reviewers reuse recorded evidence and inspect task briefs, reports, and
+  file-backed diffs. One consolidated fix pass resolves a task finding set;
+  the reviewer then checks only the delta and affected evidence.
+- After all tasks, one whole-branch review checks cross-task interfaces,
+  regressions, global constraints, and unresolved findings. It does not replay
+  each task review.
+- The plan controller runs one final full verification at the final HEAD. The
+  same normalized command is not run twice at one `HEAD` unless the first
+  observation was an explicitly recorded transient infrastructure failure or
+  the approved plan intentionally tests mutable external state.
+
+A weak approved plan that lacks focused task commands or a final verification
+command produces a plan-contract blocker. The controller does not invent broad
+package or repository tests to repair the plan at runtime.
 
 ## Limitations
 
@@ -112,8 +200,14 @@ recorded source. Ambiguous or mismatched evidence fails closed without deletion.
   resume reconciliation.
 - The bounded log tail can omit early diagnostics; the truncation marker and
   discarded-byte count make that loss explicit.
-- CPE validates reported verification evidence but does not rerun product
-  verification after an accepted Superpowers handoff.
+- The workflow receipt, reviews, and verification array are child-reported
+  evidence. CPE validates their shape, safe artifact locations, exact clean
+  `HEAD`, and successful exit codes, but does not independently judge review
+  quality or rerun product verification after acceptance.
+- Attempt usage totals can aggregate the root controller and nested subagents.
+  They are not a root-controller measurement or a root-versus-subagent split.
+- Missing plan-focused or final verification is a plan-contract blocker, not
+  permission for CPE to invent broad tests.
 - Environment filtering is best-effort defense, not a complete secret boundary.
 
 ## Change Protocol
@@ -121,7 +215,8 @@ recorded source. Ambiguous or mismatched evidence fails closed without deletion.
 Every change to the public CLI, exit meanings, state semantics, process
 lifecycle, retry policy, or completion acceptance must add or update a focused,
 deterministic fixture. Evals must remain sequential, credential-free,
-network-free, model-free, and below the fifteen-second gate.
+network-free, model-free, and below the fifteen-second ceiling. Twelve seconds
+or less is the target on the development machine.
 
 ## Verify
 
@@ -133,11 +228,15 @@ python3 scripts/cpe.py --help
 python3 scripts/cpe.py run --help
 python3 scripts/cpe.py resume --help
 python3 scripts/cpe.py inspect --help
-codex exec --help
 ```
 
-The eval suite is sequential, network-free, credential-free, and must remain
-below 15 seconds on the development machine.
+`./evals/run.sh` is the only complete behavioral gate. Run it once at the final
+revision after the whole-branch review, then run the static syntax and public
+help checks above. Do not repeat an identical command at the same `HEAD` unless
+its first observation was an explicitly recorded transient infrastructure
+failure. The deterministic gate is sequential, network-free, credential-free,
+and model-free; its hard ceiling is fifteen seconds and its target is twelve
+seconds or less on the development machine.
 
 ## Tracked Inventory
 
