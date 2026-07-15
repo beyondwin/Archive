@@ -562,11 +562,42 @@ print(json.dumps(result, sort_keys=True), flush=True)
         )
         persisted_identity = persisted.stat().st_ino
 
+        launch_calls: list[dict[str, object]] = []
+
+        def fail_without_a_process(**kwargs: object) -> LaunchResult:
+            launch_calls.append(kwargs)
+            result_path = Path(kwargs["result_path"])
+            log_path = Path(kwargs["log_path"])
+            payload = {
+                "plan_id": kwargs["plan_id"],
+                "status": "failed",
+                "head_commit": kwargs["current_commit"],
+                "verification": [],
+                "summary": "deterministic failed retry",
+            }
+            result_path.write_text(json.dumps(payload), encoding="utf-8")
+            log_path.write_text("deterministic failed retry\n", encoding="utf-8")
+            return LaunchResult(
+                payload=payload,
+                returncode=1,
+                timed_out=False,
+                forced_cleanup=False,
+                discarded_log_bytes=0,
+                result_path=result_path,
+                log_path=log_path,
+                duration_ms=0,
+                input_tokens=None,
+                cached_input_tokens=None,
+                output_tokens=None,
+                reasoning_output_tokens=None,
+                launcher_prompt_bytes=1,
+            )
+
+        runner.launcher.launch = mock.Mock(side_effect=fail_without_a_process)
         resumed = runner.resume(run_id="numeric-attempts", retry_failed=True)
 
-        calls = self.invocations()
-        self.assertEqual(len(calls), 1)
-        recovery_path = Path(calls[-1]["recovery_capsule"])
+        self.assertEqual(len(launch_calls), 1)
+        recovery_path = Path(launch_calls[-1]["recovery_path"])
         capsule = json.loads(recovery_path.read_text())
         self.assertEqual(resumed["status"], "failed")
         self.assertEqual(resumed["plans"][0]["attempt_count"], 11)
@@ -581,35 +612,57 @@ print(json.dumps(result, sort_keys=True), flush=True)
 
     def test_timeout_kills_the_complete_process_group(self) -> None:
         pid_path = self.root / "timeout-grandchildren"
+        results = self.root / "timeout-results"
+        logs = self.root / "timeout-logs"
+        results.mkdir()
+        logs.mkdir()
+        launcher = self.runner(
+            timeout_seconds=0.4,
+            CPE_FAKE_GRANDCHILD_PID=str(pid_path),
+        ).launcher
+        result_path, log_path = launcher.attempt_paths(
+            results,
+            logs,
+            "plan-01",
+            1,
+        )
+        head = git(self.repo, "rev-parse", "HEAD")
+        lock_fd = os.open(os.devnull, os.O_RDONLY)
         try:
-            result = self.runner(
-                timeout_seconds=0.2,
-                CPE_FAKE_GRANDCHILD_PID=str(pid_path),
-            ).run(
-                workspace=self.repo,
-                specs=[],
-                plans=[self.plan(1, "timeout_grandchild")],
-                run_id="timeout-group",
+            outcome = launcher.launch(
+                worktree=self.repo,
+                plan_id="plan-01",
+                plan_path=self.plan(1, "timeout_grandchild"),
+                spec_paths=[],
+                starting_commit=head,
+                current_commit=head,
+                result_path=result_path,
+                log_path=log_path,
+                lock_fd=lock_fd,
             )
-            self.assertEqual(result["status"], "failed")
-            self.assertEqual(result["plans"][0]["attempt_count"], 2)
-            timeout_capsule = json.loads(
+            self.assertTrue(outcome.timed_out)
+            self.assertIsNone(outcome.payload)
+            self.assertEqual(
+                _recovery_decision(
+                    payload=None,
+                    timed_out=True,
+                    previous_signature=None,
+                    automatic_available=True,
+                ),
                 (
-                    self.home
-                    / "orchestrator"
-                    / "timeout-group"
-                    / "results"
-                    / "plan-01-attempt-1-recovery.json"
-                ).read_text()
+                    True,
+                    "eligible",
+                    "timeout",
+                    "resume the first incomplete task from durable evidence after process timeout",
+                ),
             )
-            self.assertEqual(timeout_capsule["failure_signature"], "timeout")
-            self.assertEqual(timeout_capsule["prior_status"], "interrupted")
             pids = [int(line) for line in pid_path.read_text().splitlines()]
             self.assertGreaterEqual(len(pids), 1)
             for pid in pids:
                 with self.assertRaises(ProcessLookupError):
                     os.kill(pid, 0)
         finally:
+            os.close(lock_fd)
             self.cleanup_fixture_processes(pid_path)
 
     def assert_signal_kills_complete_process_group(self, signum: int) -> None:
@@ -1055,31 +1108,20 @@ print(json.dumps(result, sort_keys=True), flush=True)
             "invalid_result",
         )
 
-    def test_handoff_acceptance_and_result_isolation(self) -> None:
-        runner = self.runner()
-        result = runner.run(
-            workspace=self.repo,
-            specs=[],
-            plans=[
-                self.plan(1, "completed"),
-                self.plan(2, "mutate_prior_nonzero_completed"),
-            ],
-            run_id="handoff-contract",
-        )
-        self.assertEqual(result["status"], "failed")
-        self.assertEqual(result["error"], "nonzero_exit")
-        first_result = Path(result["plans"][0]["result_path"])
-        first_payload = json.loads(first_result.read_text())
-        self.assertEqual(first_payload["plan_id"], "plan-01")
-        self.assertEqual(first_result.stat().st_mode & 0o777, 0o400)
-
-        store = StateStore.open(
-            self.home / "orchestrator" / "handoff-contract"
-        )
-        plan = store.state["plans"][1]
+    def assert_handoff_contract(
+        self,
+        *,
+        runner: SequentialRunner,
+        store: StateStore,
+        plan: dict[str, object],
+    ) -> None:
         result_path = Path(plan["result_path"])
         payload = json.loads(result_path.read_text())
-        log_path = store.root / "logs" / "plan-02-attempt-1.log"
+        log_path = (
+            store.root
+            / "logs"
+            / f"{plan['plan_id']}-attempt-{plan['attempt_count']}.log"
+        )
 
         def outcome(
             candidate: dict[str, object],
@@ -1237,28 +1279,32 @@ print(json.dumps(result, sort_keys=True), flush=True)
             store.save()
 
     def test_two_plans_execute_sequentially_in_one_worktree(self) -> None:
-        result = self.runner().run(
+        runner = self.runner()
+        result = runner.run(
             workspace=self.repo,
             specs=self.specs,
             plans=[
                 self.plan(1, "oversized_usage"),
                 self.plan(2, "retryable_then_completed"),
+                self.plan(3, "mutate_prior_nonzero_completed"),
             ],
             run_id="two-plans",
         )
-        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error"], "nonzero_exit")
         self.assertEqual(
             [plan["attempt_count"] for plan in result["plans"]],
-            [1, 2],
+            [1, 2, 1],
         )
         calls = self.invocations()
         self.assertEqual(
             [call["plan_id"] for call in calls],
-            ["plan-01", "plan-02", "plan-02"],
+            ["plan-01", "plan-02", "plan-02", "plan-03"],
         )
         self.assertEqual(len({call["worktree"] for call in calls}), 1)
         self.assertTrue((Path(calls[0]["worktree"]) / "plan-1.txt").is_file())
         self.assertTrue((Path(calls[0]["worktree"]) / "plan-2.txt").is_file())
+        self.assertTrue((Path(calls[0]["worktree"]) / "plan-3.txt").is_file())
         events_path = (
             self.home / "orchestrator" / "two-plans" / "events.jsonl"
         )
@@ -1270,7 +1316,7 @@ print(json.dumps(result, sort_keys=True), flush=True)
             for event in events
             if event["kind"] == "plan.attempt_finished"
         ]
-        self.assertEqual(len(finished), 3)
+        self.assertEqual(len(finished), 4)
         for event in finished:
             self.assertGreaterEqual(event["duration_ms"], 0)
             self.assertGreater(event["launcher_prompt_bytes"], 0)
@@ -1316,6 +1362,17 @@ print(json.dumps(result, sort_keys=True), flush=True)
             )
             self.assertNotIn("RAW_EVENT_SENTINEL", log.read_text())
 
+        first_result = Path(result["plans"][0]["result_path"])
+        first_payload = json.loads(first_result.read_text())
+        self.assertEqual(first_payload["plan_id"], "plan-01")
+        self.assertEqual(first_result.stat().st_mode & 0o777, 0o400)
+        store = StateStore.open(self.home / "orchestrator" / "two-plans")
+        self.assert_handoff_contract(
+            runner=runner,
+            store=store,
+            plan=store.state["plans"][2],
+        )
+
     def test_resume_skips_completed_plan_and_continues_current_git_state(self) -> None:
         runner = self.runner()
         first = runner.run(workspace=self.repo, specs=[], plans=[self.plan(1, "completed"), self.plan(2, "resume_completed")], run_id="resume")
@@ -1328,12 +1385,62 @@ print(json.dumps(result, sort_keys=True), flush=True)
         self.assertEqual([call["plan_id"] for call in self.invocations()], ["plan-01", "plan-02", "plan-02"])
 
     def test_initial_plus_one_recovery_attempt_is_the_automatic_limit(self) -> None:
-        result = self.runner().run(workspace=self.repo, specs=[], plans=[self.plan(1, "interrupted")], run_id="attempt-limit")
+        runner = self.runner()
+        launch_calls: list[dict[str, object]] = []
+
+        def interrupt_without_a_process(**kwargs: object) -> LaunchResult:
+            launch_calls.append(kwargs)
+            worktree = Path(kwargs["worktree"])
+            evidence = worktree / ".superpowers" / "sdd"
+            evidence.mkdir(parents=True, exist_ok=True)
+            (evidence / ".gitignore").write_text("*\n", encoding="utf-8")
+            (evidence / "progress.md").write_text(
+                "Task 1: complete (commit 1111111)\n"
+                "Task 2: complete (commit 2222222)\n",
+                encoding="utf-8",
+            )
+            result_path = Path(kwargs["result_path"])
+            log_path = Path(kwargs["log_path"])
+            payload = {
+                "plan_id": kwargs["plan_id"],
+                "status": "interrupted",
+                "head_commit": kwargs["current_commit"],
+                "verification": [],
+                "summary": "deterministic interruption",
+            }
+            result_path.write_text(json.dumps(payload), encoding="utf-8")
+            log_path.write_text("deterministic interruption\n", encoding="utf-8")
+            return LaunchResult(
+                payload=payload,
+                returncode=1,
+                timed_out=False,
+                forced_cleanup=False,
+                discarded_log_bytes=0,
+                result_path=result_path,
+                log_path=log_path,
+                duration_ms=0,
+                input_tokens=None,
+                cached_input_tokens=None,
+                output_tokens=None,
+                reasoning_output_tokens=None,
+                launcher_prompt_bytes=1,
+            )
+
+        runner.launcher.launch = mock.Mock(
+            side_effect=interrupt_without_a_process
+        )
+        result = runner.run(
+            workspace=self.repo,
+            specs=[],
+            plans=[self.plan(1, "interrupted")],
+            run_id="attempt-limit",
+        )
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["plans"][0]["attempt_count"], 2)
-        calls = self.invocations()
-        self.assertEqual(len(calls), 2)
-        capsule = json.loads(Path(calls[1]["recovery_capsule"]).read_text())
+        self.assertEqual(len(launch_calls), 2)
+        capsule = json.loads(
+            Path(launch_calls[1]["recovery_path"]).read_text()
+        )
         self.assertEqual(capsule["completed_tasks"], ["Task 1", "Task 2"])
         self.assertEqual(capsule["current_task"], "Task 3")
         self.assertEqual(capsule["failure_signature"], "status:interrupted")
@@ -1433,6 +1540,42 @@ print(json.dumps(result, sort_keys=True), flush=True)
             (False, "not_retryable", "status:failed", ""),
         )
         runner = self.runner()
+        launch_count = 0
+
+        def fail_without_a_process(**kwargs: object) -> LaunchResult:
+            nonlocal launch_count
+            launch_count += 1
+            result_path = Path(kwargs["result_path"])
+            log_path = Path(kwargs["log_path"])
+            payload = {
+                "plan_id": kwargs["plan_id"],
+                "status": "failed",
+                "head_commit": kwargs["current_commit"],
+                "verification": [],
+                "summary": "deterministic nonretryable failure",
+            }
+            result_path.write_text(json.dumps(payload), encoding="utf-8")
+            log_path.write_text(
+                "deterministic nonretryable failure\n",
+                encoding="utf-8",
+            )
+            return LaunchResult(
+                payload=payload,
+                returncode=1,
+                timed_out=False,
+                forced_cleanup=False,
+                discarded_log_bytes=0,
+                result_path=result_path,
+                log_path=log_path,
+                duration_ms=0,
+                input_tokens=None,
+                cached_input_tokens=None,
+                output_tokens=None,
+                reasoning_output_tokens=None,
+                launcher_prompt_bytes=1,
+            )
+
+        runner.launcher.launch = mock.Mock(side_effect=fail_without_a_process)
         initial = runner.run(
             workspace=self.repo,
             specs=[],
@@ -1441,11 +1584,10 @@ print(json.dumps(result, sort_keys=True), flush=True)
         )
         self.assertEqual(initial["status"], "failed")
         self.assertEqual(initial["plans"][0]["attempt_count"], 1)
-        before = len(self.invocations())
-        self.assertEqual(before, 1)
+        self.assertEqual(launch_count, 1)
         result = runner.resume(run_id="explicit-retry", retry_failed=True)
         self.assertEqual(result["status"], "failed")
-        self.assertEqual(len(self.invocations()) - before, 1)
+        self.assertEqual(launch_count, 2)
         self.assertEqual(result["plans"][0]["attempt_count"], 2)
 
 
