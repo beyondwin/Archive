@@ -4,6 +4,20 @@ CPE is a small sequential runner for approved Superpowers implementation
 plans. It snapshots ordered inputs, creates one isolated worktree, launches one
 fresh Codex process per plan, and resumes at the first incomplete plan.
 
+## Release And Installation
+
+Version 1.3.0 publishes the lean-quality contract. Focused deterministic tests
+now directly reject partial or completed recovery-field triples and exercise
+two-pipe drain behavior during timeout and exceptional launcher cleanup. Test
+fixtures avoid child processes when the contract is purely a state or decision
+boundary, while real processes remain mandatory for process groups, advisory
+locking, coordinator loss, resume continuity, and result isolation.
+
+The tracked skill directory is the release source of truth. Local Codex and
+Claude Code installations should be linked to this directory rather than
+copied, so a new session discovers the same versioned skill without creating a
+second mutable installation.
+
 ## Requirements
 
 - Python 3 standard library
@@ -216,7 +230,9 @@ Every change to the public CLI, exit meanings, state semantics, process
 lifecycle, retry policy, or completion acceptance must add or update a focused,
 deterministic fixture. Evals must remain sequential, credential-free,
 network-free, model-free, and below the fifteen-second ceiling. Twelve seconds
-or less is the target on the development machine.
+or less is the target on the development machine. State-only recovery decisions
+may use direct boundary fixtures; process lifecycle and isolation claims must
+retain real-process coverage.
 
 ## Verify
 

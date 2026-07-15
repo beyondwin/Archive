@@ -2,7 +2,7 @@
 name: kws-codex-plan-executor
 description: Execute one or more approved Superpowers implementation plans sequentially in one durable isolated worktree.
 metadata:
-  version: "1.2.0"
+  version: "1.3.0"
   updated_at: "2026-07-15"
 ---
 
@@ -11,6 +11,12 @@ metadata:
 Use CPE when approved Superpowers implementation plans must run in a fixed
 order and survive process interruption. For bounded same-session work, use the
 plan's Superpowers workflow directly.
+
+Version 1.3.0 is the lean-quality release. Its deterministic contract directly
+covers atomic recovery fields and two-pipe drain behavior on timeout and
+exception cleanup while preserving real-process coverage for process groups,
+locking, resume, and result isolation. The CPE/Superpowers ownership boundary
+and the public format-version-1 contract are unchanged.
 
 ## Commands
 
