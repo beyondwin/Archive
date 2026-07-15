@@ -30,6 +30,39 @@ _USAGE_FIELDS = (
 _MAX_USAGE_COUNTER = (1 << 63) - 1
 
 
+def _git_common_directory(worktree: Path) -> Path:
+    dot_git = worktree / ".git"
+    if dot_git.is_dir() and not dot_git.is_symlink():
+        resolved = dot_git.resolve(strict=True)
+    elif dot_git.is_file() and not dot_git.is_symlink():
+        declaration = dot_git.read_text(encoding="utf-8").strip()
+        if not declaration.startswith("gitdir: "):
+            raise ValueError("linked-worktree Git directory is invalid")
+        declared_git = Path(declaration.removeprefix("gitdir: "))
+        git_directory = (
+            declared_git
+            if declared_git.is_absolute()
+            else dot_git.parent / declared_git
+        ).resolve(strict=True)
+        common_file = git_directory / "commondir"
+        if common_file.is_file() and not common_file.is_symlink():
+            declared_common = Path(
+                common_file.read_text(encoding="utf-8").strip()
+            )
+            resolved = (
+                declared_common
+                if declared_common.is_absolute()
+                else git_directory / declared_common
+            ).resolve(strict=True)
+        else:
+            resolved = git_directory
+    else:
+        raise ValueError("worktree Git metadata is unavailable")
+    if not resolved.is_dir():
+        raise ValueError("Git common directory is not a directory")
+    return resolved
+
+
 class _UsageFilter:
     def __init__(self) -> None:
         self._buffer = bytearray()
@@ -270,6 +303,8 @@ class CodexLauncher:
             "--json",
             "--sandbox",
             "workspace-write",
+            "--add-dir",
+            str(_git_common_directory(worktree)),
             "-C",
             str(worktree),
             "--output-schema",

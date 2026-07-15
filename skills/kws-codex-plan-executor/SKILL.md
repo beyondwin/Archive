@@ -2,7 +2,7 @@
 name: kws-codex-plan-executor
 description: Execute one or more approved Superpowers implementation plans sequentially in one durable isolated worktree.
 metadata:
-  version: "1.3.1"
+  version: "1.3.2"
   updated_at: "2026-07-15"
 ---
 
@@ -12,11 +12,13 @@ Use CPE when approved Superpowers implementation plans must run in a fixed
 order and survive process interruption. For bounded same-session work, use the
 plan's Superpowers workflow directly.
 
-Version 1.3.1 preserves the lean-quality contract while restoring compatibility
-with strict Codex structured-output schemas. Nullable wire-only optional fields
-are normalized back to the unchanged public format-version-1 contract. The
-atomic recovery fields and two-pipe drain behavior, real-process coverage, and the
-CPE/Superpowers ownership boundary remain unchanged.
+Version 1.3.2 preserves the lean-quality contract while restoring strict Codex
+structured-output compatibility and linked-worktree commit access. Nullable
+wire-only optional fields are normalized to the unchanged public format-version-1
+contract, and the sandbox receives only the exact resolved Git common directory
+needed for linked-worktree index, object, and ref writes. The
+atomic recovery fields, two-pipe drain behavior, real-process coverage, and CPE/Superpowers
+ownership boundary remain unchanged.
 
 ## Commands
 
@@ -66,6 +68,10 @@ or recreates only the exact recorded worktree before continuing. Attempt
 identity and its private result placeholder are durable before launch. Codex
 returns the strict result object as its final response, and accepted results
 become read-only evidence.
+
+The child remains in `workspace-write`; CPE adds only the worktree's exact
+resolved Git common directory so normal linked-worktree commits can write their
+index, objects, logs, and branch ref.
 
 Run the deterministic gate with `./evals/run.sh`. See [README.md](README.md)
 for requirements, state and result contracts, failure meanings, limitations,
