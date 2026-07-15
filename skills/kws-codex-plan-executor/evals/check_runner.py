@@ -766,6 +766,34 @@ print(json.dumps(result, sort_keys=True), flush=True)
         oversized.finish()
         self.assertEqual(oversized.usage["input_tokens"], 3)
 
+    def test_usage_filter_rejects_unreasonable_integer_totals(self) -> None:
+        capture = _UsageFilter()
+        capture.feed(
+            json.dumps(
+                {
+                    "type": "turn.completed",
+                    "usage": {
+                        "input_tokens": 10**1_000,
+                        "cached_input_tokens": True,
+                        "output_tokens": -1,
+                        "reasoning_output_tokens": 1.5,
+                    },
+                }
+            ).encode("utf-8")
+            + b"\n"
+        )
+        capture.finish()
+
+        self.assertEqual(
+            capture.usage,
+            {
+                "input_tokens": None,
+                "cached_input_tokens": None,
+                "output_tokens": None,
+                "reasoning_output_tokens": None,
+            },
+        )
+
     def test_terminate_group_tolerates_transient_permission_errors(self) -> None:
         process = mock.Mock(pid=1234)
         with mock.patch(
@@ -1021,6 +1049,35 @@ print(json.dumps(result, sort_keys=True), flush=True)
                 / f"{call['plan_id']}-attempt-1.log"
             )
             self.assertNotIn("RAW_EVENT_SENTINEL", log.read_text())
+
+    def test_oversized_usage_does_not_block_completed_handoff(self) -> None:
+        result = self.runner().run(
+            workspace=self.repo,
+            specs=[],
+            plans=[self.plan(1, "oversized_usage")],
+            run_id="oversized-usage",
+        )
+
+        self.assertEqual(result["status"], "completed")
+        events_path = (
+            self.home / "orchestrator" / "oversized-usage" / "events.jsonl"
+        )
+        event_lines = events_path.read_text().splitlines()
+        finished_lines = [
+            line
+            for line in event_lines
+            if json.loads(line)["kind"] == "plan.attempt_finished"
+        ]
+        finished = [json.loads(line) for line in finished_lines]
+        self.assertEqual(len(finished), 1)
+        self.assertLessEqual(len(finished_lines[0]), 16_383)
+        for field in (
+            "input_tokens",
+            "cached_input_tokens",
+            "output_tokens",
+            "reasoning_output_tokens",
+        ):
+            self.assertIsNone(finished[0][field])
 
     def test_resume_skips_completed_plan_and_continues_current_git_state(self) -> None:
         runner = self.runner()
