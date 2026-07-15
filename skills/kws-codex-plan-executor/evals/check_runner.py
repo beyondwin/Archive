@@ -27,6 +27,7 @@ from cpe_runtime.launcher import (
 from cpe_runtime.runner import (
     SequentialRunner,
     _ledger_progress,
+    _recovery_decision,
     _write_private_json,
 )
 from cpe_runtime.state import StateStore
@@ -550,10 +551,26 @@ print(json.dumps(result, sort_keys=True), flush=True)
         store.state["status"] = "failed"
         store.save()
 
-        runner.resume(run_id="numeric-attempts", retry_failed=True)
+        persisted = runner._create_recovery_capsule(
+            store,
+            plan,
+            current_head=head,
+            prior_result=result_path,
+            prior_log=store.root / "logs" / "plan-01-attempt-10.log",
+        )
+        persisted_identity = persisted.stat().st_ino
 
-        recovery_path = Path(self.invocations()[-1]["recovery_capsule"])
+        resumed = runner.resume(run_id="numeric-attempts", retry_failed=True)
+
+        calls = self.invocations()
+        self.assertEqual(len(calls), 1)
+        recovery_path = Path(calls[-1]["recovery_capsule"])
         capsule = json.loads(recovery_path.read_text())
+        self.assertEqual(resumed["status"], "failed")
+        self.assertEqual(resumed["plans"][0]["attempt_count"], 11)
+        self.assertEqual(recovery_path, persisted)
+        self.assertEqual(recovery_path.stat().st_ino, persisted_identity)
+        self.assertEqual(recovery_path.stat().st_mode & 0o777, 0o600)
         self.assertTrue(
             str(capsule["prior_log_path"]).endswith(
                 "plan-01-attempt-10.log"
@@ -1013,10 +1030,25 @@ print(json.dumps(result, sort_keys=True), flush=True)
             store.save()
 
     def test_two_plans_execute_sequentially_in_one_worktree(self) -> None:
-        result = self.runner().run(workspace=self.repo, specs=self.specs, plans=[self.plan(1, "completed"), self.plan(2, "completed")], run_id="two-plans")
+        result = self.runner().run(
+            workspace=self.repo,
+            specs=self.specs,
+            plans=[
+                self.plan(1, "oversized_usage"),
+                self.plan(2, "retryable_then_completed"),
+            ],
+            run_id="two-plans",
+        )
         self.assertEqual(result["status"], "completed")
+        self.assertEqual(
+            [plan["attempt_count"] for plan in result["plans"]],
+            [1, 2],
+        )
         calls = self.invocations()
-        self.assertEqual([call["plan_id"] for call in calls], ["plan-01", "plan-02"])
+        self.assertEqual(
+            [call["plan_id"] for call in calls],
+            ["plan-01", "plan-02", "plan-02"],
+        )
         self.assertEqual(len({call["worktree"] for call in calls}), 1)
         self.assertTrue((Path(calls[0]["worktree"]) / "plan-1.txt").is_file())
         self.assertTrue((Path(calls[0]["worktree"]) / "plan-2.txt").is_file())
@@ -1031,14 +1063,41 @@ print(json.dumps(result, sort_keys=True), flush=True)
             for event in events
             if event["kind"] == "plan.attempt_finished"
         ]
-        self.assertEqual(len(finished), 2)
+        self.assertEqual(len(finished), 3)
         for event in finished:
             self.assertGreaterEqual(event["duration_ms"], 0)
+            self.assertGreater(event["launcher_prompt_bytes"], 0)
+        oversized = finished[0]
+        for field in (
+            "input_tokens",
+            "cached_input_tokens",
+            "output_tokens",
+            "reasoning_output_tokens",
+        ):
+            self.assertIsNone(oversized[field])
+        finished_lines = [
+            line
+            for line in events_path.read_text().splitlines()
+            if json.loads(line)["kind"] == "plan.attempt_finished"
+        ]
+        self.assertLessEqual(len(finished_lines[0]), 16_383)
+        for event in finished[1:]:
             self.assertEqual(event["input_tokens"], 41)
             self.assertEqual(event["cached_input_tokens"], 31)
             self.assertEqual(event["output_tokens"], 7)
             self.assertEqual(event["reasoning_output_tokens"], 5)
-            self.assertGreater(event["launcher_prompt_bytes"], 0)
+        capsule_path = Path(calls[2]["recovery_capsule"])
+        self.assertEqual(capsule_path.stat().st_mode & 0o777, 0o600)
+        capsule = json.loads(capsule_path.read_text())
+        self.assertEqual(
+            capsule["failure_signature"],
+            "verification:test_parser_failed",
+        )
+        self.assertEqual(
+            capsule["next_strategy"],
+            "inspect the parser boundary and resume Task 3",
+        )
+        self.assertEqual(capsule["dirty_files"], [])
         self.assertNotIn("RAW_EVENT_SENTINEL", events_path.read_text())
         for call in calls:
             log = (
@@ -1046,38 +1105,9 @@ print(json.dumps(result, sort_keys=True), flush=True)
                 / "orchestrator"
                 / "two-plans"
                 / "logs"
-                / f"{call['plan_id']}-attempt-1.log"
+                / f"{call['plan_id']}-attempt-{call['number']}.log"
             )
             self.assertNotIn("RAW_EVENT_SENTINEL", log.read_text())
-
-    def test_oversized_usage_does_not_block_completed_handoff(self) -> None:
-        result = self.runner().run(
-            workspace=self.repo,
-            specs=[],
-            plans=[self.plan(1, "oversized_usage")],
-            run_id="oversized-usage",
-        )
-
-        self.assertEqual(result["status"], "completed")
-        events_path = (
-            self.home / "orchestrator" / "oversized-usage" / "events.jsonl"
-        )
-        event_lines = events_path.read_text().splitlines()
-        finished_lines = [
-            line
-            for line in event_lines
-            if json.loads(line)["kind"] == "plan.attempt_finished"
-        ]
-        finished = [json.loads(line) for line in finished_lines]
-        self.assertEqual(len(finished), 1)
-        self.assertLessEqual(len(finished_lines[0]), 16_383)
-        for field in (
-            "input_tokens",
-            "cached_input_tokens",
-            "output_tokens",
-            "reasoning_output_tokens",
-        ):
-            self.assertIsNone(finished[0][field])
 
     def test_resume_skips_completed_plan_and_continues_current_git_state(self) -> None:
         runner = self.runner()
@@ -1148,39 +1178,6 @@ print(json.dumps(result, sort_keys=True), flush=True)
         self.assertTrue(all(count <= 65_536 for count in requested))
         self.assertLessEqual(sum(returned), 65_536)
 
-    def test_resume_reuses_capsule_persisted_before_state_advance(self) -> None:
-        runner = self.runner()
-        original = runner._create_recovery_capsule
-        persisted: Path | None = None
-
-        def interrupt_after_capsule(*args: object, **kwargs: object) -> Path:
-            nonlocal persisted
-            persisted = original(*args, **kwargs)
-            raise KeyboardInterrupt
-
-        with mock.patch.object(
-            runner,
-            "_create_recovery_capsule",
-            side_effect=interrupt_after_capsule,
-        ):
-            first = runner.run(
-                workspace=self.repo,
-                specs=[],
-                plans=[self.plan(1, "interrupted")],
-                run_id="capsule-reentry",
-            )
-
-        self.assertEqual(first["status"], "interrupted")
-        self.assertIsNotNone(persisted)
-        self.assertEqual(first["plans"][0]["attempt_count"], 1)
-        resumed = runner.resume(run_id="capsule-reentry")
-        self.assertEqual(resumed["status"], "failed")
-        self.assertEqual(resumed["plans"][0]["attempt_count"], 2)
-        self.assertEqual(
-            Path(self.invocations()[-1]["recovery_capsule"]),
-            persisted,
-        )
-
     def test_existing_capsule_must_match_expected_canonical_bytes(self) -> None:
         target = self.root / "capsule.json"
         payload = {"plan_id": "plan-01", "attempt": 1}
@@ -1218,45 +1215,27 @@ print(json.dumps(result, sort_keys=True), flush=True)
                 _write_private_json(target, payload)
         self.assertFalse(target.exists())
 
-    def test_retryable_failure_uses_one_changed_strategy_recovery(self) -> None:
-        result = self.runner().run(
-            workspace=self.repo,
-            specs=[],
-            plans=[self.plan(1, "retryable_then_completed")],
-            run_id="retryable-recovery",
-        )
-        self.assertEqual(result["status"], "completed")
-        self.assertEqual(result["plans"][0]["attempt_count"], 2)
-        calls = self.invocations()
-        self.assertEqual(len(calls), 2)
-        capsule_path = Path(calls[1]["recovery_capsule"])
-        self.assertEqual(capsule_path.stat().st_mode & 0o777, 0o600)
-        capsule = json.loads(capsule_path.read_text())
+    def test_nonretryable_failure_stops_until_one_explicit_retry(self) -> None:
         self.assertEqual(
-            capsule["failure_signature"],
-            "verification:test_parser_failed",
+            _recovery_decision(
+                payload={"status": "failed"},
+                timed_out=False,
+                previous_signature=None,
+                automatic_available=True,
+            ),
+            (False, "not_retryable", "status:failed", ""),
         )
-        self.assertEqual(
-            capsule["next_strategy"],
-            "inspect the parser boundary and resume Task 3",
-        )
-        self.assertEqual(capsule["dirty_files"], [])
-
-    def test_nonretryable_failure_stops_after_one_attempt(self) -> None:
-        result = self.runner().run(
+        runner = self.runner()
+        initial = runner.run(
             workspace=self.repo,
             specs=[],
             plans=[self.plan(1, "failed")],
-            run_id="nonretryable",
+            run_id="explicit-retry",
         )
-        self.assertEqual(result["status"], "failed")
-        self.assertEqual(result["plans"][0]["attempt_count"], 1)
-        self.assertEqual(len(self.invocations()), 1)
-
-    def test_explicit_retry_failed_grants_exactly_one_attempt(self) -> None:
-        runner = self.runner()
-        runner.run(workspace=self.repo, specs=[], plans=[self.plan(1, "failed")], run_id="explicit-retry")
+        self.assertEqual(initial["status"], "failed")
+        self.assertEqual(initial["plans"][0]["attempt_count"], 1)
         before = len(self.invocations())
+        self.assertEqual(before, 1)
         result = runner.resume(run_id="explicit-retry", retry_failed=True)
         self.assertEqual(result["status"], "failed")
         self.assertEqual(len(self.invocations()) - before, 1)
