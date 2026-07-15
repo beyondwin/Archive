@@ -616,10 +616,30 @@ print(json.dumps(result, sort_keys=True), flush=True)
         logs = self.root / "timeout-logs"
         results.mkdir()
         logs.mkdir()
-        launcher = self.runner(
-            timeout_seconds=0.4,
-            CPE_FAKE_GRANDCHILD_PID=str(pid_path),
-        ).launcher
+        timeout_child = self.root / "timeout-codex"
+        timeout_child.write_text(
+            "#!/usr/bin/env python3\n"
+            "import os, subprocess, sys, time\n"
+            "child = subprocess.Popen([sys.executable, '-c', "
+            "'import time; time.sleep(60)'])\n"
+            "with open(os.environ['CPE_FAKE_GRANDCHILD_PID'], 'w') as stream:\n"
+            "    stream.write(f'{os.getpid()}\\n{child.pid}\\n')\n"
+            "    stream.flush()\n"
+            "while True:\n"
+            "    time.sleep(0.05)\n",
+            encoding="utf-8",
+        )
+        timeout_child.chmod(0o700)
+        launcher = CodexLauncher(
+            schema_path=ROOT / "templates" / "plan-result-schema.json",
+            codex_bin=str(timeout_child),
+            timeout_seconds=1.0,
+            termination_grace_seconds=0.02,
+            environ={
+                "PATH": os.environ["PATH"],
+                "CPE_FAKE_GRANDCHILD_PID": str(pid_path),
+            },
+        )
         result_path, log_path = launcher.attempt_paths(
             results,
             logs,
@@ -628,18 +648,27 @@ print(json.dumps(result, sort_keys=True), flush=True)
         )
         head = git(self.repo, "rev-parse", "HEAD")
         lock_fd = os.open(os.devnull, os.O_RDONLY)
+        real_monotonic = time.monotonic
+
+        def readiness_clock() -> float:
+            return real_monotonic() + (2.0 if pid_path.exists() else 0.0)
+
         try:
-            outcome = launcher.launch(
-                worktree=self.repo,
-                plan_id="plan-01",
-                plan_path=self.plan(1, "timeout_grandchild"),
-                spec_paths=[],
-                starting_commit=head,
-                current_commit=head,
-                result_path=result_path,
-                log_path=log_path,
-                lock_fd=lock_fd,
-            )
+            with mock.patch(
+                "cpe_runtime.launcher.time.monotonic",
+                side_effect=readiness_clock,
+            ):
+                outcome = launcher.launch(
+                    worktree=self.repo,
+                    plan_id="plan-01",
+                    plan_path=self.plan(1, "timeout_grandchild"),
+                    spec_paths=[],
+                    starting_commit=head,
+                    current_commit=head,
+                    result_path=result_path,
+                    log_path=log_path,
+                    lock_fd=lock_fd,
+                )
             self.assertTrue(outcome.timed_out)
             self.assertIsNone(outcome.payload)
             self.assertEqual(
@@ -664,6 +693,50 @@ print(json.dumps(result, sort_keys=True), flush=True)
         finally:
             os.close(lock_fd)
             self.cleanup_fixture_processes(pid_path)
+
+        runner = self.runner()
+        launch_calls: list[dict[str, object]] = []
+
+        def timeout_without_a_process(**kwargs: object) -> LaunchResult:
+            launch_calls.append(kwargs)
+            log_path = Path(kwargs["log_path"])
+            log_path.write_text("deterministic timeout\n", encoding="utf-8")
+            return LaunchResult(
+                payload=None,
+                returncode=-signal.SIGKILL,
+                timed_out=True,
+                forced_cleanup=True,
+                discarded_log_bytes=0,
+                result_path=Path(kwargs["result_path"]),
+                log_path=log_path,
+                duration_ms=0,
+                input_tokens=None,
+                cached_input_tokens=None,
+                output_tokens=None,
+                reasoning_output_tokens=None,
+                launcher_prompt_bytes=1,
+            )
+
+        runner.launcher.launch = mock.Mock(side_effect=timeout_without_a_process)
+        result = runner.run(
+            workspace=self.repo,
+            specs=[],
+            plans=[self.plan(1, "interrupted")],
+            run_id="timeout-wiring",
+        )
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["plans"][0]["attempt_count"], 2)
+        self.assertEqual(len(launch_calls), 2)
+        capsule = json.loads(
+            Path(launch_calls[1]["recovery_path"]).read_text()
+        )
+        self.assertEqual(capsule["failure_signature"], "timeout")
+        self.assertEqual(capsule["prior_status"], "interrupted")
+        persisted = StateStore.open(
+            self.home / "orchestrator" / "timeout-wiring"
+        ).state
+        self.assertEqual(persisted["status"], "failed")
+        self.assertEqual(persisted["plans"][0]["attempt_count"], 2)
 
     def assert_signal_kills_complete_process_group(self, signum: int) -> None:
         pid_path = self.root / f"signal-grandchild-{signum}"
@@ -929,6 +1002,9 @@ print(json.dumps(result, sort_keys=True), flush=True)
             def unregister(self, fileobj: object) -> object:
                 return self.inner.unregister(fileobj)
 
+            def modify(self, *args: object, **kwargs: object) -> object:
+                return self.inner.modify(*args, **kwargs)
+
             def get_map(self) -> object:
                 return self.inner.get_map()
 
@@ -954,10 +1030,33 @@ print(json.dumps(result, sort_keys=True), flush=True)
             timeout_seconds=1e-9,
         )
         drain_sizes: list[int] = []
+        drain_remaining: list[int] = []
+        drained_chunks: dict[int, bytearray] = {}
 
         def observed_drain(selector: selectors.BaseSelector) -> None:
-            drain_sizes.append(len(selector.get_map()))
+            keys = list(selector.get_map().values())
+            drain_sizes.append(len(keys))
+            for key in keys:
+                original_sink = key.data
+                identity = id(key.fileobj)
+                drained_chunks.setdefault(identity, bytearray())
+
+                def record(
+                    chunk: bytes,
+                    *,
+                    sink: object = original_sink,
+                    stream_identity: int = identity,
+                ) -> None:
+                    drained_chunks[stream_identity].extend(chunk)
+                    sink(chunk)
+
+                selector.modify(
+                    key.fileobj,
+                    selectors.EVENT_READ,
+                    record,
+                )
             original_drain(selector)
+            drain_remaining.append(len(selector.get_map()))
 
         timeout_process = FakeProcess(
             pipe_with(
@@ -996,12 +1095,15 @@ print(json.dumps(result, sort_keys=True), flush=True)
 
         self.assertTrue(outcome.timed_out)
         self.assertEqual(drain_sizes, [2])
+        self.assertEqual(drain_remaining, [0])
         self.assertEqual(outcome.input_tokens, 3)
         self.assertIn("timeout stderr tail", timeout_log.read_text())
         self.assertTrue(timeout_process.stdout.closed)
         self.assertTrue(timeout_process.stderr.closed)
 
         drain_sizes.clear()
+        drain_remaining.clear()
+        drained_chunks.clear()
         launcher.timeout_seconds = 5.0
         exception_process = FakeProcess(
             pipe_with(b'{"type":"turn.completed","usage":{}}\n'),
@@ -1044,6 +1146,11 @@ print(json.dumps(result, sort_keys=True), flush=True)
                 )
 
         self.assertEqual(drain_sizes, [2])
+        self.assertEqual(drain_remaining, [0])
+        self.assertIn(
+            b"turn.completed",
+            drained_chunks[id(exception_process.stdout)],
+        )
         self.assertIn("exception stderr tail", exception_log.read_text())
         self.assertTrue(exception_selector.closed)
         self.assertTrue(exception_process.stdout.closed)
