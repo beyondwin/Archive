@@ -18,7 +18,22 @@ from .state import StateStore
 
 _RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _SHA = re.compile(r"^[0-9a-f]{40}$")
-_RESULT_FIELDS = {"plan_id", "status", "head_commit", "verification", "summary"}
+_RESULT_REQUIRED_FIELDS = {
+    "plan_id",
+    "status",
+    "head_commit",
+    "verification",
+    "summary",
+}
+_RESULT_OPTIONAL_FIELDS = {"workflow_receipt"}
+_WORKFLOW_RECEIPT_FIELDS = {
+    "mode",
+    "progress_ledger",
+    "task_reviews",
+    "final_review",
+    "final_review_artifact",
+    "duplicate_verification",
+}
 
 
 def _git(repository: Path, *arguments: str, check: bool = True) -> str:
@@ -63,6 +78,45 @@ class _RunLock:
             fcntl.flock(self.descriptor, fcntl.LOCK_UN)
             os.close(self.descriptor)
             self.descriptor = None
+
+
+def _safe_worktree_artifact(worktree: Path, declared: object) -> bool:
+    if not isinstance(declared, str) or not declared or len(declared) > 500:
+        return False
+    relative = Path(declared)
+    if relative.is_absolute() or ".." in relative.parts:
+        return False
+    candidate = worktree
+    try:
+        for part in relative.parts:
+            candidate = candidate / part
+            if candidate.is_symlink():
+                return False
+        resolved = candidate.resolve(strict=True)
+        resolved.relative_to(worktree.resolve(strict=True))
+    except (OSError, ValueError):
+        return False
+    return resolved.is_file() and not resolved.is_symlink()
+
+
+def _workflow_receipt_error(
+    worktree: Path,
+    receipt: object,
+) -> str | None:
+    if not isinstance(receipt, dict) or set(receipt) != _WORKFLOW_RECEIPT_FIELDS:
+        return "invalid_workflow_receipt"
+    expected = {
+        "mode": "subagent-driven-lean",
+        "task_reviews": "complete",
+        "final_review": "approved",
+        "duplicate_verification": "none",
+    }
+    if any(receipt.get(name) != value for name, value in expected.items()):
+        return "invalid_workflow_receipt"
+    for name in ("progress_ledger", "final_review_artifact"):
+        if not _safe_worktree_artifact(worktree, receipt.get(name)):
+            return "unsafe_workflow_artifact"
+    return None
 
 
 class SequentialRunner:
@@ -458,7 +512,13 @@ class SequentialRunner:
 
     def _handoff_error(self, store: StateStore, plan: dict[str, Any], outcome: LaunchResult) -> str | None:
         payload = outcome.payload
-        if payload is None or set(payload) != _RESULT_FIELDS:
+        if not isinstance(payload, dict):
+            return "invalid_result"
+        fields = set(payload)
+        if (
+            not _RESULT_REQUIRED_FIELDS.issubset(fields)
+            or fields - _RESULT_REQUIRED_FIELDS - _RESULT_OPTIONAL_FIELDS
+        ):
             return "invalid_result"
         if payload.get("plan_id") != plan["plan_id"] or payload.get("status") not in {"completed", "interrupted", "blocked", "failed"}:
             return "invalid_result"
@@ -477,6 +537,15 @@ class SequentialRunner:
         ancestry = subprocess.run(["git", "-C", str(worktree), "merge-base", "--is-ancestor", plan["starting_commit"], head], check=False).returncode
         if ancestry != 0:
             return "broken_ancestry"
+        if payload["status"] == "completed":
+            receipt_error = _workflow_receipt_error(
+                worktree,
+                payload.get("workflow_receipt"),
+            )
+            if receipt_error is not None:
+                return receipt_error
+        elif "workflow_receipt" in payload:
+            return "invalid_result"
         if payload["status"] != "completed":
             return None
         if outcome.returncode != 0:

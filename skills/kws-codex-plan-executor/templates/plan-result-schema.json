@@ -22,6 +22,30 @@
         }
       }
     },
-    "summary": {"type": "string", "minLength": 1, "maxLength": 2000}
+    "summary": {"type": "string", "minLength": 1, "maxLength": 2000},
+    "workflow_receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "progress_ledger",
+        "task_reviews",
+        "final_review",
+        "final_review_artifact",
+        "duplicate_verification"
+      ],
+      "properties": {
+        "mode": {"const": "subagent-driven-lean"},
+        "progress_ledger": {"type": "string", "minLength": 1, "maxLength": 500},
+        "task_reviews": {"const": "complete"},
+        "final_review": {"const": "approved"},
+        "final_review_artifact": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "duplicate_verification": {"const": "none"}
+      }
+    }
   }
 }
