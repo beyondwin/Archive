@@ -24,6 +24,7 @@ SCENARIOS = {
     "timeout_grandchild",
     "completed_with_grandchild",
     "large_log",
+    "oversized_usage",
     "mutate_prior_nonzero_completed",
     "retryable_then_completed",
 }
@@ -149,8 +150,9 @@ def main() -> int:
     head = git(worktree, "rev-parse", "HEAD")
     status = scenario
 
-    if scenario == "completed":
+    if scenario in {"completed", "oversized_usage"}:
         head = commit_plan(worktree, plan_id)
+        status = "completed"
     elif scenario == "resume_completed":
         if attempt == 1:
             head = commit_plan(worktree, plan_id, "-progress")
@@ -255,15 +257,20 @@ def main() -> int:
         flush=True,
     )
     if scenario != "blocking_completed":
+        usage_total = (
+            10**4_199
+            if scenario == "oversized_usage"
+            else None
+        )
         print(
             json.dumps(
                 {
                     "type": "turn.completed",
                     "usage": {
-                        "input_tokens": 41,
-                        "cached_input_tokens": 31,
-                        "output_tokens": 7,
-                        "reasoning_output_tokens": 5,
+                        "input_tokens": usage_total or 41,
+                        "cached_input_tokens": usage_total or 31,
+                        "output_tokens": usage_total or 7,
+                        "reasoning_output_tokens": usage_total or 5,
                     },
                 }
             ),

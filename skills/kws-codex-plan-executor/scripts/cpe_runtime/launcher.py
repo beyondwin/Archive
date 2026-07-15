@@ -27,6 +27,7 @@ _USAGE_FIELDS = (
     "output_tokens",
     "reasoning_output_tokens",
 )
+_MAX_USAGE_COUNTER = (1 << 63) - 1
 
 
 class _UsageFilter:
@@ -74,7 +75,7 @@ class _UsageFilter:
                 value
                 if isinstance((value := usage.get(name)), int)
                 and not isinstance(value, bool)
-                and value >= 0
+                and 0 <= value <= _MAX_USAGE_COUNTER
                 else None
             )
             for name in _USAGE_FIELDS
