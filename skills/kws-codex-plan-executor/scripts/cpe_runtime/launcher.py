@@ -212,8 +212,7 @@ class CodexLauncher:
         spec_paths: Sequence[Path],
         starting_commit: str,
         current_commit: str,
-        prior_result: Path | None,
-        prior_log: Path | None,
+        recovery_path: Path | None,
     ) -> str:
         lines = [
             "Execute one approved implementation plan in the isolated worktree.",
@@ -225,10 +224,8 @@ class CodexLauncher:
             "SPECIFICATIONS_REFERENCE_ONLY_IN_ORDER:",
         ]
         lines.extend(f"- {path}" for path in spec_paths)
-        if prior_result is not None:
-            lines.append(f"PRIOR_RESULT: {prior_result}")
-        if prior_log is not None:
-            lines.append(f"PRIOR_LOG: {prior_log}")
+        if recovery_path is not None:
+            lines.append(f"RECOVERY_CAPSULE: {recovery_path}")
         lines.extend(
             [
                 "",
@@ -236,6 +233,7 @@ class CodexLauncher:
                 "Use superpowers:subagent-driven-development for this approved plan; CPE does not own task mapping or product quality roles.",
                 "Do not preload specification snapshots. Read only a referenced section when the plan is ambiguous or conflicts with observed code.",
                 "Use task-brief, report files, review-package, task review files, and .superpowers/sdd/progress.md as file-backed handoffs.",
+                "On recovery, read the capsule, progress ledger, Git status/log, and current task artifacts in that order; never redispatch a completed ledger task.",
                 "Implementers run plan-declared focused RED/GREEN and tests affected by fixes; there is no automatic full-suite run per task.",
                 "Reviewers reuse evidenced tests, write full findings to files, and return only verdicts, finding IDs, severities, and artifact paths.",
                 "Resolve one task finding set with one consolidated fix subagent, then review only the finding delta and affected evidence.",
@@ -260,8 +258,7 @@ class CodexLauncher:
         result_path: Path,
         log_path: Path,
         lock_fd: int,
-        prior_result: Path | None = None,
-        prior_log: Path | None = None,
+        recovery_path: Path | None = None,
     ) -> LaunchResult:
         """Launch one attempt using caller-owned paths and the held run lock."""
         command = self._command(worktree, result_path)
@@ -269,7 +266,7 @@ class CodexLauncher:
             worktree=worktree, plan_id=plan_id, plan_path=plan_path,
             spec_paths=spec_paths, starting_commit=starting_commit,
             current_commit=current_commit,
-            prior_result=prior_result, prior_log=prior_log,
+            recovery_path=recovery_path,
         )
         environment = {key: value for key, value in self.environ.items() if key not in _SECRETS}
         returncode: int | None = None

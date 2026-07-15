@@ -25,7 +25,15 @@ _RESULT_REQUIRED_FIELDS = {
     "verification",
     "summary",
 }
-_RESULT_OPTIONAL_FIELDS = {"workflow_receipt"}
+_RECOVERY_RESULT_FIELDS = {
+    "retryable",
+    "failure_signature",
+    "next_strategy",
+}
+_RESULT_OPTIONAL_FIELDS = {
+    "workflow_receipt",
+    *_RECOVERY_RESULT_FIELDS,
+}
 _WORKFLOW_RECEIPT_FIELDS = {
     "mode",
     "progress_ledger",
@@ -34,6 +42,10 @@ _WORKFLOW_RECEIPT_FIELDS = {
     "final_review_artifact",
     "duplicate_verification",
 }
+_COMPLETED_TASK = re.compile(
+    r"^Task\s+([1-9][0-9]*):\s+complete\b",
+    re.IGNORECASE | re.MULTILINE,
+)
 
 
 def _git(repository: Path, *arguments: str, check: bool = True) -> str:
@@ -42,6 +54,92 @@ def _git(repository: Path, *arguments: str, check: bool = True) -> str:
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     )
     return completed.stdout.strip()
+
+
+def _ledger_progress(worktree: Path) -> tuple[list[str], str | None]:
+    ledger = worktree / ".superpowers" / "sdd" / "progress.md"
+    if ledger.is_symlink() or not ledger.is_file():
+        return [], None
+    try:
+        text = ledger.read_bytes()[:65_536].decode("utf-8")
+    except (OSError, UnicodeDecodeError):
+        return [], None
+    numbers = sorted({int(match) for match in _COMPLETED_TASK.findall(text)})
+    completed = [f"Task {number}" for number in numbers]
+    current = 1
+    known = set(numbers)
+    while current in known:
+        current += 1
+    return completed, f"Task {current}"
+
+
+def _write_private_json(path: Path, payload: dict[str, object]) -> Path:
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    descriptor = os.open(
+        path,
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    try:
+        remaining = memoryview(encoded)
+        while remaining:
+            written = os.write(descriptor, remaining)
+            if written <= 0:
+                raise OSError("short write while persisting recovery capsule")
+            remaining = remaining[written:]
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    directory = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
+    return path.resolve()
+
+
+def _recovery_decision(
+    *,
+    payload: dict[str, object] | None,
+    timed_out: bool,
+    previous_signature: str | None,
+    automatic_available: bool,
+) -> tuple[bool, str, str, str]:
+    status = payload.get("status") if payload is not None else None
+    if timed_out:
+        signature = "timeout"
+        strategy = (
+            "resume the first incomplete task from durable evidence "
+            "after process timeout"
+        )
+    elif status == "interrupted":
+        signature = "status:interrupted"
+        strategy = (
+            "resume the first incomplete task from durable evidence "
+            "after child interruption"
+        )
+    elif (
+        status == "failed"
+        and payload is not None
+        and payload.get("retryable") is True
+    ):
+        signature = str(payload["failure_signature"])
+        strategy = str(payload["next_strategy"])
+    else:
+        return False, "not_retryable", "status:failed", ""
+    if signature == previous_signature:
+        return False, "repeated_failure_signature", signature, strategy
+    if not automatic_available:
+        return False, "automatic_limit", signature, strategy
+    return True, "eligible", signature, strategy
 
 
 class RunBusyError(RuntimeError):
@@ -371,6 +469,69 @@ class SequentialRunner:
         store.save()
         store.append_event("worktree.ready", head=state["source_commit"])
 
+    def _create_recovery_capsule(
+        self,
+        store: StateStore,
+        plan: dict[str, Any],
+        *,
+        current_head: str,
+        prior_result: Path,
+        prior_log: Path | None,
+    ) -> Path:
+        try:
+            payload = json.loads(prior_result.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        prior_status = payload.get("status")
+        if prior_status not in {"interrupted", "blocked", "failed"}:
+            prior_status = (
+                plan["status"]
+                if plan["status"] in {"interrupted", "blocked", "failed"}
+                else "interrupted"
+            )
+        signature = payload.get("failure_signature")
+        if not isinstance(signature, str) or not signature.strip():
+            signature = f"status:{prior_status}"
+        strategy = payload.get("next_strategy")
+        if not isinstance(strategy, str) or not strategy.strip():
+            strategy = (
+                "resume the first incomplete task from durable evidence "
+                "without redispatching completed tasks"
+            )
+        completed, current = _ledger_progress(Path(store.state["worktree"]))
+        dirty = _git(
+            Path(store.state["worktree"]),
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+        ).splitlines()[:100]
+        target = (
+            store.root
+            / "results"
+            / f"{plan['plan_id']}-attempt-{plan['attempt_count']}-recovery.json"
+        )
+        return _write_private_json(
+            target,
+            {
+                "plan_id": plan["plan_id"],
+                "attempt": plan["attempt_count"],
+                "starting_commit": plan["starting_commit"],
+                "current_head": current_head,
+                "completed_tasks": completed,
+                "current_task": current,
+                "prior_status": prior_status,
+                "failure_signature": signature[:256],
+                "next_strategy": strategy[:1000],
+                "dirty_files": dirty,
+                "prior_result_path": str(prior_result.resolve()),
+                "prior_log_path": (
+                    str(prior_log.resolve()) if prior_log is not None else None
+                ),
+            },
+        )
+
     def _execute(
         self,
         store: StateStore,
@@ -386,9 +547,12 @@ class SequentialRunner:
                 state["current_plan_index"] += 1
                 store.save()
                 continue
-            allowed_attempts = plan["attempt_count"] + 1 if explicit_retry else max(2, plan["attempt_count"] + (1 if plan["status"] == "blocked" else 0))
+            automatic_available = (
+                plan["attempt_count"] == 0 and not explicit_retry
+            )
+            operator_attempt = explicit_retry or plan["attempt_count"] > 0
             explicit_retry = False
-            while plan["attempt_count"] < allowed_attempts:
+            while True:
                 worktree = Path(state["worktree"])
                 current_head = _git(worktree, "rev-parse", "HEAD")
                 if plan["starting_commit"] is None:
@@ -408,6 +572,17 @@ class SequentialRunner:
                     )
                     if candidate.is_file() and not candidate.is_symlink():
                         prior_log = candidate
+                recovery_path = (
+                    self._create_recovery_capsule(
+                        store,
+                        plan,
+                        current_head=current_head,
+                        prior_result=prior_result,
+                        prior_log=prior_log,
+                    )
+                    if prior_result is not None and previous_attempt > 0
+                    else None
+                )
                 plan["attempt_count"] += 1
                 result_path, log_path = self.launcher.attempt_paths(
                     store.root / "results",
@@ -440,7 +615,7 @@ class SequentialRunner:
                     worktree=worktree, plan_id=plan["plan_id"], plan_path=Path(plan_input["snapshot_path"]),
                     spec_paths=spec_paths, starting_commit=plan["starting_commit"], current_commit=current_head,
                     result_path=result_path, log_path=log_path, lock_fd=lock_fd,
-                    prior_result=prior_result, prior_log=prior_log,
+                    recovery_path=recovery_path,
                 )
                 store.append_event(
                     "plan.attempt_finished",
@@ -466,43 +641,105 @@ class SequentialRunner:
                         status="interrupted",
                         timed_out=True,
                     )
-                    continue
-                integrity_error = self._handoff_error(store, plan, outcome)
-                if integrity_error is not None:
-                    plan["status"] = "failed"
-                    state["status"] = "failed"
+                else:
+                    integrity_error = self._handoff_error(store, plan, outcome)
+                    if integrity_error is not None:
+                        plan["status"] = "failed"
+                        state["status"] = "failed"
+                        store.save()
+                        store.append_event(
+                            "plan.integrity_failed",
+                            plan_id=plan["plan_id"],
+                            reason=integrity_error,
+                        )
+                        return self._summary(store, error=integrity_error)
+                    payload = outcome.payload
+                    assert payload is not None
+                    status = payload["status"]
+                    if status == "completed":
+                        self._seal_result(outcome.result_path)
+                        plan["status"] = "completed"
+                        plan["accepted_commit"] = payload["head_commit"]
+                        state["current_plan_index"] += 1
+                        state["status"] = (
+                            "completed"
+                            if state["current_plan_index"]
+                            == len(state["plans"])
+                            else "running"
+                        )
+                        store.save()
+                        store.append_event(
+                            "plan.completed",
+                            plan_id=plan["plan_id"],
+                            head=payload["head_commit"],
+                        )
+                        break
+                    plan["status"] = status
+                    state["status"] = status
+                    if status == "blocked":
+                        store.save()
+                        store.append_event(
+                            "plan.blocked",
+                            plan_id=plan["plan_id"],
+                        )
+                        return self._summary(store)
                     store.save()
-                    store.append_event("plan.integrity_failed", plan_id=plan["plan_id"], reason=integrity_error)
-                    return self._summary(store, error=integrity_error)
-                payload = outcome.payload
-                assert payload is not None
-                status = payload["status"]
-                if status == "completed":
-                    self._seal_result(outcome.result_path)
-                    plan["status"] = "completed"
-                    plan["accepted_commit"] = payload["head_commit"]
-                    state["current_plan_index"] += 1
-                    state["status"] = (
-                        "completed"
-                        if state["current_plan_index"] == len(state["plans"])
-                        else "running"
+                    store.append_event(
+                        "plan.attempt_incomplete",
+                        plan_id=plan["plan_id"],
+                        status=status,
                     )
-                    store.save()
-                    store.append_event("plan.completed", plan_id=plan["plan_id"], head=payload["head_commit"])
-                    break
-                plan["status"] = status
-                state["status"] = status
-                if status == "blocked":
-                    store.save()
-                    store.append_event("plan.blocked", plan_id=plan["plan_id"])
-                    return self._summary(store)
-                store.save()
-                store.append_event("plan.attempt_incomplete", plan_id=plan["plan_id"], status=status)
-            else:
+
+                previous_signature = None
+                if prior_result is not None:
+                    try:
+                        previous_payload = json.loads(
+                            prior_result.read_text(encoding="utf-8")
+                        )
+                    except (
+                        OSError,
+                        UnicodeDecodeError,
+                        json.JSONDecodeError,
+                    ):
+                        previous_payload = {}
+                    if isinstance(previous_payload, dict):
+                        candidate = previous_payload.get("failure_signature")
+                        if isinstance(candidate, str) and candidate.strip():
+                            previous_signature = candidate
+                        elif previous_payload.get("status") == "interrupted":
+                            previous_signature = "status:interrupted"
+
+                retry, reason, signature, strategy = _recovery_decision(
+                    payload=outcome.payload,
+                    timed_out=outcome.timed_out,
+                    previous_signature=previous_signature,
+                    automatic_available=(
+                        automatic_available and not operator_attempt
+                    ),
+                )
+                if retry:
+                    automatic_available = False
+                    store.append_event(
+                        "plan.recovery_scheduled",
+                        plan_id=plan["plan_id"],
+                        failure_signature=signature,
+                        next_strategy=strategy,
+                    )
+                    continue
+                store.append_event(
+                    "plan.recovery_stopped",
+                    plan_id=plan["plan_id"],
+                    reason=reason,
+                    failure_signature=signature,
+                )
                 plan["status"] = "failed"
                 state["status"] = "failed"
                 store.save()
-                store.append_event("plan.failed", plan_id=plan["plan_id"], attempts=plan["attempt_count"])
+                store.append_event(
+                    "plan.failed",
+                    plan_id=plan["plan_id"],
+                    attempts=plan["attempt_count"],
+                )
                 return self._summary(store)
 
         state["status"] = "completed"
@@ -527,6 +764,21 @@ class SequentialRunner:
         verification = payload.get("verification")
         if not isinstance(head, str) or not _SHA.fullmatch(head) or not isinstance(summary, str) or not summary.strip() or len(summary) > 2000 or not isinstance(verification, list):
             return "invalid_result"
+        recovery_fields = fields & _RECOVERY_RESULT_FIELDS
+        if recovery_fields and recovery_fields != _RECOVERY_RESULT_FIELDS:
+            return "invalid_result"
+        if recovery_fields:
+            if (
+                not isinstance(payload["retryable"], bool)
+                or not isinstance(payload["failure_signature"], str)
+                or not payload["failure_signature"].strip()
+                or len(payload["failure_signature"]) > 256
+                or not isinstance(payload["next_strategy"], str)
+                or not payload["next_strategy"].strip()
+                or len(payload["next_strategy"]) > 1000
+                or payload.get("status") == "completed"
+            ):
+                return "invalid_result"
         for item in verification:
             if not isinstance(item, dict) or set(item) != {"command", "exit_code"} or not isinstance(item["command"], str) or not item["command"].strip() or not isinstance(item["exit_code"], int) or isinstance(item["exit_code"], bool):
                 return "invalid_result"
@@ -623,11 +875,21 @@ class SequentialRunner:
         target = store.root / "results" / f"{plan['plan_id']}-attempt-{plan['attempt_count']}-synthetic.json"
         worktree = Path(store.state["worktree"])
         observed = _git(worktree, "rev-parse", "HEAD") if worktree.is_dir() else store.state["source_commit"]
+        status = "interrupted" if outcome.timed_out else "failed"
         payload = {
-            "plan_id": plan["plan_id"], "status": "failed", "head_commit": observed,
+            "plan_id": plan["plan_id"], "status": status, "head_commit": observed,
             "verification": [],
             "summary": f"child produced no valid result; returncode={outcome.returncode}; timed_out={outcome.timed_out}; log={outcome.log_path}",
         }
+        if outcome.timed_out:
+            payload.update(
+                retryable=True,
+                failure_signature="timeout",
+                next_strategy=(
+                    "resume the first incomplete task from durable evidence "
+                    "after process timeout"
+                ),
+            )
         target.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
         target.chmod(0o600)
         return target.resolve()
