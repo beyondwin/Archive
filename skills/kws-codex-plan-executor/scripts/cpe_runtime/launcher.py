@@ -115,8 +115,13 @@ def _terminate_group(
             while _group_exists(process_group) and time.monotonic() < deadline:
                 process.poll()
                 time.sleep(0.02)
-    process.wait()
-    if _group_exists(process_group):
+    direct_child_alive = False
+    try:
+        process.wait(timeout=max(1.0, grace_seconds))
+    except subprocess.TimeoutExpired:
+        direct_child_alive = True
+    group_alive = _group_exists(process_group)
+    if direct_child_alive or group_alive:
         raise RuntimeError("child process group did not terminate")
     return forced
 
