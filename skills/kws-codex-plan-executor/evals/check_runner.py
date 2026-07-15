@@ -802,7 +802,14 @@ print(json.dumps(result, sort_keys=True), flush=True)
         )
         self.assertIn("--ephemeral", command)
         self.assertIn("--json", command)
-        self.assertNotIn("--add-dir", command)
+        self.assertIn("--add-dir", command)
+        common = Path(git(self.repo, "rev-parse", "--git-common-dir"))
+        if not common.is_absolute():
+            common = self.repo / common
+        self.assertEqual(
+            command[command.index("--add-dir") + 1],
+            str(common.resolve()),
+        )
         self.assertEqual(command.count("--output-last-message"), 1)
         self.assertNotIn("REPOSITORY:", prompt)
         self.assertIn("WORKTREE:", prompt)

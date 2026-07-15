@@ -207,6 +207,7 @@ class SequentialCliTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         help_text = result.stdout + result.stderr
         for flag in (
+            "--add-dir",
             "--ephemeral",
             "--ignore-user-config",
             "--json",
@@ -218,7 +219,7 @@ class SequentialCliTest(unittest.TestCase):
     def test_skill_docs_match_hardened_public_contract(self) -> None:
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        self.assertIn('version: "1.3.1"', skill)
+        self.assertIn('version: "1.3.2"', skill)
         for phrase in (
             "process group",
             "bounded",

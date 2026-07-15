@@ -6,9 +6,11 @@ fresh Codex process per plan, and resumes at the first incomplete plan.
 
 ## Release And Installation
 
-Version 1.3.1 preserves the lean-quality contract and restores compatibility
-with strict Codex structured-output schemas by normalizing nullable wire-only
-optional fields before public contract validation. Focused deterministic tests
+Version 1.3.2 preserves the lean-quality contract and restores compatibility
+with strict Codex structured-output schemas plus linked-worktree commits. It
+normalizes nullable wire-only optional fields before public contract validation
+and grants the child sandbox only the exact resolved Git common directory needed
+for linked-worktree index, object, and ref writes. Focused deterministic tests
 still reject partial or completed recovery-field triples and exercise two-pipe
 drain behavior during timeout and exceptional launcher cleanup. Test fixtures
 avoid child processes when the contract is purely a state or decision boundary,
@@ -136,6 +138,10 @@ before Git mutation or child launch.
 - Codex uses an ephemeral session and returns the strict schema object as its
   final response. `--output-last-message` persists only the current result;
   accepted result evidence is changed to read-only mode `0400`.
+- The child keeps the `workspace-write` sandbox. The launcher resolves the
+  worktree's exact Git common directory and supplies only that path as an
+  additional writable root, enabling linked-worktree index, object, log, and
+  branch-ref writes without granting an arbitrary parent directory.
 - The existing `plan.attempt_finished` event may include `duration_ms`, final
   aggregate `input_tokens`, `cached_input_tokens`, `output_tokens`,
   `reasoning_output_tokens`, and `launcher_prompt_bytes`. Missing or malformed
