@@ -187,7 +187,7 @@ class SequentialCliTest(unittest.TestCase):
     def test_skill_docs_match_hardened_public_contract(self) -> None:
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        self.assertIn('version: "1.2.0"', skill)
+        self.assertIn('version: "1.3.0"', skill)
         for phrase in (
             "process group",
             "bounded",
@@ -199,6 +199,9 @@ class SequentialCliTest(unittest.TestCase):
             "final HEAD",
             "usage",
             "Change Protocol",
+            "atomic recovery fields",
+            "two-pipe drain",
+            "linked",
         ):
             self.assertIn(phrase, skill + readme)
         root_index = (ROOT.parent / "README.md").read_text(encoding="utf-8")
