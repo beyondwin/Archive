@@ -702,7 +702,29 @@ print(json.dumps(result, sort_keys=True), flush=True)
 
         self.assertTrue(forced)
         self.assertEqual(killpg.call_count, 2)
-        process.wait.assert_called_once_with()
+        process.wait.assert_called_once_with(timeout=1.0)
+
+    def test_terminate_group_fails_closed_on_persistent_permission_error(self) -> None:
+        process = mock.Mock(pid=1234)
+        process.wait.side_effect = subprocess.TimeoutExpired("codex", 1.0)
+        with mock.patch(
+            "cpe_runtime.launcher._group_exists",
+            return_value=True,
+        ), mock.patch(
+            "cpe_runtime.launcher.os.killpg",
+            side_effect=PermissionError(1, "Operation not permitted"),
+        ) as killpg, mock.patch(
+            "cpe_runtime.launcher.time.monotonic",
+            side_effect=[0.0, 0.0, 0.0, 1.0],
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "child process group did not terminate",
+            ):
+                _terminate_group(process, 0)
+
+        self.assertEqual(killpg.call_count, 2)
+        process.wait.assert_called_once_with(timeout=1.0)
 
     def test_handoff_acceptance_and_result_isolation(self) -> None:
         runner = self.runner()
