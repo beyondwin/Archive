@@ -1206,6 +1206,40 @@ print(json.dumps(result, sort_keys=True), flush=True)
 
         self.assertIsNone(runner._handoff_error(store, plan, outcome(payload)))
 
+        nullable_wire_payload = dict(
+            payload,
+            retryable=None,
+            failure_signature=None,
+            next_strategy=None,
+        )
+        self.assertIsNone(
+            runner._handoff_error(
+                store,
+                plan,
+                outcome(nullable_wire_payload),
+            )
+        )
+        self.assertNotIn("retryable", nullable_wire_payload)
+        self.assertNotIn("failure_signature", nullable_wire_payload)
+        self.assertNotIn("next_strategy", nullable_wire_payload)
+
+        nullable_failed_wire_payload = dict(
+            payload,
+            status="failed",
+            retryable=None,
+            failure_signature=None,
+            next_strategy=None,
+            workflow_receipt=None,
+        )
+        self.assertIsNone(
+            runner._handoff_error(
+                store,
+                plan,
+                outcome(nullable_failed_wire_payload),
+            )
+        )
+        self.assertNotIn("workflow_receipt", nullable_failed_wire_payload)
+
         missing_receipt = dict(payload)
         missing_receipt.pop("workflow_receipt")
         self.assertEqual(
