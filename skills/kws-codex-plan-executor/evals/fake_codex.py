@@ -207,9 +207,9 @@ def main() -> int:
         head = commit_plan(worktree, plan_id)
         status = "completed"
     elif scenario == "large_log":
-        sys.stdout.buffer.write(b"x" * 2_200_000)
-        sys.stdout.buffer.write(b"CPE_FINAL_LOG_MARKER\n")
-        sys.stdout.flush()
+        sys.stderr.buffer.write(b"x" * 2_200_000)
+        sys.stderr.buffer.write(b"CPE_FINAL_LOG_MARKER\n")
+        sys.stderr.flush()
         head = commit_plan(worktree, plan_id)
         status = "completed"
     elif scenario == "mutate_prior_nonzero_completed":
@@ -245,6 +245,30 @@ def main() -> int:
         )
     if status == "completed":
         payload["workflow_receipt"] = workflow_receipt(worktree)
+    print(
+        json.dumps(
+            {
+                "type": "item.completed",
+                "item": {"text": "RAW_EVENT_SENTINEL"},
+            }
+        ),
+        flush=True,
+    )
+    if scenario != "blocking_completed":
+        print(
+            json.dumps(
+                {
+                    "type": "turn.completed",
+                    "usage": {
+                        "input_tokens": 41,
+                        "cached_input_tokens": 31,
+                        "output_tokens": 7,
+                        "reasoning_output_tokens": 5,
+                    },
+                }
+            ),
+            flush=True,
+        )
     result_path.parent.mkdir(parents=True, exist_ok=True)
     result_path.write_text(json.dumps(payload), encoding="utf-8")
     print(json.dumps({"type": "result", "status": status}))

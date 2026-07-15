@@ -178,6 +178,7 @@ class SequentialCliTest(unittest.TestCase):
         for flag in (
             "--ephemeral",
             "--ignore-user-config",
+            "--json",
             "--output-schema",
             "--output-last-message",
         ):

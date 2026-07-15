@@ -18,7 +18,12 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from cpe_runtime.launcher import CodexLauncher, LaunchResult, _terminate_group
+from cpe_runtime.launcher import (
+    CodexLauncher,
+    LaunchResult,
+    _terminate_group,
+    _UsageFilter,
+)
 from cpe_runtime.runner import (
     SequentialRunner,
     _ledger_progress,
@@ -698,7 +703,7 @@ print(json.dumps(result, sort_keys=True), flush=True)
             recovery_path=None,
         )
         self.assertIn("--ephemeral", command)
-        self.assertNotIn("--json", command)
+        self.assertIn("--json", command)
         self.assertNotIn("--add-dir", command)
         self.assertEqual(command.count("--output-last-message"), 1)
         self.assertNotIn("REPOSITORY:", prompt)
@@ -717,6 +722,49 @@ print(json.dumps(result, sort_keys=True), flush=True)
         self.assertIn("same normalized verification command", prompt)
         self.assertIn("workflow_receipt", prompt)
         self.assertLess(len(prompt.encode("utf-8")), 2_400)
+
+    def test_usage_filter_keeps_only_bounded_final_totals(self) -> None:
+        capture = _UsageFilter()
+        capture.feed(
+            b'{"type":"item.completed","item":{"text":"RAW_EVENT_SENTINEL"}}\n'
+            b'{"type":"turn.completed","usage":{"input_tokens":41,'
+        )
+        capture.feed(
+            b'"cached_input_tokens":31,"output_tokens":7,'
+            b'"reasoning_output_tokens":5}}\n'
+        )
+        capture.finish()
+        self.assertEqual(
+            capture.usage,
+            {
+                "input_tokens": 41,
+                "cached_input_tokens": 31,
+                "output_tokens": 7,
+                "reasoning_output_tokens": 5,
+            },
+        )
+        self.assertFalse(hasattr(capture, "events"))
+
+        missing = _UsageFilter()
+        missing.feed(b'{"type":"turn.started"}\nnot-json\n')
+        missing.finish()
+        self.assertEqual(
+            missing.usage,
+            {
+                "input_tokens": None,
+                "cached_input_tokens": None,
+                "output_tokens": None,
+                "reasoning_output_tokens": None,
+            },
+        )
+
+        oversized = _UsageFilter()
+        oversized.feed(b"x" * 70_000 + b"\n")
+        oversized.feed(
+            b'{"type":"turn.completed","usage":{"input_tokens":3}}\n'
+        )
+        oversized.finish()
+        self.assertEqual(oversized.usage["input_tokens"], 3)
 
     def test_terminate_group_tolerates_transient_permission_errors(self) -> None:
         process = mock.Mock(pid=1234)
@@ -794,6 +842,12 @@ print(json.dumps(result, sort_keys=True), flush=True)
                 discarded_log_bytes=0,
                 result_path=result_path,
                 log_path=log_path,
+                duration_ms=0,
+                input_tokens=None,
+                cached_input_tokens=None,
+                output_tokens=None,
+                reasoning_output_tokens=None,
+                launcher_prompt_bytes=0,
             )
 
         self.assertIsNone(runner._handoff_error(store, plan, outcome(payload)))
@@ -938,6 +992,35 @@ print(json.dumps(result, sort_keys=True), flush=True)
         self.assertEqual(len({call["worktree"] for call in calls}), 1)
         self.assertTrue((Path(calls[0]["worktree"]) / "plan-1.txt").is_file())
         self.assertTrue((Path(calls[0]["worktree"]) / "plan-2.txt").is_file())
+        events_path = (
+            self.home / "orchestrator" / "two-plans" / "events.jsonl"
+        )
+        events = [
+            json.loads(line) for line in events_path.read_text().splitlines()
+        ]
+        finished = [
+            event
+            for event in events
+            if event["kind"] == "plan.attempt_finished"
+        ]
+        self.assertEqual(len(finished), 2)
+        for event in finished:
+            self.assertGreaterEqual(event["duration_ms"], 0)
+            self.assertEqual(event["input_tokens"], 41)
+            self.assertEqual(event["cached_input_tokens"], 31)
+            self.assertEqual(event["output_tokens"], 7)
+            self.assertEqual(event["reasoning_output_tokens"], 5)
+            self.assertGreater(event["launcher_prompt_bytes"], 0)
+        self.assertNotIn("RAW_EVENT_SENTINEL", events_path.read_text())
+        for call in calls:
+            log = (
+                self.home
+                / "orchestrator"
+                / "two-plans"
+                / "logs"
+                / f"{call['plan_id']}-attempt-1.log"
+            )
+            self.assertNotIn("RAW_EVENT_SENTINEL", log.read_text())
 
     def test_resume_skips_completed_plan_and_continues_current_git_state(self) -> None:
         runner = self.runner()

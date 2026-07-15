@@ -11,7 +11,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Callable, Mapping, Sequence
 
 
 _SECRETS = {
@@ -20,6 +20,65 @@ _SECRETS = {
 }
 _RETAINED_LOG_BYTES = 1_048_576
 _COMPACT_AT_BYTES = 2_097_152
+_JSON_EVENT_LINE_BYTES = 65_536
+_USAGE_FIELDS = (
+    "input_tokens",
+    "cached_input_tokens",
+    "output_tokens",
+    "reasoning_output_tokens",
+)
+
+
+class _UsageFilter:
+    def __init__(self) -> None:
+        self._buffer = bytearray()
+        self._dropping = False
+        self.usage: dict[str, int | None] = {
+            name: None for name in _USAGE_FIELDS
+        }
+
+    def feed(self, chunk: bytes) -> None:
+        for segment in chunk.splitlines(keepends=True):
+            complete = segment.endswith((b"\n", b"\r"))
+            if self._dropping:
+                if complete:
+                    self._dropping = False
+                continue
+            self._buffer.extend(segment)
+            if len(self._buffer) > _JSON_EVENT_LINE_BYTES:
+                self._buffer.clear()
+                self._dropping = not complete
+                continue
+            if complete:
+                self._consume(bytes(self._buffer).rstrip(b"\r\n"))
+                self._buffer.clear()
+
+    def finish(self) -> None:
+        if self._buffer and not self._dropping:
+            self._consume(bytes(self._buffer))
+        self._buffer.clear()
+        self._dropping = False
+
+    def _consume(self, line: bytes) -> None:
+        try:
+            event = json.loads(line.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return
+        if not isinstance(event, dict) or event.get("type") != "turn.completed":
+            return
+        usage = event.get("usage")
+        if not isinstance(usage, dict):
+            return
+        self.usage = {
+            name: (
+                value
+                if isinstance((value := usage.get(name)), int)
+                and not isinstance(value, bool)
+                and value >= 0
+                else None
+            )
+            for name in _USAGE_FIELDS
+        }
 
 
 class _BoundedLog:
@@ -126,13 +185,22 @@ def _terminate_group(
     return forced
 
 
-def _drain_pipe(pipe: object, log: _BoundedLog) -> None:
+def _drain_pipe(
+    pipe: object,
+    consume: Callable[[bytes], None],
+) -> None:
     descriptor = pipe.fileno()  # type: ignore[attr-defined]
     while True:
         chunk = os.read(descriptor, 65_536)
         if not chunk:
             return
-        log.write(chunk)
+        consume(chunk)
+
+
+def _drain_registered(selector: selectors.BaseSelector) -> None:
+    for key in list(selector.get_map().values()):
+        _drain_pipe(key.fileobj, key.data)
+        selector.unregister(key.fileobj)
 
 
 @dataclass(frozen=True)
@@ -144,6 +212,12 @@ class LaunchResult:
     discarded_log_bytes: int
     result_path: Path
     log_path: Path
+    duration_ms: int
+    input_tokens: int | None
+    cached_input_tokens: int | None
+    output_tokens: int | None
+    reasoning_output_tokens: int | None
+    launcher_prompt_bytes: int
 
 
 class CodexLauncher:
@@ -192,6 +266,7 @@ class CodexLauncher:
             "exec",
             "--ignore-user-config",
             "--ephemeral",
+            "--json",
             "--sandbox",
             "workspace-write",
             "-C",
@@ -285,14 +360,16 @@ class CodexLauncher:
 
             signal.signal(signal.SIGTERM, interrupt_on_sigterm)
         spawn_error: OSError | None = None
-        pipe_open = False
+        prompt_bytes = prompt.encode("utf-8")
+        started = time.monotonic()
+        usage = _UsageFilter()
         try:
             try:
                 process = subprocess.Popen(
                     command,
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
+                    stderr=subprocess.PIPE,
                     start_new_session=True,
                     env=environment,
                     pass_fds=(lock_fd,),
@@ -305,14 +382,26 @@ class CodexLauncher:
                     )
                 )
             if process is not None:
-                assert process.stdin is not None and process.stdout is not None
+                assert (
+                    process.stdin is not None
+                    and process.stdout is not None
+                    and process.stderr is not None
+                )
                 try:
-                    process.stdin.write(prompt.encode("utf-8"))
+                    process.stdin.write(prompt_bytes)
                     process.stdin.close()
                 except BrokenPipeError:
                     process.stdin.close()
-                selector.register(process.stdout, selectors.EVENT_READ)
-                pipe_open = True
+                selector.register(
+                    process.stdout,
+                    selectors.EVENT_READ,
+                    usage.feed,
+                )
+                selector.register(
+                    process.stderr,
+                    selectors.EVENT_READ,
+                    log.write,
+                )
                 deadline = time.monotonic() + self.timeout_seconds
                 while True:
                     remaining = deadline - time.monotonic()
@@ -320,9 +409,7 @@ class CodexLauncher:
                         timed_out = True
                         _terminate_group(process, self.termination_grace_seconds)
                         returncode = process.returncode
-                        if pipe_open:
-                            _drain_pipe(process.stdout, log)
-                            pipe_open = False
+                        _drain_registered(selector)
                         break
                     events = selector.select(
                         min(0.02, max(0.0, remaining))
@@ -330,12 +417,12 @@ class CodexLauncher:
                         else 0
                     )
                     for key, _ in events:
+                        sink = key.data
                         chunk = os.read(key.fd, 65_536)
                         if chunk:
-                            log.write(chunk)
+                            sink(chunk)
                         else:
                             selector.unregister(key.fileobj)
-                            pipe_open = False
                     observed = process.poll()
                     if observed is not None:
                         returncode = observed
@@ -345,25 +432,24 @@ class CodexLauncher:
                                 process,
                                 self.termination_grace_seconds,
                             )
-                        if pipe_open:
-                            _drain_pipe(process.stdout, log)
-                            pipe_open = False
+                        _drain_registered(selector)
                         break
         except BaseException:
             if process is not None:
                 _terminate_group(process, self.termination_grace_seconds)
-                if pipe_open and process.stdout is not None:
-                    _drain_pipe(process.stdout, log)
-                    pipe_open = False
+                _drain_registered(selector)
             raise
         finally:
             selector.close()
             if process is not None and process.stdout is not None:
                 process.stdout.close()
+            if process is not None and process.stderr is not None:
+                process.stderr.close()
             log.close()
             if manages_sigterm and previous_sigterm is not None:
                 signal.signal(signal.SIGTERM, previous_sigterm)
 
+        usage.finish()
         payload = None
         if result_path.is_file() and not result_path.is_symlink():
             try:
@@ -375,6 +461,7 @@ class CodexLauncher:
                 payload = None
         if spawn_error is not None:
             returncode = None
+        duration_ms = max(0, round((time.monotonic() - started) * 1000))
         return LaunchResult(
             payload=payload,
             returncode=returncode,
@@ -383,4 +470,12 @@ class CodexLauncher:
             discarded_log_bytes=log.discarded_bytes,
             result_path=result_path,
             log_path=log_path,
+            duration_ms=duration_ms,
+            input_tokens=usage.usage["input_tokens"],
+            cached_input_tokens=usage.usage["cached_input_tokens"],
+            output_tokens=usage.usage["output_tokens"],
+            reasoning_output_tokens=usage.usage[
+                "reasoning_output_tokens"
+            ],
+            launcher_prompt_bytes=len(prompt_bytes),
         )

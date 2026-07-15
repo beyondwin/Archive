@@ -724,6 +724,12 @@ class SequentialRunner:
                     timed_out=outcome.timed_out,
                     forced_cleanup=outcome.forced_cleanup,
                     discarded_log_bytes=outcome.discarded_log_bytes,
+                    duration_ms=outcome.duration_ms,
+                    input_tokens=outcome.input_tokens,
+                    cached_input_tokens=outcome.cached_input_tokens,
+                    output_tokens=outcome.output_tokens,
+                    reasoning_output_tokens=outcome.reasoning_output_tokens,
+                    launcher_prompt_bytes=outcome.launcher_prompt_bytes,
                 )
                 plan["result_path"] = (
                     str(outcome.result_path.resolve())
