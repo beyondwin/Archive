@@ -19,7 +19,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from cpe_runtime.launcher import CodexLauncher, LaunchResult, _terminate_group
-from cpe_runtime.runner import SequentialRunner
+from cpe_runtime.runner import (
+    SequentialRunner,
+    _ledger_progress,
+    _write_private_json,
+)
 from cpe_runtime.state import StateStore
 
 
@@ -973,6 +977,106 @@ print(json.dumps(result, sort_keys=True), flush=True)
                 for event in events
             )
         )
+
+    def test_progress_ledger_read_is_bounded_before_parsing(self) -> None:
+        evidence = self.repo / ".superpowers" / "sdd"
+        evidence.mkdir(parents=True)
+        ledger = evidence / "progress.md"
+        prefix = b"Task 1: complete\n"
+        ledger.write_bytes(
+            prefix
+            + b" " * (65_536 - len(prefix))
+            + b"Task 2: complete\n"
+        )
+
+        real_read = os.read
+        requested: list[int] = []
+        returned: list[int] = []
+
+        def bounded_read(descriptor: int, count: int) -> bytes:
+            requested.append(count)
+            chunk = real_read(descriptor, count)
+            returned.append(len(chunk))
+            return chunk
+
+        with mock.patch("cpe_runtime.runner.os.read", side_effect=bounded_read):
+            completed, current = _ledger_progress(self.repo)
+
+        self.assertEqual(completed, ["Task 1"])
+        self.assertEqual(current, "Task 2")
+        self.assertTrue(requested)
+        self.assertTrue(all(count <= 65_536 for count in requested))
+        self.assertLessEqual(sum(returned), 65_536)
+
+    def test_resume_reuses_capsule_persisted_before_state_advance(self) -> None:
+        runner = self.runner()
+        original = runner._create_recovery_capsule
+        persisted: Path | None = None
+
+        def interrupt_after_capsule(*args: object, **kwargs: object) -> Path:
+            nonlocal persisted
+            persisted = original(*args, **kwargs)
+            raise KeyboardInterrupt
+
+        with mock.patch.object(
+            runner,
+            "_create_recovery_capsule",
+            side_effect=interrupt_after_capsule,
+        ):
+            first = runner.run(
+                workspace=self.repo,
+                specs=[],
+                plans=[self.plan(1, "interrupted")],
+                run_id="capsule-reentry",
+            )
+
+        self.assertEqual(first["status"], "interrupted")
+        self.assertIsNotNone(persisted)
+        self.assertEqual(first["plans"][0]["attempt_count"], 1)
+        resumed = runner.resume(run_id="capsule-reentry")
+        self.assertEqual(resumed["status"], "failed")
+        self.assertEqual(resumed["plans"][0]["attempt_count"], 2)
+        self.assertEqual(
+            Path(self.invocations()[-1]["recovery_capsule"]),
+            persisted,
+        )
+
+    def test_existing_capsule_must_match_expected_canonical_bytes(self) -> None:
+        target = self.root / "capsule.json"
+        payload = {"plan_id": "plan-01", "attempt": 1}
+        self.assertEqual(_write_private_json(target, payload), target.resolve())
+        self.assertEqual(_write_private_json(target, payload), target.resolve())
+
+        target.write_text('{"different":true}', encoding="utf-8")
+        target.chmod(0o600)
+        with self.assertRaisesRegex(ValueError, "capsule"):
+            _write_private_json(target, payload)
+
+    def test_existing_capsule_rejects_unsafe_mode_and_symlink(self) -> None:
+        target = self.root / "capsule.json"
+        payload = {"plan_id": "plan-01", "attempt": 1}
+        _write_private_json(target, payload)
+        target.chmod(0o644)
+        with self.assertRaisesRegex(ValueError, "capsule"):
+            _write_private_json(target, payload)
+
+        target.unlink()
+        backing = self.root / "backing.json"
+        _write_private_json(backing, payload)
+        target.symlink_to(backing)
+        with self.assertRaisesRegex((OSError, ValueError), "capsule|symlink"):
+            _write_private_json(target, payload)
+
+    def test_new_capsule_partial_write_is_removed(self) -> None:
+        target = self.root / "capsule.json"
+        payload = {"plan_id": "plan-01", "attempt": 1}
+        with mock.patch(
+            "cpe_runtime.runner.os.write",
+            side_effect=OSError("injected write failure"),
+        ):
+            with self.assertRaisesRegex(OSError, "injected write failure"):
+                _write_private_json(target, payload)
+        self.assertFalse(target.exists())
 
     def test_retryable_failure_uses_one_changed_strategy_recovery(self) -> None:
         result = self.runner().run(
