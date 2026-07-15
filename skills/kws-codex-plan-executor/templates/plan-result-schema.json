@@ -23,6 +23,17 @@
       }
     },
     "summary": {"type": "string", "minLength": 1, "maxLength": 2000},
+    "retryable": {"type": "boolean"},
+    "failure_signature": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "next_strategy": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000
+    },
     "workflow_receipt": {
       "type": "object",
       "additionalProperties": false,

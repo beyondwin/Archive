@@ -25,6 +25,7 @@ SCENARIOS = {
     "completed_with_grandchild",
     "large_log",
     "mutate_prior_nonzero_completed",
+    "retryable_then_completed",
 }
 
 
@@ -56,7 +57,7 @@ def git(worktree: Path, *arguments: str) -> str:
 def invocation_number(
     plan_id: str,
     worktree: Path,
-    prior_log: str | None,
+    recovery_capsule: str | None,
 ) -> int:
     declared = os.environ.get("CPE_FAKE_INVOCATION_LOG")
     if not declared:
@@ -71,7 +72,7 @@ def invocation_number(
             "plan_id": plan_id,
             "worktree": str(worktree),
             "number": count,
-            "prior_log": prior_log,
+            "recovery_capsule": recovery_capsule,
         }
     )
     path.write_text("".join(json.dumps(entry) + "\n" for entry in entries))
@@ -109,6 +110,17 @@ def workflow_receipt(worktree: Path) -> dict[str, str]:
     }
 
 
+def write_progress(worktree: Path) -> None:
+    evidence = worktree / ".superpowers" / "sdd"
+    evidence.mkdir(parents=True, exist_ok=True)
+    (evidence / ".gitignore").write_text("*\n", encoding="utf-8")
+    (evidence / "progress.md").write_text(
+        "Task 1: complete (commit 1111111)\n"
+        "Task 2: complete (commit 2222222)\n",
+        encoding="utf-8",
+    )
+
+
 def main() -> int:
     arguments = sys.argv[1:]
     prompt = sys.stdin.read()
@@ -119,9 +131,21 @@ def main() -> int:
     scenario = plan_path.read_text(encoding="utf-8").splitlines()[0].split(":", 1)[1]
     if scenario not in SCENARIOS:
         raise SystemExit(f"unsupported scenario {scenario}")
-    prior_log_match = re.search(r"^PRIOR_LOG: (.+)$", prompt, re.MULTILINE)
-    prior_log = prior_log_match.group(1).strip() if prior_log_match else None
-    attempt = invocation_number(plan_id, worktree, prior_log)
+    recovery_match = re.search(
+        r"^RECOVERY_CAPSULE: (.+)$",
+        prompt,
+        re.MULTILINE,
+    )
+    recovery_capsule = (
+        recovery_match.group(1).strip()
+        if recovery_match
+        else None
+    )
+    attempt = invocation_number(
+        plan_id,
+        worktree,
+        recovery_capsule,
+    )
     head = git(worktree, "rev-parse", "HEAD")
     status = scenario
 
@@ -196,6 +220,15 @@ def main() -> int:
             pass
         head = commit_plan(worktree, plan_id)
         status = "completed"
+    elif scenario == "retryable_then_completed":
+        if attempt == 1:
+            write_progress(worktree)
+            status = "failed"
+        else:
+            head = commit_plan(worktree, plan_id)
+            status = "completed"
+    elif scenario == "interrupted":
+        write_progress(worktree)
 
     payload = {
         "plan_id": plan_id,
@@ -204,6 +237,12 @@ def main() -> int:
         "verification": ([{"command": "fake verify", "exit_code": 0}] if status == "completed" else []),
         "summary": f"fake {scenario} attempt {attempt}",
     }
+    if scenario == "retryable_then_completed" and status == "failed":
+        payload.update(
+            retryable=True,
+            failure_signature="verification:test_parser_failed",
+            next_strategy="inspect the parser boundary and resume Task 3",
+        )
     if status == "completed":
         payload["workflow_receipt"] = workflow_receipt(worktree)
     result_path.parent.mkdir(parents=True, exist_ok=True)
