@@ -8,7 +8,9 @@ import os
 import re
 import shutil
 import stat
+import subprocess
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from .progress import ProgressSnapshot
@@ -49,6 +51,27 @@ _VARIANT_FIELDS = {
 }
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
+_RESULT_FORMAT_2_FIELDS = {
+    "plan_id", "status", "head_commit", "summary", "verification",
+    "checkpoint", "blocker", "workflow_receipt",
+}
+_WORKFLOW_RECEIPT_FIELDS = {
+    "ledger_path", "final_review_path", "final_review_head",
+    "open_finding_ids", "open_obligation_ids",
+}
+_VERIFICATION_FIELDS = {
+    "command_id", "argv_digest", "phase", "evidence_key", "exit_code",
+    "receipt_path",
+}
+
+
+@dataclass(frozen=True)
+class EnvelopeRepair:
+    original_path: Path
+    repaired_path: Path
+    original_digest: str
+    repaired_digest: str
+    changed_fields: tuple[str, ...]
 
 
 def _safe_reference(value: object) -> str:
@@ -448,3 +471,451 @@ def ingest_plan_evidence(
             except OSError:
                 pass
         raise
+
+
+def _strict_json_object(payload: bytes) -> dict[str, object] | None:
+    def object_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        result: dict[str, object] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate JSON property")
+            result[key] = value
+        return result
+
+    try:
+        decoded = json.loads(payload, object_pairs_hook=object_pairs)
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        return None
+    return decoded if isinstance(decoded, dict) else None
+
+
+def _git_output(worktree: Path, *arguments: str) -> str | None:
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(worktree), *arguments],
+            check=True,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return completed.stdout.strip()
+
+
+def _walk_owned_regular_file(
+    declared: Path,
+    worktree: Path,
+    *,
+    allow_absolute: bool,
+) -> Path | None:
+    """Prove lexical containment, then walk every component without symlinks."""
+    try:
+        root = worktree.resolve(strict=True)
+        root_metadata = os.lstat(worktree)
+    except OSError:
+        return None
+    if worktree != root or stat.S_ISLNK(root_metadata.st_mode) or not stat.S_ISDIR(
+        root_metadata.st_mode
+    ):
+        return None
+
+    raw_parts: tuple[str, ...]
+    if declared.is_absolute():
+        if not allow_absolute:
+            return None
+        try:
+            raw_relative = declared.relative_to(root)
+        except ValueError:
+            return None
+        normalized = Path(os.path.normpath(str(declared)))
+        try:
+            normalized.relative_to(root)
+        except ValueError:
+            return None
+        raw_parts = raw_relative.parts
+    else:
+        if (
+            not declared.parts
+            or "\\" in str(declared)
+            or any(part in {"", ".", ".."} for part in declared.parts)
+        ):
+            return None
+        raw_parts = declared.parts
+
+    # Reject paths whose traversal leaves the owned root even temporarily.
+    depth = 0
+    canonical_parts: list[str] = []
+    for part in raw_parts:
+        if part == ".":
+            continue
+        if part == "..":
+            if depth == 0:
+                return None
+            depth -= 1
+            canonical_parts.pop()
+        else:
+            depth += 1
+            canonical_parts.append(part)
+    if not canonical_parts:
+        return None
+
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        current = os.open(root, flags)
+    except OSError:
+        return None
+    try:
+        for position, part in enumerate(raw_parts):
+            if part == ".":
+                continue
+            final = position == len(raw_parts) - 1
+            try:
+                visible = os.stat(part, dir_fd=current, follow_symlinks=False)
+            except OSError:
+                return None
+            if stat.S_ISLNK(visible.st_mode):
+                return None
+            component_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+            if not final:
+                component_flags |= getattr(os, "O_DIRECTORY", 0)
+            try:
+                opened = os.open(part, component_flags, dir_fd=current)
+            except OSError:
+                return None
+            metadata = os.fstat(opened)
+            if (
+                metadata.st_dev != visible.st_dev
+                or metadata.st_ino != visible.st_ino
+                or (final and not stat.S_ISREG(metadata.st_mode))
+                or (not final and not stat.S_ISDIR(metadata.st_mode))
+            ):
+                os.close(opened)
+                return None
+            os.close(current)
+            current = opened
+        if not stat.S_ISREG(os.fstat(current).st_mode):
+            return None
+    finally:
+        os.close(current)
+    return root.joinpath(*canonical_parts)
+
+
+def _valid_result_envelope(payload: dict[str, object]) -> bool:
+    if set(payload) != _RESULT_FORMAT_2_FIELDS:
+        return False
+    if (
+        payload.get("status") != "completed"
+        or not isinstance(payload.get("plan_id"), str)
+        or not _IDENTIFIER.fullmatch(str(payload["plan_id"]))
+        or not isinstance(payload.get("head_commit"), str)
+        or not re.fullmatch(r"[0-9a-f]{40}", str(payload["head_commit"]))
+        or not isinstance(payload.get("summary"), str)
+        or not str(payload["summary"]).strip()
+        or len(str(payload["summary"])) > 2000
+        or payload.get("checkpoint") is not None
+        or payload.get("blocker") is not None
+    ):
+        return False
+    verification = payload.get("verification")
+    if not isinstance(verification, list) or not verification:
+        return False
+    identities: set[tuple[str, str, str]] = set()
+    for item in verification:
+        if not isinstance(item, dict) or set(item) != _VERIFICATION_FIELDS:
+            return False
+        if (
+            not isinstance(item.get("command_id"), str)
+            or not str(item["command_id"]).strip()
+            or not isinstance(item.get("argv_digest"), str)
+            or not _DIGEST.fullmatch(str(item["argv_digest"]))
+            or item.get("phase") not in {"task", "affected", "branch_final"}
+            or not isinstance(item.get("evidence_key"), str)
+            or not _DIGEST.fullmatch(str(item["evidence_key"]))
+            or item.get("exit_code") != 0
+            or isinstance(item.get("exit_code"), bool)
+            or item.get("receipt_path") is not None
+        ):
+            return False
+        identity = (
+            str(item["command_id"]), str(item["argv_digest"]),
+            str(item["evidence_key"]),
+        )
+        if identity in identities:
+            return False
+        identities.add(identity)
+    receipt = payload.get("workflow_receipt")
+    if not isinstance(receipt, dict) or set(receipt) != _WORKFLOW_RECEIPT_FIELDS:
+        return False
+    if (
+        receipt.get("final_review_head") != payload["head_commit"]
+        or receipt.get("open_finding_ids") != []
+        or receipt.get("open_obligation_ids") != []
+    ):
+        return False
+    return all(
+        isinstance(receipt.get(name), str)
+        and bool(receipt[name])
+        and len(str(receipt[name])) <= 500
+        for name in ("ledger_path", "final_review_path")
+    )
+
+
+def _semantic_projection(payload: dict[str, object]) -> dict[str, object]:
+    projection = json.loads(json.dumps(payload))
+    receipt = projection["workflow_receipt"]
+    assert isinstance(receipt, dict)
+    receipt["ledger_path"] = "<workflow-artifact-path>"
+    receipt["final_review_path"] = "<workflow-artifact-path>"
+    return projection
+
+
+def _original_failure_is_repairable(
+    *, run_root: Path, plan_id: str, original_result_path: Path,
+) -> bool:
+    try:
+        store = StateStore.open(run_root)
+        plans = store.state["plans"]
+        plan = next(
+            record for record in plans
+            if isinstance(record, dict) and record.get("plan_id") == plan_id
+        )
+        declared_result = Path(str(plan.get("result_path"))).resolve(strict=True)
+        failed_unrepaired = (
+            store.state["status"] == "failed"
+            and plan.get("status") == "failed"
+            and plan.get("original_result_path") is None
+            and declared_result == original_result_path.resolve(strict=True)
+        )
+        recorded_repair = False
+        recorded_original = plan.get("original_result_path")
+        if isinstance(recorded_original, str):
+            recorded_repair = (
+                store.state["status"] == "running"
+                and plan.get("status") == "running"
+                and Path(recorded_original).resolve(strict=True)
+                == original_result_path.resolve(strict=True)
+                and declared_result != original_result_path.resolve(strict=True)
+            )
+        if not failed_unrepaired and not recorded_repair:
+            return False
+        events = [
+            json.loads(line)
+            for line in store.events_path.read_text(encoding="utf-8").splitlines()
+        ]
+    except (OSError, ValueError, StopIteration, json.JSONDecodeError):
+        return False
+    failures = [
+        event for event in events
+        if isinstance(event, dict)
+        and event.get("action") == "plan.integrity_failed"
+        and event.get("plan_id") == plan_id
+    ]
+    if failed_unrepaired:
+        return bool(failures) and failures[-1].get("reason") == "unsafe_workflow_artifact"
+    repairs = [
+        event for event in events
+        if isinstance(event, dict)
+        and event.get("action") == "result.envelope_repaired"
+        and event.get("plan_id") == plan_id
+    ]
+    return len(repairs) == 1
+
+
+def _write_immutable_result(path: Path, payload: bytes) -> bool:
+    try:
+        descriptor = os.open(
+            path,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            0o400,
+        )
+    except FileExistsError:
+        try:
+            metadata = os.lstat(path)
+            return (
+                stat.S_ISREG(metadata.st_mode)
+                and stat.S_IMODE(metadata.st_mode) == 0o400
+                and _read_regular(
+                    path, missing_message="repaired result is unsafe",
+                ) == payload
+            )
+        except (OSError, ValueError):
+            return False
+    except OSError:
+        return False
+    try:
+        _write_all(descriptor, payload)
+        os.fchmod(descriptor, 0o400)
+        os.fsync(descriptor)
+    except OSError:
+        os.close(descriptor)
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        return False
+    os.close(descriptor)
+    try:
+        _fsync_directory(path.parent)
+    except OSError:
+        return False
+    return True
+
+
+def repair_result_envelope(
+    *,
+    run_root: Path,
+    worktree: Path,
+    original_result_path: Path,
+) -> EnvelopeRepair | None:
+    """Normalize only safe absolute workflow artifact spellings."""
+    try:
+        root = run_root.resolve(strict=True)
+        results_root = (root / "results").resolve(strict=True)
+        original = original_result_path.resolve(strict=True)
+        original.relative_to(results_root)
+        if original_result_path.is_symlink() or original != original_result_path:
+            return None
+        original_bytes = _read_regular(
+            original, missing_message="original result is unavailable",
+        )
+    except (OSError, ValueError):
+        return None
+    payload = _strict_json_object(original_bytes)
+    if payload is None or not _valid_result_envelope(payload):
+        return None
+    plan_id = str(payload["plan_id"])
+    if not _original_failure_is_repairable(
+        run_root=root,
+        plan_id=plan_id,
+        original_result_path=original,
+    ):
+        return None
+    if (
+        _git_output(worktree, "rev-parse", "HEAD") != payload["head_commit"]
+        or _git_output(
+            worktree, "status", "--porcelain", "--untracked-files=all",
+        ) != ""
+    ):
+        return None
+
+    receipt = payload["workflow_receipt"]
+    assert isinstance(receipt, dict)
+    repaired = json.loads(json.dumps(payload))
+    repaired_receipt = repaired["workflow_receipt"]
+    assert isinstance(repaired_receipt, dict)
+    changed_fields: list[str] = []
+    artifacts: dict[str, Path] = {}
+    for field in ("ledger_path", "final_review_path"):
+        raw = receipt[field]
+        assert isinstance(raw, str)
+        declared = Path(raw)
+        artifact = _walk_owned_regular_file(
+            declared, worktree, allow_absolute=True,
+        )
+        if artifact is None:
+            return None
+        artifacts[field] = artifact
+        if declared.is_absolute():
+            repaired_receipt[field] = artifact.relative_to(
+                worktree.resolve(strict=True)
+            ).as_posix()
+            changed_fields.append(f"/workflow_receipt/{field}")
+    if not changed_fields or not _valid_result_envelope(repaired):
+        return None
+    if _semantic_projection(repaired) != _semantic_projection(payload):
+        return None
+
+    try:
+        events = validate_execution_ledger(
+            artifacts["ledger_path"], expected_plan_id=plan_id,
+        )
+    except (OSError, ValueError):
+        return None
+    expected_verification = {
+        (
+            str(item["command_id"]), str(item["argv_digest"]),
+            str(item["evidence_key"]),
+        )
+        for item in payload["verification"]
+        if isinstance(item, dict)
+    }
+    observed_verification = {
+        (
+            str(event["command_id"]), str(event["argv_digest"]),
+            str(event["evidence_key"]),
+        )
+        for event in events
+        if event.get("category") == "verification"
+        and event.get("action") == "verified"
+        and event.get("result") == "pass"
+    }
+    accepted_reviews = [
+        event for event in events
+        if event.get("category") == "review"
+        and event.get("action") == "approved"
+        and event.get("result") in {"accepted", "pass"}
+    ]
+    review_or_finding_drift = any(
+        (
+            event.get("category") == "review"
+            and (
+                event.get("action") != "approved"
+                or event.get("result") not in {"accepted", "pass"}
+            )
+        )
+        or (
+            event.get("category") == "finding_fix"
+            and event.get("result") != "closed"
+        )
+        for event in events
+    )
+    if (
+        expected_verification != observed_verification
+        or not accepted_reviews
+        or review_or_finding_drift
+    ):
+        return None
+
+    repaired_bytes = json.dumps(
+        repaired, sort_keys=True, separators=(",", ":"),
+    ).encode("utf-8")
+    original_digest = hashlib.sha256(original_bytes).hexdigest()
+    repaired_digest = hashlib.sha256(repaired_bytes).hexdigest()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,200}", original.stem):
+        return None
+    repaired_root = results_root / "repaired"
+    try:
+        repaired_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if repaired_root.is_symlink() or not repaired_root.is_dir():
+            return None
+        repaired_root.chmod(0o700)
+    except OSError:
+        return None
+    repaired_path = repaired_root / f"{original.stem}-{repaired_digest}.json"
+    if not _write_immutable_result(repaired_path, repaired_bytes):
+        return None
+    try:
+        descriptor = os.open(
+            original, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+        )
+        if (
+            not stat.S_ISREG(os.fstat(descriptor).st_mode)
+            or _read_regular(
+                original, missing_message="original result is unavailable",
+            ) != original_bytes
+        ):
+            os.close(descriptor)
+            return None
+        os.fchmod(descriptor, 0o400)
+        os.fsync(descriptor)
+        os.close(descriptor)
+    except (OSError, ValueError):
+        return None
+    return EnvelopeRepair(
+        original_path=original,
+        repaired_path=repaired_path,
+        original_digest=original_digest,
+        repaired_digest=repaired_digest,
+        changed_fields=tuple(changed_fields),
+    )

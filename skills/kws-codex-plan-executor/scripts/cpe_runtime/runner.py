@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import math
 import os
@@ -24,10 +25,12 @@ from .capabilities import (
 )
 from .compiler import CompiledIndexService
 from .evidence import (
+    EnvelopeRepair,
     execution_event_digest,
     ingest_plan_evidence,
     prepare_plan_evidence,
     read_progress_snapshot,
+    repair_result_envelope,
     validate_execution_ledger,
 )
 from .launcher import (
@@ -1258,6 +1261,218 @@ class SequentialRunner:
             },
         )
 
+    @staticmethod
+    def _recorded_envelope_repair(
+        store: StateStore,
+        plan: Mapping[str, object],
+    ) -> EnvelopeRepair | None:
+        original_raw = plan.get("original_result_path")
+        repaired_raw = plan.get("result_path")
+        if not isinstance(original_raw, str) or not isinstance(repaired_raw, str):
+            return None
+        matches = [
+            event for event in (
+                json.loads(line)
+                for line in store.events_path.read_text(encoding="utf-8").splitlines()
+            )
+            if isinstance(event, dict)
+            and event.get("action") == "result.envelope_repaired"
+            and event.get("plan_id") == plan.get("plan_id")
+        ]
+        if len(matches) != 1:
+            raise ValueError("result envelope repair event is missing or duplicated")
+        event = matches[0]
+        original = Path(original_raw)
+        repaired = Path(repaired_raw)
+        try:
+            original_bytes = original.read_bytes()
+            repaired_bytes = repaired.read_bytes()
+            changed = event.get("changed_fields")
+            allowed_changes = {
+                ("/workflow_receipt/ledger_path",),
+                ("/workflow_receipt/final_review_path",),
+                (
+                    "/workflow_receipt/ledger_path",
+                    "/workflow_receipt/final_review_path",
+                ),
+            }
+            if (
+                event.get("source") != "parent_observed"
+                or event.get("run_id") != store.state["run_id"]
+                or event.get("category") != "result"
+                or original.is_symlink()
+                or repaired.is_symlink()
+                or not original.is_file()
+                or not repaired.is_file()
+                or stat.S_IMODE(original.stat().st_mode) != 0o400
+                or stat.S_IMODE(repaired.stat().st_mode) != 0o400
+                or not isinstance(changed, list)
+                or not all(isinstance(field, str) for field in changed)
+                or tuple(changed) not in allowed_changes
+                or not isinstance(event.get("original_digest"), str)
+                or not re.fullmatch(r"[0-9a-f]{64}", event["original_digest"])
+                or not isinstance(event.get("repaired_digest"), str)
+                or not re.fullmatch(r"[0-9a-f]{64}", event["repaired_digest"])
+                or hashlib.sha256(original_bytes).hexdigest()
+                != event.get("original_digest")
+                or hashlib.sha256(repaired_bytes).hexdigest()
+                != event.get("repaired_digest")
+            ):
+                raise ValueError("result envelope repair event does not match artifacts")
+        except OSError as exc:
+            raise ValueError("result envelope repair artifacts are unavailable") from exc
+        return EnvelopeRepair(
+            original_path=original,
+            repaired_path=repaired,
+            original_digest=str(event["original_digest"]),
+            repaired_digest=str(event["repaired_digest"]),
+            changed_fields=tuple(changed),
+        )
+
+    def _resume_envelope_repair(
+        self,
+        store: StateStore,
+        plan: dict[str, Any],
+        *,
+        plan_index: int,
+    ) -> tuple[str | None, str | None]:
+        state = store.state
+        repair: EnvelopeRepair | None = None
+        recorded = self._recorded_envelope_repair(store, plan)
+        if recorded is not None:
+            repair = repair_result_envelope(
+                run_root=store.root,
+                worktree=Path(state["worktree"]),
+                original_result_path=recorded.original_path,
+            )
+            if repair != recorded:
+                raise ValueError(
+                    "recorded result envelope repair no longer validates"
+                )
+        else:
+            result_raw = plan.get("result_path")
+            if not isinstance(result_raw, str):
+                return None, None
+            repair = repair_result_envelope(
+                run_root=store.root,
+                worktree=Path(state["worktree"]),
+                original_result_path=Path(result_raw),
+            )
+            if repair is None:
+                return None, None
+            matches = [
+                event for event in (
+                    json.loads(line)
+                    for line in store.events_path.read_text(encoding="utf-8").splitlines()
+                )
+                if isinstance(event, dict)
+                and event.get("action") == "result.envelope_repaired"
+                and event.get("plan_id") == plan["plan_id"]
+            ]
+            expected = {
+                "original_digest": repair.original_digest,
+                "repaired_digest": repair.repaired_digest,
+                "changed_fields": list(repair.changed_fields),
+            }
+            if len(matches) > 1:
+                raise ValueError("result envelope repair event is duplicated")
+            if matches:
+                if any(matches[0].get(name) != value for name, value in expected.items()):
+                    raise ValueError("result envelope repair event does not match artifacts")
+            else:
+                store.append_event(
+                    "result.envelope_repaired",
+                    plan_id=plan["plan_id"],
+                    **expected,
+                )
+            plan["original_result_path"] = str(repair.original_path)
+            plan["result_path"] = str(repair.repaired_path)
+            plan["status"] = "running"
+            state["status"] = "running"
+            store.save()
+
+        try:
+            payload = json.loads(repair.repaired_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError("repaired result is unavailable") from exc
+        if not isinstance(payload, dict):
+            raise ValueError("repaired result is invalid")
+        outcome = LaunchResult(
+            payload=payload,
+            returncode=0,
+            timed_out=False,
+            forced_cleanup=False,
+            discarded_log_bytes=0,
+            result_path=repair.repaired_path,
+            log_path=store.root / "logs" / f"{plan['plan_id']}-attempt-{plan['attempt_count']}.log",
+            duration_ms=0,
+            input_tokens=None,
+            cached_input_tokens=None,
+            output_tokens=None,
+            reasoning_output_tokens=None,
+            launcher_prompt_bytes=0,
+        )
+        integrity_error = self._handoff_error(store, plan, outcome)
+        if integrity_error is not None:
+            plan["status"] = "failed"
+            state["status"] = "failed"
+            store.save()
+            store.append_event(
+                "plan.integrity_failed",
+                plan_id=plan["plan_id"],
+                reason=integrity_error,
+            )
+            return "failed", integrity_error
+        observed_head = _current_head(Path(state["worktree"]))
+        try:
+            current_snapshot = self._progress_snapshot(
+                store, plan_index=plan_index, head=observed_head,
+            )
+            _, evidence_manifest_sha256 = prepare_plan_evidence(
+                worktree=Path(state["worktree"]),
+                plan_id=plan["plan_id"],
+                accepted_head=str(payload["head_commit"]),
+            )
+        except ProgressLedgerError as exc:
+            plan["status"] = "failed"
+            state["status"] = "failed"
+            store.save()
+            store.append_event(
+                "plan.integrity_failed", plan_id=plan["plan_id"], reason=exc.code,
+            )
+            return "failed", exc.code
+        except (OSError, ValueError) as exc:
+            reason = (str(exc).strip() or type(exc).__name__)[:2000]
+            plan["status"] = "failed"
+            state["status"] = "failed"
+            store.save()
+            store.append_event(
+                "plan.evidence_failed", plan_id=plan["plan_id"], reason=reason,
+            )
+            return "evidence_failed", reason
+        decision = decide_child_outcome(
+            previous=ProgressSnapshot(observed_head, (), None, (), ()),
+            current=current_snapshot,
+            timed_out=False,
+            consecutive_no_progress=plan["consecutive_no_progress_slices"],
+            progress_checkpoints=plan["progress_checkpoint_count"],
+            controller_launches=plan["controller_launch_count"],
+            plan_elapsed_seconds=plan["plan_elapsed_seconds"],
+            budget=self._checkpoint_budget(plan),
+            child_status="completed",
+        )
+        _persist_checkpoint_decision(
+            store,
+            decision,
+            timed_out=False,
+            head=observed_head,
+            evidence_manifest_sha256=evidence_manifest_sha256,
+        )
+        action = self._apply_pending_decision(store)
+        return action, (
+            "evidence_publication_failed" if action == "evidence_failed" else None
+        )
+
     def _execute(
         self,
         store: StateStore,
@@ -1273,6 +1488,16 @@ class SequentialRunner:
                 state["current_plan_index"] += 1
                 store.save()
                 continue
+            if explicit_retry or plan["original_result_path"] is not None:
+                repaired_action, repair_error = self._resume_envelope_repair(
+                    store, plan, plan_index=index,
+                )
+                if repair_error is not None:
+                    return self._report_and_summary(store, error=repair_error)
+                if repaired_action == "finish":
+                    break
+                if repaired_action is not None:
+                    raise ValueError("result envelope repair did not finish")
             explicit_retry = False
             while True:
                 worktree = Path(state["worktree"])
@@ -1807,7 +2032,7 @@ class SequentialRunner:
             "plan_count": len(state["plans"]),
             "plans_truncated": len(state["plans"]) > len(visible_plans),
             "plans": [
-                {key: plan[key] for key in ("plan_id", "status", "starting_commit", "accepted_commit", "attempt_count", "result_path")}
+                {key: plan[key] for key in ("plan_id", "status", "starting_commit", "accepted_commit", "attempt_count", "result_path", "original_result_path")}
                 for plan in visible_plans
             ],
         }

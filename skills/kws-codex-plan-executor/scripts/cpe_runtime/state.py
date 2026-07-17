@@ -217,6 +217,7 @@ class StateStore:
                 "plan_elapsed_seconds": 0,
                 "last_known_head": None,
                 "result_path": None,
+                "original_result_path": None,
                 "budget": dict(DEFAULT_PLAN_BUDGET),
             }
             for record in records
@@ -357,7 +358,7 @@ class StateStore:
                 "progress_fingerprint", "execution_ledger_event_digests",
                 "pending_checkpoint_decision", "environment_fingerprint",
                 "capability_probe_ids", "plan_started_at", "plan_elapsed_seconds",
-                "last_known_head", "result_path", "budget",
+                "last_known_head", "result_path", "original_result_path", "budget",
             }:
                 raise ValueError("plan record is invalid")
             if record["plan_id"] != plan_ids[position] or record["status"] not in PLAN_STATUSES:
@@ -554,6 +555,24 @@ class StateStore:
                 result = _inside(declared_result, results_root, "result")
                 if not result.is_file():
                     raise ValueError("result must be a regular file")
+            original_result_path = record["original_result_path"]
+            if original_result_path is not None:
+                if record["result_path"] is None:
+                    raise ValueError("original result requires a repaired result")
+                declared_original = Path(original_result_path)
+                if declared_original.is_symlink():
+                    raise ValueError("original result must not be a symlink")
+                original = _inside(
+                    declared_original, results_root, "original result",
+                )
+                if not original.is_file() or original == result:
+                    raise ValueError("original result must be a distinct regular file")
+                try:
+                    result.relative_to(results_root / "repaired")
+                except ValueError as exc:
+                    raise ValueError(
+                        "repaired result is outside the repaired result root"
+                    ) from exc
 
         self._validate_semantics(plan_ids)
 
@@ -589,6 +608,7 @@ class StateStore:
             "plan_elapsed_seconds": 0,
             "last_known_head": None,
             "result_path": None,
+            "original_result_path": None,
             "budget": dict(DEFAULT_PLAN_BUDGET),
         }
         for position, plan in enumerate(plans):
