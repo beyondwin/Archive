@@ -18,7 +18,35 @@
       "additionalProperties": false
     },
     "duration_ms": {"type": "integer", "minimum": 0},
-    "findings": {"type": "array", "items": {"type": "object"}}
+    "findings": {
+      "type": "array",
+      "maxItems": 1024,
+      "items": {
+        "type": "object",
+        "required": ["signal", "source", "evidence_refs"],
+        "properties": {
+          "signal": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+          "source": {"enum": ["parent_observed", "child_attested", "derived", "hypothesis"]},
+          "impact": {"type": "string", "minLength": 1, "maxLength": 2000},
+          "action": {"type": "string", "minLength": 1, "maxLength": 2000},
+          "outcome": {"type": "string", "minLength": 1, "maxLength": 2000},
+          "recurrence": {"type": "string", "minLength": 1, "maxLength": 2000},
+          "recommendation": {"type": "string", "minLength": 1, "maxLength": 2000},
+          "evidence_refs": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 128,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500,
+              "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    }
   },
   "additionalProperties": false
 }
