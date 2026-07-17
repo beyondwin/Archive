@@ -16,6 +16,7 @@ SCENARIOS = {
     "completed",
     "interrupted",
     "blocked",
+    "blocked_after_commit",
     "failed",
     "wrong_commit",
     "dirty_handoff",
@@ -237,6 +238,9 @@ def main() -> int:
     elif scenario == "interrupted":
         write_progress(worktree)
         status = "checkpointed"
+    elif scenario == "blocked_after_commit":
+        head = commit_plan(worktree, plan_id, "-blocked")
+        status = "blocked"
 
     payload = {
         "plan_id": plan_id,
