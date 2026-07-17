@@ -70,7 +70,7 @@ from .verification import (
     execute_verification,
     find_reusable_receipt,
     materialize_helper_descriptor,
-    validate_recorded_receipt,
+    validate_recorded_receipt_path,
     verification_cache_key,
 )
 
@@ -865,12 +865,42 @@ class SequentialRunner:
             and event.get("action") == "verification.evidence_ingested"
         }
         evidence_root = worktree / ".superpowers" / "sdd" / "verification"
+        validated_executions: set[tuple[str, str, str, str]] = set()
+        uncached_executions: set[tuple[str, str, str]] = set()
         for event in events:
             event_id = str(event["event_id"])
+            if event.get("category") != "verification":
+                continue
+            if event.get("action") == "executed_uncached":
+                uncached_identity = (
+                    str(event["command_id"]),
+                    str(event["argv_digest"]),
+                    str(event["evidence_key"]),
+                )
+                if uncached_identity in uncached_executions:
+                    raise ValueError("uncached verification evidence is duplicated")
+                uncached_executions.add(uncached_identity)
+                if not event_id.startswith("verification.executed_uncached:"):
+                    raise ValueError("uncached verification event identity is invalid")
+                if event_id not in ingested_child_ids:
+                    store.append_event(
+                        "verification.evidence_ingested",
+                        child_event_id=event_id,
+                        plan_id=plan["plan_id"],
+                        command_id=event["command_id"],
+                        phase=event["phase"],
+                        cache_key=event["evidence_key"],
+                        receipt_id=None,
+                        receipt_path=None,
+                        decision="executed_uncached",
+                        exit_code=event["exit_code"],
+                        reason=event["reason_code"],
+                        semantic_source="child_attested",
+                    )
+                    ingested_child_ids.add(event_id)
+                continue
             if (
-                event_id in ingested_child_ids
-                or event.get("category") != "verification"
-                or event.get("action") != "verified"
+                event.get("action") != "verified"
                 or event.get("result") != "pass"
                 or not event_id.startswith(("verification.reused:", "verification.executed:"))
             ):
@@ -920,7 +950,11 @@ class SequentialRunner:
                 )
             except (KeyError, TypeError, ValueError) as exc:
                 raise ValueError("verification helper receipt request is invalid") from exc
-            receipt = validate_recorded_receipt(evidence_root, request)
+            receipt = validate_recorded_receipt_path(
+                evidence_root,
+                request,
+                Path(*relative.parts[1:]).as_posix(),
+            )
             argv_digest = hashlib.sha256(
                 json.dumps(
                     list(request.argv), separators=(",", ":")
@@ -940,19 +974,36 @@ class SequentialRunner:
             ):
                 raise ValueError("verification helper receipt binding is invalid")
             decision = "reused" if event_id.startswith("verification.reused:") else "executed"
-            store.append_event(
-                "verification.evidence_ingested",
-                child_event_id=event_id,
-                plan_id=plan["plan_id"],
-                command_id=request.command_id,
-                phase=request.phase,
-                cache_key=receipt.cache_key,
-                receipt_id=receipt.receipt_id,
-                receipt_path=references[0],
-                decision=decision,
-                semantic_source="child_attested",
+            lifecycle = (
+                receipt.receipt_id,
+                receipt.cache_key,
+                request.command_id,
+                argv_digest,
             )
-            ingested_child_ids.add(event_id)
+            if decision == "reused" and (
+                not request.deterministic
+                or request.mutable_input_policy == "always_execute"
+                or lifecycle not in validated_executions
+            ):
+                raise ValueError(
+                    "reused verification lacks a prior validated executed lifecycle"
+                )
+            if decision == "executed":
+                validated_executions.add(lifecycle)
+            if event_id not in ingested_child_ids:
+                store.append_event(
+                    "verification.evidence_ingested",
+                    child_event_id=event_id,
+                    plan_id=plan["plan_id"],
+                    command_id=request.command_id,
+                    phase=request.phase,
+                    cache_key=receipt.cache_key,
+                    receipt_id=receipt.receipt_id,
+                    receipt_path=references[0],
+                    decision=decision,
+                    semantic_source="child_attested",
+                )
+                ingested_child_ids.add(event_id)
 
     def _apply_pending_decision(self, store: StateStore) -> str | None:
         """Idempotently apply one journaled decision and clear it atomically."""
@@ -1290,12 +1341,38 @@ class SequentialRunner:
             in _VERIFY_POLICIES[item["mutable_input_policy"]]
         ]
         if len(candidates) != 1:
+            argv_digest = hashlib.sha256(
+                json.dumps(list(argv), separators=(",", ":")).encode("utf-8")
+            ).hexdigest()
+            evidence_key = hashlib.sha256(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "run_id": run_id,
+                        "command_id": command_id,
+                        "argv_digest": argv_digest,
+                        "cwd": str(resolved_cwd),
+                        "head": _current_head(worktree),
+                        "phase": phase,
+                        "input_digest": input_digest,
+                        "mutable_input_policy": mutable_input_policy,
+                        "reuse_policy": "never",
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest()
             return {
                 "schema_version": 1,
                 "status": "uncached_command_required",
                 "reason": "command_not_exactly_source_declared",
+                "reason_code": "uncached_command_required",
                 "reused": False,
                 "receipt_path": None,
+                "command_id": command_id,
+                "argv_digest": argv_digest,
+                "evidence_key": evidence_key,
+                "phase": phase,
             }
         declaration = candidates[0]
 
@@ -1321,12 +1398,31 @@ class SequentialRunner:
             required_artifact_paths=tuple(declaration["required_artifacts"]),
             timeout_seconds=3600,
         )
+        dirty_source_inputs = bool(
+            _git(
+                worktree,
+                "status",
+                "--porcelain=v1",
+                "--untracked-files=all",
+                "--",
+                ".",
+                ":(exclude).superpowers",
+                ":(exclude).superpowers/**",
+            )
+        )
+        if dirty_source_inputs:
+            request = replace(request, deterministic=False)
         evidence_root = worktree / ".superpowers" / "sdd" / "verification"
         corruption_log = evidence_root / "corruption-events.jsonl"
         corruption_bytes = corruption_log.stat().st_size if corruption_log.exists() else 0
-        receipt = find_reusable_receipt(evidence_root, request)
+        receipt = (
+            None
+            if dirty_source_inputs
+            else find_reusable_receipt(evidence_root, request)
+        )
         fallback = (
-            receipt is None
+            not dirty_source_inputs
+            and receipt is None
             and corruption_log.exists()
             and corruption_log.stat().st_size > corruption_bytes
         )
@@ -1391,6 +1487,8 @@ class SequentialRunner:
         }
         if fallback:
             response["reason"] = "verification_helper_fallback"
+        elif dirty_source_inputs:
+            response["reason"] = "dirty_worktree_requires_execution"
         return response
 
     @staticmethod

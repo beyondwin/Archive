@@ -389,7 +389,7 @@ class VerificationCliTests(unittest.TestCase):
             ["git", "-C", str(self.repo), "checkout", "-q", "-b", f"codex/{self.run_id}"],
             check=True,
         )
-        self.counter = self.repo / "counter.txt"
+        self.counter = self.root / "counter.txt"
         script = (
             "from pathlib import Path; "
             f"p=Path({str(self.counter)!r}); "
@@ -398,6 +398,11 @@ class VerificationCliTests(unittest.TestCase):
         self.argv = (sys.executable, "-c", script)
         plan = self.repo / "plan.md"
         plan.write_text("Run the declared verification command.\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(self.repo), "add", "plan.md"], check=True)
+        subprocess.run(
+            ["git", "-C", str(self.repo), "commit", "-q", "-m", "plan"],
+            check=True,
+        )
         source_commit = subprocess.run(
             ["git", "-C", str(self.repo), "rev-parse", "HEAD"],
             check=True,
@@ -515,6 +520,18 @@ class VerificationCliTests(unittest.TestCase):
             self.assertEqual("failed", json.loads(result.stdout)["status"])
         self.assertFalse(self.counter.exists())
 
+    def test_verify_requires_the_parsed_separator_not_a_later_argv_token(self) -> None:
+        arguments = self.verify_arguments()
+        arguments[arguments.index("--")] = "not-a-separator"
+        arguments.append("--")
+
+        result = self.command(*arguments)
+
+        self.assertEqual(1, result.returncode, result.stdout + result.stderr)
+        self.assertEqual("failed", json.loads(result.stdout)["status"])
+        self.assertIn("requires --", json.loads(result.stdout)["error"])
+        self.assertFalse(self.counter.exists())
+
     def test_verify_rejects_unknown_run_outside_cwd_and_parent_derived_flags(self) -> None:
         unknown = self.verify_arguments()
         unknown[unknown.index(self.run_id)] = "missing-run"
@@ -535,6 +552,12 @@ class VerificationCliTests(unittest.TestCase):
         self.assertEqual(1, result.returncode, result.stdout + result.stderr)
         payload = json.loads(result.stdout)
         self.assertEqual("uncached_command_required", payload["status"])
+        self.assertEqual("uncached_command_required", payload["reason_code"])
+        self.assertEqual("undeclared", payload["command_id"])
+        self.assertEqual("task", payload["phase"])
+        self.assertEqual(64, len(payload["argv_digest"]))
+        self.assertEqual(64, len(payload["evidence_key"]))
+        self.assertIsNone(payload["receipt_path"])
         self.assertFalse(self.counter.exists())
 
     def test_exact_second_invocation_reuses_first_receipt(self) -> None:
@@ -576,6 +599,21 @@ class VerificationCliTests(unittest.TestCase):
         self.assertFalse(payload["reused"])
         self.assertEqual("verification_helper_fallback", payload["reason"])
         self.assertEqual("xx", self.counter.read_text(encoding="utf-8"))
+
+    def test_dirty_source_tree_executes_every_time_instead_of_reusing_head(self) -> None:
+        clean = self.command(*self.verify_arguments())
+        self.assertEqual(0, clean.returncode, clean.stdout + clean.stderr)
+        (self.repo / "seed.txt").write_text("dirty\n", encoding="utf-8")
+
+        first_dirty = self.command(*self.verify_arguments())
+        second_dirty = self.command(*self.verify_arguments())
+
+        for result in (first_dirty, second_dirty):
+            self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertFalse(payload["reused"])
+            self.assertEqual("dirty_worktree_requires_execution", payload["reason"])
+        self.assertEqual("xxx", self.counter.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

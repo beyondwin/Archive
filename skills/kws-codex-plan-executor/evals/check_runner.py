@@ -389,6 +389,8 @@ class VerificationReuseIntegrationTests(unittest.TestCase):
         self.assertIn("merged_main is parent-integration-only", prompt)
         self.assertIn("never rerun an exact cached same-key pass", prompt)
         self.assertIn("uncached_command_required", prompt)
+        self.assertIn("action=executed_uncached", prompt)
+        self.assertIn("receipt_path=null", prompt)
         self.assertIn("never treat fallback as a skipped verification", prompt)
 
     def test_replaced_helper_descriptor_becomes_recorded_direct_fallback(self) -> None:
@@ -429,31 +431,36 @@ class VerificationReuseIntegrationTests(unittest.TestCase):
             required_artifact_paths=(),
             timeout_seconds=10,
         )
-        receipt = execute_verification(evidence_root, request)
+        receipts = [
+            execute_verification(evidence_root, request),
+            execute_verification(evidence_root, request),
+        ]
+        self.assertNotEqual(receipts[0].receipt_id, receipts[1].receipt_id)
+        self.assertFalse((evidence_root / "indexes").exists())
         argv_digest = hashlib.sha256(
             json.dumps(list(request.argv), separators=(",", ":")).encode("utf-8")
         ).hexdigest()
-        child_event_id = "verification.executed:" + "a" * 32
-        append_execution_event(
-            self.repo / ".superpowers" / "sdd" / "execution-ledger.jsonl",
-            {
-                "event_id": child_event_id,
-                "source": "child_attested",
-                "plan_id": "plan-01",
-                "category": "verification",
-                "action": "verified",
-                "result": "pass",
-                "evidence_refs": [
-                    f"verification/receipts/{receipt.receipt_id}.json",
-                    f"verification/{receipt.stdout_path}",
-                    f"verification/{receipt.stderr_path}",
-                ],
-                "command_id": "unit",
-                "argv_digest": argv_digest,
-                "evidence_key": receipt.cache_key,
-                "duration_ms": 1,
-            },
-        )
+        for marker, receipt in zip(("a", "b"), receipts, strict=True):
+            append_execution_event(
+                self.repo / ".superpowers" / "sdd" / "execution-ledger.jsonl",
+                {
+                    "event_id": "verification.executed:" + marker * 32,
+                    "source": "child_attested",
+                    "plan_id": "plan-01",
+                    "category": "verification",
+                    "action": "verified",
+                    "result": "pass",
+                    "evidence_refs": [
+                        f"verification/receipts/{receipt.receipt_id}.json",
+                        f"verification/{receipt.stdout_path}",
+                        f"verification/{receipt.stderr_path}",
+                    ],
+                    "command_id": "unit",
+                    "argv_digest": argv_digest,
+                    "evidence_key": receipt.cache_key,
+                    "duration_ms": 1,
+                },
+            )
         runner = SequentialRunner(codex_home=self.home)
 
         runner._ingest_verification_observations(self.store)
@@ -467,12 +474,157 @@ class VerificationReuseIntegrationTests(unittest.TestCase):
             event for event in events
             if event.get("action") == "verification.evidence_ingested"
         ]
+        self.assertEqual(2, len(ingested))
+        self.assertEqual({receipt.receipt_id for receipt in receipts}, {
+            event["receipt_id"] for event in ingested
+        })
+        for event in ingested:
+            self.assertEqual("parent_observed", event["source"])
+            self.assertEqual("child_attested", event["semantic_source"])
+            self.assertEqual("executed", event["decision"])
+            self.assertNotIn("result", event)
+
+    def test_reused_claim_requires_prior_validated_executed_lifecycle(self) -> None:
+        evidence_root = self.repo / ".superpowers" / "sdd" / "verification"
+        request = VerificationRequest(
+            run_id=self.run_id,
+            command_id="unit",
+            argv=(sys.executable, "-c", "print('ok')"),
+            cwd=self.repo,
+            head=git(self.repo, "rev-parse", "HEAD"),
+            environment_fingerprint="e" * 64,
+            phase="task",
+            input_digest="immutable",
+            deterministic=True,
+            mutable_input_policy="immutable",
+            required_artifact_paths=(),
+            timeout_seconds=10,
+        )
+        receipt = execute_verification(evidence_root, request)
+        argv_digest = hashlib.sha256(
+            json.dumps(list(request.argv), separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        append_execution_event(
+            self.repo / ".superpowers" / "sdd" / "execution-ledger.jsonl",
+            {
+                "event_id": "verification.reused:" + "a" * 32,
+                "source": "child_attested",
+                "plan_id": "plan-01",
+                "category": "verification",
+                "action": "verified",
+                "result": "pass",
+                "evidence_refs": [
+                    f"verification/receipts/{receipt.receipt_id}.json",
+                    f"verification/{receipt.stdout_path}",
+                    f"verification/{receipt.stderr_path}",
+                ],
+                "command_id": "unit",
+                "argv_digest": argv_digest,
+                "evidence_key": receipt.cache_key,
+                "duration_ms": 0,
+            },
+        )
+
+        with self.assertRaisesRegex(ValueError, "executed lifecycle"):
+            SequentialRunner(codex_home=self.home)._ingest_verification_observations(
+                self.store
+            )
+
+    def test_valid_executed_then_reused_lifecycle_is_parent_observed(self) -> None:
+        evidence_root = self.repo / ".superpowers" / "sdd" / "verification"
+        request = VerificationRequest(
+            run_id=self.run_id,
+            command_id="unit",
+            argv=(sys.executable, "-c", "print('ok')"),
+            cwd=self.repo,
+            head=git(self.repo, "rev-parse", "HEAD"),
+            environment_fingerprint="e" * 64,
+            phase="task",
+            input_digest="immutable",
+            deterministic=True,
+            mutable_input_policy="immutable",
+            required_artifact_paths=(),
+            timeout_seconds=10,
+        )
+        receipt = execute_verification(evidence_root, request)
+        argv_digest = hashlib.sha256(
+            json.dumps(list(request.argv), separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        references = [
+            f"verification/receipts/{receipt.receipt_id}.json",
+            f"verification/{receipt.stdout_path}",
+            f"verification/{receipt.stderr_path}",
+        ]
+        for decision, marker in (("executed", "a"), ("reused", "b")):
+            append_execution_event(
+                self.repo / ".superpowers" / "sdd" / "execution-ledger.jsonl",
+                {
+                    "event_id": f"verification.{decision}:" + marker * 32,
+                    "source": "child_attested",
+                    "plan_id": "plan-01",
+                    "category": "verification",
+                    "action": "verified",
+                    "result": "pass",
+                    "evidence_refs": references,
+                    "command_id": "unit",
+                    "argv_digest": argv_digest,
+                    "evidence_key": receipt.cache_key,
+                    "duration_ms": 0,
+                },
+            )
+
+        runner = SequentialRunner(codex_home=self.home)
+        runner._ingest_verification_observations(self.store)
+
+        events = [
+            json.loads(line)
+            for line in self.store.events_path.read_text(encoding="utf-8").splitlines()
+            if json.loads(line).get("action") == "verification.evidence_ingested"
+        ]
+        self.assertEqual(["executed", "reused"], [event["decision"] for event in events])
+
+    def test_uncached_pass_has_strict_null_receipt_and_idempotent_parent_ingest(self) -> None:
+        evidence_key = hashlib.sha256(b"uncached-unit").hexdigest()
+        argv_digest = hashlib.sha256(b"uncached-argv").hexdigest()
+        append_execution_event(
+            self.repo / ".superpowers" / "sdd" / "execution-ledger.jsonl",
+            {
+                "event_id": "verification.executed_uncached:" + "a" * 32,
+                "source": "child_attested",
+                "plan_id": "plan-01",
+                "category": "verification",
+                "action": "executed_uncached",
+                "result": "pass",
+                "evidence_refs": [],
+                "command_id": "unit-uncached",
+                "argv_digest": argv_digest,
+                "evidence_key": evidence_key,
+                "duration_ms": 12,
+                "exit_code": 0,
+                "receipt_path": None,
+                "reason_code": "uncached_command_required",
+                "phase": "task",
+            },
+        )
+        runner = SequentialRunner(codex_home=self.home)
+
+        runner._ingest_verification_observations(self.store)
+        runner._ingest_verification_observations(self.store)
+
+        validate_execution_ledger(
+            self.repo / ".superpowers" / "sdd" / "execution-ledger.jsonl",
+            expected_plan_id="plan-01",
+        )
+        ingested = [
+            json.loads(line)
+            for line in self.store.events_path.read_text(encoding="utf-8").splitlines()
+            if json.loads(line).get("action") == "verification.evidence_ingested"
+        ]
         self.assertEqual(1, len(ingested))
-        self.assertEqual("parent_observed", ingested[0]["source"])
-        self.assertEqual("child_attested", ingested[0]["semantic_source"])
-        self.assertEqual("executed", ingested[0]["decision"])
-        self.assertEqual(receipt.receipt_id, ingested[0]["receipt_id"])
-        self.assertNotIn("result", ingested[0])
+        self.assertEqual("executed_uncached", ingested[0]["decision"])
+        self.assertEqual(0, ingested[0]["exit_code"])
+        self.assertIsNone(ingested[0]["receipt_id"])
+        self.assertFalse((self.repo / ".superpowers" / "sdd" / "verification" / "indexes").exists())
 
 
 class CapabilityTests(unittest.TestCase):
@@ -944,6 +1096,22 @@ class ProgressDecisionTests(unittest.TestCase):
         for category, fields in evidence_module._VARIANT_FIELDS.items():
             with self.subTest(category=category):
                 branch = category_branches[category]
+                if category == "verification":
+                    self.assertEqual({"oneOf"}, set(branch))
+                    normal, uncached = branch["oneOf"]
+                    self.assertEqual(fields, set(normal["required"]))
+                    self.assertEqual(fields | {"action"}, set(normal["properties"]))
+                    self.assertEqual(
+                        fields | evidence_module._UNCACHED_FIELDS,
+                        set(uncached["required"]),
+                    )
+                    self.assertEqual(
+                        fields
+                        | evidence_module._UNCACHED_FIELDS
+                        | {"action", "evidence_refs"},
+                        set(uncached["properties"]),
+                    )
+                    continue
                 self.assertEqual({"properties", "required"}, set(branch))
                 self.assertEqual(fields, set(branch["required"]))
                 self.assertEqual(fields, set(branch["properties"]))

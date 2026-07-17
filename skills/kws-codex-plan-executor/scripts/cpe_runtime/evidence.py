@@ -36,6 +36,7 @@ _ACTIONS = {
     "recorded", "started", "completed", "failed", "blocked", "resolved",
     "approved", "rejected", "verified", "observed", "created", "updated",
     "checked", "satisfied", "waived", "requested", "responded",
+    "executed_uncached",
 }
 _RESULTS = {
     "pass", "fail", "blocked", "skipped", "unavailable", "accepted", "closed",
@@ -57,6 +58,9 @@ _VARIANT_FIELDS = {
 }
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
+_UNCACHED_REASONS = {"uncached_command_required", "verification_helper_fallback"}
+_UNCACHED_PHASES = {"task", "affected", "branch_final"}
+_UNCACHED_FIELDS = {"exit_code", "receipt_path", "reason_code", "phase"}
 
 
 @dataclass(frozen=True)
@@ -115,7 +119,10 @@ def validate_execution_event_schema(event: object, *, allow_private_sources: boo
     category = event.get("category")
     if category not in _CATEGORIES:
         raise ValueError("execution event category is invalid")
+    is_uncached = category == "verification" and event.get("action") == "executed_uncached"
     allowed = _BASE_FIELDS | _VARIANT_FIELDS[str(category)]
+    if is_uncached:
+        allowed |= _UNCACHED_FIELDS
     if set(event) != allowed:
         raise ValueError("execution event properties are invalid")
     if event["schema_version"] != 1 or isinstance(event["schema_version"], bool):
@@ -130,6 +137,8 @@ def validate_execution_event_schema(event: object, *, allow_private_sources: boo
         raise ValueError("worktree execution event trust level is invalid")
     if event["action"] not in _ACTIONS:
         raise ValueError("execution event action is invalid")
+    if event["action"] == "executed_uncached" and category != "verification":
+        raise ValueError("uncached execution category is invalid")
     if event["result"] not in _RESULTS:
         raise ValueError("execution event result is invalid")
     refs = event["evidence_refs"]
@@ -137,9 +146,25 @@ def validate_execution_event_schema(event: object, *, allow_private_sources: boo
         raise ValueError("execution evidence references are invalid")
     for reference in refs:
         _safe_reference(reference)
+    if is_uncached and (
+        refs != []
+        or event.get("receipt_path") is not None
+        or event.get("reason_code") not in _UNCACHED_REASONS
+        or event.get("phase") not in _UNCACHED_PHASES
+        or not isinstance(event.get("exit_code"), int)
+        or isinstance(event.get("exit_code"), bool)
+        or ((event["exit_code"] == 0) != (event["result"] == "pass"))
+    ):
+        raise ValueError("uncached verification evidence is invalid")
     for field in set(event) - _BASE_FIELDS:
         value = event[field]
-        if field == "duration_ms":
+        if field == "receipt_path":
+            if value is not None:
+                raise ValueError("uncached verification receipt must be null")
+        elif field == "exit_code":
+            if not isinstance(value, int) or isinstance(value, bool):
+                raise ValueError("verification exit code is invalid")
+        elif field == "duration_ms":
             if not isinstance(value, int) or isinstance(value, bool) or value < 0:
                 raise ValueError("execution event duration is invalid")
         elif field == "finding_ids":
@@ -1008,7 +1033,7 @@ def repair_result_envelope(
             )
             for event in events
             if event.get("category") == "verification"
-            and event.get("action") == "verified"
+            and event.get("action") in {"verified", "executed_uncached"}
             and event.get("result") == "pass"
         }
         accepted_reviews = [

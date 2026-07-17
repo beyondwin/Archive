@@ -377,7 +377,7 @@ class CodexLauncher:
                 "Use task or affected for branch work and branch_final only for the final branch gate; task review delta is not a verification phase and merged_main is parent-integration-only.",
                 "Digest every declared non-Git mutable input completely; use always_execute when mutable external state cannot be decision-completely digested.",
                 "Never claim a cache hit without the helper receipt, and never rerun an exact cached same-key pass merely for reassurance.",
-                "If the helper returns uncached_command_required or is unavailable, execute the exact command once, record child-attested uncached verification evidence with a null receipt, and never treat fallback as a skipped verification.",
+                "If the helper returns uncached_command_required or is unavailable, execute the exact command once and append one child-attested verification event with action=executed_uncached, the helper-provided or locally derived never-reusable evidence_key, exact argv digest, exit_code, phase, reason_code, receipt_path=null, and no evidence refs; never treat fallback as a skipped verification.",
                 "Reviewers reuse evidenced tests, write full findings to files, and return only verdicts, finding IDs, severities, and artifact paths.",
                 "Resolve one task finding set with one consolidated fix subagent, then review only the finding delta and affected evidence.",
                 "After all tasks, perform one cross-task final review and one full verification at the final HEAD.",
