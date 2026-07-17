@@ -448,7 +448,14 @@ class StateStore:
                     )
                     or (
                         not pending["timed_out"]
-                        and pending["decision"] in {"continue", "stop_stalled"}
+                        and (
+                            pending["decision"] == "continue"
+                            or (
+                                pending["decision"] == "stop_stalled"
+                                and pending["reason"]
+                                != "child_stopped_without_completion"
+                            )
+                        )
                     )
                     or state["status"] != "running"
                     or record["status"] != "running"

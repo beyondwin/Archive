@@ -52,6 +52,10 @@ from .state import StateStore
 
 _RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _SHA = re.compile(r"^[0-9a-f]{40}$")
+_EVENT_ID = re.compile(r"^[0-9a-f]{32}$")
+_RUN_COMPLETED_FIELDS = {
+    "event_id", "at", "source", "run_id", "category", "action", "head",
+}
 _RESULT_REQUIRED_FIELDS = {
     "plan_id",
     "status",
@@ -1553,10 +1557,29 @@ class SequentialRunner:
             raise ValueError("run.completed event is duplicated")
         if matches:
             event = matches[0]
+            timestamp = event.get("at")
+            try:
+                parsed_at = (
+                    datetime.fromisoformat(timestamp)
+                    if isinstance(timestamp, str) and 1 <= len(timestamp) <= 64
+                    else None
+                )
+                timestamp_is_aware = (
+                    parsed_at is not None
+                    and parsed_at.tzinfo is not None
+                    and parsed_at.utcoffset() is not None
+                )
+            except (ValueError, OverflowError):
+                timestamp_is_aware = False
             if (
-                event.get("run_id") != state["run_id"]
+                set(event) != _RUN_COMPLETED_FIELDS
+                or not isinstance(event.get("event_id"), str)
+                or not _EVENT_ID.fullmatch(event["event_id"])
+                or not timestamp_is_aware
                 or event.get("source") != "parent_observed"
+                or event.get("run_id") != state["run_id"]
                 or event.get("category") != "run"
+                or event.get("action") != "run.completed"
                 or event.get("head") != expected_head
             ):
                 raise ValueError("run.completed event does not match completed run")
