@@ -3,7 +3,7 @@
   "$id": "optimization-report.schema.json",
   "title": "CPE optimization report",
   "type": "object",
-  "required": ["format_version", "run_id", "usage", "duration_ms", "findings"],
+  "required": ["format_version", "run_id", "usage", "duration_ms", "recovery_metrics", "findings"],
   "properties": {
     "format_version": {"const": 2},
     "run_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
@@ -18,6 +18,23 @@
       "additionalProperties": false
     },
     "duration_ms": {"type": "integer", "minimum": 0},
+    "recovery_metrics": {
+      "type": "object",
+      "required": ["launches_avoided", "envelope_repairs", "productive_timeouts", "no_progress_slices", "budget_stops", "continuation_reason_counts"],
+      "properties": {
+        "launches_avoided": {"type": "integer", "minimum": 0},
+        "envelope_repairs": {"type": "integer", "minimum": 0},
+        "productive_timeouts": {"type": "integer", "minimum": 0},
+        "no_progress_slices": {"type": "integer", "minimum": 0},
+        "budget_stops": {"type": "integer", "minimum": 0},
+        "continuation_reason_counts": {
+          "type": "object",
+          "maxProperties": 128,
+          "additionalProperties": {"type": "integer", "minimum": 0}
+        }
+      },
+      "additionalProperties": false
+    },
     "findings": {
       "type": "array",
       "maxItems": 1024,

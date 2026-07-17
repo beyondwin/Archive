@@ -111,7 +111,8 @@ def _validate_finding(finding: object) -> None:
 
 def validate_optimization_report(report: object) -> dict[str, object]:
     if not isinstance(report, dict) or set(report) != {
-        "format_version", "run_id", "usage", "duration_ms", "findings",
+        "format_version", "run_id", "usage", "duration_ms", "recovery_metrics",
+        "findings",
     }:
         raise ValueError("optimization report fields are invalid")
     if report["format_version"] != 2:
@@ -134,6 +135,28 @@ def validate_optimization_report(report: object) -> dict[str, object]:
     expected_kind = "exact" if usage["unknown_attempt_count"] == 0 else "lower_bound"
     if usage["total_kind"] != expected_kind:
         raise ValueError("optimization report usage kind is invalid")
+    metrics = report["recovery_metrics"]
+    metric_fields = {
+        "launches_avoided", "envelope_repairs", "productive_timeouts",
+        "no_progress_slices", "budget_stops", "continuation_reason_counts",
+    }
+    if not isinstance(metrics, dict) or set(metrics) != metric_fields:
+        raise ValueError("optimization report recovery metrics are invalid")
+    for name in metric_fields - {"continuation_reason_counts"}:
+        value = metrics[name]
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise ValueError("optimization report recovery metrics are invalid")
+    reasons = metrics["continuation_reason_counts"]
+    if (
+        not isinstance(reasons, dict)
+        or len(reasons) > 128
+        or any(
+            not isinstance(name, str) or not _SIGNAL.fullmatch(name)
+            or not isinstance(value, int) or isinstance(value, bool) or value < 0
+            for name, value in reasons.items()
+        )
+    ):
+        raise ValueError("optimization report recovery metrics are invalid")
     findings = report["findings"]
     if not isinstance(findings, list) or len(findings) > 1024:
         raise ValueError("optimization report findings are invalid")
@@ -169,6 +192,7 @@ def build_optimization_report(
             "total_kind": "exact" if unknown == 0 else "lower_bound",
         },
         "duration_ms": duration,
+        "recovery_metrics": derive_recovery_metrics(events),
         "findings": findings,
     }
     return validate_optimization_report(report)
@@ -177,6 +201,10 @@ def build_optimization_report(
 def render_optimization_markdown(report: dict[str, object]) -> str:
     usage = report["usage"]
     assert isinstance(usage, dict)
+    metrics = report["recovery_metrics"]
+    assert isinstance(metrics, dict)
+    reasons = metrics["continuation_reason_counts"]
+    assert isinstance(reasons, dict)
     lines = [
         "# Optimization Report",
         "",
@@ -184,6 +212,20 @@ def render_optimization_markdown(report: dict[str, object]) -> str:
         f"Usage ({usage['total_kind']}): {usage['observed_input_tokens']} observed input tokens; "
         f"{usage['unknown_attempt_count']} attempts unknown.",
         f"Observed attempt duration: {report['duration_ms']} ms.",
+        "",
+        "## Recovery Metrics",
+        "",
+        f"- Launches avoided: {metrics['launches_avoided']}",
+        f"- Local envelope repairs: {metrics['envelope_repairs']}",
+        f"- Productive timeouts: {metrics['productive_timeouts']}",
+        f"- No-progress slices: {metrics['no_progress_slices']}",
+        f"- Budget stops: {metrics['budget_stops']}",
+        (
+            "- Continuation reasons: " + ", ".join(
+                f"{name}={count}" for name, count in reasons.items()
+            )
+            if reasons else "- Continuation reasons: none"
+        ),
         "",
         "## Findings",
         "",
