@@ -346,6 +346,16 @@ class SequentialCliTest(unittest.TestCase):
         root_index = (ROOT.parent / "README.md").read_text(encoding="utf-8")
         self.assertNotIn("내보내기", root_index)
 
+    def test_readme_inventory_covers_every_tracked_runtime_module(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        inventory = readme[readme.index("## Tracked Inventory"):]
+        modules = sorted((ROOT / "scripts" / "cpe_runtime").glob("*.py"))
+        self.assertTrue(modules)
+        for module in modules:
+            relative = module.relative_to(ROOT).as_posix()
+            with self.subTest(module=relative):
+                self.assertIn(relative, inventory)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

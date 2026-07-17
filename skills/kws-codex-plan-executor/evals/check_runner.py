@@ -3664,6 +3664,7 @@ class EnvelopeRepairTests(_RecoveryRunnerFixture):
         *,
         mutate: object | None = None,
         expected_error: str = "unsafe_workflow_artifact",
+        plans: list[Path] | None = None,
     ) -> tuple[SequentialRunner, Path, Path, Path, bytes]:
         runner = self.runner(run_id)
 
@@ -3674,6 +3675,8 @@ class EnvelopeRepairTests(_RecoveryRunnerFixture):
             log_path = Path(kwargs["log_path"])
             head = str(kwargs["current_commit"])
             evidence = worktree / ".superpowers" / "sdd"
+            if evidence.exists():
+                shutil.rmtree(evidence)
             evidence.mkdir(parents=True, exist_ok=True)
             (evidence / ".gitignore").write_text("*\n", encoding="utf-8")
             (evidence / "final-review.md").write_text(
@@ -3729,8 +3732,10 @@ class EnvelopeRepairTests(_RecoveryRunnerFixture):
                 "blocker": None,
                 "workflow_receipt": {
                     "ledger_path": ".superpowers/sdd/execution-ledger.jsonl",
-                    "final_review_path": str(
-                        (evidence / "final-review.md").resolve()
+                    "final_review_path": (
+                        str((evidence / "final-review.md").resolve())
+                        if kwargs["plan_id"] == "plan-01"
+                        else ".superpowers/sdd/final-review.md"
                     ),
                     "final_review_head": head,
                     "open_finding_ids": [],
@@ -3766,7 +3771,7 @@ class EnvelopeRepairTests(_RecoveryRunnerFixture):
         result = runner.run(
             workspace=self.repo,
             specs=[],
-            plans=[self.plan("completed")],
+            plans=plans or [self.plan("completed")],
             run_id=run_id,
         )
         self.assertEqual("failed", result["status"])
@@ -3776,6 +3781,29 @@ class EnvelopeRepairTests(_RecoveryRunnerFixture):
         worktree = Path(store.state["worktree"])
         original_path = Path(store.state["plans"][0]["result_path"])
         return runner, run_root, worktree, original_path, original_path.read_bytes()
+
+    def test_repaired_nonfinal_plan_advances_to_next_ordered_plan(self) -> None:
+        runner, run_root, worktree, original_path, _ = self._failed_result(
+            "repair-continues-to-next",
+            plans=[
+                self.plan("completed", number=1),
+                self.plan("completed", number=2),
+            ],
+        )
+        repair = self._repair(run_root, worktree, original_path)
+        self.assertIsNotNone(repair)
+
+        result = runner.resume(
+            run_id="repair-continues-to-next", retry_failed=True,
+        )
+
+        self.assertEqual("completed", result["status"])
+        state = StateStore.open(run_root).state
+        self.assertEqual(2, state["current_plan_index"])
+        self.assertEqual(
+            ["completed", "completed"],
+            [plan["status"] for plan in state["plans"]],
+        )
 
     def _repair(self, run_root: Path, worktree: Path, result_path: Path):
         return evidence_module.repair_result_envelope(
@@ -4735,6 +4763,47 @@ class ProgressRecoveryIntegrationTests(_RecoveryRunnerFixture):
             },
             metrics,
         )
+
+    def test_recovery_metrics_materialize_in_optimization_reports(self) -> None:
+        run_id = "report-recovery-metrics"
+        runner = self.runner(run_id)
+        completed = runner.run(
+            workspace=self.repo,
+            specs=[],
+            plans=[self.plan("completed")],
+            run_id=run_id,
+        )
+        self.assertEqual("completed", completed["status"])
+        run_root = self.home / "orchestrator" / run_id
+        store = StateStore.open(run_root)
+        for action, details in (
+            ("resume.stopped_unchanged_blocker", {"reason": "unchanged_environment_blocker"}),
+            ("result.envelope_repaired", {"plan_id": "plan-01"}),
+            ("plan.checkpoint_decided", {"decision": "continue", "reason": "productive_timeout"}),
+            ("plan.checkpoint_decided", {"decision": "stop_stalled", "reason": "second_no_progress_slice"}),
+            ("plan.pre_spawn_stopped", {"decision": "stop_budget", "reason": "launch_budget_exhausted"}),
+        ):
+            store.append_event(action, **details)
+
+        self.assertIsNone(runner._update_reports(store))
+        report = json.loads(
+            (run_root / "reports" / "optimization-report.json").read_text()
+        )
+        self.assertEqual(
+            {
+                "launches_avoided": 2,
+                "envelope_repairs": 1,
+                "productive_timeouts": 1,
+                "no_progress_slices": 1,
+                "budget_stops": 1,
+                "continuation_reason_counts": {"productive_timeout": 1},
+            },
+            report["recovery_metrics"],
+        )
+        markdown = (run_root / "reports" / "optimization-report.md").read_text()
+        self.assertIn("## Recovery Metrics", markdown)
+        self.assertIn("- Launches avoided: 2", markdown)
+        self.assertIn("- Continuation reasons: productive_timeout=1", markdown)
 
     def test_stop_and_finish_decisions_are_not_continuation_reasons(self) -> None:
         metrics = reporting_module.derive_recovery_metrics([

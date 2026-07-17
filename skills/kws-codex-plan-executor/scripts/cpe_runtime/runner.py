@@ -1581,7 +1581,8 @@ class SequentialRunner:
                 if repair_error is not None:
                     return self._report_and_summary(store, error=repair_error)
                 if repaired_action == "finish":
-                    break
+                    explicit_retry = False
+                    continue
                 if repaired_action is not None:
                     raise ValueError("result envelope repair did not finish")
             explicit_retry = False

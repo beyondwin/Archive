@@ -73,7 +73,9 @@ Attempt diagnostics are stored at
 `~/.codex/orchestrator/<run-id>/logs/<plan-id>-attempt-<n>.log`. The derived
 operator views are
 `~/.codex/orchestrator/<run-id>/reports/optimization-report.json` and
-`~/.codex/orchestrator/<run-id>/reports/optimization-report.md`.
+`~/.codex/orchestrator/<run-id>/reports/optimization-report.md`. Both reports
+materialize recovery counters from authoritative run events, including avoided
+launches, envelope repairs, timeout decisions, and budget stops.
 
 `state.json` format version 2 is authoritative and atomically replaced. Run
 creation records `preparing`, persists immutable input snapshots and the
@@ -354,10 +356,13 @@ evals/fake_codex.py
 evals/run.sh
 scripts/cpe.py
 scripts/cpe_runtime/__init__.py
+scripts/cpe_runtime/capabilities.py
 scripts/cpe_runtime/compiler.py
 scripts/cpe_runtime/evidence.py
 scripts/cpe_runtime/launcher.py
+scripts/cpe_runtime/progress.py
 scripts/cpe_runtime/reporting.py
+scripts/cpe_runtime/result_validation.py
 scripts/cpe_runtime/runner.py
 scripts/cpe_runtime/state.py
 templates/compiled-run-index.schema.json
