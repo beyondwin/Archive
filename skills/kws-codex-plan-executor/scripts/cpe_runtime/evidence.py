@@ -790,6 +790,87 @@ def result_artifact_digest(run_root: Path, result_path: Path) -> str | None:
         return proof.digest
 
 
+def _open_private_result(
+    *, run_root: Path, result_path: Path, expected_digest: str,
+) -> _VerifiedArtifact:
+    if not _DIGEST.fullmatch(expected_digest):
+        raise ValueError("private result digest is invalid")
+    try:
+        results_root = (run_root.resolve(strict=True) / "results").resolve(strict=True)
+        root_metadata = os.lstat(results_root)
+    except OSError as exc:
+        raise ValueError("private result root is unavailable") from exc
+    if (
+        not stat.S_ISDIR(root_metadata.st_mode)
+        or root_metadata.st_uid != os.geteuid()
+        or stat.S_IMODE(root_metadata.st_mode) & 0o077
+    ):
+        raise ValueError("private result root ownership is invalid")
+    proof = _open_verified_artifact(result_path, results_root, allow_absolute=True)
+    if proof is None:
+        raise ValueError("private result is unavailable or redirected")
+    try:
+        metadata = os.fstat(proof.descriptor)
+        if (
+            metadata.st_uid != os.geteuid()
+            or stat.S_IMODE(metadata.st_mode) & 0o077
+            or proof.digest != expected_digest
+        ):
+            raise ValueError("private result does not match its recorded digest")
+        return proof
+    except BaseException:
+        proof.close()
+        raise
+
+
+def read_private_result(
+    *, run_root: Path, result_path: Path, expected_digest: str,
+) -> bytes:
+    """Read one digest-bound result through the private component boundary."""
+    with _open_private_result(
+        run_root=run_root,
+        result_path=result_path,
+        expected_digest=expected_digest,
+    ) as proof:
+        return proof.payload
+
+
+def seal_private_result(
+    *, run_root: Path, result_path: Path, expected_digest: str,
+) -> None:
+    """Verify and seal the exact digest-bound result descriptor."""
+    proof = _open_private_result(
+        run_root=run_root,
+        result_path=result_path,
+        expected_digest=expected_digest,
+    )
+    with ExitStack() as stack:
+        stack.enter_context(proof)
+        os.fchmod(proof.descriptor, 0o400)
+        os.fsync(proof.descriptor)
+        sealed = os.fstat(proof.descriptor)
+        if (
+            sealed.st_dev != proof.device
+            or sealed.st_ino != proof.inode
+            or sealed.st_size != proof.size
+            or stat.S_IMODE(sealed.st_mode) != 0o400
+        ):
+            raise ValueError("private result changed while sealing")
+        visible = _open_private_result(
+            run_root=run_root,
+            result_path=result_path,
+            expected_digest=expected_digest,
+        )
+        if visible is None:
+            raise ValueError("private result changed while sealing")
+        stack.enter_context(visible)
+        if (
+            not proof.same_identity(visible)
+            or stat.S_IMODE(os.fstat(visible.descriptor).st_mode) != 0o400
+        ):
+            raise ValueError("private result changed while sealing")
+
+
 def _write_immutable_result(path: Path, payload: bytes) -> bool:
     try:
         descriptor = os.open(
@@ -892,7 +973,7 @@ def repair_result_envelope(
         for index, item in enumerate(verification):
             assert isinstance(item, dict)
             raw_receipt = item.get("receipt_path")
-            if raw_receipt is None:
+            if raw_receipt in {None, ""}:
                 continue
             declared = Path(str(raw_receipt))
             proof = _open_verified_artifact(declared, worktree, allow_absolute=False)

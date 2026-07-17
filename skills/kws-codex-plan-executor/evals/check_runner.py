@@ -3963,6 +3963,196 @@ class EnvelopeRepairTests(_RecoveryRunnerFixture):
             repaired["verification"][0]["receipt_path"],
         )
 
+    def test_empty_verification_receipt_preserves_normal_handoff_and_repair_contract(self) -> None:
+        def add_empty_receipt(
+            payload: dict[str, object], _worktree: Path, _root: Path,
+        ) -> None:
+            verification = payload["verification"]
+            assert isinstance(verification, list)
+            assert isinstance(verification[0], dict)
+            verification[0]["receipt_path"] = ""
+
+        runner, run_root, _, _, _ = self._failed_result(
+            "repair-empty-verification-receipt",
+            mutate=add_empty_receipt,
+            expected_error="unsafe_workflow_artifact",
+        )
+        completed = runner.resume(
+            run_id="repair-empty-verification-receipt", retry_failed=True,
+        )
+
+        self.assertEqual("completed", completed["status"])
+        self.assertEqual(0, fake_codex_launch_count(run_root))
+        plan = StateStore.open(run_root).state["plans"][0]
+        repaired = json.loads(Path(plan["result_path"]).read_text(encoding="utf-8"))
+        self.assertEqual("", repaired["verification"][0]["receipt_path"])
+
+    def test_repaired_result_swap_before_handoff_parse_fails_closed(self) -> None:
+        runner, run_root, _, original_path, original_bytes = self._failed_result(
+            "repair-result-swap-before-parse",
+        )
+        compiler_log = run_root / "compiler-invocations.jsonl"
+        compiler_log.write_text("", encoding="utf-8")
+        before = StateStore.open(run_root).state["plans"][0]
+        attempts = before["attempt_count"]
+        controller_launches = before["controller_launch_count"]
+        original_repair = runner_module.repair_result_envelope
+        captured: dict[str, object] = {}
+
+        def swap_after_repair(**kwargs: object):
+            repair = original_repair(**kwargs)
+            assert repair is not None
+            captured["repair_path"] = str(repair.repaired_path)
+            replacement = json.loads(repair.repaired_path.read_text(encoding="utf-8"))
+            replacement["summary"] = "attacker replacement must not be accepted"
+            temporary = repair.repaired_path.with_suffix(".replacement")
+            temporary.write_text(
+                json.dumps(replacement, sort_keys=True, separators=(",", ":")),
+                encoding="utf-8",
+            )
+            os.replace(temporary, repair.repaired_path)
+            captured["replacement_bytes"] = repair.repaired_path.read_bytes()
+            return repair
+
+        with mock.patch.object(
+            runner_module, "repair_result_envelope", new=swap_after_repair,
+        ):
+            rejected = runner.resume(
+                run_id="repair-result-swap-before-parse", retry_failed=True,
+            )
+
+        self.assertEqual("failed", rejected["status"])
+        self.assertEqual(0, fake_codex_launch_count(run_root))
+        self.assertEqual(0, compiler_launch_count(run_root))
+        self.assertEqual(original_bytes, original_path.read_bytes())
+        plan = StateStore.open(run_root).state["plans"][0]
+        self.assertEqual(attempts, plan["attempt_count"])
+        self.assertEqual(controller_launches, plan["controller_launch_count"])
+        self.assertEqual(captured["repair_path"], plan["result_path"])
+        self.assertEqual(str(original_path), plan["original_result_path"])
+        repaired_path = Path(str(plan["result_path"]))
+        self.assertEqual(captured["replacement_bytes"], repaired_path.read_bytes())
+        repair_events = [
+            event for event in _runner_events(run_root)
+            if event.get("action") == "result.envelope_repaired"
+        ]
+        self.assertEqual(1, len(repair_events))
+        self.assertFalse(any(
+            event.get("action") == "plan.completed"
+            for event in _runner_events(run_root)
+        ))
+
+    def test_repaired_result_swap_immediately_before_final_seal_fails_closed(self) -> None:
+        runner, run_root, _, original_path, original_bytes = self._failed_result(
+            "repair-result-swap-before-seal",
+        )
+        compiler_log = run_root / "compiler-invocations.jsonl"
+        compiler_log.write_text("", encoding="utf-8")
+        before = StateStore.open(run_root).state["plans"][0]
+        attempts = before["attempt_count"]
+        controller_launches = before["controller_launch_count"]
+        original_seal = runner._seal_result
+        captured: dict[str, bytes] = {}
+
+        def swap_before_seal(path: Path, *args: object, **kwargs: object) -> None:
+            replacement = json.loads(path.read_text(encoding="utf-8"))
+            replacement["summary"] = "late attacker replacement must not be accepted"
+            temporary = path.with_suffix(".replacement")
+            temporary.write_text(
+                json.dumps(replacement, sort_keys=True, separators=(",", ":")),
+                encoding="utf-8",
+            )
+            os.replace(temporary, path)
+            captured["replacement_bytes"] = path.read_bytes()
+            captured["replacement_mode"] = (path.stat().st_mode & 0o777).to_bytes(2)
+            original_seal(path, *args, **kwargs)
+
+        with mock.patch.object(runner, "_seal_result", new=swap_before_seal):
+            rejected = runner.resume(
+                run_id="repair-result-swap-before-seal", retry_failed=True,
+            )
+
+        self.assertEqual("failed", rejected["status"])
+        self.assertEqual(0, fake_codex_launch_count(run_root))
+        self.assertEqual(0, compiler_launch_count(run_root))
+        self.assertEqual(original_bytes, original_path.read_bytes())
+        plan = StateStore.open(run_root).state["plans"][0]
+        self.assertEqual(attempts, plan["attempt_count"])
+        self.assertEqual(controller_launches, plan["controller_launch_count"])
+        repaired_path = Path(str(plan["result_path"]))
+        self.assertEqual(captured["replacement_bytes"], repaired_path.read_bytes())
+        self.assertEqual(
+            int.from_bytes(captured["replacement_mode"]),
+            repaired_path.stat().st_mode & 0o777,
+        )
+        repair_events = [
+            event for event in _runner_events(run_root)
+            if event.get("action") == "result.envelope_repaired"
+        ]
+        self.assertEqual(1, len(repair_events))
+        self.assertFalse(any(
+            event.get("action") == "plan.completed"
+            for event in _runner_events(run_root)
+        ))
+
+    def test_recorded_repair_digest_mismatch_rejects_before_reconstruction(self) -> None:
+        runner, run_root, _, _, _ = self._failed_result(
+            "repair-recorded-digest-mismatch",
+        )
+        original_save = StateStore.save
+        injected = False
+
+        def crash_after_repaired_state(store: StateStore) -> None:
+            nonlocal injected
+            original_save(store)
+            plan = store.state["plans"][0]
+            if (
+                plan.get("original_result_path") is not None
+                and store.state.get("status") == "running"
+                and not injected
+            ):
+                injected = True
+                raise RuntimeError("injected recorded repair window")
+
+        with (
+            mock.patch.object(StateStore, "save", new=crash_after_repaired_state),
+            self.assertRaisesRegex(RuntimeError, "injected recorded repair window"),
+        ):
+            runner.resume(
+                run_id="repair-recorded-digest-mismatch", retry_failed=True,
+            )
+
+        store = StateStore.open(run_root)
+        repaired_path = Path(store.state["plans"][0]["result_path"])
+        replacement = json.loads(repaired_path.read_text(encoding="utf-8"))
+        replacement["summary"] = "recorded mismatch must not be reconstructed"
+        temporary = repaired_path.with_suffix(".replacement")
+        temporary.write_text(
+            json.dumps(replacement, sort_keys=True, separators=(",", ":")),
+            encoding="utf-8",
+        )
+        os.replace(temporary, repaired_path)
+        replacement_bytes = repaired_path.read_bytes()
+        replacement_mode = repaired_path.stat().st_mode & 0o777
+
+        with (
+            mock.patch.object(
+                runner_module,
+                "repair_result_envelope",
+                side_effect=AssertionError("must reject before reconstruction"),
+            ),
+            self.assertRaisesRegex(ValueError, "recorded digest"),
+        ):
+            runner.resume(run_id="repair-recorded-digest-mismatch")
+
+        self.assertEqual(0, fake_codex_launch_count(run_root))
+        self.assertEqual(replacement_bytes, repaired_path.read_bytes())
+        self.assertEqual(replacement_mode, repaired_path.stat().st_mode & 0o777)
+        self.assertEqual(1, len([
+            event for event in _runner_events(run_root)
+            if event.get("action") == "result.envelope_repaired"
+        ]))
+
     def test_duplicate_execution_ledger_key_fails_closed(self) -> None:
         _, run_root, worktree, original_path, _ = self._failed_result(
             "repair-duplicate-ledger-key",
