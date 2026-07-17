@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import shutil
@@ -17,7 +18,9 @@ ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "scripts" / "cpe.py"
 sys.path.insert(0, str(ROOT / "scripts"))
 
+from cpe_runtime.compiler import compiler_cache_key, default_operator_contract
 from cpe_runtime.state import StateStore
+from cpe_runtime.verification import materialize_helper_descriptor
 
 
 class SequentialCliTest(unittest.TestCase):
@@ -104,12 +107,12 @@ class SequentialCliTest(unittest.TestCase):
             text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
         )
 
-    def test_help_exposes_only_run_resume_and_inspect(self) -> None:
+    def test_help_exposes_public_commands_and_internal_verify(self) -> None:
         source = CLI.read_text(encoding="utf-8")
         self.assertNotIn("export", source)
         result = self.command("--help")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("{run,resume,inspect}", result.stdout)
+        self.assertIn("{run,resume,inspect,verify}", result.stdout)
         self.assertNotIn("export", result.stdout)
 
     def test_output_schema_is_strict_structured_output_compatible(self) -> None:
@@ -355,6 +358,224 @@ class SequentialCliTest(unittest.TestCase):
             relative = module.relative_to(ROOT).as_posix()
             with self.subTest(module=relative):
                 self.assertIn(relative, inventory)
+
+
+class VerificationCliTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory(prefix="cpe-verify-cli-")
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.home = self.root / "codex-home"
+        self.repo = self.root / "repo"
+        self.home.mkdir(mode=0o700)
+        self.repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
+        subprocess.run(
+            ["git", "-C", str(self.repo), "config", "user.email", "cpe@example.invalid"],
+            check=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(self.repo), "config", "user.name", "CPE Eval"],
+            check=True,
+        )
+        (self.repo / "seed.txt").write_text("seed\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(self.repo), "add", "seed.txt"], check=True)
+        subprocess.run(
+            ["git", "-C", str(self.repo), "commit", "-q", "-m", "seed"],
+            check=True,
+        )
+        self.run_id = "verify-active"
+        subprocess.run(
+            ["git", "-C", str(self.repo), "checkout", "-q", "-b", f"codex/{self.run_id}"],
+            check=True,
+        )
+        self.counter = self.repo / "counter.txt"
+        script = (
+            "from pathlib import Path; "
+            f"p=Path({str(self.counter)!r}); "
+            "p.write_text(p.read_text() + 'x' if p.exists() else 'x')"
+        )
+        self.argv = (sys.executable, "-c", script)
+        plan = self.repo / "plan.md"
+        plan.write_text("Run the declared verification command.\n", encoding="utf-8")
+        source_commit = subprocess.run(
+            ["git", "-C", str(self.repo), "rev-parse", "HEAD"],
+            check=True,
+            text=True,
+            stdout=subprocess.PIPE,
+        ).stdout.strip()
+        self.store = StateStore.create(
+            run_root=self.home / "orchestrator" / self.run_id,
+            run_id=self.run_id,
+            source_repository=self.repo,
+            source_commit=source_commit,
+            worktree=self.repo,
+            branch=f"codex/{self.run_id}",
+            specs=[],
+            plans=[plan],
+        )
+        contract = default_operator_contract(self.store.state)
+        contract_path = self.store.root / "operator-contract.json"
+        contract_payload = json.dumps(
+            contract, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        contract_path.write_bytes(contract_payload)
+        contract_path.chmod(0o600)
+        plan_record = next(
+            item for item in self.store.state["inputs"] if item["role"] == "plan"
+        )
+        source = Path(plan_record["snapshot_path"]).read_bytes()
+        compiled = {
+            "format_version": 2,
+            "cache_key": compiler_cache_key(self.store.state, contract),
+            "plans": [{
+                "plan_id": "plan-01",
+                "source_sha256": plan_record["sha256"],
+                "byte_length": plan_record["byte_length"],
+                "line_count": 1,
+                "tasks": [{
+                    "task_id": "task-01",
+                    "order": 0,
+                    "source_line_start": 1,
+                    "source_line_end": 1,
+                    "source_text_sha256": hashlib.sha256(source).hexdigest(),
+                }],
+                "verifications": [{
+                    "command_id": "unit",
+                    "argv": list(self.argv),
+                    "allowed_branch_phases": ["task_green", "final_verification"],
+                    "deterministic": True,
+                    "mutable_input_policy": "forbidden",
+                    "required_artifacts": [],
+                    "source_line_start": 1,
+                    "source_line_end": 1,
+                    "source_text_sha256": hashlib.sha256(source).hexdigest(),
+                }],
+                "capabilities": [],
+                "coordination_exceptions": [],
+                "execution_advisories": [],
+                "unknowns": [],
+            }],
+        }
+        compiled_path = self.store.root / "compiled-run-index.json"
+        compiled_payload = json.dumps(
+            compiled, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        compiled_path.write_bytes(compiled_payload)
+        compiled_path.chmod(0o600)
+        self.store.state.update(
+            status="ready",
+            operator_contract_path=str(contract_path.resolve()),
+            operator_contract_sha256=hashlib.sha256(contract_payload).hexdigest(),
+            compiled_run_index_path=str(compiled_path.resolve()),
+            compiled_run_index_sha256=hashlib.sha256(compiled_payload).hexdigest(),
+        )
+        self.store.save()
+        materialize_helper_descriptor(self.store.root, CLI)
+        self.environment = dict(os.environ, CODEX_HOME=str(self.home))
+
+    def command(self, *arguments: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, str(CLI), *arguments],
+            env=self.environment,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+
+    def verify_arguments(self, *, command_id: str = "unit", cwd: Path | None = None) -> list[str]:
+        return [
+            "verify",
+            "--run-id", self.run_id,
+            "--command-id", command_id,
+            "--phase", "task",
+            "--input-digest", "immutable",
+            "--mutable-input-policy", "immutable",
+            "--cwd", str(cwd or self.repo),
+            "--",
+            *self.argv,
+        ]
+
+    def test_verify_requires_separator_nonempty_argv_and_known_enums(self) -> None:
+        no_separator = self.command(*self.verify_arguments()[:-len(self.argv) - 1], *self.argv)
+        empty = self.command(*self.verify_arguments()[:-len(self.argv)])
+        bad_phase = self.verify_arguments()
+        bad_phase[bad_phase.index("task")] = "merged_main"
+        bad_policy = self.verify_arguments()
+        policy_index = bad_policy.index("immutable", bad_policy.index("--mutable-input-policy"))
+        bad_policy[policy_index] = "unknown"
+        for result in (
+            no_separator,
+            empty,
+            self.command(*bad_phase),
+            self.command(*bad_policy),
+        ):
+            self.assertEqual(1, result.returncode, result.stdout + result.stderr)
+            self.assertEqual("failed", json.loads(result.stdout)["status"])
+        self.assertFalse(self.counter.exists())
+
+    def test_verify_rejects_unknown_run_outside_cwd_and_parent_derived_flags(self) -> None:
+        unknown = self.verify_arguments()
+        unknown[unknown.index(self.run_id)] = "missing-run"
+        outside = self.root / "outside"
+        outside.mkdir()
+        supplied_head = self.verify_arguments()
+        supplied_head[supplied_head.index("--"):supplied_head.index("--")] = [
+            "--head", "a" * 40,
+        ]
+        for arguments in (unknown, self.verify_arguments(cwd=outside), supplied_head):
+            result = self.command(*arguments)
+            self.assertEqual(1, result.returncode, result.stdout + result.stderr)
+            self.assertEqual("failed", json.loads(result.stdout)["status"])
+        self.assertFalse(self.counter.exists())
+
+    def test_verify_rejects_undeclared_command_without_executing(self) -> None:
+        result = self.command(*self.verify_arguments(command_id="undeclared"))
+        self.assertEqual(1, result.returncode, result.stdout + result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual("uncached_command_required", payload["status"])
+        self.assertFalse(self.counter.exists())
+
+    def test_exact_second_invocation_reuses_first_receipt(self) -> None:
+        first = self.command(*self.verify_arguments())
+        second = self.command(*self.verify_arguments())
+        self.assertEqual(0, first.returncode, first.stdout + first.stderr)
+        self.assertEqual(0, second.returncode, second.stdout + second.stderr)
+        first_payload, second_payload = json.loads(first.stdout), json.loads(second.stdout)
+        self.assertFalse(first_payload["reused"])
+        self.assertTrue(second_payload["reused"])
+        self.assertEqual(first_payload["receipt_path"], second_payload["receipt_path"])
+        self.assertEqual("x", self.counter.read_text(encoding="utf-8"))
+        ledger = [
+            json.loads(line)
+            for line in (
+                self.repo / ".superpowers" / "sdd" / "execution-ledger.jsonl"
+            ).read_text(encoding="utf-8").splitlines()
+        ]
+        for event in ledger:
+            self.assertEqual(3, len(event["evidence_refs"]))
+            self.assertTrue(event["evidence_refs"][0].startswith("verification/receipts/"))
+            self.assertTrue(event["evidence_refs"][1].startswith("verification/logs/"))
+            self.assertTrue(event["evidence_refs"][2].startswith("verification/logs/"))
+
+    def test_corrupt_cache_index_executes_once_with_fallback_reason(self) -> None:
+        first = self.command(*self.verify_arguments())
+        self.assertEqual(0, first.returncode, first.stdout + first.stderr)
+        index = next(
+            (self.repo / ".superpowers" / "sdd" / "verification" / "indexes").glob("*.json")
+        )
+        index.chmod(0o600)
+        index.write_text("{}", encoding="utf-8")
+        index.chmod(0o400)
+
+        fallback = self.command(*self.verify_arguments())
+
+        self.assertEqual(0, fallback.returncode, fallback.stdout + fallback.stderr)
+        payload = json.loads(fallback.stdout)
+        self.assertFalse(payload["reused"])
+        self.assertEqual("verification_helper_fallback", payload["reason"])
+        self.assertEqual("xx", self.counter.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

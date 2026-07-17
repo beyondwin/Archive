@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+import sys
 from pathlib import Path
 from typing import Sequence
 
@@ -46,6 +47,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     inspect = commands.add_parser("inspect")
     inspect.add_argument("--run-id", required=True)
+
+    verify = commands.add_parser("verify")
+    verify.add_argument("--run-id", required=True)
+    verify.add_argument("--command-id", required=True)
+    verify.add_argument("--phase", choices=("task", "affected", "branch_final"), required=True)
+    verify.add_argument("--input-digest", required=True)
+    verify.add_argument(
+        "--mutable-input-policy",
+        choices=("immutable", "digest_complete", "always_execute"),
+        required=True,
+    )
+    verify.add_argument("--cwd", type=absolute_path, required=True)
+    verify.add_argument("argv", nargs=argparse.REMAINDER)
     return parser
 
 
@@ -62,7 +76,10 @@ def _emit(payload: dict[str, object], exit_code: int | None = None) -> int:
 
 def main(argv: Sequence[str] | None = None) -> int:
     try:
-        args = build_parser().parse_args(argv)
+        raw_argv = list(sys.argv[1:] if argv is None else argv)
+        if raw_argv[:1] == ["verify"] and "--" not in raw_argv:
+            raise CliUsageError("verify requires -- before command argv")
+        args = build_parser().parse_args(raw_argv)
         runner = SequentialRunner()
         if args.command == "run":
             result = runner.run(workspace=args.workspace, specs=args.spec, plans=args.plan)
@@ -70,6 +87,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "resume":
             result = runner.resume(run_id=args.run_id, retry_failed=args.retry_failed)
             return _emit(result)
+        if args.command == "verify":
+            command_argv = list(args.argv)
+            if command_argv[:1] == ["--"]:
+                command_argv = command_argv[1:]
+            if not command_argv:
+                raise CliUsageError("verify command argv must not be empty")
+            result = runner.verify(
+                run_id=args.run_id,
+                command_id=args.command_id,
+                phase=args.phase,
+                input_digest=args.input_digest,
+                mutable_input_policy=args.mutable_input_policy,
+                cwd=args.cwd,
+                argv=command_argv,
+            )
+            if result.get("status") == "uncached_command_required":
+                return _emit(result, 1)
+            return _emit(result, 0 if result.get("status") == "passed" else 1)
         result = runner.inspect(run_id=args.run_id)
         return _emit(result, 0)
     except KeyboardInterrupt:
