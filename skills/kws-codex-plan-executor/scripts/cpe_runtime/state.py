@@ -217,6 +217,10 @@ class StateStore:
             "current_plan_index": 0,
             "inputs": records,
             "plans": plan_records,
+            "operator_contract_path": None,
+            "operator_contract_sha256": None,
+            "compiled_run_index_path": None,
+            "compiled_run_index_sha256": None,
         }
         store = cls(run_root.resolve(), state)
         store._validate()
@@ -249,6 +253,8 @@ class StateStore:
         required = {
             "format_version", "run_id", "status", "source_repository", "source_commit",
             "worktree", "branch", "current_plan_index", "inputs", "plans",
+            "operator_contract_path", "operator_contract_sha256",
+            "compiled_run_index_path", "compiled_run_index_sha256",
         }
         if set(state) != required or state.get("format_version") != FORMAT_VERSION:
             raise ValueError("invalid format-version-2 state")
@@ -275,6 +281,26 @@ class StateStore:
                 raise ValueError("private run directory is missing or redirected")
             _inside(directory, self.root, "private run directory")
         inputs_root, results_root, _, _, _ = owned_directories
+        for path_name, digest_name in (
+            ("operator_contract_path", "operator_contract_sha256"),
+            ("compiled_run_index_path", "compiled_run_index_sha256"),
+        ):
+            declared, digest = state[path_name], state[digest_name]
+            if (declared is None) != (digest is None):
+                raise ValueError("private compiled artifact metadata is incomplete")
+            if declared is not None:
+                artifact_path = Path(declared)
+                if artifact_path.is_symlink():
+                    raise ValueError("private compiled artifact must not be a symlink")
+                artifact = _inside(artifact_path, self.root, "private compiled artifact")
+                metadata = artifact.stat()
+                if (not artifact.is_file() or not stat.S_ISREG(metadata.st_mode)
+                        or stat.S_IMODE(metadata.st_mode) & 0o077):
+                    raise ValueError("private compiled artifact must be a regular file")
+                if not isinstance(digest, str) or not _DIGEST_PATTERN.fullmatch(digest):
+                    raise ValueError("private compiled artifact digest is invalid")
+                if hashlib.sha256(artifact.read_bytes()).hexdigest() != digest:
+                    raise ValueError("private compiled artifact digest changed")
         plan_ids = []
         role_orders = {"spec": 0, "plan": 0}
         for record in state["inputs"]:
