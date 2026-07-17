@@ -25,16 +25,10 @@ _RESULT_REQUIRED_FIELDS = {
     "verification",
     "summary",
 }
-_RECOVERY_RESULT_FIELDS = {
-    "retryable",
-    "failure_signature",
-    "next_strategy",
-}
 _RESULT_OPTIONAL_FIELDS = {
     "checkpoint",
     "blocker",
     "workflow_receipt",
-    *_RECOVERY_RESULT_FIELDS,
 }
 _WORKFLOW_RECEIPT_FIELDS = {
     "ledger_path",
@@ -226,13 +220,6 @@ def _recovery_decision(
             "resume the first incomplete task from durable evidence "
             "after child interruption"
         )
-    elif (
-        status == "failed"
-        and payload is not None
-        and payload.get("retryable") is True
-    ):
-        signature = str(payload["failure_signature"])
-        strategy = str(payload["next_strategy"])
     else:
         return False, "not_retryable", "status:failed", ""
     if signature == previous_signature:
@@ -893,21 +880,6 @@ class SequentialRunner:
         verification = payload.get("verification")
         if not isinstance(head, str) or not _SHA.fullmatch(head) or not isinstance(summary, str) or not summary.strip() or len(summary) > 2000 or not isinstance(verification, list):
             return "invalid_result"
-        recovery_fields = fields & _RECOVERY_RESULT_FIELDS
-        if recovery_fields and recovery_fields != _RECOVERY_RESULT_FIELDS:
-            return "invalid_result"
-        if recovery_fields:
-            if (
-                not isinstance(payload["retryable"], bool)
-                or not isinstance(payload["failure_signature"], str)
-                or not payload["failure_signature"].strip()
-                or len(payload["failure_signature"]) > 256
-                or not isinstance(payload["next_strategy"], str)
-                or not payload["next_strategy"].strip()
-                or len(payload["next_strategy"]) > 1000
-                or payload.get("status") == "completed"
-            ):
-                return "invalid_result"
         verification_fields = {"command_id", "argv_digest", "phase", "evidence_key", "exit_code", "receipt_path"}
         for item in verification:
             if (
@@ -1033,12 +1005,6 @@ class SequentialRunner:
                     "completed_task_ids": [],
                     "current_task_id": None,
                 },
-                retryable=True,
-                failure_signature="timeout",
-                next_strategy=(
-                    "resume the first incomplete task from durable evidence "
-                    "after process timeout"
-                ),
             )
         target.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
         target.chmod(0o600)
@@ -1051,7 +1017,8 @@ class SequentialRunner:
         observed_head = _git(worktree, "rev-parse", "HEAD") if worktree.is_dir() else None
         last_known_head = observed_head
         if last_known_head is None and state["plans"]:
-            last_known_head = state["plans"][max(0, state["current_plan_index"] - 1)]["last_known_head"]
+            index = min(state["current_plan_index"], len(state["plans"]) - 1)
+            last_known_head = state["plans"][index]["last_known_head"]
         visible_plans = state["plans"][:100]
         result = {
             "run_id": state["run_id"], "status": state["status"], "source_commit": state["source_commit"],

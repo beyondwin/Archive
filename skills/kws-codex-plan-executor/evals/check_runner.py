@@ -371,6 +371,31 @@ print(json.dumps(result, sort_keys=True), flush=True)
         self.assertIsNone(inspected["observed_head"])
         self.assertEqual(inspected["last_known_head"], result["last_known_head"])
 
+    def test_missing_worktree_reports_active_later_plan_last_known_head(self) -> None:
+        runner = self.runner()
+        result = runner.run(
+            workspace=self.repo,
+            specs=[],
+            plans=[
+                self.plan(1, "completed"),
+                self.plan(2, "blocked_after_commit"),
+            ],
+            run_id="missing-later-worktree-summary",
+        )
+        store = StateStore.open(
+            self.home / "orchestrator" / "missing-later-worktree-summary"
+        )
+        first_head = store.state["plans"][0]["accepted_commit"]
+        second_head = store.state["plans"][1]["last_known_head"]
+        self.assertNotEqual(second_head, first_head)
+        Path(result["worktree"]).rename(self.root / "moved-later-worktree")
+
+        inspected = runner.inspect(run_id="missing-later-worktree-summary")
+
+        self.assertEqual(result["status"], "blocked")
+        self.assertIsNone(inspected["observed_head"])
+        self.assertEqual(inspected["last_known_head"], second_head)
+
     def test_timeout_persists_advanced_head_and_returns_without_relaunch(self) -> None:
         runner = self.runner(timeout_seconds=1.0)
         result = runner.run(
@@ -1321,27 +1346,83 @@ print(json.dumps(result, sort_keys=True), flush=True)
         self.assertTrue(exception_process.stdout.closed)
         self.assertTrue(exception_process.stderr.closed)
 
-    def test_recovery_field_triples_are_atomic_and_incomplete_only(self) -> None:
+    def test_legacy_recovery_fields_are_rejected_without_plan_advancement(self) -> None:
         runner = self.runner()
-        store = mock.Mock(state={"worktree": str(self.repo)})
-        plan = {
-            "plan_id": "plan-01",
-            "starting_commit": git(self.repo, "rev-parse", "HEAD"),
-        }
-        base: dict[str, object] = {
-            "plan_id": "plan-01",
-            "status": "failed",
-            "head_commit": plan["starting_commit"],
-            "verification": [],
-            "summary": "focused recovery-field contract",
-        }
-        recovery = {
+        legacy = {
             "retryable": True,
             "failure_signature": "verification:test_failed",
             "next_strategy": "inspect the focused failing boundary",
         }
 
-        def outcome(payload: dict[str, object]) -> LaunchResult:
+        cases = [(field, {field: value}) for field, value in legacy.items()]
+        cases.append(("legacy_triple", legacy))
+
+        def launch_with(injected: dict[str, object]):
+            def launch(**kwargs: object) -> LaunchResult:
+                result_path = Path(kwargs["result_path"])
+                log_path = Path(kwargs["log_path"])
+                payload: dict[str, object] = {
+                    "plan_id": kwargs["plan_id"],
+                    "status": "failed",
+                    "head_commit": kwargs["current_commit"],
+                    "verification": [],
+                    "summary": "result with undeclared legacy field",
+                    "checkpoint": None,
+                    "blocker": None,
+                    "workflow_receipt": None,
+                    **injected,
+                }
+                result_path.write_text(json.dumps(payload), encoding="utf-8")
+                log_path.write_text("legacy field fixture\n", encoding="utf-8")
+                return LaunchResult(
+                    payload=payload,
+                    returncode=1,
+                    timed_out=False,
+                    forced_cleanup=False,
+                    discarded_log_bytes=0,
+                    result_path=result_path,
+                    log_path=log_path,
+                    duration_ms=0,
+                    input_tokens=None,
+                    cached_input_tokens=None,
+                    output_tokens=None,
+                    reasoning_output_tokens=None,
+                    launcher_prompt_bytes=0,
+                )
+            return launch
+
+        for index, (label, injected) in enumerate(cases, 1):
+            runner.launcher.launch = mock.Mock(
+                side_effect=launch_with(injected)
+            )
+            result = runner.run(
+                workspace=self.repo,
+                specs=[],
+                plans=[self.plan(index, "failed")],
+                run_id=f"legacy-result-field-{index}",
+            )
+            with self.subTest(field=label):
+                self.assertEqual(result["status"], "failed")
+                self.assertEqual(result["error"], "invalid_result")
+                self.assertEqual(result["current_plan_index"], 0)
+                self.assertEqual(result["plans"][0]["status"], "failed")
+                self.assertIsNone(result["plans"][0]["accepted_commit"])
+
+    def test_undeclared_result_field_is_rejected_at_handoff(self) -> None:
+        runner = self.runner()
+        store = mock.Mock(state={"worktree": str(self.repo)})
+        head = git(self.repo, "rev-parse", "HEAD")
+        plan = {"plan_id": "plan-01", "starting_commit": head}
+        payload = {
+            "plan_id": "plan-01",
+            "status": "failed",
+            "head_commit": head,
+            "verification": [],
+            "summary": "focused strict-envelope contract",
+            "unexpected": "field",
+        }
+
+        def outcome() -> LaunchResult:
             return LaunchResult(
                 payload=payload,
                 returncode=1,
@@ -1358,30 +1439,8 @@ print(json.dumps(result, sort_keys=True), flush=True)
                 launcher_prompt_bytes=0,
             )
 
-        names = tuple(recovery)
-        for mask in range(1, (1 << len(names)) - 1):
-            candidate = dict(base)
-            candidate.update(
-                {
-                    name: recovery[name]
-                    for index, name in enumerate(names)
-                    if mask & (1 << index)
-                }
-            )
-            with self.subTest(fields=sorted(set(candidate) - set(base))):
-                self.assertEqual(
-                    runner._handoff_error(store, plan, outcome(candidate)),
-                    "invalid_result",
-                )
-
-        completed = dict(
-            base,
-            status="completed",
-            workflow_receipt={},
-            **recovery,
-        )
         self.assertEqual(
-            runner._handoff_error(store, plan, outcome(completed)),
+            runner._handoff_error(store, plan, outcome()),
             "invalid_result",
         )
 
@@ -1423,12 +1482,7 @@ print(json.dumps(result, sort_keys=True), flush=True)
 
         self.assertIsNone(runner._handoff_error(store, plan, outcome(payload)))
 
-        nullable_wire_payload = dict(
-            payload,
-            retryable=None,
-            failure_signature=None,
-            next_strategy=None,
-        )
+        nullable_wire_payload = dict(payload)
         self.assertIsNone(
             runner._handoff_error(
                 store,
@@ -1436,16 +1490,9 @@ print(json.dumps(result, sort_keys=True), flush=True)
                 outcome(nullable_wire_payload),
             )
         )
-        self.assertNotIn("retryable", nullable_wire_payload)
-        self.assertNotIn("failure_signature", nullable_wire_payload)
-        self.assertNotIn("next_strategy", nullable_wire_payload)
-
         nullable_failed_wire_payload = dict(
             payload,
             status="failed",
-            retryable=None,
-            failure_signature=None,
-            next_strategy=None,
             workflow_receipt=None,
         )
         self.assertIsNone(
@@ -1776,7 +1823,7 @@ print(json.dumps(result, sort_keys=True), flush=True)
             ["plan-02", "plan-02"],
         )
 
-    def test_recovery_attempt_limits_and_timeout_wiring(self) -> None:
+    def test_failed_result_stops_without_automatic_recovery(self) -> None:
         self.assertEqual(
             _recovery_decision(
                 payload={"status": "interrupted"},
@@ -1825,15 +1872,12 @@ print(json.dumps(result, sort_keys=True), flush=True)
                     "status": "failed",
                     "head_commit": kwargs["current_commit"],
                     "verification": [],
-                    "summary": "deterministic retryable failure",
-                    "retryable": True,
-                    "failure_signature": "verification:test_parser_failed",
-                    "next_strategy": "inspect the parser boundary and resume Task 3",
+                    "summary": "deterministic failed result",
                 }
                 returncode = 1
                 result_path.write_text(json.dumps(payload), encoding="utf-8")
                 log_path.write_text(
-                    "deterministic retryable failure\n",
+                    "deterministic failed result\n",
                     encoding="utf-8",
                 )
             else:
@@ -1894,43 +1938,26 @@ print(json.dumps(result, sort_keys=True), flush=True)
             ],
             run_id="recovery-wiring",
         )
-        self.assertEqual(result["status"], "checkpointed")
+        self.assertEqual(result["status"], "failed")
         self.assertEqual(
             [plan["attempt_count"] for plan in result["plans"]],
-            [2, 1],
+            [1, 0],
         )
         self.assertEqual(
             [plan["status"] for plan in result["plans"]],
-            ["completed", "checkpointed"],
+            ["failed", "pending"],
         )
-        self.assertEqual(len(launch_calls), 3)
-        retryable_capsule = json.loads(
-            Path(launch_calls[1]["recovery_path"]).read_text()
-        )
-        self.assertEqual(
-            retryable_capsule["completed_tasks"],
-            ["Task 1", "Task 2"],
-        )
-        self.assertEqual(retryable_capsule["current_task"], "Task 3")
-        self.assertEqual(
-            retryable_capsule["failure_signature"],
-            "verification:test_parser_failed",
-        )
-        self.assertEqual(
-            retryable_capsule["next_strategy"],
-            "inspect the parser boundary and resume Task 3",
-        )
-        self.assertEqual(retryable_capsule["prior_status"], "failed")
+        self.assertEqual(len(launch_calls), 1)
         persisted = StateStore.open(
             self.home / "orchestrator" / "recovery-wiring"
         ).state
         self.assertEqual(persisted["format_version"], 2)
-        self.assertEqual(persisted["status"], "checkpointed")
-        self.assertEqual(persisted["plans"][1]["status"], "checkpointed")
+        self.assertEqual(persisted["status"], "failed")
+        self.assertEqual(persisted["plans"][1]["status"], "pending")
         self.assertEqual(persisted["plans"][1]["checkpoint_count"], 0)
         self.assertEqual(
             [plan["attempt_count"] for plan in persisted["plans"]],
-            [2, 1],
+            [1, 0],
         )
         events = [
             json.loads(line)
