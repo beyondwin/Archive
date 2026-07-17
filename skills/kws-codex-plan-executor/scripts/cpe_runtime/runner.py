@@ -59,7 +59,7 @@ from .result_validation import (
     normalize_result_v2,
     strict_json_object,
 )
-from .state import StateStore
+from .state import PRE_EXECUTION_WORKTREE_BLOCKER, StateStore
 
 
 _RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
@@ -604,6 +604,57 @@ class SequentialRunner:
             compile_once=self.launcher.compile_index
         )
 
+    @staticmethod
+    def _is_pre_execution_worktree_blocked(store: StateStore) -> bool:
+        return store.state.get("pre_execution_blocker") == PRE_EXECUTION_WORKTREE_BLOCKER
+
+    @staticmethod
+    def _clear_pre_execution_worktree_blocker(store: StateStore) -> None:
+        if not SequentialRunner._is_pre_execution_worktree_blocked(store):
+            raise ValueError("pre-execution worktree blocker is unavailable")
+        state = store.state
+        plan = state["plans"][state["current_plan_index"]]
+        plan["status"] = "pending"
+        state["status"] = "ready"
+        state["pre_execution_blocker"] = None
+        store.save()
+
+    @staticmethod
+    def _record_worktree_creation_blocked(
+        store: StateStore,
+        *,
+        detail: str,
+    ) -> dict[str, Any]:
+        state = store.state
+        plan = state["plans"][state["current_plan_index"]]
+        plan["status"] = "blocked"
+        state["status"] = "blocked"
+        state["pre_execution_blocker"] = dict(PRE_EXECUTION_WORKTREE_BLOCKER)
+        store.save()
+        store.append_event(
+            "run.worktree_creation_blocked",
+            plan_id=plan["plan_id"],
+            reason=PRE_EXECUTION_WORKTREE_BLOCKER["code"],
+            detail=detail,
+            **PRE_EXECUTION_WORKTREE_BLOCKER,
+        )
+        return SequentialRunner._summary(store, error=detail)
+
+    def _create_worktree_or_block(
+        self,
+        store: StateStore,
+    ) -> dict[str, Any] | None:
+        try:
+            self._create_or_reconcile_worktree(store)
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            try:
+                self._cleanup_created_worktree(store)
+            except (OSError, ValueError, subprocess.SubprocessError):
+                pass
+            detail = (str(exc).strip() or type(exc).__name__)[:2000]
+            return self._record_worktree_creation_blocked(store, detail=detail)
+        return None
+
     def run(
         self,
         *,
@@ -625,20 +676,9 @@ class SequentialRunner:
             return self._summary(store, error="compiled_index_preparation_failed")
         try:
             with _RunLock(store.root / "run.lock") as lock_fd:
-                try:
-                    self._create_or_reconcile_worktree(store)
-                except (OSError, ValueError, subprocess.SubprocessError) as exc:
-                    try:
-                        self._cleanup_created_worktree(store)
-                    except (OSError, ValueError, subprocess.SubprocessError):
-                        pass
-                    store.state["status"] = "failed"
-                    store.save()
-                    reason = (str(exc).strip() or type(exc).__name__)[:2000]
-                    store.append_event("run.creation_failed", reason=reason)
-                    summary = self._summary(store, error=reason)
-                    summary["status"] = "blocked"
-                    return summary
+                blocked = self._create_worktree_or_block(store)
+                if blocked is not None:
+                    return blocked
                 try:
                     return self._execute(
                         store,
@@ -657,7 +697,17 @@ class SequentialRunner:
         try:
             with _RunLock(store.root / "run.lock") as lock_fd:
                 store = StateStore.open(store.root)
-                if store.state["status"] in {"preparing", "ready"}:
+                resumed_recorded = False
+                if self._is_pre_execution_worktree_blocked(store):
+                    if retry_failed:
+                        raise ValueError("retry-failed requires a failed run")
+                    store.append_event("run.resumed", retry_failed=False)
+                    resumed_recorded = True
+                    self._clear_pre_execution_worktree_blocker(store)
+                    blocked = self._create_worktree_or_block(store)
+                    if blocked is not None:
+                        return blocked
+                elif store.state["status"] in {"preparing", "ready"}:
                     self._create_or_reconcile_worktree(store)
                 else:
                     self._verify_worktree(store)
@@ -712,7 +762,8 @@ class SequentialRunner:
                             reason=preflight,
                             environment_fingerprint=current_environment,
                         )
-                store.append_event("run.resumed", retry_failed=retry_failed)
+                if not resumed_recorded:
+                    store.append_event("run.resumed", retry_failed=retry_failed)
                 try:
                     return self._execute(
                         store,
@@ -2044,7 +2095,12 @@ class SequentialRunner:
     def _summary(store: StateStore, *, error: str | None = None) -> dict[str, Any]:
         state = store.state
         worktree = Path(state["worktree"])
-        observed_head = _git(worktree, "rev-parse", "HEAD") if worktree.is_dir() else None
+        observed_head = None
+        if worktree.is_dir():
+            try:
+                observed_head = _git(worktree, "rev-parse", "HEAD")
+            except (OSError, ValueError, subprocess.SubprocessError):
+                pass
         last_known_head = observed_head
         if last_known_head is None and state["plans"]:
             index = min(state["current_plan_index"], len(state["plans"]) - 1)
@@ -2077,6 +2133,7 @@ class SequentialRunner:
                         "plan.recovery_stopped",
                         "resume.environment_changed",
                         "resume.stopped_unchanged_blocker",
+                        "run.worktree_creation_blocked",
                     }
                     and isinstance(event.get("reason"), str)
                 ),

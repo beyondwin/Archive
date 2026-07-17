@@ -698,8 +698,12 @@ def controller_side_effect(
 
 
 class FailingCreateRunner(SequentialRunner):
+    fail_worktree_creation = True
+
     def _add_new_worktree(self, store: StateStore) -> None:
-        raise subprocess.CalledProcessError(128, ["git", "worktree", "add"])
+        if self.fail_worktree_creation:
+            raise subprocess.CalledProcessError(128, ["git", "worktree", "add"])
+        super()._add_new_worktree(store)
 
 
 class SequentialRunnerTest(unittest.TestCase):
@@ -1825,11 +1829,13 @@ print(json.dumps(result, sort_keys=True), flush=True)
                 reopened = StateStore.open(store.root)
                 self.assertEqual(reopened.state["status"], terminal)
 
-    def test_worktree_creation_failure_never_leaves_running_state(self) -> None:
+    def test_worktree_creation_blocker_is_durable_and_plain_resume_recovers(self) -> None:
         runner = FailingCreateRunner(
             codex_home=self.home,
             launcher=self.runner().launcher,
         )
+        run_root = self.home / "orchestrator" / "create-failure"
+        worktree = self.home / "worktrees" / "create-failure"
         result = runner.run(
             workspace=self.repo,
             specs=[],
@@ -1837,16 +1843,89 @@ print(json.dumps(result, sort_keys=True), flush=True)
             run_id="create-failure",
         )
         self.assertEqual(result["status"], "blocked")
-        state = json.loads(
-            (
-                self.home
-                / "orchestrator"
-                / "create-failure"
-                / "state.json"
-            ).read_text()
+        blocked_bytes = (run_root / "state.json").read_bytes()
+        state = StateStore.open(run_root).state
+        self.assertEqual(state["status"], "blocked")
+        self.assertEqual(state["plans"][0]["status"], "blocked")
+        self.assertEqual(state["plans"][0]["attempt_count"], 0)
+        self.assertEqual(state["plans"][0]["controller_launch_count"], 0)
+        self.assertEqual(state["pre_execution_blocker"], {
+            "code": "worktree_creation_failed",
+            "kind": "verification_environment",
+            "operation": "create_or_reconcile_worktree",
+            "owner": "operator",
+        })
+        self.assertFalse(worktree.exists())
+        self.assertEqual(runner.compiler.compile_calls, 1)
+
+        inspected = runner.inspect(run_id="create-failure")
+
+        self.assertEqual(inspected["status"], "blocked")
+        self.assertEqual(inspected["last_decision_reason"], "worktree_creation_failed")
+        self.assertEqual(blocked_bytes, (run_root / "state.json").read_bytes())
+
+        blocked_again = runner.resume(run_id="create-failure")
+
+        self.assertEqual(blocked_again["status"], "blocked")
+        repeated = StateStore.open(run_root).state
+        self.assertEqual(repeated["status"], "blocked")
+        self.assertEqual(repeated["plans"][0]["status"], "blocked")
+        self.assertEqual(repeated["plans"][0]["attempt_count"], 0)
+        self.assertEqual(repeated["plans"][0]["controller_launch_count"], 0)
+        self.assertEqual(runner.compiler.compile_calls, 1)
+        self.assertFalse(worktree.exists())
+        blocked_events = [
+            event for event in _runner_events(run_root)
+            if event.get("action") == "run.worktree_creation_blocked"
+        ]
+        self.assertEqual(len(blocked_events), 2)
+        self.assertTrue(all(
+            event.get("source") == "parent_observed"
+            and event.get("kind") == "verification_environment"
+            and event.get("code") == "worktree_creation_failed"
+            and event.get("owner") == "operator"
+            for event in blocked_events
+        ))
+
+        runner.fail_worktree_creation = False
+        completed = runner.resume(run_id="create-failure")
+
+        self.assertEqual(completed["status"], "completed")
+        recovered = StateStore.open(run_root).state
+        self.assertEqual(recovered["status"], "completed")
+        self.assertIsNone(recovered["pre_execution_blocker"])
+        self.assertEqual(recovered["plans"][0]["attempt_count"], 1)
+        self.assertEqual(recovered["plans"][0]["controller_launch_count"], 1)
+        self.assertEqual(runner.compiler.compile_calls, 1)
+        self.assertTrue(worktree.is_dir())
+
+    def test_worktree_creation_blocker_preserves_unowned_path_collision(self) -> None:
+        runner = FailingCreateRunner(
+            codex_home=self.home,
+            launcher=self.runner().launcher,
         )
-        self.assertEqual(state["status"], "failed")
-        self.assertFalse((self.home / "worktrees" / "create-failure").exists())
+        run_root = self.home / "orchestrator" / "create-path-collision"
+        worktree = self.home / "worktrees" / "create-path-collision"
+        blocked = runner.run(
+            workspace=self.repo,
+            specs=[],
+            plans=[self.plan(1, "completed")],
+            run_id="create-path-collision",
+        )
+        self.assertEqual(blocked["status"], "blocked")
+        worktree.mkdir(mode=0o700, parents=True)
+        marker = worktree / "unowned.txt"
+        marker.write_text("preserve\n", encoding="utf-8")
+
+        blocked_again = runner.resume(run_id="create-path-collision")
+
+        self.assertEqual(blocked_again["status"], "blocked")
+        self.assertEqual(marker.read_text(encoding="utf-8"), "preserve\n")
+        state = StateStore.open(run_root).state
+        self.assertEqual(state["status"], "blocked")
+        self.assertEqual(state["plans"][0]["attempt_count"], 0)
+        self.assertEqual(state["plans"][0]["controller_launch_count"], 0)
+        self.assertEqual(runner.compiler.compile_calls, 1)
 
     def test_reconciles_verified_initializing_worktree(self) -> None:
         runner = self.runner()
