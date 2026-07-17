@@ -21,6 +21,9 @@
 - Review reuse means accepting an already-recorded Superpowers review receipt for the same scope and HEAD. It does not mean CPE performs another review.
 - `merged_main` is a reserved evidence-key namespace for a separate parent-observed integration receipt. The branch controller and its internal helper cannot claim or execute that phase.
 - Default Superpowers implementer/reviewer delegation evidence uses `fork_turns=none`. `fork_turns=all` requires a source-referenced exception recorded by the child.
+- Follow the approved [token evidence and observability addendum](../specs/2026-07-17-cpe-2.0-token-evidence-observability-addendum.md): produced artifact bytes, declared context bytes, and model-consumed tokens are distinct measurements and may never be relabelled as one another.
+- Review/context telemetry is content-free. Persist only stable class, digest, byte length, scope, and availability metadata; never raw diff bodies, prompts, source bodies, or tool output.
+- Aggregate Codex usage may include the controller and nested agents. Do not allocate aggregate tokens to roles unless a provider event supplies independently attributable usage.
 - Durable accepted artifacts remain under `~/.codex/orchestrator/<run-id>/`. The helper may write temporary receipts/logs only under the ignored worktree path `.superpowers/sdd/verification/`; Wave 1 bounded ingest validates and seals them into the run root before acceptance. No helper artifact may become a tracked product change.
 - Use test-driven development and commit after each task.
 
@@ -338,6 +341,11 @@ class ReviewReceipt:
     finding_set_id: str | None
     finding_ids: tuple[str, ...]
     evidence_digest: str
+    diff_kind: Literal["task", "finding_delta", "whole_branch"]
+    diff_artifact_digest: str
+    diff_artifact_bytes: int
+    review_package_digest: str
+    review_package_bytes: int
     disposition: Literal["accepted", "changes_requested"]
     reviewer_attestation_path: str
 
@@ -384,6 +392,11 @@ Required cases:
 - two fix receipts for the same finding set: the second is invalid `duplicate_fix_cycle`;
 - a new finding set opened by a delta review may have its own consolidated fix and delta review;
 - two reviews with identical scope, base HEAD, head, task IDs, and evidence digest: valid evidence but the second is reported as `redundant_review_receipt` for efficiency metrics;
+- review package and diff metadata are bound to safe worktree-relative regular files before acceptance, with digest and byte length verified by the parent;
+- `scope=task|delta|whole_branch` must map respectively to `diff_kind=task|finding_delta|whole_branch`;
+- the same diff digest repeated for the same scope/base/head is counted as redundant payload evidence;
+- finding-delta and whole-branch receipts with different kinds are not collapsed even if incidental metadata matches;
+- raw diff bodies are not copied into sealed evidence; base/head, reconstruction command identity, digest, and byte length are retained instead;
 - reviewer attestation path outside run root/worktree or through a symlink: rejected;
 - child prose without a receipt: not accepted as review evidence.
 
@@ -398,7 +411,7 @@ Expected: missing review evidence module.
 
 - [ ] **Step 3: Implement strict receipt and lifecycle validation**
 
-Store accepted review receipts in `evidence/reviews/<review-id>.json` and fix receipts in `evidence/reviews/<fix-id>.json`; store only references in the execution ledger. Validate identifier uniqueness, finding-set linkage, exact base/head/task/evidence coverage, one fix per finding set, and a matching delta review after each fix. Return structured missing/stale sets; do not produce natural-language semantic findings.
+Store accepted review receipts in `evidence/reviews/<review-id>.json` and fix receipts in `evidence/reviews/<fix-id>.json`; store only references in the execution ledger. Validate identifier uniqueness, finding-set linkage, exact base/head/task/evidence coverage, one fix per finding set, and a matching delta review after each fix. Before sealing the receipt, validate each declared review package/diff artifact as a safe worktree-relative regular file and record its SHA-256 and byte length. Do not copy raw diff snapshots into durable evidence: preserve base/head, diff kind, digest, byte length, and a stable reconstruction command identifier. Return structured missing/stale sets; do not produce natural-language semantic findings.
 
 - [ ] **Step 4: Derive review efficiency metrics**
 
@@ -410,11 +423,19 @@ Add these report fields from events/receipts:
   "delta_reviews": 1,
   "whole_branch_reviews": 1,
   "redundant_review_receipts": 0,
-  "consolidated_fix_cycles": 1
+  "consolidated_fix_cycles": 1,
+  "review_package_bytes": 48192,
+  "review_diff_bytes": 32768,
+  "review_diff_bytes_by_kind": {
+    "task": 8192,
+    "finding_delta": 4096,
+    "whole_branch": 20480
+  },
+  "duplicate_review_diff_digests": 0
 }
 ```
 
-If a second same-scope, same-HEAD receipt appears, retain it as evidence but count it as redundant. Do not automatically delete it.
+If a second same-scope, same-HEAD receipt appears, retain it as evidence but count it as redundant. Do not automatically delete it. Artifact-byte counters are payload-pressure observations, not token totals and not semantic review-quality signals.
 
 - [ ] **Step 5: Run focused tests and confirm GREEN**
 
@@ -476,12 +497,38 @@ def validate_transition_obligations(
   "role": "implementer",
   "depth": 1,
   "fork_turns": "none",
-  "source_context_refs": [],
+  "source_context_refs": [
+    {
+      "class": "task_brief",
+      "path": ".superpowers/sdd/task-3-brief.md",
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+      "class": "review_diff",
+      "path": ".superpowers/sdd/review-base..head.diff",
+      "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    {
+      "class": "implementer_report",
+      "path": ".superpowers/sdd/task-3-report.md",
+      "sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+    }
+  ],
+  "context_ref_count": 3,
+  "context_ref_bytes": 48192,
+  "context_measurement_kind": "declared_refs_not_provider_ingestion",
+  "context_classes": {
+    "task_brief": 1,
+    "review_diff": 1,
+    "implementer_report": 1
+  },
   "source": "child_attested"
 }
 ```
 
 Supported event names: `coordination.spawn`, `coordination.wait`, `coordination.list`, `coordination.send`, `coordination.followup`, `coordination.finish`, and `coordination.compaction`.
+
+`source_context_refs` exists only in the child worktree event used for parent validation. Each entry contains exactly `class`, safe relative `path`, and SHA-256. After resolving and observing byte length, durable coordination telemetry retains digest/class/byte metadata and discards the raw path.
 
 **Coordination interfaces:**
 
@@ -495,6 +542,15 @@ class CoordinationObservation:
     depth: int | None
     fork_turns: str | None
     duration_ms: int | None
+    context_ref_count: int | None
+    context_ref_bytes: int | None
+    context_measurement_kind: Literal[
+        "declared_refs_not_provider_ingestion", "unavailable"
+    ]
+    context_classes: Mapping[str, int] | None
+    usage_scope: Literal["controller_and_nested_agents_aggregate"]
+    usage_attribution: Literal["parent_observed", "child_attested", "unavailable"]
+    usage_attribution_unavailable_reason: str | None
     source: Literal["parent_observed", "child_attested"]
 
 def extract_coordination_observation(
@@ -529,6 +585,12 @@ Prove:
 - supported Codex JSONL coordination metadata becomes `parent_observed` without storing raw JSONL/content;
 - when the event stream omits a field, the value remains `child_attested` or unknown with an explicit unavailable reason;
 - a parent/child mismatch keeps the parent observation and records a data-quality warning rather than silently merging counts.
+- context refs accept only safe worktree-relative regular files classified as `task_brief`, `implementer_report`, `review_package`, `review_diff`, `finding_delta`, `progress_ledger`, `spec_slice`, `plan_slice`, or `other_bounded`;
+- parent metadata observation records digest and byte length without persisting file bodies;
+- produced SDD inventory and declared context refs remain separate counters;
+- missing declared context metadata remains unavailable rather than zero;
+- aggregate usage without agent-scoped provider events records `usage_attribution=unavailable` and reason `provider_event_not_agent_scoped`;
+- child-estimated role usage cannot alter parent-observed aggregate usage.
 
 - [ ] **Step 3: Run focused tests and confirm RED**
 
@@ -551,7 +613,9 @@ The parent may confirm evidence or record an explicit waiver. The child cannot s
 
 The launcher prompt must tell the Superpowers worker to append coordination events whenever it uses subagents. The child chooses and runs its Superpowers workflow; CPE only supplies an append-only event path and validates events afterward.
 
-Extend the existing JSONL usage filter with a content-free coordination callback. `coordination.py` may accept only stable event type, agent ID digest, task ID, role, depth, `fork_turns`, duration, and operation count. Discard prompts, messages, tool arguments/results, and unknown event bodies immediately. If the Codex stream does not expose coordination metadata, append `coordination.telemetry_unavailable` with reason `provider_event_not_available` and use validated child-attested ledger events without upgrading their trust.
+Extend the existing JSONL usage filter with a content-free coordination callback. `coordination.py` may accept only stable event type, agent ID digest, task ID, role, depth, `fork_turns`, duration, operation count, context class counts, context reference count/bytes, and explicit measurement/attribution availability. Discard prompts, messages, tool arguments/results, raw paths, and unknown event bodies immediately. Resolve child-declared safe relative context refs inside the owned worktree, observe regular-file digest and byte length, then retain only stable digest/class/byte metadata. If the Codex stream does not expose coordination metadata, append `coordination.telemetry_unavailable` with reason `provider_event_not_available` and use validated child-attested ledger events without upgrading their trust.
+
+At every checkpoint and plan acceptance, create a metadata-only `.superpowers/sdd` production inventory: files/bytes by stable artifact class, largest file bytes, review diff files/bytes by diff kind, duplicate digest count when already available, and whether produced inventory exceeds the Wave 1 sealing limits. Inventory above the limits is advisory; referenced evidence still obeys the existing fail-closed sealing contract. Do not read file bodies solely to estimate tokens and do not delete artifacts automatically.
 
 Ingestion limits:
 
@@ -576,7 +640,20 @@ Derive:
     "send_calls": 0,
     "followup_calls": 1,
     "compactions": 0,
-    "duration_seconds": 842
+    "duration_seconds": 842,
+    "declared_context_refs": 12,
+    "declared_context_bytes": 193536,
+    "context_measurement_kind": "declared_refs_not_provider_ingestion",
+    "usage_scope": "controller_and_nested_agents_aggregate",
+    "usage_attribution": "unavailable",
+    "usage_attribution_unavailable_reason": "provider_event_not_agent_scoped",
+    "produced_artifacts": {
+      "files": 37,
+      "bytes": 712704,
+      "review_diff_files": 8,
+      "review_diff_bytes": 524288,
+      "sealed_evidence_limit_exceeded": false
+    }
   }
 }
 ```
@@ -662,6 +739,9 @@ Explain:
 - CPE validates review receipts but never re-reviews code;
 - CPE records coordination patterns but does not orchestrate Superpowers subagents;
 - `fork_turns=none` is the default because the plan, source refs, and task prompt are the intended context boundary;
+- produced artifact bytes, declared context bytes, and provider token usage are separate measurements;
+- raw diff snapshots are not sealed; review receipts preserve reconstructable base/head plus digest/byte metadata;
+- aggregate controller usage is not allocated to implementer/reviewer roles without agent-scoped provider evidence;
 - mutable external inputs default to execution, not reuse.
 
 - [ ] **Step 4: Run focused Wave 3 tests**
@@ -721,4 +801,7 @@ git commit -m "docs(cpe): define evidence reuse boundaries"
 - Task, delta, and whole-branch review scopes align with their declared HEAD/task coverage.
 - Transition obligations survive resume and block the correct boundary until satisfied or parent-waived.
 - Coordination telemetry reveals context-fork and subagent overhead without controlling Superpowers.
+- Review receipts bind diff kind, digest, and byte length without sealing raw diff bodies.
+- Produced SDD inventory and declared context refs are reported separately and are never labelled as consumed tokens.
+- Missing context or per-agent usage attribution is explicit rather than coerced to zero.
 - The complete CPE eval suite and `git diff --check` pass.
