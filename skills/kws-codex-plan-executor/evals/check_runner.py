@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import importlib
 import json
@@ -35,6 +36,14 @@ from cpe_runtime.compiler import (
     default_operator_contract,
     validate_compiled_index,
 )
+from cpe_runtime.capabilities import (
+    CapabilityObservation,
+    blocker_resume_decision,
+    canonicalize_observation,
+    environment_fingerprint,
+    typed_blockers,
+    validate_observation,
+)
 from cpe_runtime.evidence import (
     MAX_EVIDENCE_FILE_BYTES,
     append_execution_event,
@@ -55,6 +64,162 @@ except ModuleNotFoundError as exc:
     if exc.name != "evals":
         raise
     from fake_codex import workflow_receipt
+
+
+class CapabilityTests(unittest.TestCase):
+    def test_fingerprint_ignores_incidental_probe_details(self) -> None:
+        first = CapabilityObservation(
+            capability="loopback_bind",
+            scope="workspace",
+            outcome="unavailable",
+            reason_code="permission_denied",
+            observed_by="parent_observed",
+            stable_details={"host": "127.0.0.1", "probe_port": "43117"},
+        )
+        second = CapabilityObservation(
+            capability="loopback_bind",
+            scope="workspace",
+            outcome="unavailable",
+            reason_code="permission_denied",
+            observed_by="parent_observed",
+            stable_details={"host": "127.0.0.1", "probe_port": "58241"},
+        )
+        self.assertEqual(
+            environment_fingerprint([first]),
+            environment_fingerprint([second]),
+        )
+
+    def test_child_hypothesis_does_not_become_typed_blocker(self) -> None:
+        observation = CapabilityObservation(
+            capability="product_runtime",
+            scope="plan",
+            outcome="unavailable",
+            reason_code="suspected_environment",
+            observed_by="hypothesis",
+            stable_details={},
+        )
+        self.assertEqual([], typed_blockers([observation]))
+
+    def test_parent_observed_unavailable_capability_is_a_blocker(self) -> None:
+        observation = CapabilityObservation(
+            capability="loopback_bind",
+            scope="workspace",
+            outcome="unavailable",
+            reason_code="permission_denied",
+            observed_by="parent_observed",
+            stable_details={"host": "127.0.0.1"},
+        )
+        self.assertEqual("loopback_bind", typed_blockers([observation])[0]["capability"])
+
+    def test_trust_upgrade_does_not_change_environment_fingerprint(self) -> None:
+        child = CapabilityObservation(
+            "loopback_bind", "workspace", "unavailable", "permission_denied",
+            "child_attested", {"host": "127.0.0.1"},
+        )
+        parent = dataclasses.replace(child, observed_by="parent_observed")
+        self.assertEqual(
+            environment_fingerprint([child]), environment_fingerprint([parent])
+        )
+        self.assertEqual([], typed_blockers([child]))
+        self.assertEqual(1, len(typed_blockers([parent])))
+
+    def test_validation_accepts_allowlisted_and_incidental_details(self) -> None:
+        observation = CapabilityObservation(
+            capability="loopback_bind",
+            scope="workspace",
+            outcome="available",
+            reason_code="bound",
+            observed_by="parent_observed",
+            stable_details={"host": "127.0.0.1", "probe_port": "43117"},
+        )
+        validate_observation(observation)
+        self.assertEqual(
+            {"host": "127.0.0.1"},
+            canonicalize_observation(observation)["stable_details"],
+        )
+
+    def test_validation_rejects_empty_required_fields(self) -> None:
+        for field in ("capability", "scope", "reason_code"):
+            with self.subTest(field=field):
+                values = {
+                    "capability": "loopback_bind",
+                    "scope": "workspace",
+                    "reason_code": "permission_denied",
+                }
+                values[field] = ""
+                with self.assertRaises(ValueError):
+                    validate_observation(
+                        CapabilityObservation(
+                            outcome="unavailable",
+                            observed_by="parent_observed",
+                            stable_details={},
+                            **values,
+                        )
+                    )
+
+    def test_validation_rejects_unsupported_enum_values(self) -> None:
+        observation = CapabilityObservation(
+            capability="loopback_bind",
+            scope="workspace",
+            outcome="blocked",  # type: ignore[arg-type]
+            reason_code="permission_denied",
+            observed_by="parent_observed",
+            stable_details={},
+        )
+        with self.assertRaises(ValueError):
+            validate_observation(observation)
+
+    def test_validation_rejects_non_string_detail_keys_or_values(self) -> None:
+        for details in ({"host": 127}, {1: "127.0.0.1"}):
+            with self.subTest(details=details):
+                observation = CapabilityObservation(
+                    capability="loopback_bind",
+                    scope="workspace",
+                    outcome="unavailable",
+                    reason_code="permission_denied",
+                    observed_by="parent_observed",
+                    stable_details=details,  # type: ignore[arg-type]
+                )
+                with self.assertRaises(ValueError):
+                    validate_observation(observation)
+
+    def test_validation_rejects_secret_like_detail_keys(self) -> None:
+        observation = CapabilityObservation(
+            capability="loopback_bind",
+            scope="workspace",
+            outcome="unavailable",
+            reason_code="permission_denied",
+            observed_by="parent_observed",
+            stable_details={"api_token": "secret"},
+        )
+        with self.assertRaises(ValueError):
+            validate_observation(observation)
+
+    def test_validation_rejects_unknown_detail_keys(self) -> None:
+        observation = CapabilityObservation(
+            capability="loopback_bind",
+            scope="workspace",
+            outcome="unavailable",
+            reason_code="permission_denied",
+            observed_by="parent_observed",
+            stable_details={"raw_environment": "PATH=/bin"},
+        )
+        with self.assertRaises(ValueError):
+            validate_observation(observation)
+
+    def test_blocker_resume_decision_stops_only_unchanged_fingerprints(self) -> None:
+        self.assertEqual(
+            "stop_unchanged",
+            blocker_resume_decision(
+                previous_fingerprint="same", current_fingerprint="same"
+            ),
+        )
+        self.assertEqual(
+            "launch",
+            blocker_resume_decision(
+                previous_fingerprint="previous", current_fingerprint="current"
+            ),
+        )
 
 
 class HistoricalEvidenceFixtureTests(unittest.TestCase):
