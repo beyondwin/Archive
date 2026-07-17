@@ -35,6 +35,68 @@ from cpe_runtime.runner import (
 from cpe_runtime.state import StateStore
 
 
+class HistoricalEvidenceFixtureTests(unittest.TestCase):
+    fixture_root = ROOT / "evals" / "fixtures"
+    approved_provenance = {
+        "direct_cpe",
+        "direct_codex_goal_comparative",
+        "non_cpe_comparative",
+    }
+
+    def load_fixture(self, name: str) -> dict[str, object]:
+        payload = json.loads(
+            (self.fixture_root / name).read_text(encoding="utf-8")
+        )
+        if payload.get("provenance") not in self.approved_provenance:
+            raise ValueError("unknown historical evidence provenance")
+        return payload
+
+    def test_unknown_provenance_is_rejected(self) -> None:
+        payload = {"provenance": "unverified_run"}
+        with mock.patch.object(
+            Path,
+            "read_text",
+            return_value=json.dumps(payload),
+        ):
+            with self.assertRaisesRegex(ValueError, "unknown historical evidence"):
+                self.load_fixture("unknown.json")
+
+    def test_comparative_cases_never_count_as_cpe_metrics(self) -> None:
+        for name in (
+            "readmates-comparative.json",
+            "gasstation-comparative.json",
+        ):
+            with self.subTest(name=name):
+                payload = self.load_fixture(name)
+                self.assertFalse(payload["count_as_cpe_metrics"])
+                self.assertNotEqual(payload["provenance"], "direct_cpe")
+
+    def test_fixtures_are_sanitized_and_content_free(self) -> None:
+        forbidden = (
+            '"prompt"',
+            '"transcript"',
+            '"raw_log"',
+            '"source_diff"',
+            '"token"',
+            '"password"',
+            "/Users/",
+            "/home/",
+        )
+        for name in (
+            "canvas-direct-run-format2.json",
+            "readmates-comparative.json",
+            "gasstation-comparative.json",
+        ):
+            with self.subTest(name=name):
+                path = self.fixture_root / name
+                text = path.read_text(encoding="utf-8")
+                payload = self.load_fixture(name)
+                self.assertEqual(payload["schema_version"], 1)
+                self.assertTrue(payload["sanitized"])
+                for marker in forbidden:
+                    self.assertNotIn(marker, text)
+
+
 def git(repository: Path, *arguments: str) -> str:
     result = subprocess.run(
         ["git", "-C", str(repository), *arguments],
@@ -647,7 +709,7 @@ print(json.dumps(result, sort_keys=True), flush=True)
         process.communicate(timeout=2)
 
         second = self.runner(**environment).resume(run_id="coordinator-loss")
-        self.assertEqual(second["status"], "interrupted")
+        self.assertEqual(second["status"], "checkpointed")
         self.assertEqual(second["error"], "run_busy")
         self.assertEqual(len(self.invocations()), 1)
 
@@ -845,7 +907,7 @@ print(json.dumps(result, sort_keys=True), flush=True)
             process.send_signal(signum)
             stdout, stderr = process.communicate(timeout=3)
             self.assertEqual(process.returncode, 3, stderr)
-            self.assertEqual(json.loads(stdout)["status"], "interrupted")
+            self.assertEqual(json.loads(stdout)["status"], "checkpointed")
             for line in pid_path.read_text().splitlines():
                 with self.assertRaises(ProcessLookupError):
                     os.kill(int(line), 0)
@@ -1312,7 +1374,12 @@ print(json.dumps(result, sort_keys=True), flush=True)
                     "invalid_result",
                 )
 
-        completed = dict(base, status="completed", **recovery)
+        completed = dict(
+            base,
+            status="completed",
+            workflow_receipt={},
+            **recovery,
+        )
         self.assertEqual(
             runner._handoff_error(store, plan, outcome(completed)),
             "invalid_result",
@@ -1409,7 +1476,7 @@ print(json.dumps(result, sort_keys=True), flush=True)
 
         failed_final_review = dict(
             payload,
-            workflow_receipt=dict(receipt, final_review="changes_requested"),
+            workflow_receipt=dict(receipt, open_finding_ids=["F-1"]),
         )
         self.assertEqual(
             runner._handoff_error(store, plan, outcome(failed_final_review)),
@@ -1420,7 +1487,7 @@ print(json.dumps(result, sort_keys=True), flush=True)
             payload,
             workflow_receipt=dict(
                 receipt,
-                final_review_artifact="../outside-review.md",
+                final_review_path="../outside-review.md",
             ),
         )
         self.assertEqual(
@@ -1435,7 +1502,7 @@ print(json.dumps(result, sort_keys=True), flush=True)
             payload,
             workflow_receipt=dict(
                 receipt,
-                final_review_artifact=".superpowers/sdd/review-link.md",
+                final_review_path=".superpowers/sdd/review-link.md",
             ),
         )
         self.assertEqual(
@@ -1451,8 +1518,15 @@ print(json.dumps(result, sort_keys=True), flush=True)
         )
         wrong_incomplete = dict(
             wrong_head,
-            status="interrupted",
+            status="checkpointed",
             verification=[],
+            checkpoint={
+                "reason": "coordinator_interrupt",
+                "progress_fingerprint": "0" * 64,
+                "completed_task_ids": [],
+                "current_task_id": None,
+            },
+            workflow_receipt=None,
         )
         self.assertEqual(
             runner._handoff_error(store, plan, outcome(wrong_incomplete)),
@@ -1461,7 +1535,16 @@ print(json.dumps(result, sort_keys=True), flush=True)
 
         failed_verification = dict(
             payload,
-            verification=[{"command": "fake verify", "exit_code": 1}],
+            verification=[
+                {
+                    "command_id": "fake-final",
+                    "argv_digest": "f" * 64,
+                    "phase": "branch_final",
+                    "evidence_key": "0" * 64,
+                    "exit_code": 1,
+                    "receipt_path": None,
+                }
+            ],
         )
         self.assertEqual(
             runner._handoff_error(
@@ -1556,7 +1639,7 @@ print(json.dumps(result, sort_keys=True), flush=True)
         finished = [
             event
             for event in events
-            if event["kind"] == "plan.attempt_finished"
+            if event["action"] == "plan.attempt_finished"
         ]
         self.assertEqual(len(finished), 2)
         for event in finished:
@@ -1573,7 +1656,7 @@ print(json.dumps(result, sort_keys=True), flush=True)
         finished_lines = [
             line
             for line in events_path.read_text().splitlines()
-            if json.loads(line)["kind"] == "plan.attempt_finished"
+            if json.loads(line)["action"] == "plan.attempt_finished"
         ]
         self.assertLessEqual(len(finished_lines[0]), 16_383)
         for event in finished[1:]:
@@ -1759,16 +1842,22 @@ print(json.dumps(result, sort_keys=True), flush=True)
                     "status": "completed",
                     "head_commit": kwargs["current_commit"],
                     "verification": [
-                        {"command": "focused deterministic verify", "exit_code": 0}
+                        {
+                            "command_id": "focused-deterministic-verify",
+                            "argv_digest": "f" * 64,
+                            "phase": "branch_final",
+                            "evidence_key": "0" * 64,
+                            "exit_code": 0,
+                            "receipt_path": None,
+                        }
                     ],
                     "summary": "deterministic recovery completed",
                     "workflow_receipt": {
-                        "mode": "subagent-driven-lean",
-                        "progress_ledger": ".superpowers/sdd/progress.md",
-                        "task_reviews": "complete",
-                        "final_review": "approved",
-                        "final_review_artifact": ".superpowers/sdd/final-review.md",
-                        "duplicate_verification": "none",
+                        "ledger_path": ".superpowers/sdd/progress.md",
+                        "final_review_path": ".superpowers/sdd/final-review.md",
+                        "final_review_head": kwargs["current_commit"],
+                        "open_finding_ids": [],
+                        "open_obligation_ids": [],
                     },
                 }
                 returncode = 0
@@ -1805,16 +1894,16 @@ print(json.dumps(result, sort_keys=True), flush=True)
             ],
             run_id="recovery-wiring",
         )
-        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["status"], "checkpointed")
         self.assertEqual(
             [plan["attempt_count"] for plan in result["plans"]],
-            [2, 2],
+            [2, 1],
         )
         self.assertEqual(
             [plan["status"] for plan in result["plans"]],
-            ["completed", "failed"],
+            ["completed", "checkpointed"],
         )
-        self.assertEqual(len(launch_calls), 4)
+        self.assertEqual(len(launch_calls), 3)
         retryable_capsule = json.loads(
             Path(launch_calls[1]["recovery_path"]).read_text()
         )
@@ -1832,18 +1921,16 @@ print(json.dumps(result, sort_keys=True), flush=True)
             "inspect the parser boundary and resume Task 3",
         )
         self.assertEqual(retryable_capsule["prior_status"], "failed")
-        timeout_capsule = json.loads(
-            Path(launch_calls[3]["recovery_path"]).read_text()
-        )
-        self.assertEqual(timeout_capsule["failure_signature"], "timeout")
-        self.assertEqual(timeout_capsule["prior_status"], "interrupted")
         persisted = StateStore.open(
             self.home / "orchestrator" / "recovery-wiring"
         ).state
-        self.assertEqual(persisted["status"], "failed")
+        self.assertEqual(persisted["format_version"], 2)
+        self.assertEqual(persisted["status"], "checkpointed")
+        self.assertEqual(persisted["plans"][1]["status"], "checkpointed")
+        self.assertEqual(persisted["plans"][1]["checkpoint_count"], 0)
         self.assertEqual(
             [plan["attempt_count"] for plan in persisted["plans"]],
-            [2, 2],
+            [2, 1],
         )
         events = [
             json.loads(line)
@@ -1854,13 +1941,7 @@ print(json.dumps(result, sort_keys=True), flush=True)
                 / "events.jsonl"
             ).read_text().splitlines()
         ]
-        self.assertTrue(
-            any(
-                event["kind"] == "plan.recovery_stopped"
-                and event["reason"] == "repeated_failure_signature"
-                for event in events
-            )
-        )
+        self.assertTrue(any(event["action"] == "plan.attempt_incomplete" for event in events))
 
     def test_progress_ledger_read_is_bounded_before_parsing(self) -> None:
         evidence = self.repo / ".superpowers" / "sdd"
