@@ -342,7 +342,16 @@ class StateStore:
                 or not all(isinstance(value, str) for value in record["capability_probe_ids"])
             ):
                 raise ValueError("plan capability probe IDs are invalid")
-            if record["budget"] != DEFAULT_PLAN_BUDGET:
+            budget = record["budget"]
+            if (
+                not isinstance(budget, dict)
+                or set(budget) != set(DEFAULT_PLAN_BUDGET)
+                or not all(
+                    isinstance(value, int) and not isinstance(value, bool)
+                    for value in budget.values()
+                )
+                or budget != DEFAULT_PLAN_BUDGET
+            ):
                 raise ValueError("plan budget is invalid")
             if record["result_path"] is not None:
                 declared_result = Path(record["result_path"])
@@ -447,6 +456,9 @@ class StateStore:
             raise ValueError("event source is invalid")
         if not action or len(action) > 100:
             raise ValueError("event action must be bounded")
+        reserved = {"event_id", "at", "source", "run_id", "category", "action"}
+        if reserved & set(details):
+            raise ValueError("event contains reserved envelope field")
         forbidden = {"prompt", "transcript", "raw_output", "environment", "secret", "token"}
         if forbidden & set(details):
             raise ValueError("event contains forbidden content field")

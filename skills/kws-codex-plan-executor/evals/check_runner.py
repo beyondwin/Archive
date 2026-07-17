@@ -306,6 +306,30 @@ print(json.dumps(result, sort_keys=True), flush=True)
         self.assertEqual(event["category"], "plan")
         self.assertEqual(event["action"], "plan.attempt_finished")
 
+    def test_format_two_event_rejects_reserved_envelope_collisions(self) -> None:
+        store = self.create_format_two_store("event-collision")
+        before = store.events_path.read_bytes()
+        reserved = {
+            "event_id": "forged-event",
+            "at": "forged-time",
+            "run_id": "forged-run",
+            "category": "forged-category",
+        }
+        for name, value in reserved.items():
+            with self.subTest(name=name):
+                with self.assertRaisesRegex(ValueError, "reserved envelope field"):
+                    store.append_event("plan.started", **{name: value})
+        self.assertEqual(store.events_path.read_bytes(), before)
+
+    def test_state_rejects_non_integer_budget_values(self) -> None:
+        store = self.create_format_two_store("budget-types")
+        budget = store.state["plans"][0]["budget"]
+        for value in (3600.0, True):
+            with self.subTest(value=value):
+                budget["controller_slice_timeout_seconds"] = value
+                self.assert_state_rejected(store, "plan budget is invalid")
+        budget["controller_slice_timeout_seconds"] = 3600
+
     def test_state_rejects_impossible_plan_and_run_relationships(self) -> None:
         plans = [self.plan(1, "completed"), self.plan(2, "completed")]
         store = StateStore.create(
