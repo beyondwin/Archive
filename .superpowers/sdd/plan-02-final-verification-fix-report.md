@@ -50,3 +50,35 @@ brief: `compiled_index_preparation_failed` and `failed` instead of `blocked`.
 
 None. No production behavior, compiler safety boundary, evidence requirement,
 or assertion was weakened. The reserved full eval suite was not run.
+
+## Follow-up: direct eval entrypoint import
+
+### Root cause and RED evidence
+
+The first fix imported `workflow_receipt` as `evals.fake_codex`, which worked
+when `check_runner` was loaded as a package but failed under the canonical
+`run.sh` entrypoint. Direct execution places `evals/`, not its parent, on
+`sys.path`; therefore the package-qualified import raised
+`ModuleNotFoundError: No module named 'evals'` before any test ran.
+
+### Fix
+
+Import the sibling fixture as `fake_codex`, matching direct script execution
+and preserving the fixture behavior added by the first fix.
+
+### GREEN commands and exact outcomes
+
+- `python3 evals/check_runner.py SequentialRunnerTest.test_spawn_failure_is_recorded_as_a_durable_failed_attempt SequentialRunnerTest.test_resume_skips_completed_plan_and_continues_current_git_state`
+  — `Ran 2 tests in 1.227s`, `OK`.
+- `python3 evals/check_runner.py --help`
+  — exit 0; unittest help rendered, proving the direct entrypoint imports.
+- `git diff --check` — exit 0 with no output.
+
+### Commit SHA
+
+Recorded in the final controller response for the commit containing this
+follow-up section.
+
+### Concerns
+
+None. The reserved full eval suite was not run.

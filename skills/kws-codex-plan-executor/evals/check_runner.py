@@ -49,7 +49,7 @@ from cpe_runtime.runner import (
     _write_private_json,
 )
 from cpe_runtime.state import StateStore
-from evals.fake_codex import workflow_receipt
+from fake_codex import workflow_receipt
 
 
 class HistoricalEvidenceFixtureTests(unittest.TestCase):
