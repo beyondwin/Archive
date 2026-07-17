@@ -636,7 +636,9 @@ class SequentialRunner:
                     store.save()
                     reason = (str(exc).strip() or type(exc).__name__)[:2000]
                     store.append_event("run.creation_failed", reason=reason)
-                    return self._summary(store, error=reason)
+                    summary = self._summary(store, error=reason)
+                    summary["status"] = "blocked"
+                    return summary
                 try:
                     return self._execute(
                         store,

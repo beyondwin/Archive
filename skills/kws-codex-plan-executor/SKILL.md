@@ -2,8 +2,8 @@
 name: kws-codex-plan-executor
 description: Execute one or more approved Superpowers implementation plans sequentially in one durable isolated worktree.
 metadata:
-  version: "1.3.2"
-  updated_at: "2026-07-15"
+  version: "2.0.0"
+  updated_at: "2026-07-17"
 ---
 
 # KWS Codex Plan Executor
@@ -12,13 +12,13 @@ Use CPE when approved Superpowers implementation plans must run in a fixed
 order and survive process interruption. For bounded same-session work, use the
 plan's Superpowers workflow directly.
 
-Version 1.3.2 preserves the lean-quality contract while restoring strict Codex
-structured-output compatibility and linked-worktree commit access. Nullable
-wire-only optional fields are normalized to the unchanged public format-version-1
-contract, and the sandbox receives only the exact resolved Git common directory
-needed for linked-worktree index, object, and ref writes. The
-atomic recovery fields, two-pipe drain behavior, real-process coverage, and CPE/Superpowers
-ownership boundary remain unchanged.
+CPE 2.0 uses only format-version-2 run state, child-result, compiled-index, and
+optimization-report contracts; it consumes a strict append-only execution
+ledger and does not read or migrate format-1 run state. Its recovery controller
+is evidence-driven and progress-aware: it avoids relaunches when
+parent-observed capabilities are unchanged, permits bounded recovery after the
+environment or durable work changes, and can repair only safe artifact-path
+spellings without a model turn.
 
 ## Commands
 
@@ -33,46 +33,66 @@ Repeated plan flags preserve execution order. All specification snapshots are
 available to each plan session. Plans share one isolated worktree, and resume
 starts at the first incomplete plan without relaunching completed plans.
 
-CPE launches one fresh plan controller per plan. Superpowers owns task
-execution, review, fixes, the cross-task final review, final verification, and
-commits inside that session. CPE owns snapshots, the worktree, process launch,
-plan checkpoints, bounded recovery, resume, inspection, and mechanical result
-acceptance; it does not become a task mapper or product-quality role.
+Superpowers owns implementation correctness: task execution, TDD, review,
+finding fixes, cross-task final review, verification, and commits. CPE owns the
+durable plan boundary and decides only whether the evidence justifies another
+controller slice. It also owns input snapshots, the isolated worktree,
+capability probes, budgets, resume, inspection, mechanical result acceptance,
+and derived optimization reports. CPE is not a task mapper or a product-quality
+judge.
 
 The controller uses file-backed task briefs, reports, review packages, review
-files, and the progress ledger. Only compact status, commit, test, finding, and
-next-action returns stay in controller context. Task workers run focused
-verification, reviewers reuse recorded evidence, and full verification runs
-once at the final HEAD. A completed output requires the exact clean worktree
-HEAD, successful verification, and a valid workflow receipt.
+files, the strict execution ledger, and the progress ledger. Only compact
+status, commit, verification, finding, and next-action returns remain in
+controller context. Task workers run focused verification, reviewers reuse
+recorded evidence, and the complete gate runs once at the final `HEAD`.
 
-Automatic recovery is conditional and bounded: one private recovery capsule
-may drive one fresh attempt after interruption, timeout, or a structured
-retryable failure with a changed strategy. Blocked, non-retryable, integrity,
-and repeated-signature outcomes stop. An explicit `--retry-failed` grants one
-operator-initiated attempt.
+## Recovery Contract
 
-The existing attempt-finished event may record aggregate usage totals from the
-Codex session. Those totals can include the root controller and subagents and
-are not claimed as a root-versus-subagent split.
+- A parent-observed unavailable capability is a typed blocker. Resuming with
+  the same environment fingerprint launches zero compiler, model, or
+  verification children. A changed fingerprint permits a bounded resume.
+- The progress fingerprint covers durable `HEAD`, completed task IDs, current
+  task ID, accepted review IDs, and closed finding IDs. A timed-out slice with
+  a changed fingerprint is productive and may continue within budget. The first
+  unchanged timeout receives at most one confirmation slice; the second
+  consecutive no-progress slice stops as stalled.
+- The fixed per-plan defaults are a 3600-second controller slice, 6 productive
+  progress checkpoints, 21600 seconds of wall time, and 8 controller launches.
+  Every budget is checked before another launch.
+- `checkpointed` is a durable resumable state and exit 3, not a synonym for
+  failure. Child checkpoints remain subject to the same post-slice budgets.
+- Safe result-envelope repair changes only absolute workflow-receipt
+  `ledger_path` and `final_review_path` spellings into verified worktree-relative
+  paths. It preserves the immutable original result and its digest, writes a
+  separate repaired receipt, changes no semantic result field, and consumes
+  zero model turns, controller launches, or attempts. Unsafe or drifted
+  evidence fails closed.
+
+Run artifacts stay outside the repository. With the default Codex home they
+live under `~/.codex/orchestrator/<run-id>/`; attempt logs are in
+`logs/<plan-id>-attempt-<n>.log`, and derived reports are
+`reports/optimization-report.json` and
+`reports/optimization-report.md`. The isolated worktree is
+`~/.codex/worktrees/<run-id>/`.
 
 ## Operational Safety
 
 Only one mutating `run` or `resume` owns a run at a time; a competitor returns
-an interrupted `run_busy` result without launching another child. CPE starts
+a checkpointed `run_busy` result without launching another child. CPE starts
 each child in one POSIX process group, cleans the complete group on timeout,
 interrupt, or termination, and retains a bounded one-MiB attempt-log tail.
 
-Run creation persists `initializing` before worktree creation. Resume verifies
-or recreates only the exact recorded worktree before continuing. Attempt
-identity and its private result placeholder are durable before launch. Codex
-returns the strict result object as its final response, and accepted results
-become read-only evidence.
+Run creation persists `preparing` before compilation and worktree execution.
+Resume verifies the exact recorded worktree before continuing. Attempt identity
+and its private result placeholder are durable before launch. Codex returns the
+strict format-2 result object as its final response, and accepted results become
+read-only evidence.
 
 The child remains in `workspace-write`; CPE adds only the worktree's exact
 resolved Git common directory so normal linked-worktree commits can write their
 index, objects, logs, and branch ref.
 
-Run the deterministic gate with `./evals/run.sh`. See [README.md](README.md)
-for requirements, state and result contracts, failure meanings, limitations,
-and the complete verification commands.
+Run the deterministic integration gate with `./evals/run.sh`. See
+[README.md](README.md) for requirements, format-2 state and result contracts,
+typed stop meanings, limitations, artifact locations, and all static checks.
