@@ -254,6 +254,16 @@ class LaunchResult:
     launcher_prompt_bytes: int
 
 
+@dataclass(frozen=True)
+class StructuredLaunchRequest:
+    command: list[str]
+    cwd: Path
+    prompt: str
+    result_path: Path
+    log_path: Path
+    timeout_seconds: float
+
+
 class CodexLauncher:
     def __init__(
         self,
@@ -372,13 +382,114 @@ class CodexLauncher:
         recovery_path: Path | None = None,
     ) -> LaunchResult:
         """Launch one attempt using caller-owned paths and the held run lock."""
-        command = self._command(worktree, result_path)
-        prompt = self._prompt(
-            worktree=worktree, plan_id=plan_id, plan_path=plan_path,
-            spec_paths=spec_paths, starting_commit=starting_commit,
-            current_commit=current_commit,
-            recovery_path=recovery_path,
+        request = StructuredLaunchRequest(
+            command=self._command(worktree, result_path),
+            cwd=worktree,
+            prompt=self._prompt(
+                worktree=worktree, plan_id=plan_id, plan_path=plan_path,
+                spec_paths=spec_paths, starting_commit=starting_commit,
+                current_commit=current_commit,
+                recovery_path=recovery_path,
+            ),
+            result_path=result_path,
+            log_path=log_path,
+            timeout_seconds=self.timeout_seconds,
         )
+        return self._launch_structured(request, lock_fd)
+
+    def compiler_request(
+        self,
+        *,
+        run_root: Path,
+        snapshot_paths: Sequence[Path],
+        contract_path: Path,
+        result_path: Path,
+        repair: bool,
+        previous_output_path: Path | None = None,
+        previous_error_code: str | None = None,
+    ) -> StructuredLaunchRequest:
+        schema = self.schema_path.parent / "compiled-run-index.schema.json"
+        attempt = 2 if repair else 1
+        command = [
+            self.codex_bin,
+            "exec",
+            "--ignore-user-config",
+            "--ephemeral",
+            "--json",
+            "--sandbox",
+            "read-only",
+            "--output-schema",
+            str(schema),
+            "--output-last-message",
+            str(result_path),
+            "-C",
+            str(run_root),
+            "-",
+        ]
+        prompt = "\n".join([
+            "Compile immutable CPE input snapshots into the strict run-index schema.",
+            "Do not modify files, execute Git mutations, or access the network.",
+            "Do not spawn subagents.",
+            f"OPERATOR_CONTRACT: {contract_path}",
+            f"REPAIR_PREVIOUS_OUTPUT: {'yes' if repair else 'no'}",
+            f"PREVIOUS_OUTPUT_PATH: {previous_output_path or 'none'}",
+            f"PREVIOUS_ERROR_CODE: {previous_error_code or 'none'}",
+            "SNAPSHOTS:",
+            *(f"- {path}" for path in snapshot_paths),
+            "Return only the strict schema object.",
+            "",
+        ])
+        return StructuredLaunchRequest(
+            command=command,
+            cwd=run_root,
+            prompt=prompt,
+            result_path=result_path,
+            log_path=run_root / "logs" / f"compiler-attempt-{attempt}.log",
+            timeout_seconds=300.0,
+        )
+
+    def compile_index(
+        self,
+        store: object,
+        contract: dict[str, object],
+        repair: bool,
+    ) -> dict[str, object]:
+        root = store.root  # type: ignore[attr-defined]
+        state = store.state  # type: ignore[attr-defined]
+        attempt = 2 if repair else 1
+        result_path = root / "results" / f"compiler-attempt-{attempt}.json"
+        previous_output = (
+            root / "results" / "compiler-attempt-1.json" if repair else None
+        )
+        request = self.compiler_request(
+            run_root=root,
+            snapshot_paths=[Path(item["snapshot_path"]) for item in state["inputs"]],
+            contract_path=root / "operator-contract.json",
+            result_path=result_path,
+            repair=repair,
+            previous_output_path=previous_output,
+            previous_error_code=None,
+        )
+        result = self._launch_structured(request, 0)
+        if result.returncode != 0 or result.payload is None:
+            raise ValueError("compiler launch failed")
+        try:
+            if result_path.stat().st_size > 1_048_576:
+                raise ValueError("compiler output exceeds size limit")
+            result_path.chmod(0o400)
+        except OSError as exc:
+            raise ValueError("compiler output is unavailable") from exc
+        return result.payload
+
+    def _launch_structured(
+        self,
+        request: StructuredLaunchRequest,
+        lock_fd: int,
+    ) -> LaunchResult:
+        command = request.command
+        prompt = request.prompt
+        result_path = request.result_path
+        log_path = request.log_path
         environment = {key: value for key, value in self.environ.items() if key not in _SECRETS}
         returncode: int | None = None
         timed_out = False
@@ -403,6 +514,7 @@ class CodexLauncher:
             try:
                 process = subprocess.Popen(
                     command,
+                    cwd=request.cwd,
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
@@ -438,7 +550,7 @@ class CodexLauncher:
                     selectors.EVENT_READ,
                     log.write,
                 )
-                deadline = time.monotonic() + self.timeout_seconds
+                deadline = time.monotonic() + request.timeout_seconds
                 while True:
                     remaining = deadline - time.monotonic()
                     if process.poll() is None and remaining <= 0:
@@ -487,7 +599,11 @@ class CodexLauncher:
 
         usage.finish()
         payload = None
-        if result_path.is_file() and not result_path.is_symlink():
+        if (
+            result_path.is_file()
+            and not result_path.is_symlink()
+            and result_path.stat().st_size <= 1_048_576
+        ):
             try:
                 candidate = json.loads(result_path.read_text(encoding="utf-8"))
                 if isinstance(candidate, dict):
