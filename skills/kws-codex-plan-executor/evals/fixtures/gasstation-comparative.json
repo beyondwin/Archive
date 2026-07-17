@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "provenance": "non_cpe_comparative",
+  "sanitized": true,
+  "count_as_cpe_metrics": false,
+  "plan_lines": 2167,
+  "tasks": 8,
+  "existing_dirty_worktree": true,
+  "required_capabilities": ["android_sdk", "adb", "avd", "emulator", "writable_cache"]
+}
