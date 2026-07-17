@@ -82,3 +82,31 @@ follow-up section.
 ### Concerns
 
 None. The reserved full eval suite was not run.
+
+## Follow-up: FVR-001 dual entrypoint compatibility
+
+### Root cause and RED evidence
+
+The sibling-only `from fake_codex import workflow_receipt` fixed direct script
+execution but made the plan-declared module-style command unable to import
+`check_runner`. Running the exact module-style two-test command failed before
+tests with two `ModuleNotFoundError: No module named 'fake_codex'` errors.
+
+### Fix
+
+Prefer the package-qualified fixture import and fall back to the sibling import
+only when the missing module is specifically the `evals` package. This supports
+both Python entrypoint layouts without masking an import failure inside the
+fixture module.
+
+### GREEN commands and exact outcomes
+
+- Module style: `python3 -m unittest -v evals.check_runner.SequentialRunnerTest.test_spawn_failure_is_recorded_as_a_durable_failed_attempt evals.check_runner.SequentialRunnerTest.test_resume_skips_completed_plan_and_continues_current_git_state`
+  — `Ran 2 tests in 1.424s`, `OK`.
+- Direct script: `python3 evals/check_runner.py SequentialRunnerTest.test_spawn_failure_is_recorded_as_a_durable_failed_attempt SequentialRunnerTest.test_resume_skips_completed_plan_and_continues_current_git_state`
+  — `Ran 2 tests in 1.224s`, `OK`.
+- `git diff --check` — exit 0 with no output.
+
+### Concerns
+
+None. The reserved full eval suite was not run.
