@@ -30,6 +30,7 @@ SCENARIOS = {
     "timeout_with_completed_result",
     "timeout_with_malformed_ledger",
     "timeout_with_ledger_deletion",
+    "timeout_with_ledger_rewrite",
     "completed_with_grandchild",
     "large_log",
     "oversized_usage",
@@ -454,6 +455,21 @@ def main() -> int:
         else:
             ledger = worktree / ".superpowers" / "sdd" / "execution-ledger.jsonl"
             ledger.unlink()
+        wait_for_launcher_timeout(
+            result_path,
+            checkpoint_payload(plan_id, head, scenario, attempt),
+        )
+    elif scenario == "timeout_with_ledger_rewrite":
+        if attempt == 1:
+            head = commit_plan(worktree, plan_id, "-progress")
+            write_checkpoint_ledger(worktree, plan_id)
+        else:
+            ledger = worktree / ".superpowers" / "sdd" / "execution-ledger.jsonl"
+            event = json.loads(ledger.read_text(encoding="utf-8"))
+            event["task_id"] = "task-rewritten"
+            ledger.write_text(
+                json.dumps(event, sort_keys=True) + "\n", encoding="utf-8",
+            )
         wait_for_launcher_timeout(
             result_path,
             checkpoint_payload(plan_id, head, scenario, attempt),

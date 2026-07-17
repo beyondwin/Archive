@@ -167,6 +167,15 @@ def validate_execution_ledger(path: Path, *, expected_plan_id: str) -> list[dict
     return _validate_execution_ledger_payload(payload, expected_plan_id=expected_plan_id)
 
 
+def execution_event_digest(event: dict[str, object]) -> str:
+    """Digest canonical event content, not only its caller-selected identity."""
+    validate_execution_event_schema(event)
+    payload = json.dumps(
+        event, sort_keys=True, separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
 def read_progress_snapshot(run_root: Path, *, plan_index: int, head: str) -> ProgressSnapshot:
     """Project the current strict JSONL ledger into durable progress state."""
     if not isinstance(plan_index, int) or isinstance(plan_index, bool):
@@ -258,7 +267,15 @@ def _reject_symlink_components(root: Path, relative: PurePosixPath) -> None:
             raise ValueError("required evidence is missing or redirected")
 
 
-def ingest_plan_evidence(*, run_root: Path, worktree: Path, plan_id: str, accepted_head: str) -> dict[str, object]:
+def _manifest_bytes(manifest: dict[str, object]) -> bytes:
+    return json.dumps(
+        manifest, sort_keys=True, separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _collect_plan_evidence(
+    *, worktree: Path, plan_id: str, accepted_head: str,
+) -> tuple[dict[str, object], list[tuple[str, bytes]]]:
     if not _IDENTIFIER.fullmatch(plan_id) or not re.fullmatch(r"[0-9a-f]{40,64}", accepted_head):
         raise ValueError("evidence identity is invalid")
     source_root = worktree / ".superpowers" / "sdd"
@@ -281,33 +298,120 @@ def ingest_plan_evidence(*, run_root: Path, worktree: Path, plan_id: str, accept
     if len(seen) > MAX_EVIDENCE_FILES:
         raise ValueError("evidence file count exceeds limit")
 
+    files: list[dict[str, object]] = []
+    payloads: list[tuple[str, bytes]] = []
+    total = 0
+    for reference in ["execution-ledger.jsonl", *references]:
+        _reject_symlink_components(source_root, PurePosixPath(reference))
+        source = source_root.joinpath(*PurePosixPath(reference).parts)
+        resolved_parent = source.parent.resolve(strict=True)
+        if source_root.resolve(strict=True) not in (resolved_parent, *resolved_parent.parents):
+            raise ValueError("evidence reference escapes its root")
+        payload = (
+            ledger_payload
+            if reference == "execution-ledger.jsonl"
+            else _read_regular(
+                source,
+                missing_message="required evidence is missing or redirected",
+            )
+        )
+        total += len(payload)
+        if total > MAX_EVIDENCE_TOTAL_BYTES:
+            raise ValueError("evidence bundle exceeds size limit")
+        payloads.append((reference, payload))
+        files.append({
+            "path": reference,
+            "byte_length": len(payload),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+        })
+    manifest: dict[str, object] = {
+        "format_version": 2,
+        "plan_id": plan_id,
+        "accepted_head": accepted_head,
+        "files": files,
+        "total_byte_length": total,
+    }
+    return manifest, payloads
+
+
+def prepare_plan_evidence(
+    *, worktree: Path, plan_id: str, accepted_head: str,
+) -> tuple[dict[str, object], str]:
+    """Validate source evidence and return its immutable publication contract."""
+    manifest, _ = _collect_plan_evidence(
+        worktree=worktree, plan_id=plan_id, accepted_head=accepted_head,
+    )
+    return manifest, hashlib.sha256(_manifest_bytes(manifest)).hexdigest()
+
+
+def _validate_published_evidence(
+    target_root: Path,
+    *,
+    manifest: dict[str, object],
+    payloads: list[tuple[str, bytes]],
+) -> None:
+    if target_root.is_symlink() or not target_root.is_dir():
+        raise ValueError("sealed evidence target does not match journal contract")
+    expected_files = {reference for reference, _ in payloads}
+    expected_files.add("evidence-manifest.json")
+    observed_files: set[str] = set()
+    for path in target_root.rglob("*"):
+        if path.is_symlink():
+            raise ValueError("sealed evidence target does not match journal contract")
+        if path.is_file():
+            observed_files.add(path.relative_to(target_root).as_posix())
+            if not stat.S_ISREG(path.stat().st_mode):
+                raise ValueError("sealed evidence target does not match journal contract")
+    if observed_files != expected_files:
+        raise ValueError("sealed evidence target does not match journal contract")
+    expected_payloads = dict(payloads)
+    expected_payloads["evidence-manifest.json"] = _manifest_bytes(manifest)
+    for reference, expected in expected_payloads.items():
+        target = target_root.joinpath(*PurePosixPath(reference).parts)
+        if stat.S_IMODE(target.stat().st_mode) != 0o400:
+            raise ValueError("sealed evidence target does not match journal contract")
+        if _read_regular(
+            target,
+            missing_message="sealed evidence target does not match journal contract",
+        ) != expected:
+            raise ValueError("sealed evidence target does not match journal contract")
+
+
+def ingest_plan_evidence(
+    *,
+    run_root: Path,
+    worktree: Path,
+    plan_id: str,
+    accepted_head: str,
+    expected_manifest_sha256: str | None = None,
+) -> dict[str, object]:
+    manifest, payloads = _collect_plan_evidence(
+        worktree=worktree, plan_id=plan_id, accepted_head=accepted_head,
+    )
+    manifest_payload = _manifest_bytes(manifest)
+    manifest_sha256 = hashlib.sha256(manifest_payload).hexdigest()
+    if (
+        expected_manifest_sha256 is not None
+        and (
+            not _DIGEST.fullmatch(expected_manifest_sha256)
+            or expected_manifest_sha256 != manifest_sha256
+        )
+    ):
+        raise ValueError("evidence source changed after decision journal")
+
     evidence_root = run_root / "evidence"
     evidence_root.mkdir(mode=0o700, parents=True, exist_ok=True)
     target_root = evidence_root / plan_id
     if target_root.exists() or target_root.is_symlink():
-        raise FileExistsError("sealed evidence target already exists")
+        _validate_published_evidence(
+            target_root, manifest=manifest, payloads=payloads,
+        )
+        return manifest
+
     staging = Path(tempfile.mkdtemp(prefix=f".{plan_id}.", dir=evidence_root))
     published = False
-    files: list[dict[str, object]] = []
-    total = 0
     try:
-        for reference in ["execution-ledger.jsonl", *references]:
-            _reject_symlink_components(source_root, PurePosixPath(reference))
-            source = source_root.joinpath(*PurePosixPath(reference).parts)
-            resolved_parent = source.parent.resolve(strict=True)
-            if source_root.resolve(strict=True) not in (resolved_parent, *resolved_parent.parents):
-                raise ValueError("evidence reference escapes its root")
-            payload = (
-                ledger_payload
-                if reference == "execution-ledger.jsonl"
-                else _read_regular(
-                    source,
-                    missing_message="required evidence is missing or redirected",
-                )
-            )
-            total += len(payload)
-            if total > MAX_EVIDENCE_TOTAL_BYTES:
-                raise ValueError("evidence bundle exceeds size limit")
+        for reference, payload in payloads:
             target = staging.joinpath(*PurePosixPath(reference).parts)
             target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
@@ -317,13 +421,8 @@ def ingest_plan_evidence(*, run_root: Path, worktree: Path, plan_id: str, accept
             finally:
                 os.close(descriptor)
             target.chmod(0o400)
-            files.append({"path": reference, "byte_length": len(payload), "sha256": hashlib.sha256(payload).hexdigest()})
-        manifest: dict[str, object] = {
-            "format_version": 2, "plan_id": plan_id, "accepted_head": accepted_head,
-            "files": files, "total_byte_length": total,
-        }
         manifest_path = staging / "evidence-manifest.json"
-        manifest_path.write_text(json.dumps(manifest, sort_keys=True, separators=(",", ":")), encoding="utf-8")
+        manifest_path.write_bytes(manifest_payload)
         with manifest_path.open("rb") as stream:
             os.fsync(stream.fileno())
         manifest_path.chmod(0o400)

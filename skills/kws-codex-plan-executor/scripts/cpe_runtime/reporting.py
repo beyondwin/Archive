@@ -33,6 +33,15 @@ def derive_recovery_metrics(
         reason = event.get("reason")
         if action == "resume.stopped_unchanged_blocker":
             launches_avoided += 1
+        if (
+            action == "plan.pre_spawn_stopped"
+            and reason in {
+                "checkpoint_budget_exhausted",
+                "launch_budget_exhausted",
+                "wall_budget_exhausted",
+            }
+        ):
+            budget_stops += 1
         if action != "plan.checkpoint_decided" or not isinstance(reason, str):
             continue
         if event.get("decision") == "continue":

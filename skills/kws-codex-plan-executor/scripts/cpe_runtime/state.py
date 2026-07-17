@@ -42,6 +42,19 @@ _SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 _DIGEST_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _DECISION_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 _RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_DECISION_REASONS = {
+    "continue": {"productive_timeout", "first_no_progress_slice"},
+    "checkpoint": {"child_checkpointed"},
+    "block": {"child_blocked"},
+    "fail": {"child_failed"},
+    "stop_stalled": {"second_no_progress_slice", "child_stopped_without_completion"},
+    "stop_budget": {
+        "checkpoint_budget_exhausted",
+        "launch_budget_exhausted",
+        "wall_budget_exhausted",
+    },
+    "finish": {"child_completed"},
+}
 
 
 def _write_all(descriptor: int, payload: bytes) -> None:
@@ -196,7 +209,7 @@ class StateStore:
                 "progress_checkpoint_count": 0,
                 "consecutive_no_progress_slices": 0,
                 "progress_fingerprint": None,
-                "execution_ledger_event_ids": [],
+                "execution_ledger_event_digests": [],
                 "pending_checkpoint_decision": None,
                 "environment_fingerprint": None,
                 "capability_probe_ids": [],
@@ -341,7 +354,7 @@ class StateStore:
                 "plan_id", "status", "starting_commit", "accepted_commit",
                 "attempt_count", "controller_launch_count", "checkpoint_count",
                 "progress_checkpoint_count", "consecutive_no_progress_slices",
-                "progress_fingerprint", "execution_ledger_event_ids",
+                "progress_fingerprint", "execution_ledger_event_digests",
                 "pending_checkpoint_decision", "environment_fingerprint",
                 "capability_probe_ids", "plan_started_at", "plan_elapsed_seconds",
                 "last_known_head", "result_path", "budget",
@@ -363,27 +376,33 @@ class StateStore:
                 value = record[name]
                 if value is not None and not _SHA_PATTERN.fullmatch(str(value)):
                     raise ValueError(f"plan {name} is invalid")
-            for name in ("progress_fingerprint", "environment_fingerprint", "plan_started_at"):
+            for name in ("progress_fingerprint", "environment_fingerprint"):
                 value = record[name]
-                if value is not None and not isinstance(value, str):
+                if value is not None and (
+                    not isinstance(value, str) or not _DIGEST_PATTERN.fullmatch(value)
+                ):
                     raise ValueError(f"plan {name} is invalid")
-            event_ids = record["execution_ledger_event_ids"]
-            if (
-                not isinstance(event_ids, list)
-                or len(event_ids) > 4096
-                or not all(
-                    isinstance(value, str) and 1 <= len(value) <= 128
-                    for value in event_ids
-                )
-                or len(event_ids) != len(set(event_ids))
+            if record["plan_started_at"] is not None and not isinstance(
+                record["plan_started_at"], str,
             ):
-                raise ValueError("plan execution ledger event IDs are invalid")
+                raise ValueError("plan plan_started_at is invalid")
+            event_digests = record["execution_ledger_event_digests"]
+            if (
+                not isinstance(event_digests, list)
+                or len(event_digests) > 4096
+                or not all(
+                    isinstance(value, str) and _DIGEST_PATTERN.fullmatch(value)
+                    for value in event_digests
+                )
+                or len(event_digests) != len(set(event_digests))
+            ):
+                raise ValueError("plan execution ledger event digests are invalid")
             pending = record["pending_checkpoint_decision"]
             if pending is not None:
                 pending_fields = {
                     "decision_id", "plan_id", "attempt", "decision", "reason",
                     "progress_fingerprint", "previous_progress_fingerprint",
-                    "timed_out", "head",
+                    "timed_out", "head", "evidence_manifest_sha256",
                 }
                 if (
                     not isinstance(pending, dict)
@@ -393,22 +412,47 @@ class StateStore:
                     or pending["plan_id"] != record["plan_id"]
                     or not isinstance(pending["attempt"], int)
                     or isinstance(pending["attempt"], bool)
-                    or not 1 <= pending["attempt"] <= record["attempt_count"]
-                    or pending["decision"] not in {
-                        "continue", "checkpoint", "block", "fail",
-                        "stop_stalled", "stop_budget", "finish",
-                    }
-                    or not isinstance(pending["reason"], str)
-                    or not pending["reason"]
+                    or pending["attempt"] != record["attempt_count"]
+                    or pending["decision"] not in _DECISION_REASONS
+                    or pending["reason"] not in _DECISION_REASONS[pending["decision"]]
                     or not isinstance(pending["progress_fingerprint"], str)
                     or not _DIGEST_PATTERN.fullmatch(pending["progress_fingerprint"])
                     or not isinstance(pending["previous_progress_fingerprint"], str)
                     or not _DIGEST_PATTERN.fullmatch(
                         pending["previous_progress_fingerprint"]
                     )
+                    or pending["previous_progress_fingerprint"]
+                    != record["progress_fingerprint"]
                     or not isinstance(pending["timed_out"], bool)
                     or not isinstance(pending["head"], str)
                     or not _SHA_PATTERN.fullmatch(pending["head"])
+                    or pending["head"] != record["last_known_head"]
+                    or (
+                        pending["decision"] == "finish"
+                        and (
+                            not isinstance(pending["evidence_manifest_sha256"], str)
+                            or not _DIGEST_PATTERN.fullmatch(
+                                pending["evidence_manifest_sha256"]
+                            )
+                        )
+                    )
+                    or (
+                        pending["decision"] != "finish"
+                        and pending["evidence_manifest_sha256"] is not None
+                    )
+                    or (
+                        pending["timed_out"]
+                        and pending["decision"] not in {
+                            "continue", "stop_stalled", "stop_budget",
+                        }
+                    )
+                    or (
+                        not pending["timed_out"]
+                        and pending["decision"] in {"continue", "stop_stalled"}
+                    )
+                    or state["status"] != "running"
+                    or record["status"] != "running"
+                    or position != state["current_plan_index"]
                 ):
                     raise ValueError("pending checkpoint decision is invalid")
             if (
@@ -461,7 +505,7 @@ class StateStore:
             "progress_checkpoint_count": 0,
             "consecutive_no_progress_slices": 0,
             "progress_fingerprint": None,
-            "execution_ledger_event_ids": [],
+            "execution_ledger_event_digests": [],
             "pending_checkpoint_decision": None,
             "environment_fingerprint": None,
             "capability_probe_ids": [],
