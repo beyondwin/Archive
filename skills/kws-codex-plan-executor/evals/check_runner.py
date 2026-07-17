@@ -4042,6 +4042,52 @@ class EnvelopeRepairTests(_RecoveryRunnerFixture):
             for event in _runner_events(run_root)
         ))
 
+    def test_repaired_result_mode_drift_before_handoff_parse_fails_closed(self) -> None:
+        runner, run_root, _, original_path, original_bytes = self._failed_result(
+            "repair-result-mode-before-parse",
+        )
+        (run_root / "compiler-invocations.jsonl").write_text("", encoding="utf-8")
+        before = StateStore.open(run_root).state["plans"][0]
+        attempts = before["attempt_count"]
+        controller_launches = before["controller_launch_count"]
+        original_repair = runner_module.repair_result_envelope
+        captured: dict[str, object] = {}
+
+        def chmod_after_repair(**kwargs: object):
+            repair = original_repair(**kwargs)
+            assert repair is not None
+            repair.repaired_path.chmod(0o600)
+            metadata = repair.repaired_path.stat()
+            captured.update({
+                "path": str(repair.repaired_path),
+                "inode": metadata.st_ino,
+                "bytes": repair.repaired_path.read_bytes(),
+            })
+            return repair
+
+        with mock.patch.object(
+            runner_module, "repair_result_envelope", new=chmod_after_repair,
+        ):
+            rejected = runner.resume(
+                run_id="repair-result-mode-before-parse", retry_failed=True,
+            )
+
+        self.assertEqual("failed", rejected["status"])
+        self.assertEqual(0, fake_codex_launch_count(run_root))
+        self.assertEqual(0, compiler_launch_count(run_root))
+        self.assertEqual(original_bytes, original_path.read_bytes())
+        plan = StateStore.open(run_root).state["plans"][0]
+        self.assertEqual(attempts, plan["attempt_count"])
+        self.assertEqual(controller_launches, plan["controller_launch_count"])
+        repaired_path = Path(str(captured["path"]))
+        self.assertEqual(captured["inode"], repaired_path.stat().st_ino)
+        self.assertEqual(captured["bytes"], repaired_path.read_bytes())
+        self.assertEqual(0o600, repaired_path.stat().st_mode & 0o777)
+        self.assertFalse(any(
+            event.get("action") == "plan.completed"
+            for event in _runner_events(run_root)
+        ))
+
     def test_repaired_result_swap_immediately_before_final_seal_fails_closed(self) -> None:
         runner, run_root, _, original_path, original_bytes = self._failed_result(
             "repair-result-swap-before-seal",
@@ -4090,6 +4136,49 @@ class EnvelopeRepairTests(_RecoveryRunnerFixture):
             if event.get("action") == "result.envelope_repaired"
         ]
         self.assertEqual(1, len(repair_events))
+        self.assertFalse(any(
+            event.get("action") == "plan.completed"
+            for event in _runner_events(run_root)
+        ))
+
+    def test_repaired_result_mode_drift_immediately_before_seal_fails_closed(self) -> None:
+        runner, run_root, _, original_path, original_bytes = self._failed_result(
+            "repair-result-mode-before-seal",
+        )
+        (run_root / "compiler-invocations.jsonl").write_text("", encoding="utf-8")
+        before = StateStore.open(run_root).state["plans"][0]
+        attempts = before["attempt_count"]
+        controller_launches = before["controller_launch_count"]
+        original_seal = runner._seal_result
+        captured: dict[str, object] = {}
+
+        def chmod_before_seal(
+            path: Path, *args: object, **kwargs: object,
+        ) -> None:
+            path.chmod(0o600)
+            metadata = path.stat()
+            captured.update({
+                "inode": metadata.st_ino,
+                "bytes": path.read_bytes(),
+            })
+            original_seal(path, *args, **kwargs)
+
+        with mock.patch.object(runner, "_seal_result", new=chmod_before_seal):
+            rejected = runner.resume(
+                run_id="repair-result-mode-before-seal", retry_failed=True,
+            )
+
+        self.assertEqual("failed", rejected["status"])
+        self.assertEqual(0, fake_codex_launch_count(run_root))
+        self.assertEqual(0, compiler_launch_count(run_root))
+        self.assertEqual(original_bytes, original_path.read_bytes())
+        plan = StateStore.open(run_root).state["plans"][0]
+        self.assertEqual(attempts, plan["attempt_count"])
+        self.assertEqual(controller_launches, plan["controller_launch_count"])
+        repaired_path = Path(str(plan["result_path"]))
+        self.assertEqual(captured["inode"], repaired_path.stat().st_ino)
+        self.assertEqual(captured["bytes"], repaired_path.read_bytes())
+        self.assertEqual(0o600, repaired_path.stat().st_mode & 0o777)
         self.assertFalse(any(
             event.get("action") == "plan.completed"
             for event in _runner_events(run_root)
