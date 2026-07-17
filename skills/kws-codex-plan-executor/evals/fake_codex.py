@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -123,11 +124,62 @@ def write_progress(worktree: Path) -> None:
     )
 
 
+def compile_index(arguments: list[str], prompt: str, result_path: Path) -> int:
+    contract_path = Path(marker(prompt, "OPERATOR_CONTRACT"))
+    contract = json.loads(contract_path.read_text(encoding="utf-8"))
+    snapshot_lines = prompt.split("SNAPSHOTS:\n", 1)[1].split(
+        "\nReturn only the strict schema object.", 1
+    )[0].splitlines()
+    snapshots = [Path(line.removeprefix("- ")) for line in snapshot_lines]
+    digests = [hashlib.sha256(path.read_bytes()).hexdigest() for path in snapshots]
+    cache_source = {
+        "format_version": 2,
+        "input_sha256": digests,
+        "operator_contract": contract,
+        "compiler_schema_version": 1,
+        "cpe_version": "2.0",
+    }
+    cache_key = hashlib.sha256(json.dumps(
+        cache_source, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")).hexdigest()
+    plans = []
+    for order, path in enumerate(
+        (path for path in snapshots if path.name.startswith("plan-")),
+        start=1,
+    ):
+        source = path.read_bytes()
+        line_count = len(source.decode("utf-8").splitlines(keepends=True))
+        plans.append({
+            "plan_id": f"plan-{order:02d}",
+            "source_sha256": hashlib.sha256(source).hexdigest(),
+            "byte_length": len(source),
+            "line_count": line_count,
+            "tasks": [{
+                "task_id": "task-01",
+                "order": 0,
+                "source_line_start": 1,
+                "source_line_end": line_count,
+                "source_text_sha256": hashlib.sha256(source).hexdigest(),
+            }],
+            "verifications": [],
+            "capabilities": [],
+            "coordination_exceptions": [],
+            "execution_advisories": [],
+            "unknowns": [],
+        })
+    payload = {"format_version": 2, "cache_key": cache_key, "plans": plans}
+    result_path.parent.mkdir(parents=True, exist_ok=True)
+    result_path.write_text(json.dumps(payload), encoding="utf-8")
+    return 0
+
+
 def main() -> int:
     arguments = sys.argv[1:]
     prompt = sys.stdin.read()
     worktree = Path(value(arguments, "-C"))
     result_path = Path(value(arguments, "--output-last-message"))
+    if Path(value(arguments, "--output-schema")).name == "compiled-run-index.schema.json":
+        return compile_index(arguments, prompt, result_path)
     plan_id = marker(prompt, "PLAN_ID")
     plan_path = Path(marker(prompt, "CURRENT_PLAN"))
     scenario = plan_path.read_text(encoding="utf-8").splitlines()[0].split(":", 1)[1]

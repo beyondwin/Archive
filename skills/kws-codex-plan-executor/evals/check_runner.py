@@ -362,6 +362,22 @@ print(json.dumps(result, sort_keys=True), flush=True)
             return self.compiler_payload(store, unknowns=[unknown])
         return compile_once
 
+    def test_compiler_launcher_is_read_only_bounded_and_has_no_git_add_dir(self) -> None:
+        launcher = self.runner().launcher
+        request = launcher.compiler_request(
+            run_root=self.root,
+            snapshot_paths=[self.plan(1, "completed")],
+            contract_path=self.root / "operator-contract.json",
+            result_path=self.root / "compiled-result.json",
+            repair=False,
+        )
+        self.assertIn("read-only", request.command)
+        self.assertNotIn("--add-dir", request.command)
+        self.assertIn("--ephemeral", request.command)
+        self.assertEqual(request.timeout_seconds, 300)
+        self.assertIn("Do not modify files", request.prompt)
+        self.assertIn("Do not spawn subagents", request.prompt)
+
     def test_compiled_index_requires_exact_plan_source_spans(self) -> None:
         store = self.create_compiler_store("compiler-source")
         contract = default_operator_contract(store.state)
