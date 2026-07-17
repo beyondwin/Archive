@@ -231,23 +231,46 @@ class SequentialCliTest(unittest.TestCase):
     def test_skill_docs_match_hardened_public_contract(self) -> None:
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        self.assertIn('version: "1.3.2"', skill)
+        contract = " ".join((skill + readme).split())
+        self.assertIn('version: "2.0.0"', skill)
         for phrase in (
             "process group",
             "bounded",
             "run_busy",
-            "initializing",
+            "format-version-2",
+            "does not read or migrate format-1 run state",
+            "parent-observed",
+            "same environment fingerprint",
+            "zero compiler, model, or verification",
+            "productive_timeout",
+            "second_no_progress_slice",
+            "3600 seconds",
+            "6 productive progress checkpoints",
+            "21600 seconds",
+            "8 controller launches",
+            "checkpointed` is a durable",
             "workflow receipt",
-            "recovery capsule",
+            "ledger_path",
+            "final_review_path",
+            "zero model turns",
+            "~/.codex/orchestrator/<run-id>/",
+            "Superpowers owns",
+            "another controller slice",
             "focused",
-            "final HEAD",
-            "usage",
+            "final `HEAD`",
+            "optimization reports",
             "Change Protocol",
-            "atomic recovery fields",
             "two-pipe drain",
             "linked",
         ):
-            self.assertIn(phrase, skill + readme)
+            self.assertIn(phrase, contract)
+        for stale in (
+            'version: "1.3.2"',
+            "format-version-1",
+            "recovery capsule",
+            "initializing",
+        ):
+            self.assertNotIn(stale, contract)
         root_index = (ROOT.parent / "README.md").read_text(encoding="utf-8")
         self.assertNotIn("내보내기", root_index)
 
