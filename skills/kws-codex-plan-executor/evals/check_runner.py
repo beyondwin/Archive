@@ -44,10 +44,17 @@ from cpe_runtime.capabilities import (
     typed_blockers,
     validate_observation,
 )
+from cpe_runtime.progress import (
+    CheckpointBudget,
+    ProgressSnapshot,
+    decide_checkpoint,
+    progress_fingerprint,
+)
 from cpe_runtime.evidence import (
     MAX_EVIDENCE_FILE_BYTES,
     append_execution_event,
     ingest_plan_evidence,
+    read_progress_snapshot,
     validate_execution_ledger,
 )
 from cpe_runtime.reporting import build_optimization_report
@@ -305,6 +312,168 @@ class CapabilityTests(unittest.TestCase):
                 previous_fingerprint="previous", current_fingerprint="current"
             ),
         )
+
+
+class ProgressDecisionTests(unittest.TestCase):
+    DEFAULT_BUDGET = CheckpointBudget(
+        max_progress_checkpoints=6,
+        max_controller_launches=8,
+        plan_wall_seconds=21_600,
+    )
+
+    def snapshot(self, *, head: str = "abc", completed: tuple[str, ...] = ()) -> ProgressSnapshot:
+        return ProgressSnapshot(head, completed, "T3", ("R1",), ("F1",))
+
+    def decide(
+        self,
+        *,
+        previous: ProgressSnapshot | None = None,
+        current: ProgressSnapshot | None = None,
+        timed_out: bool = True,
+        consecutive_no_progress: int = 0,
+        progress_checkpoints: int = 0,
+        controller_launches: int = 0,
+        plan_elapsed_seconds: int = 0,
+        child_completed: bool = False,
+    ) -> object:
+        return decide_checkpoint(
+            previous=previous,
+            current=current or self.snapshot(),
+            timed_out=timed_out,
+            consecutive_no_progress=consecutive_no_progress,
+            progress_checkpoints=progress_checkpoints,
+            controller_launches=controller_launches,
+            plan_elapsed_seconds=plan_elapsed_seconds,
+            budget=self.DEFAULT_BUDGET,
+            child_completed=child_completed,
+        )
+
+    def test_child_completed_finishes_before_hard_budgets(self) -> None:
+        decision = self.decide(
+            progress_checkpoints=6, controller_launches=8,
+            plan_elapsed_seconds=21_600, child_completed=True,
+        )
+        self.assertEqual("finish", decision.action)
+        self.assertEqual("child_completed", decision.reason_code)
+
+    def test_timed_out_changed_fingerprint_continues_within_budgets(self) -> None:
+        decision = self.decide(previous=self.snapshot(head="before"))
+        self.assertEqual("continue", decision.action)
+        self.assertEqual("productive_timeout", decision.reason_code)
+
+    def test_timed_out_first_unchanged_slice_continues(self) -> None:
+        current = self.snapshot()
+        decision = self.decide(previous=current)
+        self.assertEqual("continue", decision.action)
+        self.assertEqual("first_no_progress_slice", decision.reason_code)
+
+    def test_timed_out_second_unchanged_slice_stops_stalled(self) -> None:
+        current = self.snapshot()
+        decision = self.decide(previous=current, consecutive_no_progress=1)
+        self.assertEqual("stop_stalled", decision.action)
+        self.assertEqual("second_no_progress_slice", decision.reason_code)
+
+    def test_changed_fingerprint_stops_at_checkpoint_budget(self) -> None:
+        decision = self.decide(
+            previous=self.snapshot(head="before"), progress_checkpoints=6,
+        )
+        self.assertEqual("stop_budget", decision.action)
+        self.assertEqual("checkpoint_budget_exhausted", decision.reason_code)
+
+    def test_changed_fingerprint_stops_at_launch_budget(self) -> None:
+        decision = self.decide(
+            previous=self.snapshot(head="before"), controller_launches=8,
+        )
+        self.assertEqual("stop_budget", decision.action)
+        self.assertEqual("launch_budget_exhausted", decision.reason_code)
+
+    def test_changed_fingerprint_stops_at_wall_budget(self) -> None:
+        decision = self.decide(
+            previous=self.snapshot(head="before"), plan_elapsed_seconds=21_600,
+        )
+        self.assertEqual("stop_budget", decision.action)
+        self.assertEqual("wall_budget_exhausted", decision.reason_code)
+
+    def test_progress_fingerprint_ignores_set_like_ordering(self) -> None:
+        left = ProgressSnapshot("abc", ("T2", "T1"), "T3", ("R2", "R1"), ("F1",))
+        right = ProgressSnapshot("abc", ("T1", "T2"), "T3", ("R1", "R2"), ("F1",))
+        self.assertEqual(progress_fingerprint(left), progress_fingerprint(right))
+
+    def test_progress_fingerprint_rejects_empty_head(self) -> None:
+        with self.assertRaisesRegex(ValueError, "head"):
+            progress_fingerprint(self.snapshot(head=""))
+
+    def create_progress_store(self) -> tuple[tempfile.TemporaryDirectory[str], StateStore, Path]:
+        temporary = tempfile.TemporaryDirectory()
+        root = Path(temporary.name)
+        repository = root / "repository"
+        worktree = root / "worktree"
+        repository.mkdir()
+        worktree.mkdir()
+        plan = root / "plan.md"
+        plan.write_text("# Plan\n", encoding="utf-8")
+        store = StateStore.create(
+            run_root=root / "run",
+            run_id="progress-snapshot",
+            source_repository=repository,
+            source_commit="1" * 40,
+            worktree=worktree,
+            branch="codex/progress-snapshot",
+            specs=[],
+            plans=[plan],
+        )
+        return temporary, store, worktree
+
+    def ledger_event(self, event_id: str, category: str, **extra: object) -> dict[str, object]:
+        event: dict[str, object] = {
+            "schema_version": 1,
+            "event_id": event_id,
+            "source": "child_attested",
+            "plan_id": "plan-01",
+            "category": category,
+            "action": "recorded",
+            "result": "pass",
+            "evidence_refs": [],
+        }
+        event.update(extra)
+        return event
+
+    def test_read_progress_snapshot_projects_validated_execution_ledger(self) -> None:
+        temporary, store, worktree = self.create_progress_store()
+        self.addCleanup(temporary.cleanup)
+        ledger = worktree / ".superpowers" / "sdd" / "execution-ledger.jsonl"
+        events = [
+            self.ledger_event("task-start-1", "task", action="started", task_id="T1", duration_ms=0),
+            self.ledger_event("task-complete-1", "task", action="completed", task_id="T1", duration_ms=1),
+            self.ledger_event("task-start-2", "task", action="started", task_id="T2", duration_ms=0),
+            self.ledger_event("review-1", "review", action="approved", result="accepted", review_id="R1", artifact_digest="a" * 64, duration_ms=1),
+            self.ledger_event("finding-1", "finding_fix", action="resolved", result="closed", finding_ids=["F2", "F1"], fix_digest="b" * 64, duration_ms=1),
+        ]
+        for event in events:
+            append_execution_event(ledger, event)
+
+        snapshot = read_progress_snapshot(store.root, plan_index=0, head="2" * 40)
+
+        self.assertEqual("2" * 40, snapshot.head)
+        self.assertEqual(("T1",), snapshot.completed_task_ids)
+        self.assertEqual("T2", snapshot.current_task_id)
+        self.assertEqual(("R1",), snapshot.accepted_review_ids)
+        self.assertEqual(("F1", "F2"), snapshot.closed_finding_ids)
+
+    def test_read_progress_snapshot_rejects_duplicate_ledger_event(self) -> None:
+        temporary, store, worktree = self.create_progress_store()
+        self.addCleanup(temporary.cleanup)
+        ledger = worktree / ".superpowers" / "sdd" / "execution-ledger.jsonl"
+        event = self.ledger_event(
+            "task-start-1", "task", action="started", task_id="T1", duration_ms=0,
+        )
+        ledger.parent.mkdir(parents=True)
+        ledger.write_text(
+            json.dumps(event) + "\n" + json.dumps(event) + "\n", encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(ValueError, "duplicated"):
+            read_progress_snapshot(store.root, plan_index=0, head="2" * 40)
 
 
 class HistoricalEvidenceFixtureTests(unittest.TestCase):
@@ -1019,6 +1188,17 @@ print(json.dumps(result, sort_keys=True), flush=True)
             "result": "pass",
             "evidence_refs": [],
         }
+        event.update({
+            "task": {"task_id": "task-01", "duration_ms": 0},
+            "review": {"review_id": "review-01", "artifact_digest": "a" * 64, "duration_ms": 0},
+            "finding_fix": {"finding_ids": ["finding-01"], "fix_digest": "a" * 64, "duration_ms": 0},
+            "verification": {"command_id": "command-01", "argv_digest": "a" * 64, "evidence_key": "b" * 64, "duration_ms": 0},
+            "capability": {"capability_id": "capability-01", "capability_digest": "a" * 64},
+            "checkpoint": {"checkpoint_id": "checkpoint-01", "checkpoint_digest": "a" * 64},
+            "blocker": {"blocker_id": "blocker-01", "blocker_digest": "a" * 64},
+            "obligation": {"obligation_id": "obligation-01", "obligation_digest": "a" * 64},
+            "coordination": {"coordination_id": "coordination-01", "coordination_digest": "a" * 64, "duration_ms": 0},
+        }.get(category, {}))
         event.update(extra)
         return event
 
@@ -1043,6 +1223,8 @@ print(json.dumps(result, sort_keys=True), flush=True)
                 "action": "completed",
                 "result": "pass",
                 "evidence_refs": [],
+                "task_id": "task-01",
+                "duration_ms": 1,
             },
         )
         manifest = ingest_plan_evidence(
