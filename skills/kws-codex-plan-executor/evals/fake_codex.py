@@ -92,7 +92,7 @@ def commit_plan(worktree: Path, plan_id: str, suffix: str = "") -> str:
     return git(worktree, "rev-parse", "HEAD")
 
 
-def workflow_receipt(worktree: Path, head: str) -> dict[str, object]:
+def workflow_receipt(worktree: Path, head: str, plan_id: str) -> dict[str, object]:
     evidence = worktree / ".superpowers" / "sdd"
     evidence.mkdir(parents=True, exist_ok=True)
     (evidence / ".gitignore").write_text("*\n", encoding="utf-8")
@@ -102,6 +102,41 @@ def workflow_receipt(worktree: Path, head: str) -> dict[str, object]:
     )
     (evidence / "final-review.md").write_text(
         "Verdict: approved\nFindings: none\n",
+        encoding="utf-8",
+    )
+    receipts = evidence / "receipts"
+    receipts.mkdir(exist_ok=True)
+    references = {
+        "task": "receipts/task.txt",
+        "review": "receipts/review.txt",
+        "verification": "receipts/verification.txt",
+    }
+    for category, reference in references.items():
+        (evidence / reference).write_text(f"{category}: pass\n", encoding="utf-8")
+    digest = "a" * 64
+    events = [
+        {
+            "schema_version": 1, "event_id": "task-1", "source": "child_attested",
+            "plan_id": plan_id,
+            "category": "task", "action": "completed", "result": "pass",
+            "evidence_refs": [references["task"]], "task_id": "task-01", "duration_ms": 1,
+        },
+        {
+            "schema_version": 1, "event_id": "review-1", "source": "child_attested",
+            "plan_id": plan_id,
+            "category": "review", "action": "approved", "result": "pass",
+            "evidence_refs": [references["review"]], "review_id": "review-01", "artifact_digest": digest, "duration_ms": 1,
+        },
+        {
+            "schema_version": 1, "event_id": "verification-1", "source": "child_attested",
+            "plan_id": plan_id,
+            "category": "verification", "action": "verified", "result": "pass",
+            "evidence_refs": [references["verification"]], "command_id": "fake-final",
+            "argv_digest": digest, "evidence_key": "b" * 64, "duration_ms": 1,
+        },
+    ]
+    (evidence / "execution-ledger.jsonl").write_text(
+        "".join(json.dumps(event, sort_keys=True) + "\n" for event in events),
         encoding="utf-8",
     )
     return {
@@ -346,7 +381,7 @@ def main() -> int:
             "fingerprint": "2" * 64,
         }
     if status == "completed":
-        payload["workflow_receipt"] = workflow_receipt(worktree, head)
+        payload["workflow_receipt"] = workflow_receipt(worktree, head, plan_id)
     print(
         json.dumps(
             {

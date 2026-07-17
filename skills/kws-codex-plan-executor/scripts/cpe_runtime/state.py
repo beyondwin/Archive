@@ -436,8 +436,8 @@ class StateStore:
                     raise ValueError("future plan is not pristine")
 
         if completed_prefix == len(plans):
-            if state["status"] != "completed":
-                raise ValueError("all plans complete but run is not completed")
+            if state["status"] not in {"completed", "failed"}:
+                raise ValueError("all plans complete but run is not terminal")
             return
 
         current = plans[completed_prefix]
