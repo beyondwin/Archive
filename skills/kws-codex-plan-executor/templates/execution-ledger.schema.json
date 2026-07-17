@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "execution-ledger.schema.json",
+  "title": "CPE execution ledger event",
+  "type": "object",
+  "required": ["schema_version", "event_id", "source", "plan_id", "category", "action", "result", "evidence_refs"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "event_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+    "source": {"enum": ["parent_observed", "child_attested", "derived", "hypothesis"]},
+    "plan_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+    "category": {"enum": ["task", "review", "finding_fix", "verification", "capability", "checkpoint", "blocker", "obligation", "coordination"]},
+    "action": {"enum": ["recorded", "started", "completed", "failed", "blocked", "resolved", "approved", "rejected", "verified", "observed", "created", "updated", "checked", "satisfied", "waived", "requested", "responded"]},
+    "result": {"enum": ["pass", "fail", "blocked", "skipped", "unavailable"]},
+    "evidence_refs": {"type": "array", "maxItems": 128, "items": {"type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"}}
+  },
+  "allOf": [
+    {"if": {"properties": {"category": {"const": "task"}}}, "then": {"properties": {"task_id": {"type": "string"}, "duration_ms": {"type": "integer", "minimum": 0}}}},
+    {"if": {"properties": {"category": {"const": "review"}}}, "then": {"properties": {"review_id": {"type": "string"}, "artifact_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "duration_ms": {"type": "integer", "minimum": 0}}}},
+    {"if": {"properties": {"category": {"const": "finding_fix"}}}, "then": {"properties": {"finding_id": {"type": "string"}, "fix_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "duration_ms": {"type": "integer", "minimum": 0}}}},
+    {"if": {"properties": {"category": {"const": "verification"}}}, "then": {"properties": {"command_id": {"type": "string"}, "argv_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "evidence_key": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "duration_ms": {"type": "integer", "minimum": 0}}}},
+    {"if": {"properties": {"category": {"const": "capability"}}}, "then": {"properties": {"capability_id": {"type": "string"}, "capability_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}}},
+    {"if": {"properties": {"category": {"const": "checkpoint"}}}, "then": {"properties": {"checkpoint_id": {"type": "string"}, "checkpoint_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}}},
+    {"if": {"properties": {"category": {"const": "blocker"}}}, "then": {"properties": {"blocker_id": {"type": "string"}, "blocker_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}}},
+    {"if": {"properties": {"category": {"const": "obligation"}}}, "then": {"properties": {"obligation_id": {"type": "string"}, "obligation_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}}},
+    {"if": {"properties": {"category": {"const": "coordination"}}}, "then": {"properties": {"coordination_id": {"type": "string"}, "coordination_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "duration_ms": {"type": "integer", "minimum": 0}}}}
+  ],
+  "unevaluatedProperties": false
+}
