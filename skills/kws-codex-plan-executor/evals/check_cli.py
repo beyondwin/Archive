@@ -120,25 +120,23 @@ class SequentialCliTest(unittest.TestCase):
         properties = schema["properties"]
         self.assertEqual(set(schema["required"]), set(properties))
         self.assertEqual(
-            set(properties["retryable"]["type"]),
-            {"boolean", "null"},
+            properties["status"]["enum"],
+            ["completed", "checkpointed", "blocked", "failed"],
         )
-        for name in ("failure_signature", "next_strategy"):
-            self.assertEqual(
-                set(properties[name]["type"]),
-                {"string", "null"},
-            )
-        receipt_variants = properties["workflow_receipt"]["anyOf"]
-        self.assertEqual(receipt_variants[-1], {"type": "null"})
-        receipt = receipt_variants[0]
-        self.assertEqual(set(receipt["required"]), set(receipt["properties"]))
-        for name in (
-            "mode",
-            "task_reviews",
-            "final_review",
-            "duplicate_verification",
-        ):
-            self.assertEqual(receipt["properties"][name]["type"], "string")
+        for name in ("checkpoint", "blocker", "workflow_receipt"):
+            self.assertEqual(properties[name]["anyOf"][-1], {"type": "null"})
+        verification = properties["verification"]["items"]
+        self.assertEqual(
+            set(verification["required"]),
+            {
+                "command_id",
+                "argv_digest",
+                "phase",
+                "evidence_key",
+                "exit_code",
+                "receipt_path",
+            },
+        )
 
     def test_run_requires_absolute_workspace_and_at_least_one_plan(self) -> None:
         missing = self.command("run", "--workspace", str(self.repo))

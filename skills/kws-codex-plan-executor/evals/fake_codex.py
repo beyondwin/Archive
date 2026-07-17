@@ -89,7 +89,7 @@ def commit_plan(worktree: Path, plan_id: str, suffix: str = "") -> str:
     return git(worktree, "rev-parse", "HEAD")
 
 
-def workflow_receipt(worktree: Path) -> dict[str, str]:
+def workflow_receipt(worktree: Path, head: str) -> dict[str, object]:
     evidence = worktree / ".superpowers" / "sdd"
     evidence.mkdir(parents=True, exist_ok=True)
     (evidence / ".gitignore").write_text("*\n", encoding="utf-8")
@@ -102,12 +102,11 @@ def workflow_receipt(worktree: Path) -> dict[str, str]:
         encoding="utf-8",
     )
     return {
-        "mode": "subagent-driven-lean",
-        "progress_ledger": ".superpowers/sdd/progress.md",
-        "task_reviews": "complete",
-        "final_review": "approved",
-        "final_review_artifact": ".superpowers/sdd/final-review.md",
-        "duplicate_verification": "none",
+        "ledger_path": ".superpowers/sdd/progress.md",
+        "final_review_path": ".superpowers/sdd/final-review.md",
+        "final_review_head": head,
+        "open_finding_ids": [],
+        "open_obligation_ids": [],
     }
 
 
@@ -231,22 +230,50 @@ def main() -> int:
             status = "completed"
     elif scenario == "interrupted":
         write_progress(worktree)
+        status = "checkpointed"
 
     payload = {
         "plan_id": plan_id,
         "status": status,
         "head_commit": head,
-        "verification": ([{"command": "fake verify", "exit_code": 0}] if status == "completed" else []),
         "summary": f"fake {scenario} attempt {attempt}",
+        "verification": (
+            [
+                {
+                    "command_id": "fake-final",
+                    "argv_digest": "f" * 64,
+                    "phase": "branch_final",
+                    "evidence_key": "0" * 64,
+                    "exit_code": 0,
+                    "receipt_path": None,
+                }
+            ]
+            if status == "completed"
+            else []
+        ),
+        "checkpoint": None,
+        "blocker": None,
+        "workflow_receipt": None,
     }
-    if scenario == "retryable_then_completed" and status == "failed":
-        payload.update(
-            retryable=True,
-            failure_signature="verification:test_parser_failed",
-            next_strategy="inspect the parser boundary and resume Task 3",
-        )
+    if status == "checkpointed":
+        payload["checkpoint"] = {
+            "reason": "coordinator_interrupt",
+            "progress_fingerprint": "1" * 64,
+            "completed_task_ids": ["Task 1", "Task 2"],
+            "current_task_id": None,
+        }
+    if status == "blocked":
+        payload["blocker"] = {
+            "kind": "operator_owned",
+            "code": "fake_blocked",
+            "resource": plan_id,
+            "operation": "execute_plan",
+            "errno": None,
+            "retry_condition": "operator resolves the fake blocker",
+            "fingerprint": "2" * 64,
+        }
     if status == "completed":
-        payload["workflow_receipt"] = workflow_receipt(worktree)
+        payload["workflow_receipt"] = workflow_receipt(worktree, head)
     print(
         json.dumps(
             {
