@@ -4033,6 +4033,89 @@ class Format2RecoveryStateValidationTests(_RecoveryRunnerFixture):
             candidate.save()
         self.assertEqual(valid_bytes, candidate.state_path.read_bytes())
 
+    def test_every_valid_pending_decision_row_persists(self) -> None:
+        cases = (
+            ("continue", "productive_timeout", {}, {}),
+            (
+                "continue", "first_no_progress_slice",
+                {"progress_fingerprint": "a" * 64}, {},
+            ),
+            (
+                "checkpoint", "child_checkpointed",
+                {"timed_out": False}, {},
+            ),
+            ("block", "child_blocked", {"timed_out": False}, {}),
+            ("fail", "child_failed", {"timed_out": False}, {}),
+            (
+                "stop_stalled", "second_no_progress_slice",
+                {"progress_fingerprint": "a" * 64},
+                {"consecutive_no_progress_slices": 1},
+            ),
+            (
+                "stop_stalled", "child_stopped_without_completion",
+                {"timed_out": False}, {},
+            ),
+            (
+                "stop_budget", "checkpoint_budget_exhausted", {},
+                {"progress_checkpoint_count": 6},
+            ),
+            (
+                "stop_budget", "launch_budget_exhausted", {},
+                {"controller_launch_count": 8},
+            ),
+            (
+                "stop_budget", "wall_budget_exhausted", {},
+                {"plan_elapsed_seconds": 21_600},
+            ),
+            (
+                "finish", "child_completed",
+                {
+                    "timed_out": False,
+                    "evidence_manifest_sha256": "d" * 64,
+                },
+                {},
+            ),
+        )
+        for index, (decision, reason, pending_changes, plan_changes) in enumerate(cases):
+            with self.subTest(decision=decision, reason=reason):
+                store = self._active_store(f"valid-pending-row-{index}")
+                plan = store.state["plans"][0]
+                plan.update(plan_changes)
+                plan["pending_checkpoint_decision"] = self._pending(
+                    plan,
+                    decision=decision,
+                    reason=reason,
+                    **pending_changes,
+                )
+
+                store.save()
+
+                persisted = StateStore.open(store.root).state["plans"][0]
+                self.assertEqual(
+                    (decision, reason),
+                    (
+                        persisted["pending_checkpoint_decision"]["decision"],
+                        persisted["pending_checkpoint_decision"]["reason"],
+                    ),
+                )
+
+    def test_non_timeout_stalled_decision_rejects_the_wrong_reason(self) -> None:
+        store = self._active_store("invalid-nontimeout-stalled-reason")
+        valid_bytes = store.state_path.read_bytes()
+        plan = store.state["plans"][0]
+        plan["consecutive_no_progress_slices"] = 1
+        plan["pending_checkpoint_decision"] = self._pending(
+            plan,
+            decision="stop_stalled",
+            reason="second_no_progress_slice",
+            progress_fingerprint="a" * 64,
+            timed_out=False,
+        )
+
+        with self.assertRaisesRegex(ValueError, "pending checkpoint decision"):
+            store.save()
+        self.assertEqual(valid_bytes, store.state_path.read_bytes())
+
 
 class FullActionWalReconciliationTests(_RecoveryRunnerFixture):
     def _crash_after_decision_event(self, expected_decision: str) -> object:
@@ -4454,6 +4537,48 @@ class ReconciledResumeDispatchTests(_RecoveryRunnerFixture):
             runner.resume(run_id=run_id)
 
         self.assertEqual(state_before, store.state_path.read_bytes())
+
+    def test_run_completion_envelope_mutations_fail_closed(self) -> None:
+        mutations = (
+            ("missing-event-id", lambda event: event.pop("event_id")),
+            ("malformed-at", lambda event: event.__setitem__("at", "not-a-time")),
+            ("extra-field", lambda event: event.__setitem__("extra", True)),
+            ("malformed-event-id", lambda event: event.__setitem__("event_id", "bad-id")),
+        )
+        for index, (label, mutate) in enumerate(mutations, 1):
+            with self.subTest(mutation=label):
+                run_id = f"run-completion-envelope-{index}"
+                runner = self.runner(run_id)
+                completed = runner.run(
+                    workspace=self.repo,
+                    specs=[],
+                    plans=[self.plan("completed", number=index)],
+                    run_id=run_id,
+                )
+                self.assertEqual("completed", completed["status"])
+                run_root = self.home / "orchestrator" / run_id
+                store = StateStore.open(run_root)
+                events = _runner_events(run_root)
+                completion = next(
+                    event for event in events
+                    if event.get("action") == "run.completed"
+                )
+                mutate(completion)
+                store.events_path.write_text(
+                    "".join(
+                        json.dumps(event, sort_keys=True) + "\n"
+                        for event in events
+                    ),
+                    encoding="utf-8",
+                )
+                state_before = store.state_path.read_bytes()
+                events_before = store.events_path.read_bytes()
+
+                with self.assertRaisesRegex(ValueError, "run.completed"):
+                    runner.resume(run_id=run_id)
+
+                self.assertEqual(state_before, store.state_path.read_bytes())
+                self.assertEqual(events_before, store.events_path.read_bytes())
 
 
 class FinishWalAndEvidenceTests(_RecoveryRunnerFixture):
