@@ -11,6 +11,9 @@ import stat
 import tempfile
 from pathlib import Path, PurePosixPath
 
+from .progress import ProgressSnapshot
+from .state import StateStore
+
 MAX_EVIDENCE_FILES = 128
 MAX_EVIDENCE_FILE_BYTES = 1024 * 1024
 MAX_EVIDENCE_TOTAL_BYTES = 8 * 1024 * 1024
@@ -26,7 +29,9 @@ _ACTIONS = {
     "approved", "rejected", "verified", "observed", "created", "updated",
     "checked", "satisfied", "waived", "requested", "responded",
 }
-_RESULTS = {"pass", "fail", "blocked", "skipped", "unavailable"}
+_RESULTS = {
+    "pass", "fail", "blocked", "skipped", "unavailable", "accepted", "closed",
+}
 _BASE_FIELDS = {
     "schema_version", "event_id", "source", "plan_id", "category", "action",
     "result", "evidence_refs",
@@ -34,7 +39,7 @@ _BASE_FIELDS = {
 _VARIANT_FIELDS = {
     "task": {"task_id", "duration_ms"},
     "review": {"review_id", "artifact_digest", "duration_ms"},
-    "finding_fix": {"finding_id", "fix_digest", "duration_ms"},
+    "finding_fix": {"finding_ids", "fix_digest", "duration_ms"},
     "verification": {"command_id", "argv_digest", "evidence_key", "duration_ms"},
     "capability": {"capability_id", "capability_digest"},
     "checkpoint": {"checkpoint_id", "checkpoint_digest"},
@@ -62,7 +67,7 @@ def validate_execution_event_schema(event: object, *, allow_private_sources: boo
     if category not in _CATEGORIES:
         raise ValueError("execution event category is invalid")
     allowed = _BASE_FIELDS | _VARIANT_FIELDS[str(category)]
-    if set(event) - allowed or not _BASE_FIELDS.issubset(event):
+    if set(event) != allowed:
         raise ValueError("execution event properties are invalid")
     if event["schema_version"] != 1 or isinstance(event["schema_version"], bool):
         raise ValueError("execution event schema version is invalid")
@@ -88,6 +93,18 @@ def validate_execution_event_schema(event: object, *, allow_private_sources: boo
         if field == "duration_ms":
             if not isinstance(value, int) or isinstance(value, bool) or value < 0:
                 raise ValueError("execution event duration is invalid")
+        elif field == "finding_ids":
+            if (
+                not isinstance(value, list)
+                or not value
+                or not all(
+                    isinstance(finding_id, str)
+                    and _IDENTIFIER.fullmatch(finding_id)
+                    for finding_id in value
+                )
+                or len(value) != len(set(value))
+            ):
+                raise ValueError("execution event finding IDs are invalid")
         elif field.endswith("digest") or field in {"argv_digest", "evidence_key"}:
             if not isinstance(value, str) or not _DIGEST.fullmatch(value):
                 raise ValueError("execution event digest is invalid")
@@ -148,6 +165,46 @@ def _read_regular(path: Path, *, missing_message: str) -> bytes:
 def validate_execution_ledger(path: Path, *, expected_plan_id: str) -> list[dict[str, object]]:
     payload = _read_regular(path, missing_message="required evidence is missing or redirected")
     return _validate_execution_ledger_payload(payload, expected_plan_id=expected_plan_id)
+
+
+def read_progress_snapshot(run_root: Path, *, plan_index: int, head: str) -> ProgressSnapshot:
+    """Project the current strict JSONL ledger into durable progress state."""
+    if not isinstance(plan_index, int) or isinstance(plan_index, bool):
+        raise ValueError("plan index is invalid")
+    state = StateStore.open(run_root).state
+    plans = state["plans"]
+    if not 0 <= plan_index < len(plans):
+        raise ValueError("plan index is invalid")
+    plan_id = plans[plan_index]["plan_id"]
+    ledger = Path(state["worktree"]) / ".superpowers" / "sdd" / "execution-ledger.jsonl"
+    events = validate_execution_ledger(ledger, expected_plan_id=plan_id)
+    completed = {
+        event["task_id"] for event in events
+        if event["category"] == "task"
+        and event["action"] == "completed"
+        and event["result"] == "pass"
+    }
+    started = [
+        event["task_id"] for event in events
+        if event["category"] == "task" and event["action"] == "started"
+    ]
+    current = next(
+        (task_id for task_id in reversed(started) if task_id not in completed), None
+    )
+    return ProgressSnapshot(
+        head=head,
+        completed_task_ids=tuple(sorted(completed)),
+        current_task_id=current,
+        accepted_review_ids=tuple(sorted({
+            event["review_id"] for event in events
+            if event["category"] == "review" and event["result"] == "accepted"
+        })),
+        closed_finding_ids=tuple(sorted({
+            finding_id for event in events
+            if event["category"] == "finding_fix" and event["result"] == "closed"
+            for finding_id in event["finding_ids"]
+        })),
+    )
 
 
 def _validate_execution_ledger_payload(
