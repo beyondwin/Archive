@@ -34,6 +34,12 @@ from cpe_runtime.compiler import (
     default_operator_contract,
     validate_compiled_index,
 )
+from cpe_runtime.evidence import (
+    MAX_EVIDENCE_FILE_BYTES,
+    append_execution_event,
+    ingest_plan_evidence,
+    validate_execution_ledger,
+)
 from cpe_runtime.runner import (
     SequentialRunner,
     _ledger_progress,
@@ -680,6 +686,122 @@ print(json.dumps(result, sort_keys=True), flush=True)
         self.assertEqual(store.state["plans"][0]["plan_elapsed_seconds"], 0)
         self.assertTrue((store.root / "evidence").is_dir())
         self.assertTrue((store.root / "reports").is_dir())
+
+    def execution_event(self, category: str, **extra: object) -> dict[str, object]:
+        event: dict[str, object] = {
+            "schema_version": 1,
+            "event_id": f"event-{category}",
+            "source": "child_attested",
+            "plan_id": "plan-01",
+            "category": category,
+            "action": "recorded",
+            "result": "pass",
+            "evidence_refs": [],
+        }
+        event.update(extra)
+        return event
+
+    def write_execution_ledger(
+        self, worktree: Path, events: list[dict[str, object]]
+    ) -> Path:
+        ledger = worktree / ".superpowers" / "sdd" / "execution-ledger.jsonl"
+        for event in events:
+            append_execution_event(ledger, event)
+        return ledger
+
+    def test_plan_evidence_survives_worktree_removal(self) -> None:
+        worktree = self.root / "evidence-worktree"
+        ledger = worktree / ".superpowers" / "sdd" / "execution-ledger.jsonl"
+        append_execution_event(
+            ledger,
+            {
+                "event_id": "event-1",
+                "source": "child_attested",
+                "plan_id": "plan-01",
+                "category": "task",
+                "action": "completed",
+                "result": "pass",
+                "evidence_refs": [],
+            },
+        )
+        manifest = ingest_plan_evidence(
+            run_root=self.root / "run",
+            worktree=worktree,
+            plan_id="plan-01",
+            accepted_head="1" * 40,
+        )
+        shutil.rmtree(worktree)
+        archived = self.root / "run" / "evidence" / "plan-01"
+        self.assertEqual(manifest["accepted_head"], "1" * 40)
+        self.assertTrue((archived / "execution-ledger.jsonl").is_file())
+        self.assertEqual(
+            (archived / "execution-ledger.jsonl").stat().st_mode & 0o777, 0o400
+        )
+
+    def test_execution_ledger_accepts_each_category_and_rejects_bad_schema(self) -> None:
+        categories = (
+            "task", "review", "finding_fix", "verification", "capability",
+            "checkpoint", "blocker", "obligation", "coordination",
+        )
+        worktree = self.root / "ledger-schema"
+        ledger = self.write_execution_ledger(
+            worktree, [self.execution_event(category) for category in categories]
+        )
+        self.assertEqual(len(validate_execution_ledger(ledger, expected_plan_id="plan-01")), 9)
+
+        invalid_events = [
+            self.execution_event("unknown"),
+            self.execution_event("task", action="unknown"),
+            self.execution_event("task", surprise=True),
+            self.execution_event("task", source="untrusted"),
+            self.execution_event("task", evidence_refs=["/absolute"]),
+            self.execution_event("task", evidence_refs=["../escape"]),
+            self.execution_event("task", source="parent_observed"),
+        ]
+        for index, event in enumerate(invalid_events):
+            with self.subTest(index=index):
+                bad = worktree / f"bad-{index}.jsonl"
+                bad.write_text(json.dumps(event) + "\n", encoding="utf-8")
+                with self.assertRaises(ValueError):
+                    validate_execution_ledger(bad, expected_plan_id="plan-01")
+
+        duplicate = worktree / "duplicate.jsonl"
+        event = self.execution_event("task")
+        duplicate.write_text(
+            json.dumps(event) + "\n" + json.dumps(event) + "\n", encoding="utf-8"
+        )
+        with self.assertRaisesRegex(ValueError, "duplicated"):
+            validate_execution_ledger(duplicate, expected_plan_id="plan-01")
+
+    def test_evidence_rejects_symlinks_limits_and_cleans_partial_target(self) -> None:
+        cases: list[tuple[str, list[tuple[str, bytes]], str]] = [
+            ("too-many", [(f"file-{i}", b"x") for i in range(128)], "file count"),
+            ("too-large", [("large", b"x" * (MAX_EVIDENCE_FILE_BYTES + 1))], "size limit"),
+            ("aggregate", [(f"chunk-{i}", b"x" * MAX_EVIDENCE_FILE_BYTES) for i in range(9)], "bundle"),
+        ]
+        for name, files, message in cases:
+            with self.subTest(name=name):
+                worktree = self.root / f"evidence-{name}"
+                sdd = worktree / ".superpowers" / "sdd"
+                sdd.mkdir(parents=True)
+                refs = []
+                for filename, payload in files:
+                    (sdd / filename).write_bytes(payload)
+                    refs.append(filename)
+                self.write_execution_ledger(worktree, [self.execution_event("task", evidence_refs=refs)])
+                run_root = self.root / f"run-{name}"
+                with self.assertRaisesRegex(ValueError, message):
+                    ingest_plan_evidence(run_root=run_root, worktree=worktree, plan_id="plan-01", accepted_head="1" * 40)
+                self.assertFalse((run_root / "evidence" / "plan-01").exists())
+
+        worktree = self.root / "evidence-symlink"
+        sdd = worktree / ".superpowers" / "sdd"
+        sdd.mkdir(parents=True)
+        real = sdd / "real-ledger"
+        real.write_text(json.dumps(self.execution_event("task")) + "\n", encoding="utf-8")
+        (sdd / "execution-ledger.jsonl").symlink_to(real)
+        with self.assertRaisesRegex(ValueError, "redirected"):
+            ingest_plan_evidence(run_root=self.root / "run-symlink", worktree=worktree, plan_id="plan-01", accepted_head="1" * 40)
 
     def test_checkpointed_result_is_durable_and_resumable(self) -> None:
         runner = self.runner()
