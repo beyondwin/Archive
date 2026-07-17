@@ -25,6 +25,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from cpe_runtime.launcher import (
     CodexLauncher,
     LaunchResult,
+    StructuredLaunchRequest,
     _drain_registered,
     _terminate_group,
     _UsageFilter,
@@ -58,6 +59,7 @@ from cpe_runtime.evidence import (
     validate_execution_ledger,
 )
 from cpe_runtime.reporting import build_optimization_report
+import cpe_runtime.reporting as reporting_module
 from cpe_runtime.runner import (
     SequentialRunner,
     _ledger_progress,
@@ -605,6 +607,53 @@ def git(repository: Path, *arguments: str) -> str:
         stderr=subprocess.PIPE,
     )
     return result.stdout.strip()
+
+
+def structured_launch_kwargs(request: StructuredLaunchRequest) -> dict[str, object]:
+    def prompt_value(name: str) -> str:
+        prefix = f"{name}: "
+        return next(
+            line.removeprefix(prefix)
+            for line in request.prompt.splitlines()
+            if line.startswith(prefix)
+        )
+
+    recovery = next(
+        (
+            line.removeprefix("RECOVERY_CAPSULE: ")
+            for line in request.prompt.splitlines()
+            if line.startswith("RECOVERY_CAPSULE: ")
+        ),
+        None,
+    )
+    return {
+        "worktree": request.cwd,
+        "plan_id": prompt_value("PLAN_ID"),
+        "current_commit": prompt_value("CURRENT_COMMIT"),
+        "starting_commit": prompt_value("STARTING_COMMIT"),
+        "result_path": request.result_path,
+        "log_path": request.log_path,
+        "recovery_path": Path(recovery) if recovery is not None else None,
+    }
+
+
+def controller_side_effect(
+    launcher: CodexLauncher,
+    callback: object,
+):
+    real = getattr(
+        launcher,
+        "_cpe_test_real_structured",
+        launcher._launch_structured,
+    )
+    launcher._cpe_test_real_structured = real  # type: ignore[attr-defined]
+
+    def dispatch(request: StructuredLaunchRequest, lock_fd: int) -> LaunchResult:
+        if "PLAN_ID: " not in request.prompt:
+            return real(request, lock_fd)
+        return callback(request, lock_fd)  # type: ignore[operator]
+
+    return dispatch
 
 
 class FailingCreateRunner(SequentialRunner):
@@ -1456,8 +1505,20 @@ print(json.dumps(result, sort_keys=True), flush=True)
         self.assertIsNone(inspected["observed_head"])
         self.assertEqual(inspected["last_known_head"], second_head)
 
-    def test_timeout_persists_advanced_head_and_returns_without_relaunch(self) -> None:
+    def test_timeout_persists_advanced_head_and_stops_after_two_stalled_slices(self) -> None:
         runner = self.runner(timeout_seconds=1.0)
+        real_launch = runner.launcher._launch_structured
+        observed_timeouts: list[float] = []
+
+        def accelerated(
+            request: StructuredLaunchRequest, lock_fd: int,
+        ) -> LaunchResult:
+            if "PLAN_ID: " in request.prompt:
+                observed_timeouts.append(request.timeout_seconds)
+                request = dataclasses.replace(request, timeout_seconds=0.12)
+            return real_launch(request, lock_fd)
+
+        runner.launcher._launch_structured = mock.Mock(side_effect=accelerated)
         result = runner.run(
             workspace=self.repo,
             specs=[],
@@ -1470,10 +1531,12 @@ print(json.dumps(result, sort_keys=True), flush=True)
 
         inspected = runner.inspect(run_id="timeout-after-commit")
 
-        self.assertEqual(result["status"], "checkpointed")
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["last_decision_reason"], "second_no_progress_slice")
         self.assertIsNone(inspected["observed_head"])
         self.assertEqual(inspected["last_known_head"], advanced_head)
-        self.assertEqual(len(self.invocations()), 1)
+        self.assertEqual(len(self.invocations()), 3)
+        self.assertEqual(observed_timeouts, [3600.0, 3600.0, 3600.0])
 
     def test_format_one_state_is_unsupported_without_mutation(self) -> None:
         root = self.home / "orchestrator" / "legacy-format-one"
@@ -1883,7 +1946,14 @@ print(json.dumps(result, sort_keys=True), flush=True)
                 launcher_prompt_bytes=1,
             )
 
-        runner.launcher.launch = mock.Mock(side_effect=fail_without_a_process)
+        runner.launcher._launch_structured = mock.Mock(
+            side_effect=controller_side_effect(
+                runner.launcher,
+                lambda request, _lock_fd: fail_without_a_process(
+                    **structured_launch_kwargs(request)
+                ),
+            )
+        )
         resumed = runner.resume(run_id="numeric-attempts", retry_failed=True)
 
         self.assertEqual(len(launch_calls), 1)
@@ -2459,8 +2529,13 @@ print(json.dumps(result, sort_keys=True), flush=True)
             return launch
 
         for index, (label, injected) in enumerate(cases, 1):
-            runner.launcher.launch = mock.Mock(
-                side_effect=launch_with(injected)
+            runner.launcher._launch_structured = mock.Mock(
+                side_effect=controller_side_effect(
+                    runner.launcher,
+                    lambda request, _lock_fd, injected=injected: launch_with(
+                        injected
+                    )(**structured_launch_kwargs(request)),
+                )
             )
             result = runner.run(
                 workspace=self.repo,
@@ -2802,7 +2877,7 @@ print(json.dumps(result, sort_keys=True), flush=True)
 
     def test_resume_skips_completed_plan_and_continues_current_git_state(self) -> None:
         runner = self.runner()
-        real_launch = runner.launcher.launch
+        real_launch = runner.launcher._launch_structured
         launch_plan_ids: list[str] = []
 
         def complete_first_plan_without_a_process(
@@ -2811,7 +2886,7 @@ print(json.dumps(result, sort_keys=True), flush=True)
             plan_id = str(kwargs["plan_id"])
             launch_plan_ids.append(plan_id)
             if plan_id != "plan-01":
-                return real_launch(**kwargs)
+                raise AssertionError("real launch must use the structured wrapper")
             worktree = Path(kwargs["worktree"])
             result_path = Path(kwargs["result_path"])
             log_path = Path(kwargs["log_path"])
@@ -2857,8 +2932,19 @@ print(json.dumps(result, sort_keys=True), flush=True)
                 launcher_prompt_bytes=1,
             )
 
-        runner.launcher.launch = mock.Mock(
-            side_effect=complete_first_plan_without_a_process
+        def complete_first_or_launch(
+            request: StructuredLaunchRequest, lock_fd: int,
+        ) -> LaunchResult:
+            if "PLAN_ID: " not in request.prompt:
+                return real_launch(request, lock_fd)
+            kwargs = structured_launch_kwargs(request)
+            if kwargs["plan_id"] == "plan-01":
+                return complete_first_plan_without_a_process(**kwargs)
+            launch_plan_ids.append(str(kwargs["plan_id"]))
+            return real_launch(request, lock_fd)
+
+        runner.launcher._launch_structured = mock.Mock(
+            side_effect=complete_first_or_launch
         )
         first = runner.run(workspace=self.repo, specs=[], plans=[self.plan(1, "completed"), self.plan(2, "resume_completed")], run_id="resume")
         self.assertEqual(first["status"], "blocked")
@@ -2980,8 +3066,13 @@ print(json.dumps(result, sort_keys=True), flush=True)
                 launcher_prompt_bytes=1,
             )
 
-        runner.launcher.launch = mock.Mock(
-            side_effect=recovery_without_a_process
+        runner.launcher._launch_structured = mock.Mock(
+            side_effect=controller_side_effect(
+                runner.launcher,
+                lambda request, _lock_fd: recovery_without_a_process(
+                    **structured_launch_kwargs(request)
+                ),
+            )
         )
         result = runner.run(
             workspace=self.repo,
@@ -3137,7 +3228,14 @@ print(json.dumps(result, sort_keys=True), flush=True)
                 launcher_prompt_bytes=1,
             )
 
-        runner.launcher.launch = mock.Mock(side_effect=fail_without_a_process)
+        runner.launcher._launch_structured = mock.Mock(
+            side_effect=controller_side_effect(
+                runner.launcher,
+                lambda request, _lock_fd: fail_without_a_process(
+                    **structured_launch_kwargs(request)
+                ),
+            )
+        )
         initial = runner.run(
             workspace=self.repo,
             specs=[],
@@ -3151,6 +3249,247 @@ print(json.dumps(result, sort_keys=True), flush=True)
         self.assertEqual(result["status"], "failed")
         self.assertEqual(launch_count, 2)
         self.assertEqual(result["plans"][0]["attempt_count"], 2)
+
+
+def _runner_events(run_root: Path) -> list[dict[str, object]]:
+    return [
+        json.loads(line)
+        for line in (run_root / "events.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+
+
+def fake_codex_launch_count(run_root: Path) -> int:
+    events = _runner_events(run_root)
+    resumed_at = max(
+        (index for index, event in enumerate(events) if event.get("action") == "run.resumed"),
+        default=-1,
+    )
+    return sum(
+        event.get("action") == "plan.attempt_started"
+        for event in events[resumed_at + 1:]
+    )
+
+
+def compiler_launch_count(run_root: Path) -> int:
+    path = run_root / "compiler-invocations.jsonl"
+    return len(path.read_text(encoding="utf-8").splitlines()) if path.exists() else 0
+
+
+class _RecoveryRunnerFixture(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory(prefix="cpe-recovery-integration-")
+        self.root = Path(self.temporary.name)
+        self.home = self.root / "codex-home"
+        self.repo = self.root / "repo"
+        self.home.mkdir(mode=0o700)
+        self.repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
+        git(self.repo, "config", "user.email", "cpe@example.invalid")
+        git(self.repo, "config", "user.name", "CPE Eval")
+        (self.repo / "base.txt").write_text("base\n", encoding="utf-8")
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-q", "-m", "fixture base")
+        self.fake = self.root / "codex"
+        shutil.copyfile(ROOT / "evals" / "fake_codex.py", self.fake)
+        self.fake.chmod(0o700)
+        self.invocations = self.root / "invocations.jsonl"
+        self.captured_timeouts: list[float] = []
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    def plan(self, scenario: str, *, loopback: bool = False) -> Path:
+        path = self.repo / "input-plan-1.md"
+        suffix = "requires loopback_bind\n" if loopback else ""
+        path.write_text(f"scenario:{scenario}\n{suffix}plan 1\n", encoding="utf-8")
+        return path
+
+    def runner(self, run_id: str) -> SequentialRunner:
+        run_root = self.home / "orchestrator" / run_id
+        launcher = CodexLauncher(
+            schema_path=ROOT / "templates" / "plan-result-schema.json",
+            codex_bin=str(self.fake),
+            timeout_seconds=0.12,
+            termination_grace_seconds=0.02,
+            environ={
+                "PATH": os.environ["PATH"],
+                "CODEX_HOME": str(self.home),
+                "CPE_FAKE_INVOCATION_LOG": str(self.invocations),
+                "CPE_FAKE_COMPILER_INVOCATION_LOG": str(
+                    run_root / "compiler-invocations.jsonl"
+                ),
+            },
+        )
+        real_launch = launcher._launch_structured
+
+        def accelerated(request: object, lock_fd: int) -> LaunchResult:
+            assert hasattr(request, "timeout_seconds")
+            timeout = float(request.timeout_seconds)  # type: ignore[attr-defined]
+            if timeout != 300.0:
+                self.captured_timeouts.append(timeout)
+                request = dataclasses.replace(request, timeout_seconds=0.12)
+            return real_launch(request, lock_fd)  # type: ignore[arg-type]
+
+        launcher._launch_structured = mock.Mock(side_effect=accelerated)
+        return SequentialRunner(codex_home=self.home, launcher=launcher)
+
+
+class ResumeCapabilityTests(_RecoveryRunnerFixture):
+    def observation(self, outcome: str) -> CapabilityObservation:
+        return CapabilityObservation(
+            capability="loopback_bind",
+            scope="workspace",
+            outcome=outcome,  # type: ignore[arg-type]
+            reason_code="permission_denied" if outcome == "unavailable" else "bound",
+            observed_by="parent_observed",
+            stable_details={"host": "127.0.0.1"},
+        )
+
+    def test_unchanged_parent_blocker_stops_before_compiler_or_codex_launch(self) -> None:
+        run_id = "unchanged-blocker"
+        runner = self.runner(run_id)
+        with mock.patch(
+            "cpe_runtime.runner._observe_capabilities",
+            return_value=[self.observation("unavailable")],
+        ):
+            initial = runner.run(
+                workspace=self.repo,
+                specs=[],
+                plans=[self.plan("resume_completed", loopback=True)],
+                run_id=run_id,
+            )
+        self.assertEqual("blocked", initial["status"])
+        run_root = self.home / "orchestrator" / run_id
+        compiler_log = run_root / "compiler-invocations.jsonl"
+        compiler_log.write_text("", encoding="utf-8")
+
+        with mock.patch(
+            "cpe_runtime.runner._observe_capabilities",
+            return_value=[self.observation("unavailable")],
+        ):
+            resumed = runner.resume(run_id=run_id)
+        self.assertEqual("blocked", resumed["status"])
+        self.assertEqual(0, fake_codex_launch_count(run_root))
+        self.assertEqual(0, compiler_launch_count(run_root))
+        self.assertEqual(
+            "unchanged_environment_blocker", resumed["last_decision_reason"]
+        )
+        self.assertEqual(
+            "resume.stopped_unchanged_blocker", _runner_events(run_root)[-1]["action"]
+        )
+
+        with mock.patch(
+            "cpe_runtime.runner._observe_capabilities",
+            return_value=[self.observation("available")],
+        ):
+            changed = runner.resume(run_id=run_id)
+        self.assertEqual("completed", changed["status"])
+        self.assertEqual(1, fake_codex_launch_count(run_root))
+
+
+class ProgressRecoveryIntegrationTests(_RecoveryRunnerFixture):
+    def test_recovery_metrics_are_derived_once_from_decision_events(self) -> None:
+        metrics = reporting_module.derive_recovery_metrics([
+            {
+                "action": "resume.stopped_unchanged_blocker",
+                "reason": "unchanged_environment_blocker",
+            },
+            {
+                "action": "plan.checkpoint_decided",
+                "reason": "productive_timeout",
+            },
+        ])
+        self.assertEqual(
+            {
+                "launches_avoided": 1,
+                "productive_timeouts": 1,
+                "no_progress_slices": 0,
+                "budget_stops": 0,
+                "continuation_reason_counts": {"productive_timeout": 1},
+            },
+            metrics,
+        )
+
+    def test_productive_timeout_continues_once_and_completes(self) -> None:
+        run_id = "productive-timeout"
+        runner = self.runner(run_id)
+        result = runner.run(
+            workspace=self.repo,
+            specs=[],
+            plans=[self.plan("timeout_with_progress")],
+            run_id=run_id,
+        )
+        run_root = self.home / "orchestrator" / run_id
+        self.assertEqual("completed", result["status"])
+        self.assertEqual(2, fake_codex_launch_count(run_root))
+        self.assertEqual([3600.0, 3600.0], self.captured_timeouts)
+        state = StateStore.open(run_root).state["plans"][0]
+        self.assertEqual(2, state["controller_launch_count"])
+        self.assertEqual(2, state["checkpoint_count"])
+        self.assertEqual(2, state["progress_checkpoint_count"])
+        events = _runner_events(run_root)
+        self.assertTrue(any(
+            event.get("action") == "plan.checkpoint_decided"
+            and event.get("reason") == "productive_timeout"
+            for event in events
+        ))
+
+    def test_second_stalled_timeout_stops_with_typed_blocker(self) -> None:
+        run_id = "stalled-timeout"
+        runner = self.runner(run_id)
+        result = runner.run(
+            workspace=self.repo,
+            specs=[],
+            plans=[self.plan("timeout_without_progress")],
+            run_id=run_id,
+        )
+        run_root = self.home / "orchestrator" / run_id
+        self.assertEqual("blocked", result["status"])
+        self.assertEqual("second_no_progress_slice", result["last_decision_reason"])
+        self.assertEqual(2, fake_codex_launch_count(run_root))
+        self.assertEqual([3600.0, 3600.0], self.captured_timeouts)
+        state = StateStore.open(run_root).state["plans"][0]
+        self.assertEqual(2, state["controller_launch_count"])
+        self.assertEqual(2, state["checkpoint_count"])
+        self.assertEqual(2, state["consecutive_no_progress_slices"])
+        blocker = json.loads(Path(state["result_path"]).read_text(encoding="utf-8"))
+        self.assertEqual("operator_owned", blocker["blocker"]["kind"])
+        self.assertEqual("second_no_progress_slice", blocker["blocker"]["code"])
+
+    def test_historical_direct_cpe_timeouts_split_without_comparative_inflation(self) -> None:
+        fixtures = ROOT / "evals" / "fixtures"
+        direct = json.loads(
+            (fixtures / "canvas-direct-run-format2.json").read_text(encoding="utf-8")
+        )
+        timeout = next(
+            item for item in direct["observations"] if item["signal"] == "slice_timeout"
+        )
+        advanced = next(
+            item for item in direct["observations"]
+            if item["signal"] == "head_advanced_between_timeouts"
+        )
+        productive = len(advanced["plans"])
+        unchanged = timeout["occurrences"] - productive
+        events = [
+            {"action": "plan.checkpoint_decided", "reason": "productive_timeout"}
+            for _ in range(productive)
+        ] + [
+            {"action": "resume.stopped_unchanged_blocker", "reason": "unchanged_environment_blocker"}
+            for _ in range(unchanged)
+        ]
+        metrics = reporting_module.derive_recovery_metrics(events)
+        self.assertEqual(5, timeout["occurrences"])
+        self.assertEqual(3600, timeout["duration_seconds_each"])
+        self.assertEqual(productive, metrics["productive_timeouts"])
+        self.assertEqual(unchanged, metrics["launches_avoided"])
+
+        for name in ("readmates-comparative.json", "gasstation-comparative.json"):
+            payload = json.loads((fixtures / name).read_text(encoding="utf-8"))
+            self.assertFalse(payload["count_as_cpe_metrics"])
+        self.assertEqual(
+            metrics,
+            reporting_module.derive_recovery_metrics(events),
+        )
 
 
 if __name__ == "__main__":

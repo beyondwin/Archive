@@ -19,6 +19,42 @@ _FINDING_OPTIONAL = {
 }
 
 
+def derive_recovery_metrics(
+    events: list[dict[str, object]],
+) -> dict[str, object]:
+    """Derive bounded recovery counters from the authoritative event stream."""
+    launches_avoided = 0
+    productive_timeouts = 0
+    no_progress_slices = 0
+    budget_stops = 0
+    reasons: dict[str, int] = {}
+    for event in events:
+        action = event.get("action")
+        reason = event.get("reason")
+        if action == "resume.stopped_unchanged_blocker":
+            launches_avoided += 1
+        if action != "plan.checkpoint_decided" or not isinstance(reason, str):
+            continue
+        reasons[reason] = reasons.get(reason, 0) + 1
+        if reason == "productive_timeout":
+            productive_timeouts += 1
+        if reason in {"first_no_progress_slice", "second_no_progress_slice"}:
+            no_progress_slices += 1
+        if reason in {
+            "checkpoint_budget_exhausted",
+            "launch_budget_exhausted",
+            "wall_budget_exhausted",
+        }:
+            budget_stops += 1
+    return {
+        "launches_avoided": launches_avoided,
+        "productive_timeouts": productive_timeouts,
+        "no_progress_slices": no_progress_slices,
+        "budget_stops": budget_stops,
+        "continuation_reason_counts": dict(sorted(reasons.items())),
+    }
+
+
 class OptimizationMarkdownError(RuntimeError):
     """The authoritative JSON report succeeded but its derivative did not."""
 
