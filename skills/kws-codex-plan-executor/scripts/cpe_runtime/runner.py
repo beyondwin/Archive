@@ -24,7 +24,9 @@ from .capabilities import (
 )
 from .compiler import CompiledIndexService
 from .evidence import (
+    execution_event_digest,
     ingest_plan_evidence,
+    prepare_plan_evidence,
     read_progress_snapshot,
     validate_execution_ledger,
 )
@@ -225,8 +227,9 @@ class ProgressLedgerError(ValueError):
         self.code = code
 
 
-def _pending_checkpoint_event(
+def _decision_scoped_events(
     store: StateStore,
+    action: str,
     decision_id: str,
 ) -> list[dict[str, object]]:
     matches: list[dict[str, object]] = []
@@ -234,50 +237,28 @@ def _pending_checkpoint_event(
         payload = json.loads(line)
         if (
             isinstance(payload, dict)
-            and payload.get("action") == "plan.checkpoint_decided"
+            and payload.get("action") == action
             and payload.get("decision_id") == decision_id
         ):
             matches.append(payload)
     return matches
 
 
-def _reconcile_pending_checkpoint(store: StateStore) -> None:
-    state = store.state
-    index = state["current_plan_index"]
-    if not isinstance(index, int) or index >= len(state["plans"]):
-        return
-    plan = state["plans"][index]
-    pending = plan["pending_checkpoint_decision"]
-    if pending is None:
-        return
-    decision = CheckpointDecision(
-        pending["decision"],
-        pending["reason"],
-        pending["progress_fingerprint"],
-    )
-    matches = _pending_checkpoint_event(store, pending["decision_id"])
+def _ensure_decision_scoped_event(
+    store: StateStore,
+    action: str,
+    decision_id: str,
+    **details: object,
+) -> None:
+    matches = _decision_scoped_events(store, action, decision_id)
     if len(matches) > 1:
-        raise ValueError("checkpoint decision event is duplicated")
-    details = {
-        "decision_id": pending["decision_id"],
-        "plan_id": pending["plan_id"],
-        "attempt": pending["attempt"],
-        "decision": pending["decision"],
-        "reason": pending["reason"],
-        "progress_fingerprint": pending["progress_fingerprint"],
-        "timed_out": pending["timed_out"],
-    }
+        raise ValueError(f"{action} event is duplicated")
+    expected = {"decision_id": decision_id, **details}
     if matches:
-        if any(matches[0].get(name) != value for name, value in details.items()):
-            raise ValueError("checkpoint decision event does not match journal")
+        if any(matches[0].get(name) != value for name, value in expected.items()):
+            raise ValueError(f"{action} event does not match decision journal")
     else:
-        store.append_event("plan.checkpoint_decided", **details)
-    if plan["progress_fingerprint"] != pending["previous_progress_fingerprint"]:
-        raise ValueError("checkpoint decision journal baseline changed")
-    _record_checkpoint(state, decision)
-    plan["last_known_head"] = pending["head"]
-    plan["pending_checkpoint_decision"] = None
-    store.save()
+        store.append_event(action, **expected)
 
 
 def _persist_checkpoint_decision(
@@ -286,6 +267,7 @@ def _persist_checkpoint_decision(
     *,
     timed_out: bool,
     head: str,
+    evidence_manifest_sha256: str | None,
 ) -> None:
     state = store.state
     plan = state["plans"][state["current_plan_index"]]
@@ -304,9 +286,9 @@ def _persist_checkpoint_decision(
         "previous_progress_fingerprint": previous,
         "timed_out": timed_out,
         "head": head,
+        "evidence_manifest_sha256": evidence_manifest_sha256,
     }
     store.save()
-    _reconcile_pending_checkpoint(store)
 
 
 def _pre_spawn_budget_decision(
@@ -676,12 +658,17 @@ class SequentialRunner:
         try:
             with _RunLock(store.root / "run.lock") as lock_fd:
                 store = StateStore.open(store.root)
-                _reconcile_pending_checkpoint(store)
                 if store.state["status"] in {"preparing", "ready"}:
                     self._create_or_reconcile_worktree(store)
                 else:
                     self._verify_worktree(store)
+                reconciled_action = self._apply_pending_decision(store)
                 status = store.state["status"]
+                if reconciled_action not in {None, "continue"}:
+                    store.append_event("run.resumed", retry_failed=retry_failed)
+                    if status == "completed":
+                        return self._summary(store)
+                    return self._report_and_summary(store)
                 if status == "completed":
                     if retry_failed:
                         raise ValueError("retry-failed requires a failed run")
@@ -768,16 +755,16 @@ class SequentialRunner:
             / "execution-ledger.jsonl"
         )
         if not ledger.exists():
-            if plan["execution_ledger_event_ids"]:
+            if plan["execution_ledger_event_digests"]:
                 raise ProgressLedgerError("execution_ledger_regressed")
             return ProgressSnapshot(head, (), None, (), ())
         try:
             events = validate_execution_ledger(
                 ledger, expected_plan_id=plan["plan_id"],
             )
-            current_ids = [str(event["event_id"]) for event in events]
-            previous_ids = plan["execution_ledger_event_ids"]
-            if current_ids[:len(previous_ids)] != previous_ids:
+            current_digests = [execution_event_digest(event) for event in events]
+            previous_digests = plan["execution_ledger_event_digests"]
+            if current_digests[:len(previous_digests)] != previous_digests:
                 raise ProgressLedgerError("execution_ledger_regressed")
             snapshot = read_progress_snapshot(
                 store.root, plan_index=plan_index, head=head,
@@ -786,8 +773,208 @@ class SequentialRunner:
             raise
         except (OSError, ValueError) as exc:
             raise ProgressLedgerError("execution_ledger_invalid") from exc
-        plan["execution_ledger_event_ids"] = current_ids
+        plan["execution_ledger_event_digests"] = current_digests
         return snapshot
+
+    def _apply_pending_decision(self, store: StateStore) -> str | None:
+        """Idempotently apply one journaled decision and clear it atomically."""
+        state = store.state
+        index = state["current_plan_index"]
+        if not isinstance(index, int) or index >= len(state["plans"]):
+            return None
+        plan = state["plans"][index]
+        pending = plan["pending_checkpoint_decision"]
+        if pending is None:
+            return None
+        decision = CheckpointDecision(
+            pending["decision"],
+            pending["reason"],
+            pending["progress_fingerprint"],
+        )
+        decision_id = pending["decision_id"]
+        _ensure_decision_scoped_event(
+            store,
+            "plan.checkpoint_decided",
+            decision_id,
+            plan_id=pending["plan_id"],
+            attempt=pending["attempt"],
+            decision=pending["decision"],
+            reason=pending["reason"],
+            progress_fingerprint=pending["progress_fingerprint"],
+            timed_out=pending["timed_out"],
+        )
+        if plan["progress_fingerprint"] != pending["previous_progress_fingerprint"]:
+            raise ValueError("checkpoint decision journal baseline changed")
+
+        if decision.action == "finish":
+            publication_started = time.monotonic()
+            try:
+                ingest_plan_evidence(
+                    run_root=store.root,
+                    worktree=Path(state["worktree"]),
+                    plan_id=plan["plan_id"],
+                    accepted_head=pending["head"],
+                    expected_manifest_sha256=pending["evidence_manifest_sha256"],
+                )
+                self._seal_result(Path(plan["result_path"]))
+            except (OSError, ValueError) as exc:
+                reason = (str(exc).strip() or type(exc).__name__)[:2000]
+                _ensure_decision_scoped_event(
+                    store,
+                    "plan.evidence_failed",
+                    decision_id,
+                    plan_id=plan["plan_id"],
+                    reason=reason,
+                )
+                plan["status"] = "failed"
+                state["status"] = "failed"
+                plan["pending_checkpoint_decision"] = None
+                store.save()
+                return "evidence_failed"
+            plan["plan_elapsed_seconds"] += math.ceil(
+                time.monotonic() - publication_started
+            )
+            _ensure_decision_scoped_event(
+                store,
+                "plan.completed",
+                decision_id,
+                plan_id=plan["plan_id"],
+                head=pending["head"],
+            )
+
+        block_details: tuple[bool, str | None, list[str]] | None = None
+        if decision.action == "block":
+            existing = _decision_scoped_events(
+                store, "plan.blocked", decision_id,
+            )
+            if len(existing) > 1:
+                raise ValueError("plan.blocked event is duplicated")
+            if existing:
+                event = existing[0]
+                parent_confirmed = event.get("parent_confirmed")
+                fingerprint = event.get("environment_fingerprint")
+                probe_ids = event.get("capability_probe_ids")
+                if (
+                    event.get("plan_id") != plan["plan_id"]
+                    or not isinstance(parent_confirmed, bool)
+                    or (
+                        parent_confirmed
+                        and (not isinstance(fingerprint, str) or len(fingerprint) != 64)
+                    )
+                    or (not parent_confirmed and fingerprint is not None)
+                    or not isinstance(probe_ids, list)
+                    or not all(isinstance(value, str) for value in probe_ids)
+                    or len(probe_ids) != len(set(probe_ids))
+                ):
+                    raise ValueError(
+                        "plan.blocked event does not match decision journal"
+                    )
+                block_details = (
+                    parent_confirmed, fingerprint, list(probe_ids),
+                )
+            else:
+                probe_started = time.monotonic()
+                observations = _observe_capabilities(
+                    Path(state["worktree"]), self._compiled_plan(store),
+                )
+                blockers = typed_blockers(observations)
+                fingerprint = (
+                    environment_fingerprint(observations) if blockers else None
+                )
+                probe_ids = (
+                    sorted({observation.capability for observation in observations})
+                    if blockers else []
+                )
+                plan["plan_elapsed_seconds"] += math.ceil(
+                    time.monotonic() - probe_started
+                )
+                block_details = (bool(blockers), fingerprint, probe_ids)
+                _ensure_decision_scoped_event(
+                    store,
+                    "plan.blocked",
+                    decision_id,
+                    plan_id=plan["plan_id"],
+                    parent_confirmed=bool(blockers),
+                    environment_fingerprint=fingerprint,
+                    capability_probe_ids=probe_ids,
+                )
+
+        _record_checkpoint(state, decision)
+        plan["last_known_head"] = pending["head"]
+
+        if decision.action == "finish":
+            plan["status"] = "completed"
+            plan["accepted_commit"] = pending["head"]
+            state["current_plan_index"] += 1
+            state["status"] = (
+                "completed"
+                if state["current_plan_index"] == len(state["plans"])
+                else "running"
+            )
+        elif decision.action == "continue":
+            _ensure_decision_scoped_event(
+                store,
+                "plan.continuation_scheduled",
+                decision_id,
+                plan_id=plan["plan_id"],
+                reason=decision.reason_code,
+                head=pending["head"],
+            )
+            plan["status"] = "checkpointed"
+            state["status"] = "checkpointed"
+        elif decision.action == "checkpoint":
+            _ensure_decision_scoped_event(
+                store,
+                "plan.checkpointed",
+                decision_id,
+                plan_id=plan["plan_id"],
+                head=pending["head"],
+            )
+            plan["status"] = "checkpointed"
+            state["status"] = "checkpointed"
+        elif decision.action == "fail":
+            _ensure_decision_scoped_event(
+                store,
+                "plan.failed",
+                decision_id,
+                plan_id=plan["plan_id"],
+                attempts=plan["attempt_count"],
+            )
+            plan["status"] = "failed"
+            state["status"] = "failed"
+        elif decision.action == "block":
+            assert block_details is not None
+            _, fingerprint, probe_ids = block_details
+            plan["environment_fingerprint"] = fingerprint
+            plan["capability_probe_ids"] = probe_ids
+            _ensure_decision_scoped_event(
+                store,
+                "plan.recovery_stopped",
+                decision_id,
+                plan_id=plan["plan_id"],
+                reason=decision.reason_code,
+                failure_signature=decision.progress_fingerprint,
+            )
+            plan["status"] = "blocked"
+            state["status"] = "blocked"
+        else:
+            plan["result_path"] = str(self._controller_stop_result(
+                store, plan, decision, pending["head"],
+            ))
+            _ensure_decision_scoped_event(
+                store,
+                "plan.recovery_stopped",
+                decision_id,
+                plan_id=plan["plan_id"],
+                reason=decision.reason_code,
+                failure_signature=decision.progress_fingerprint,
+            )
+            plan["status"] = "blocked"
+            state["status"] = "blocked"
+
+        plan["pending_checkpoint_decision"] = None
+        store.save()
+        return decision.action
 
     @staticmethod
     def _checkpoint_budget(plan: Mapping[str, object]) -> CheckpointBudget:
@@ -1288,12 +1475,10 @@ class SequentialRunner:
                     )
                     return self._report_and_summary(store, error=exc.code)
 
-                acceptance_started = None
+                evidence_manifest_sha256 = None
                 if payload_status == "completed":
-                    acceptance_started = time.monotonic()
                     try:
-                        ingest_plan_evidence(
-                            run_root=store.root,
+                        _, evidence_manifest_sha256 = prepare_plan_evidence(
                             worktree=worktree,
                             plan_id=plan["plan_id"],
                             accepted_head=payload["head_commit"],
@@ -1325,109 +1510,21 @@ class SequentialRunner:
                     decision,
                     timed_out=outcome.timed_out,
                     head=observed_head,
+                    evidence_manifest_sha256=evidence_manifest_sha256,
                 )
+                applied_action = self._apply_pending_decision(store)
 
-                if decision.action == "finish":
-                    assert isinstance(payload, dict)
-                    assert payload_status == "completed"
-                    self._seal_result(outcome.result_path)
-                    assert acceptance_started is not None
-                    plan["plan_elapsed_seconds"] += math.ceil(
-                        time.monotonic() - acceptance_started
-                    )
-                    plan["status"] = "completed"
-                    plan["accepted_commit"] = payload["head_commit"]
-                    state["current_plan_index"] += 1
-                    state["status"] = (
-                        "completed"
-                        if state["current_plan_index"] == len(state["plans"])
-                        else "running"
-                    )
-                    store.save()
-                    store.append_event(
-                        "plan.completed",
-                        plan_id=plan["plan_id"],
-                        head=payload["head_commit"],
-                    )
+                if applied_action == "finish":
                     report_error = self._update_reports(store)
                     if report_error is not None:
                         return self._summary(store, error=report_error)
                     break
-
-                if decision.action == "continue":
-                    plan["status"] = "checkpointed"
-                    state["status"] = "checkpointed"
-                    store.save()
-                    store.append_event(
-                        "plan.continuation_scheduled",
-                        plan_id=plan["plan_id"],
-                        reason=decision.reason_code,
-                        head=observed_head,
-                    )
+                if applied_action == "continue":
                     continue
-
-                if decision.action == "checkpoint":
-                    plan["status"] = "checkpointed"
-                    state["status"] = "checkpointed"
-                    store.save()
-                    store.append_event(
-                        "plan.checkpointed",
-                        plan_id=plan["plan_id"],
-                        head=observed_head,
+                if applied_action == "evidence_failed":
+                    return self._report_and_summary(
+                        store, error="evidence_publication_failed",
                     )
-                    return self._report_and_summary(store)
-
-                if decision.action == "fail":
-                    plan["status"] = "failed"
-                    state["status"] = "failed"
-                    store.save()
-                    store.append_event(
-                        "plan.failed",
-                        plan_id=plan["plan_id"],
-                        attempts=plan["attempt_count"],
-                    )
-                    return self._report_and_summary(store)
-
-                if decision.action == "block":
-                    probe_started = time.monotonic()
-                    observations = _observe_capabilities(
-                        worktree, self._compiled_plan(store),
-                    )
-                    blockers = typed_blockers(observations)
-                    if blockers:
-                        plan["environment_fingerprint"] = environment_fingerprint(
-                            observations
-                        )
-                        plan["capability_probe_ids"] = sorted({
-                            observation.capability for observation in observations
-                        })
-                    else:
-                        plan["environment_fingerprint"] = None
-                        plan["capability_probe_ids"] = []
-                    plan["plan_elapsed_seconds"] += math.ceil(
-                        time.monotonic() - probe_started
-                    )
-                    store.append_event(
-                        "plan.blocked",
-                        plan_id=plan["plan_id"],
-                        parent_confirmed=bool(blockers),
-                        environment_fingerprint=(
-                            plan["environment_fingerprint"] if blockers else None
-                        ),
-                    )
-                else:
-                    plan["result_path"] = str(self._controller_stop_result(
-                        store, plan, decision, observed_head,
-                    ))
-                plan["status"] = "blocked"
-                state["status"] = "blocked"
-                store.save()
-                store.append_event(
-                    "plan.recovery_stopped",
-                    plan_id=plan["plan_id"],
-                    reason=decision.reason_code,
-                    failure_signature=decision.progress_fingerprint,
-                )
                 return self._report_and_summary(store)
 
         state["status"] = "completed"
