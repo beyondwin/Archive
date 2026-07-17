@@ -13,15 +13,31 @@ from pathlib import Path
 from typing import Any, Sequence
 
 
+FORMAT_VERSION = 2
 RUN_STATUSES = {
-    "initializing",
+    "preparing",
+    "ready",
     "running",
+    "checkpointed",
     "completed",
     "blocked",
     "failed",
-    "interrupted",
 }
-PLAN_STATUSES = {"pending", "running", "completed", "blocked", "failed", "interrupted"}
+TRUST_LEVELS = {"parent_observed", "child_attested", "derived", "hypothesis"}
+PLAN_STATUSES = {
+    "pending",
+    "running",
+    "checkpointed",
+    "completed",
+    "blocked",
+    "failed",
+}
+DEFAULT_PLAN_BUDGET = {
+    "controller_slice_timeout_seconds": 3600,
+    "max_progress_checkpoints": 6,
+    "plan_wall_budget_seconds": 21_600,
+    "max_controller_launches": 8,
+}
 _SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 _DIGEST_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
@@ -34,6 +50,38 @@ def _write_all(descriptor: int, payload: bytes) -> None:
         if written <= 0:
             raise OSError("short write while persisting run state")
         remaining = remaining[written:]
+
+
+def atomic_private_write(path: Path, payload: bytes, mode: int = 0o600) -> None:
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            mode,
+        )
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise ValueError("private artifact must be a regular file")
+        _write_all(descriptor, payload)
+        os.fchmod(descriptor, mode)
+        os.fsync(descriptor)
+        os.close(descriptor)
+        descriptor = None
+        os.replace(temporary, path)
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def _private_directory(path: Path) -> None:
@@ -66,7 +114,7 @@ def _read_document(path: Path) -> tuple[Path, bytes]:
 
 
 class StateStore:
-    """Own one format-version-1 state file beneath a private run root."""
+    """Own one format-version-2 state file beneath a private run root."""
 
     def __init__(self, root: Path, state: dict[str, Any]) -> None:
         self.root = root
@@ -86,11 +134,11 @@ class StateStore:
         branch: str,
         specs: Sequence[Path],
         plans: Sequence[Path],
-        initial_status: str = "initializing",
+        initial_status: str = "preparing",
     ) -> "StateStore":
         if not plans:
             raise ValueError("at least one plan is required")
-        if initial_status not in {"initializing", "running"}:
+        if initial_status not in {"preparing", "ready", "running"}:
             raise ValueError("initial run status is invalid")
         if run_root.exists():
             raise ValueError("run root already exists")
@@ -113,7 +161,7 @@ class StateStore:
 
         _private_directory(run_root.parent)
         _private_directory(run_root)
-        for name in ("inputs", "results", "logs"):
+        for name in ("inputs", "results", "logs", "evidence", "reports"):
             _private_directory(run_root / name)
 
         records: list[dict[str, Any]] = []
@@ -142,13 +190,24 @@ class StateStore:
                 "starting_commit": None,
                 "accepted_commit": None,
                 "attempt_count": 0,
+                "controller_launch_count": 0,
+                "checkpoint_count": 0,
+                "progress_checkpoint_count": 0,
+                "consecutive_no_progress_slices": 0,
+                "progress_fingerprint": None,
+                "environment_fingerprint": None,
+                "capability_probe_ids": [],
+                "plan_started_at": None,
+                "plan_elapsed_seconds": 0,
+                "last_known_head": None,
                 "result_path": None,
+                "budget": dict(DEFAULT_PLAN_BUDGET),
             }
             for record in records
             if record["role"] == "plan"
         ]
         state = {
-            "format_version": 1,
+            "format_version": FORMAT_VERSION,
             "run_id": run_id,
             "status": initial_status,
             "source_repository": str(repository),
@@ -176,7 +235,10 @@ class StateStore:
             payload = json.loads((root / "state.json").read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise ValueError("run state is unavailable or invalid") from exc
-        if not isinstance(payload, dict) or payload.get("format_version") != 1:
+        version = payload.get("format_version") if isinstance(payload, dict) else None
+        if version == 1:
+            raise ValueError("unsupported_legacy_run")
+        if version != FORMAT_VERSION:
             raise ValueError("unsupported_run_format")
         store = cls(root, payload)
         store._validate()
@@ -188,8 +250,8 @@ class StateStore:
             "format_version", "run_id", "status", "source_repository", "source_commit",
             "worktree", "branch", "current_plan_index", "inputs", "plans",
         }
-        if set(state) != required or state.get("format_version") != 1:
-            raise ValueError("invalid format-version-1 state")
+        if set(state) != required or state.get("format_version") != FORMAT_VERSION:
+            raise ValueError("invalid format-version-2 state")
         if not isinstance(state["run_id"], str) or not _RUN_ID_PATTERN.fullmatch(state["run_id"]) or state["branch"] != f"codex/{state['run_id']}":
             raise ValueError("run identity is invalid")
         if not all(isinstance(state[name], str) and Path(state[name]).is_absolute() for name in ("source_repository", "worktree")):
@@ -204,12 +266,15 @@ class StateStore:
         if not isinstance(index, int) or isinstance(index, bool) or not 0 <= index <= len(state["plans"]):
             raise ValueError("current plan index is invalid")
 
-        owned_directories = [self.root / name for name in ("inputs", "results", "logs")]
+        owned_directories = [
+            self.root / name
+            for name in ("inputs", "results", "logs", "evidence", "reports")
+        ]
         for directory in owned_directories:
             if directory.is_symlink() or not directory.is_dir():
                 raise ValueError("private run directory is missing or redirected")
             _inside(directory, self.root, "private run directory")
-        inputs_root, results_root, _ = owned_directories
+        inputs_root, results_root, _, _, _ = owned_directories
         plan_ids = []
         role_orders = {"spec": 0, "plan": 0}
         for record in state["inputs"]:
@@ -244,17 +309,41 @@ class StateStore:
             raise ValueError("plan input count does not match plan state")
         for position, record in enumerate(state["plans"]):
             if not isinstance(record, dict) or set(record) != {
-                "plan_id", "status", "starting_commit", "accepted_commit", "attempt_count", "result_path"
+                "plan_id", "status", "starting_commit", "accepted_commit",
+                "attempt_count", "controller_launch_count", "checkpoint_count",
+                "progress_checkpoint_count", "consecutive_no_progress_slices",
+                "progress_fingerprint", "environment_fingerprint",
+                "capability_probe_ids", "plan_started_at", "plan_elapsed_seconds",
+                "last_known_head", "result_path", "budget",
             }:
                 raise ValueError("plan record is invalid")
             if record["plan_id"] != plan_ids[position] or record["status"] not in PLAN_STATUSES:
                 raise ValueError("plan identity or status is invalid")
             if not isinstance(record["attempt_count"], int) or isinstance(record["attempt_count"], bool) or record["attempt_count"] < 0:
                 raise ValueError("plan attempt count is invalid")
-            for name in ("starting_commit", "accepted_commit"):
+            for name in (
+                "controller_launch_count", "checkpoint_count",
+                "progress_checkpoint_count", "consecutive_no_progress_slices",
+                "plan_elapsed_seconds",
+            ):
+                value = record[name]
+                if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                    raise ValueError(f"plan {name} is invalid")
+            for name in ("starting_commit", "accepted_commit", "last_known_head"):
                 value = record[name]
                 if value is not None and not _SHA_PATTERN.fullmatch(str(value)):
                     raise ValueError(f"plan {name} is invalid")
+            for name in ("progress_fingerprint", "environment_fingerprint", "plan_started_at"):
+                value = record[name]
+                if value is not None and not isinstance(value, str):
+                    raise ValueError(f"plan {name} is invalid")
+            if (
+                not isinstance(record["capability_probe_ids"], list)
+                or not all(isinstance(value, str) for value in record["capability_probe_ids"])
+            ):
+                raise ValueError("plan capability probe IDs are invalid")
+            if record["budget"] != DEFAULT_PLAN_BUDGET:
+                raise ValueError("plan budget is invalid")
             if record["result_path"] is not None:
                 declared_result = Path(record["result_path"])
                 if declared_result.is_symlink():
@@ -284,7 +373,18 @@ class StateStore:
             "starting_commit": None,
             "accepted_commit": None,
             "attempt_count": 0,
+            "controller_launch_count": 0,
+            "checkpoint_count": 0,
+            "progress_checkpoint_count": 0,
+            "consecutive_no_progress_slices": 0,
+            "progress_fingerprint": None,
+            "environment_fingerprint": None,
+            "capability_probe_ids": [],
+            "plan_started_at": None,
+            "plan_elapsed_seconds": 0,
+            "last_known_head": None,
             "result_path": None,
+            "budget": dict(DEFAULT_PLAN_BUDGET),
         }
         for position, plan in enumerate(plans):
             if position < completed_prefix:
@@ -319,40 +419,55 @@ class StateStore:
             raise ValueError("active current plan evidence is incomplete")
 
         allowed = {
-            "initializing": {"pending"},
+            "preparing": {"pending"},
+            "ready": {"pending"},
             "running": {"pending", "running"},
+            "checkpointed": {"checkpointed"},
             "blocked": {"blocked"},
             "failed": {"failed", "pending"},
-            "interrupted": {"pending", "interrupted"},
         }
         if current["status"] not in allowed.get(state["status"], set()):
             raise ValueError("run and current plan statuses disagree")
 
     def save(self) -> None:
         self._validate()
-        temporary = self.root / f".state.{os.getpid()}.{uuid.uuid4().hex}.tmp"
-        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        try:
-            payload = json.dumps(self.state, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
-            _write_all(descriptor, payload)
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
-        os.replace(temporary, self.state_path)
-        self.state_path.chmod(0o600)
-        directory = os.open(self.root, os.O_RDONLY)
-        try:
-            os.fsync(directory)
-        finally:
-            os.close(directory)
+        payload = json.dumps(
+            self.state, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        atomic_private_write(self.state_path, payload)
 
-    def append_event(self, kind: str, **details: object) -> None:
-        if not kind or len(kind) > 100:
-            raise ValueError("event kind must be bounded")
-        event = {"at": datetime.now(timezone.utc).isoformat(), "kind": kind, **details}
-        line = json.dumps(event, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
-        if len(line) > 16_384:
+    def append_event(
+        self,
+        action: str,
+        *,
+        source: str = "parent_observed",
+        **details: object,
+    ) -> None:
+        if source not in TRUST_LEVELS:
+            raise ValueError("event source is invalid")
+        if not action or len(action) > 100:
+            raise ValueError("event action must be bounded")
+        forbidden = {"prompt", "transcript", "raw_output", "environment", "secret", "token"}
+        if forbidden & set(details):
+            raise ValueError("event contains forbidden content field")
+        event = {
+            "event_id": uuid.uuid4().hex,
+            "at": datetime.now(timezone.utc).isoformat(),
+            "source": source,
+            "run_id": self.state["run_id"],
+            "category": action.split(".", 1)[0],
+            "action": action,
+            **details,
+        }
+        encoded = (
+            json.dumps(event, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            + "\n"
+        ).encode("utf-8")
+        if len(encoded) > 16_384:
             raise ValueError("event record exceeds the bounded event contract")
+        self._append_event_bytes(encoded)
+
+    def _append_event_bytes(self, encoded: bytes) -> None:
         descriptor = os.open(
             self.events_path,
             os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
@@ -361,7 +476,7 @@ class StateStore:
         try:
             if not stat.S_ISREG(os.fstat(descriptor).st_mode):
                 raise ValueError("event stream must be a regular file")
-            _write_all(descriptor, line.encode("utf-8"))
+            _write_all(descriptor, encoded)
             os.fsync(descriptor)
         finally:
             os.close(descriptor)

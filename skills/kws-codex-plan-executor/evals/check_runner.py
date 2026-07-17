@@ -236,6 +236,76 @@ print(json.dumps(result, sort_keys=True), flush=True)
         with self.assertRaisesRegex(ValueError, message):
             store.save()
 
+    def create_format_two_store(self, run_id: str) -> StateStore:
+        return StateStore.create(
+            run_root=self.home / "orchestrator" / run_id,
+            run_id=run_id,
+            source_repository=self.repo,
+            source_commit=git(self.repo, "rev-parse", "HEAD"),
+            worktree=self.home / "worktrees" / run_id,
+            branch=f"codex/{run_id}",
+            specs=[],
+            plans=[self.plan(1, "completed")],
+        )
+
+    def test_format_two_state_has_preparation_and_budget_fields(self) -> None:
+        source_commit = git(self.repo, "rev-parse", "HEAD")
+        store = StateStore.create(
+            run_root=self.home / "orchestrator" / "format-two",
+            run_id="format-two",
+            source_repository=self.repo,
+            source_commit=source_commit,
+            worktree=self.home / "worktrees" / "format-two",
+            branch="codex/format-two",
+            specs=[],
+            plans=[self.plan(1, "completed")],
+        )
+        self.assertEqual(store.state["format_version"], 2)
+        self.assertEqual(store.state["status"], "preparing")
+        self.assertEqual(
+            store.state["plans"][0]["budget"],
+            {
+                "controller_slice_timeout_seconds": 3600,
+                "max_progress_checkpoints": 6,
+                "plan_wall_budget_seconds": 21600,
+                "max_controller_launches": 8,
+            },
+        )
+        self.assertEqual(store.state["plans"][0]["consecutive_no_progress_slices"], 0)
+        self.assertEqual(store.state["plans"][0]["progress_checkpoint_count"], 0)
+        self.assertIsNone(store.state["plans"][0]["progress_fingerprint"])
+        self.assertIsNone(store.state["plans"][0]["environment_fingerprint"])
+        self.assertEqual(store.state["plans"][0]["plan_elapsed_seconds"], 0)
+        self.assertTrue((store.root / "evidence").is_dir())
+        self.assertTrue((store.root / "reports").is_dir())
+
+    def test_format_one_state_is_unsupported_without_mutation(self) -> None:
+        root = self.home / "orchestrator" / "legacy-format-one"
+        root.mkdir(parents=True, mode=0o700)
+        state_path = root / "state.json"
+        state_path.write_text('{"format_version":1}', encoding="utf-8")
+        before = state_path.read_bytes()
+        with self.assertRaisesRegex(ValueError, "unsupported_legacy_run"):
+            StateStore.open(root)
+        self.assertEqual(state_path.read_bytes(), before)
+
+    def test_format_two_event_has_bounded_trust_labelled_envelope(self) -> None:
+        store = self.create_format_two_store("event-envelope")
+        store.append_event(
+            "plan.attempt_finished",
+            plan_id="plan-01",
+            reason_code="child_completed",
+            duration_ms=42,
+            result="pass",
+            evidence_refs=["results/plan-01.json"],
+        )
+        event = json.loads(store.events_path.read_text(encoding="utf-8").splitlines()[-1])
+        self.assertRegex(event["event_id"], r"^[0-9a-f]{32}$")
+        self.assertEqual(event["source"], "parent_observed")
+        self.assertEqual(event["run_id"], "event-envelope")
+        self.assertEqual(event["category"], "plan")
+        self.assertEqual(event["action"], "plan.attempt_finished")
+
     def test_state_rejects_impossible_plan_and_run_relationships(self) -> None:
         plans = [self.plan(1, "completed"), self.plan(2, "completed")]
         store = StateStore.create(
