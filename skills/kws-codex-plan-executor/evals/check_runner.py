@@ -48,6 +48,7 @@ from cpe_runtime.capabilities import (
 from cpe_runtime.progress import (
     CheckpointBudget,
     ProgressSnapshot,
+    decide_child_outcome,
     decide_checkpoint,
     progress_fingerprint,
 )
@@ -357,6 +358,42 @@ class ProgressDecisionTests(unittest.TestCase):
         )
         self.assertEqual("finish", decision.action)
         self.assertEqual("child_completed", decision.reason_code)
+
+    def test_non_timeout_child_statuses_have_explicit_terminal_actions(self) -> None:
+        expected = {
+            "checkpointed": ("checkpoint", "child_checkpointed"),
+            "failed": ("fail", "child_failed"),
+            "blocked": ("block", "child_blocked"),
+        }
+        for status, outcome in expected.items():
+            with self.subTest(status=status):
+                decision = decide_child_outcome(
+                    previous=self.snapshot(),
+                    current=self.snapshot(),
+                    timed_out=False,
+                    consecutive_no_progress=0,
+                    progress_checkpoints=0,
+                    controller_launches=1,
+                    plan_elapsed_seconds=1,
+                    budget=self.DEFAULT_BUDGET,
+                    child_status=status,
+                )
+                self.assertEqual(outcome, (decision.action, decision.reason_code))
+
+    def test_child_checkpoint_respects_post_slice_hard_budget(self) -> None:
+        decision = decide_child_outcome(
+            previous=self.snapshot(),
+            current=self.snapshot(),
+            timed_out=False,
+            consecutive_no_progress=0,
+            progress_checkpoints=0,
+            controller_launches=8,
+            plan_elapsed_seconds=1,
+            budget=self.DEFAULT_BUDGET,
+            child_status="checkpointed",
+        )
+        self.assertEqual("stop_budget", decision.action)
+        self.assertEqual("launch_budget_exhausted", decision.reason_code)
 
     def test_timed_out_changed_fingerprint_continues_within_budgets(self) -> None:
         decision = self.decide(previous=self.snapshot(head="before"))
@@ -1501,7 +1538,7 @@ print(json.dumps(result, sort_keys=True), flush=True)
 
         inspected = runner.inspect(run_id="missing-later-worktree-summary")
 
-        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["status"], "failed")
         self.assertIsNone(inspected["observed_head"])
         self.assertEqual(inspected["last_known_head"], second_head)
 
@@ -1696,7 +1733,7 @@ print(json.dumps(result, sort_keys=True), flush=True)
             plans=[self.plan(1, "completed")],
             run_id="create-failure",
         )
-        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["status"], "blocked")
         state = json.loads(
             (
                 self.home
@@ -3113,7 +3150,12 @@ print(json.dumps(result, sort_keys=True), flush=True)
                 / "events.jsonl"
             ).read_text().splitlines()
         ]
-        self.assertTrue(any(event["action"] == "plan.attempt_incomplete" for event in events))
+        self.assertTrue(any(
+            event["action"] == "plan.checkpoint_decided"
+            and event.get("decision") == "fail"
+            for event in events
+        ))
+        self.assertTrue(any(event["action"] == "plan.failed" for event in events))
 
     def test_progress_ledger_read_is_bounded_before_parsing(self) -> None:
         evidence = self.repo / ".superpowers" / "sdd"
@@ -3396,6 +3438,7 @@ class ProgressRecoveryIntegrationTests(_RecoveryRunnerFixture):
             },
             {
                 "action": "plan.checkpoint_decided",
+                "decision": "continue",
                 "reason": "productive_timeout",
             },
         ])
@@ -3408,6 +3451,29 @@ class ProgressRecoveryIntegrationTests(_RecoveryRunnerFixture):
                 "continuation_reason_counts": {"productive_timeout": 1},
             },
             metrics,
+        )
+
+    def test_stop_and_finish_decisions_are_not_continuation_reasons(self) -> None:
+        metrics = reporting_module.derive_recovery_metrics([
+            {
+                "action": "plan.checkpoint_decided",
+                "decision": "continue",
+                "reason": "productive_timeout",
+            },
+            {
+                "action": "plan.checkpoint_decided",
+                "decision": "stop_stalled",
+                "reason": "second_no_progress_slice",
+            },
+            {
+                "action": "plan.checkpoint_decided",
+                "decision": "finish",
+                "reason": "child_completed",
+            },
+        ])
+        self.assertEqual(
+            {"productive_timeout": 1},
+            metrics["continuation_reason_counts"],
         )
 
     def test_productive_timeout_continues_once_and_completes(self) -> None:
@@ -3468,27 +3534,249 @@ class ProgressRecoveryIntegrationTests(_RecoveryRunnerFixture):
             item for item in direct["observations"]
             if item["signal"] == "head_advanced_between_timeouts"
         )
-        productive = len(advanced["plans"])
-        unchanged = timeout["occurrences"] - productive
-        events = [
-            {"action": "plan.checkpoint_decided", "reason": "productive_timeout"}
-            for _ in range(productive)
-        ] + [
-            {"action": "resume.stopped_unchanged_blocker", "reason": "unchanged_environment_blocker"}
-            for _ in range(unchanged)
-        ]
-        metrics = reporting_module.derive_recovery_metrics(events)
         self.assertEqual(5, timeout["occurrences"])
         self.assertEqual(3600, timeout["duration_seconds_each"])
-        self.assertEqual(productive, metrics["productive_timeouts"])
-        self.assertEqual(unchanged, metrics["launches_avoided"])
+        self.assertEqual(2, len(advanced["plans"]))
+
+        productive_id = "fixture-productive"
+        productive_runner = self.runner(productive_id)
+        productive = productive_runner.run(
+            workspace=self.repo,
+            specs=[],
+            plans=[self.plan("timeout_with_progress")],
+            run_id=productive_id,
+        )
+        productive_root = self.home / "orchestrator" / productive_id
+        self.assertEqual("completed", productive["status"])
+        self.assertEqual(2, fake_codex_launch_count(productive_root))
+        self.assertEqual([3600.0, 3600.0], self.captured_timeouts)
+        productive_events = _runner_events(productive_root)
+        self.assertTrue(any(
+            event.get("action") == "plan.checkpoint_decided"
+            and event.get("decision") == "continue"
+            and event.get("reason") == "productive_timeout"
+            for event in productive_events
+        ))
+
+        self.captured_timeouts.clear()
+        self.invocations.write_text("", encoding="utf-8")
+        blocker_id = "fixture-unchanged-blocker"
+        blocker_runner = self.runner(blocker_id)
+        unavailable = CapabilityObservation(
+            "loopback_bind", "workspace", "unavailable", "permission_denied",
+            "parent_observed", {"host": "127.0.0.1"},
+        )
+        with mock.patch(
+            "cpe_runtime.runner._observe_capabilities",
+            return_value=[unavailable],
+        ):
+            first = blocker_runner.run(
+                workspace=self.repo,
+                specs=[],
+                plans=[self.plan("resume_completed", loopback=True)],
+                run_id=blocker_id,
+            )
+            stopped = blocker_runner.resume(run_id=blocker_id)
+        blocker_root = self.home / "orchestrator" / blocker_id
+        self.assertEqual("blocked", first["status"])
+        self.assertEqual("blocked", stopped["status"])
+        self.assertEqual(0, fake_codex_launch_count(blocker_root))
+        self.assertEqual([3600.0], self.captured_timeouts)
+        self.assertEqual(
+            "resume.stopped_unchanged_blocker",
+            _runner_events(blocker_root)[-1]["action"],
+        )
 
         for name in ("readmates-comparative.json", "gasstation-comparative.json"):
             payload = json.loads((fixtures / name).read_text(encoding="utf-8"))
             self.assertFalse(payload["count_as_cpe_metrics"])
-        self.assertEqual(
-            metrics,
-            reporting_module.derive_recovery_metrics(events),
+
+
+class PreSpawnBudgetTests(_RecoveryRunnerFixture):
+    def test_resume_stops_before_launch_for_every_hard_plan_budget(self) -> None:
+        cases = (
+            ("launch", "controller_launch_count", 8, "launch_budget_exhausted"),
+            ("checkpoint", "progress_checkpoint_count", 6, "checkpoint_budget_exhausted"),
+            ("wall", "plan_elapsed_seconds", 21_600, "wall_budget_exhausted"),
+        )
+        for label, field, value, reason in cases:
+            with self.subTest(label=label):
+                run_id = f"pre-spawn-{label}"
+                runner = self.runner(run_id)
+                initial = runner.run(
+                    workspace=self.repo,
+                    specs=[],
+                    plans=[self.plan("blocked")],
+                    run_id=run_id,
+                )
+                self.assertEqual("blocked", initial["status"])
+                run_root = self.home / "orchestrator" / run_id
+                store = StateStore.open(run_root)
+                plan = store.state["plans"][0]
+                plan[field] = value
+                plan["status"] = "checkpointed"
+                store.state["status"] = "checkpointed"
+                store.save()
+                compiler_log = run_root / "compiler-invocations.jsonl"
+                compiler_log.write_text("", encoding="utf-8")
+
+                resumed = runner.resume(run_id=run_id)
+
+                self.assertEqual("blocked", resumed["status"])
+                self.assertEqual(reason, resumed["last_decision_reason"])
+                self.assertEqual(0, fake_codex_launch_count(run_root))
+                self.assertEqual(0, compiler_launch_count(run_root))
+                events = _runner_events(run_root)
+                self.assertTrue(any(
+                    event.get("action") == "plan.pre_spawn_stopped"
+                    and event.get("reason") == reason
+                    for event in events
+                ))
+
+
+class CheckpointTrustAndLedgerTests(_RecoveryRunnerFixture):
+    def test_wrong_head_completion_does_not_create_parent_checkpoint(self) -> None:
+        run_id = "wrong-head-trust"
+        runner = self.runner(run_id)
+        result = runner.run(
+            workspace=self.repo,
+            specs=[],
+            plans=[self.plan("wrong_commit")],
+            run_id=run_id,
+        )
+        run_root = self.home / "orchestrator" / run_id
+        self.assertEqual("failed", result["status"])
+        self.assertEqual("wrong_head", result["error"])
+        self.assertEqual(0, StateStore.open(run_root).state["plans"][0]["checkpoint_count"])
+        self.assertFalse(any(
+            event.get("action") == "plan.checkpoint_decided"
+            for event in _runner_events(run_root)
+        ))
+
+    def test_completed_payload_killed_by_timeout_fails_typed_before_finish(self) -> None:
+        run_id = "timed-out-completion"
+        runner = self.runner(run_id)
+        result = runner.run(
+            workspace=self.repo,
+            specs=[],
+            plans=[self.plan("timeout_with_completed_result")],
+            run_id=run_id,
+        )
+        run_root = self.home / "orchestrator" / run_id
+        self.assertEqual("failed", result["status"])
+        self.assertEqual("timed_out", result["error"])
+        self.assertEqual(0, StateStore.open(run_root).state["plans"][0]["checkpoint_count"])
+
+    def test_non_timeout_failed_and_checkpointed_results_preserve_terminal_status(self) -> None:
+        cases = (
+            ("failed", "failed", "child_failed"),
+            ("interrupted", "checkpointed", "child_checkpointed"),
+        )
+        for scenario, status, reason in cases:
+            with self.subTest(scenario=scenario):
+                run_id = f"canonical-stop-{scenario}"
+                runner = self.runner(run_id)
+                result = runner.run(
+                    workspace=self.repo,
+                    specs=[],
+                    plans=[self.plan(scenario)],
+                    run_id=run_id,
+                )
+                self.assertEqual(status, result["status"])
+                self.assertEqual(reason, result["last_decision_reason"])
+                self.assertEqual(1, fake_codex_launch_count(
+                    self.home / "orchestrator" / run_id
+                ))
+
+    def test_malformed_ledger_fails_typed_without_uncaught_exception(self) -> None:
+        run_id = "malformed-ledger"
+        runner = self.runner(run_id)
+        result = runner.run(
+            workspace=self.repo,
+            specs=[],
+            plans=[self.plan("timeout_with_malformed_ledger")],
+            run_id=run_id,
+        )
+        self.assertEqual("failed", result["status"])
+        self.assertEqual("execution_ledger_invalid", result["error"])
+
+    def test_populated_ledger_deletion_is_regression_not_progress(self) -> None:
+        run_id = "ledger-regression"
+        runner = self.runner(run_id)
+        result = runner.run(
+            workspace=self.repo,
+            specs=[],
+            plans=[self.plan("timeout_with_ledger_deletion")],
+            run_id=run_id,
+        )
+        run_root = self.home / "orchestrator" / run_id
+        self.assertEqual("failed", result["status"])
+        self.assertEqual("execution_ledger_regressed", result["error"])
+        self.assertEqual(2, fake_codex_launch_count(run_root))
+        decisions = [
+            event for event in _runner_events(run_root)
+            if event.get("action") == "plan.checkpoint_decided"
+        ]
+        self.assertEqual(1, len(decisions))
+
+
+class CheckpointCrashReconciliationTests(_RecoveryRunnerFixture):
+    def _assert_reconciled_after_crash(self, patcher: object, run_id: str) -> None:
+        runner = self.runner(run_id)
+        with patcher, self.assertRaisesRegex(RuntimeError, "injected checkpoint crash"):
+            runner.run(
+                workspace=self.repo,
+                specs=[],
+                plans=[self.plan("timeout_with_progress")],
+                run_id=run_id,
+            )
+        run_root = self.home / "orchestrator" / run_id
+        crashed = StateStore.open(run_root).state["plans"][0]
+        self.assertIsNotNone(crashed["pending_checkpoint_decision"])
+
+        completed = runner.resume(run_id=run_id)
+
+        self.assertEqual("completed", completed["status"])
+        plan = StateStore.open(run_root).state["plans"][0]
+        self.assertIsNone(plan["pending_checkpoint_decision"])
+        self.assertEqual(2, plan["checkpoint_count"])
+        decisions = [
+            event for event in _runner_events(run_root)
+            if event.get("action") == "plan.checkpoint_decided"
+        ]
+        self.assertEqual([1, 2], [event["attempt"] for event in decisions])
+        self.assertEqual(2, len({event["decision_id"] for event in decisions}))
+
+    def test_crash_after_journal_before_event_reconciles_once(self) -> None:
+        original = StateStore.append_event
+        injected = False
+
+        def crash_before_event(store: StateStore, action: str, **details: object) -> None:
+            nonlocal injected
+            if action == "plan.checkpoint_decided" and not injected:
+                injected = True
+                raise RuntimeError("injected checkpoint crash before event")
+            original(store, action, **details)
+
+        self._assert_reconciled_after_crash(
+            mock.patch.object(StateStore, "append_event", new=crash_before_event),
+            "crash-before-decision-event",
+        )
+
+    def test_crash_after_event_before_state_apply_reconciles_once(self) -> None:
+        original = StateStore._append_event_bytes
+        injected = False
+
+        def crash_after_event(store: StateStore, encoded: bytes) -> None:
+            nonlocal injected
+            original(store, encoded)
+            if b'"action":"plan.checkpoint_decided"' in encoded and not injected:
+                injected = True
+                raise RuntimeError("injected checkpoint crash after event")
+
+        self._assert_reconciled_after_crash(
+            mock.patch.object(StateStore, "_append_event_bytes", new=crash_after_event),
+            "crash-after-decision-event",
         )
 
 

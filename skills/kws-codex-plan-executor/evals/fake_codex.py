@@ -27,6 +27,9 @@ SCENARIOS = {
     "timeout_after_commit",
     "timeout_with_progress",
     "timeout_without_progress",
+    "timeout_with_completed_result",
+    "timeout_with_malformed_ledger",
+    "timeout_with_ledger_deletion",
     "completed_with_grandchild",
     "large_log",
     "oversized_usage",
@@ -146,8 +149,34 @@ def workflow_receipt(worktree: Path, head: str, plan_id: str) -> dict[str, objec
             "argv_digest": digest, "evidence_key": "b" * 64, "duration_ms": 1,
         },
     ]
-    (evidence / "execution-ledger.jsonl").write_text(
-        "".join(json.dumps(event, sort_keys=True) + "\n" for event in events),
+    ledger = evidence / "execution-ledger.jsonl"
+    preserved = ""
+    existing_ids: set[str] = set()
+    if ledger.exists():
+        candidate = ledger.read_text(encoding="utf-8")
+        try:
+            previous_events = [
+                json.loads(line) for line in candidate.splitlines() if line.strip()
+            ]
+        except json.JSONDecodeError:
+            previous_events = []
+        if previous_events and all(
+            isinstance(event, dict) and event.get("plan_id") == plan_id
+            for event in previous_events
+        ):
+            preserved = candidate
+            existing_ids = {
+                str(event["event_id"])
+                for event in previous_events
+                if isinstance(event.get("event_id"), str)
+            }
+    ledger.write_text(
+        preserved
+        + "".join(
+            json.dumps(event, sort_keys=True) + "\n"
+            for event in events
+            if event["event_id"] not in existing_ids
+        ),
         encoding="utf-8",
     )
     return {
@@ -383,6 +412,48 @@ def main() -> int:
         head = commit_plan(worktree, plan_id)
         status = "completed"
     elif scenario == "timeout_without_progress":
+        wait_for_launcher_timeout(
+            result_path,
+            checkpoint_payload(plan_id, head, scenario, attempt),
+        )
+    elif scenario == "timeout_with_completed_result":
+        head = commit_plan(worktree, plan_id)
+        payload = {
+            "plan_id": plan_id,
+            "status": "completed",
+            "head_commit": head,
+            "summary": "completed payload before launcher timeout",
+            "verification": [{
+                "command_id": "fake-final",
+                "argv_digest": "f" * 64,
+                "phase": "branch_final",
+                "evidence_key": "0" * 64,
+                "exit_code": 0,
+                "receipt_path": None,
+            }],
+            "checkpoint": None,
+            "blocker": None,
+            "workflow_receipt": workflow_receipt(worktree, head, plan_id),
+        }
+        wait_for_launcher_timeout(result_path, payload)
+    elif scenario == "timeout_with_malformed_ledger":
+        evidence = worktree / ".superpowers" / "sdd"
+        evidence.mkdir(parents=True, exist_ok=True)
+        (evidence / ".gitignore").write_text("*\n", encoding="utf-8")
+        (evidence / "execution-ledger.jsonl").write_text(
+            "{not-json}\n", encoding="utf-8"
+        )
+        wait_for_launcher_timeout(
+            result_path,
+            checkpoint_payload(plan_id, head, scenario, attempt),
+        )
+    elif scenario == "timeout_with_ledger_deletion":
+        if attempt == 1:
+            head = commit_plan(worktree, plan_id, "-progress")
+            write_checkpoint_ledger(worktree, plan_id)
+        else:
+            ledger = worktree / ".superpowers" / "sdd" / "execution-ledger.jsonl"
+            ledger.unlink()
         wait_for_launcher_timeout(
             result_path,
             checkpoint_payload(plan_id, head, scenario, attempt),

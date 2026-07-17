@@ -35,7 +35,8 @@ def derive_recovery_metrics(
             launches_avoided += 1
         if action != "plan.checkpoint_decided" or not isinstance(reason, str):
             continue
-        reasons[reason] = reasons.get(reason, 0) + 1
+        if event.get("decision") == "continue":
+            reasons[reason] = reasons.get(reason, 0) + 1
         if reason == "productive_timeout":
             productive_timeouts += 1
         if reason in {"first_no_progress_slice", "second_no_progress_slice"}:
