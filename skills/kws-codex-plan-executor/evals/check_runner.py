@@ -3789,13 +3789,264 @@ class EnvelopeRepairTests(_RecoveryRunnerFixture):
         )
         self.assertIsNone(self._repair(run_root, worktree, original_path))
 
+    def test_unsafe_failure_provenance_binds_attempt_path_and_digest(self) -> None:
+        _, run_root, _, original_path, original_bytes = self._failed_result(
+            "repair-bound-provenance",
+        )
+        failure = next(
+            event for event in reversed(_runner_events(run_root))
+            if event.get("action") == "plan.integrity_failed"
+        )
+        self.assertEqual(1, failure["attempt"])
+        self.assertEqual(str(original_path), failure["original_result_path"])
+        self.assertEqual(
+            hashlib.sha256(original_bytes).hexdigest(),
+            failure["original_result_sha256"],
+        )
+
+    def test_later_terminal_and_bound_provenance_mismatch_reject_repair(self) -> None:
+        cases = (
+            "later-evidence", "later-plan-failed", "later-integrity",
+            "digest-mismatch", "path-mismatch",
+        )
+        for case in cases:
+            with self.subTest(case=case):
+                _, run_root, worktree, original_path, _ = self._failed_result(
+                    f"repair-provenance-{case}",
+                )
+                if case == "later-evidence":
+                    StateStore.open(run_root).append_event(
+                        "plan.evidence_failed",
+                        plan_id="plan-01",
+                        reason="later terminal failure",
+                    )
+                elif case == "later-plan-failed":
+                    StateStore.open(run_root).append_event(
+                        "plan.failed", plan_id="plan-01", reason="later failure",
+                    )
+                elif case == "later-integrity":
+                    StateStore.open(run_root).append_event(
+                        "plan.integrity_failed",
+                        plan_id="plan-01",
+                        reason="verification_failed",
+                    )
+                else:
+                    events = _runner_events(run_root)
+                    failure = next(
+                        event for event in reversed(events)
+                        if event.get("action") == "plan.integrity_failed"
+                    )
+                    if case == "digest-mismatch":
+                        failure["original_result_sha256"] = "0" * 64
+                    else:
+                        failure["original_result_path"] = str(
+                            run_root / "results" / "different.json"
+                        )
+                    (run_root / "events.jsonl").write_text(
+                        "".join(
+                            json.dumps(event, sort_keys=True, separators=(",", ":"))
+                            + "\n"
+                            for event in events
+                        ),
+                        encoding="utf-8",
+                    )
+                self.assertIsNone(
+                    self._repair(run_root, worktree, original_path)
+                )
+
+    def test_intervening_attempt_rejects_prior_unsafe_result(self) -> None:
+        _, run_root, worktree, original_path, _ = self._failed_result(
+            "repair-intervening-attempt",
+        )
+        store = StateStore.open(run_root)
+        plan = store.state["plans"][0]
+        later_result = run_root / "results" / "plan-01-attempt-2.json"
+        later_result.write_text("{}", encoding="utf-8")
+        plan["attempt_count"] = 2
+        plan["controller_launch_count"] = 2
+        plan["result_path"] = str(later_result.resolve())
+        store.save()
+        store.append_event(
+            "plan.attempt_started",
+            plan_id="plan-01",
+            attempt=2,
+            controller_launch_count=2,
+            head=plan["last_known_head"],
+            timeout_seconds=3600,
+        )
+        self.assertIsNone(self._repair(run_root, worktree, original_path))
+
+    def test_open_obligation_rejects_but_satisfied_or_waived_obligation_passes(self) -> None:
+        def obligation(
+            worktree: Path,
+            *,
+            event_id: str,
+            action: str,
+            result: str,
+        ) -> None:
+            append_execution_event(
+                worktree / ".superpowers" / "sdd" / "execution-ledger.jsonl",
+                {
+                    "event_id": event_id,
+                    "source": "child_attested",
+                    "plan_id": "plan-01",
+                    "category": "obligation",
+                    "action": action,
+                    "result": result,
+                    "evidence_refs": [],
+                    "obligation_id": "O-1",
+                    "obligation_digest": "9" * 64,
+                },
+            )
+
+        _, run_root, worktree, original_path, _ = self._failed_result(
+            "repair-open-obligation",
+        )
+        obligation(
+            worktree, event_id="obligation-open", action="started", result="fail",
+        )
+        self.assertIsNone(self._repair(run_root, worktree, original_path))
+
+        for index, (action, result) in enumerate(
+            (("satisfied", "closed"), ("waived", "skipped")), 1,
+        ):
+            with self.subTest(action=action):
+                _, run_root, worktree, original_path, _ = self._failed_result(
+                    f"repair-closed-obligation-{index}",
+                )
+                obligation(
+                    worktree,
+                    event_id=f"obligation-open-{index}",
+                    action="started",
+                    result="fail",
+                )
+                obligation(
+                    worktree,
+                    event_id=f"obligation-closed-{index}",
+                    action=action,
+                    result=result,
+                )
+                self.assertIsNotNone(
+                    self._repair(run_root, worktree, original_path)
+                )
+
+    def test_non_null_verification_receipt_is_preserved_on_zero_launch_resume(self) -> None:
+        def add_receipt_path(
+            payload: dict[str, object], _worktree: Path, _root: Path,
+        ) -> None:
+            verification = payload["verification"]
+            assert isinstance(verification, list)
+            assert isinstance(verification[0], dict)
+            verification[0]["receipt_path"] = (
+                ".superpowers/sdd/receipts/verification.txt"
+            )
+
+        runner, run_root, _, _, _ = self._failed_result(
+            "repair-verification-receipt", mutate=add_receipt_path,
+        )
+        before = StateStore.open(run_root).state["plans"][0]
+        attempts = before["attempt_count"]
+        controller_launches = before["controller_launch_count"]
+
+        completed = runner.resume(
+            run_id="repair-verification-receipt", retry_failed=True,
+        )
+
+        self.assertEqual("completed", completed["status"])
+        self.assertEqual(0, fake_codex_launch_count(run_root))
+        plan = StateStore.open(run_root).state["plans"][0]
+        self.assertEqual(attempts, plan["attempt_count"])
+        self.assertEqual(controller_launches, plan["controller_launch_count"])
+        repaired = json.loads(Path(plan["result_path"]).read_text(encoding="utf-8"))
+        self.assertEqual(
+            ".superpowers/sdd/receipts/verification.txt",
+            repaired["verification"][0]["receipt_path"],
+        )
+
+    def test_duplicate_execution_ledger_key_fails_closed(self) -> None:
+        _, run_root, worktree, original_path, _ = self._failed_result(
+            "repair-duplicate-ledger-key",
+        )
+        ledger = worktree / ".superpowers" / "sdd" / "execution-ledger.jsonl"
+        text = ledger.read_text(encoding="utf-8")
+        text = text.replace(
+            '"event_id":"review-1"',
+            '"event_id":"review-1","event_id":"review-1"',
+            1,
+        )
+        ledger.write_text(text, encoding="utf-8")
+        self.assertIsNone(self._repair(run_root, worktree, original_path))
+
+    def test_parent_component_replacement_after_proof_fails_closed(self) -> None:
+        _, run_root, worktree, original_path, _ = self._failed_result(
+            "repair-parent-swap",
+        )
+        original_validate = evidence_module._validate_execution_ledger_payload
+        swapped = False
+
+        def replace_parent(payload: bytes, *, expected_plan_id: str):
+            nonlocal swapped
+            events = original_validate(
+                payload, expected_plan_id=expected_plan_id,
+            )
+            if not swapped:
+                swapped = True
+                current = worktree / ".superpowers" / "sdd"
+                moved = worktree / ".superpowers" / "sdd-replaced"
+                current.rename(moved)
+                shutil.copytree(moved, current)
+            return events
+
+        with mock.patch.object(
+            evidence_module,
+            "_validate_execution_ledger_payload",
+            new=replace_parent,
+        ):
+            self.assertIsNone(self._repair(run_root, worktree, original_path))
+
+    def test_same_path_inode_swap_fails_resume_with_zero_launch(self) -> None:
+        runner, run_root, worktree, _, _ = self._failed_result(
+            "repair-inode-swap",
+        )
+        original_validate = evidence_module._validate_execution_ledger_payload
+        swapped = False
+
+        def replace_review(payload: bytes, *, expected_plan_id: str):
+            nonlocal swapped
+            events = original_validate(
+                payload, expected_plan_id=expected_plan_id,
+            )
+            if not swapped:
+                swapped = True
+                review = worktree / ".superpowers" / "sdd" / "final-review.md"
+                replacement = review.with_name("replacement-review.md")
+                replacement.write_bytes(review.read_bytes())
+                os.replace(replacement, review)
+            return events
+
+        with mock.patch.object(
+            evidence_module,
+            "_validate_execution_ledger_payload",
+            new=replace_review,
+        ):
+            rejected = runner.resume(
+                run_id="repair-inode-swap", retry_failed=True,
+            )
+        self.assertEqual("failed", rejected["status"])
+        self.assertEqual("unsafe_workflow_artifact", rejected["error"])
+        self.assertEqual(0, fake_codex_launch_count(run_root))
+        self.assertFalse(any(
+            event.get("action") == "result.envelope_repaired"
+            for event in _runner_events(run_root)
+        ))
+
     def test_repair_only_resume_accepts_receipt_with_zero_new_launches(self) -> None:
         runner, run_root, _, original_path, original_bytes = self._failed_result(
             "repair-resume",
         )
-        original_attempts = StateStore.open(run_root).state["plans"][0][
-            "controller_launch_count"
-        ]
+        original_plan = StateStore.open(run_root).state["plans"][0]
+        original_attempts = original_plan["attempt_count"]
+        original_controller_launches = original_plan["controller_launch_count"]
         compiler_log = run_root / "compiler-invocations.jsonl"
         compiler_log.write_text("", encoding="utf-8")
 
@@ -3806,7 +4057,10 @@ class EnvelopeRepairTests(_RecoveryRunnerFixture):
         self.assertEqual(0, compiler_launch_count(run_root))
         state = StateStore.open(run_root).state
         plan = state["plans"][0]
-        self.assertEqual(original_attempts, plan["controller_launch_count"])
+        self.assertEqual(original_attempts, plan["attempt_count"])
+        self.assertEqual(
+            original_controller_launches, plan["controller_launch_count"],
+        )
         self.assertEqual(str(original_path), plan["original_result_path"])
         self.assertNotEqual(plan["original_result_path"], plan["result_path"])
         self.assertEqual(original_bytes, original_path.read_bytes())

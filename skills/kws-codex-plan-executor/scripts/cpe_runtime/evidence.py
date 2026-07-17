@@ -10,10 +10,16 @@ import shutil
 import stat
 import subprocess
 import tempfile
+from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from .progress import ProgressSnapshot
+from .result_validation import (
+    RESULT_WIRE_FIELDS,
+    normalize_result_v2,
+    strict_json_object,
+)
 from .state import StateStore
 
 MAX_EVIDENCE_FILES = 128
@@ -51,18 +57,6 @@ _VARIANT_FIELDS = {
 }
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
-_RESULT_FORMAT_2_FIELDS = {
-    "plan_id", "status", "head_commit", "summary", "verification",
-    "checkpoint", "blocker", "workflow_receipt",
-}
-_WORKFLOW_RECEIPT_FIELDS = {
-    "ledger_path", "final_review_path", "final_review_head",
-    "open_finding_ids", "open_obligation_ids",
-}
-_VERIFICATION_FIELDS = {
-    "command_id", "argv_digest", "phase", "evidence_key", "exit_code",
-    "receipt_path",
-}
 
 
 @dataclass(frozen=True)
@@ -72,6 +66,38 @@ class EnvelopeRepair:
     original_digest: str
     repaired_digest: str
     changed_fields: tuple[str, ...]
+
+
+@dataclass
+class _VerifiedArtifact:
+    canonical_path: Path
+    relative_path: PurePosixPath
+    device: int
+    inode: int
+    size: int
+    digest: str
+    payload: bytes
+    descriptor: int
+
+    def __enter__(self) -> "_VerifiedArtifact":
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
+
+    def close(self) -> None:
+        if self.descriptor >= 0:
+            os.close(self.descriptor)
+            self.descriptor = -1
+
+    def same_identity(self, other: "_VerifiedArtifact") -> bool:
+        return (
+            self.relative_path == other.relative_path
+            and self.device == other.device
+            and self.inode == other.inode
+            and self.size == other.size
+            and self.digest == other.digest
+        )
 
 
 def _safe_reference(value: object) -> str:
@@ -247,10 +273,9 @@ def _validate_execution_ledger_payload(
     for line_number, line in enumerate(payload.splitlines(), start=1):
         if not line or len(line) > MAX_EXECUTION_EVENT_BYTES:
             raise ValueError(f"execution event {line_number} is too large or empty")
-        try:
-            event = json.loads(line)
-        except (json.JSONDecodeError, UnicodeDecodeError) as error:
-            raise ValueError(f"execution event {line_number} is invalid JSON") from error
+        event = strict_json_object(line)
+        if event is None:
+            raise ValueError(f"execution event {line_number} is invalid JSON")
         validate_execution_event_schema(event)
         if event["plan_id"] != expected_plan_id:
             raise ValueError("execution event plan identity is invalid")
@@ -473,22 +498,6 @@ def ingest_plan_evidence(
         raise
 
 
-def _strict_json_object(payload: bytes) -> dict[str, object] | None:
-    def object_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
-        result: dict[str, object] = {}
-        for key, value in pairs:
-            if key in result:
-                raise ValueError("duplicate JSON property")
-            result[key] = value
-        return result
-
-    try:
-        decoded = json.loads(payload, object_pairs_hook=object_pairs)
-    except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
-        return None
-    return decoded if isinstance(decoded, dict) else None
-
-
 def _git_output(worktree: Path, *arguments: str) -> str | None:
     try:
         completed = subprocess.run(
@@ -503,13 +512,13 @@ def _git_output(worktree: Path, *arguments: str) -> str | None:
     return completed.stdout.strip()
 
 
-def _walk_owned_regular_file(
+def _open_verified_artifact(
     declared: Path,
     worktree: Path,
     *,
     allow_absolute: bool,
-) -> Path | None:
-    """Prove lexical containment, then walk every component without symlinks."""
+) -> _VerifiedArtifact | None:
+    """Open a component-safe artifact and retain the verified descriptor."""
     try:
         root = worktree.resolve(strict=True)
         root_metadata = os.lstat(worktree)
@@ -594,70 +603,69 @@ def _walk_owned_regular_file(
                 return None
             os.close(current)
             current = opened
-        if not stat.S_ISREG(os.fstat(current).st_mode):
+        metadata = os.fstat(current)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > MAX_EVIDENCE_FILE_BYTES:
             return None
+        chunks: list[bytes] = []
+        remaining = MAX_EVIDENCE_FILE_BYTES + 1
+        while remaining:
+            chunk = os.read(current, min(65_536, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        payload = b"".join(chunks)
+        after = os.fstat(current)
+        if (
+            len(payload) > MAX_EVIDENCE_FILE_BYTES
+            or after.st_dev != metadata.st_dev
+            or after.st_ino != metadata.st_ino
+            or after.st_size != metadata.st_size
+            or len(payload) != metadata.st_size
+        ):
+            return None
+        artifact = _VerifiedArtifact(
+            canonical_path=root.joinpath(*canonical_parts),
+            relative_path=PurePosixPath(*canonical_parts),
+            device=metadata.st_dev,
+            inode=metadata.st_ino,
+            size=metadata.st_size,
+            digest=hashlib.sha256(payload).hexdigest(),
+            payload=payload,
+            descriptor=current,
+        )
+        current = -1
+        return artifact
     finally:
-        os.close(current)
-    return root.joinpath(*canonical_parts)
+        if current >= 0:
+            os.close(current)
 
 
 def _valid_result_envelope(payload: dict[str, object]) -> bool:
-    if set(payload) != _RESULT_FORMAT_2_FIELDS:
+    if set(payload) != RESULT_WIRE_FIELDS:
         return False
-    if (
-        payload.get("status") != "completed"
-        or not isinstance(payload.get("plan_id"), str)
-        or not _IDENTIFIER.fullmatch(str(payload["plan_id"]))
-        or not isinstance(payload.get("head_commit"), str)
-        or not re.fullmatch(r"[0-9a-f]{40}", str(payload["head_commit"]))
-        or not isinstance(payload.get("summary"), str)
-        or not str(payload["summary"]).strip()
-        or len(str(payload["summary"])) > 2000
-        or payload.get("checkpoint") is not None
-        or payload.get("blocker") is not None
-    ):
+    normalized, error = normalize_result_v2(payload)
+    if error is not None or normalized is None:
+        return False
+    if payload.get("status") != "completed" or payload.get("checkpoint") is not None or payload.get("blocker") is not None:
         return False
     verification = payload.get("verification")
     if not isinstance(verification, list) or not verification:
         return False
     identities: set[tuple[str, str, str]] = set()
     for item in verification:
-        if not isinstance(item, dict) or set(item) != _VERIFICATION_FIELDS:
+        assert isinstance(item, dict)
+        if item.get("exit_code") != 0:
             return False
-        if (
-            not isinstance(item.get("command_id"), str)
-            or not str(item["command_id"]).strip()
-            or not isinstance(item.get("argv_digest"), str)
-            or not _DIGEST.fullmatch(str(item["argv_digest"]))
-            or item.get("phase") not in {"task", "affected", "branch_final"}
-            or not isinstance(item.get("evidence_key"), str)
-            or not _DIGEST.fullmatch(str(item["evidence_key"]))
-            or item.get("exit_code") != 0
-            or isinstance(item.get("exit_code"), bool)
-            or item.get("receipt_path") is not None
-        ):
-            return False
-        identity = (
-            str(item["command_id"]), str(item["argv_digest"]),
-            str(item["evidence_key"]),
-        )
+        identity = (str(item["command_id"]), str(item["argv_digest"]), str(item["evidence_key"]))
         if identity in identities:
             return False
         identities.add(identity)
     receipt = payload.get("workflow_receipt")
-    if not isinstance(receipt, dict) or set(receipt) != _WORKFLOW_RECEIPT_FIELDS:
-        return False
-    if (
-        receipt.get("final_review_head") != payload["head_commit"]
-        or receipt.get("open_finding_ids") != []
-        or receipt.get("open_obligation_ids") != []
-    ):
-        return False
-    return all(
-        isinstance(receipt.get(name), str)
-        and bool(receipt[name])
-        and len(str(receipt[name])) <= 500
-        for name in ("ledger_path", "final_review_path")
+    assert isinstance(receipt, dict)
+    return (
+        receipt.get("final_review_head") == payload["head_commit"]
+        and receipt.get("open_finding_ids") == []
     )
 
 
@@ -670,9 +678,16 @@ def _semantic_projection(payload: dict[str, object]) -> dict[str, object]:
     return projection
 
 
-def _original_failure_is_repairable(
+_PLAN_TERMINALS = {
+    "plan.integrity_failed", "plan.evidence_failed", "plan.failed",
+    "plan.blocked", "plan.completed",
+}
+
+
+def _bound_unsafe_failure(
     *, run_root: Path, plan_id: str, original_result_path: Path,
-) -> bool:
+    original_digest: str,
+) -> dict[str, object] | None:
     try:
         store = StateStore.open(run_root)
         plans = store.state["plans"]
@@ -680,6 +695,9 @@ def _original_failure_is_repairable(
             record for record in plans
             if isinstance(record, dict) and record.get("plan_id") == plan_id
         )
+        attempt = plan.get("attempt_count")
+        if not isinstance(attempt, int) or isinstance(attempt, bool):
+            return None
         declared_result = Path(str(plan.get("result_path"))).resolve(strict=True)
         failed_unrepaired = (
             store.state["status"] == "failed"
@@ -698,28 +716,78 @@ def _original_failure_is_repairable(
                 and declared_result != original_result_path.resolve(strict=True)
             )
         if not failed_unrepaired and not recorded_repair:
-            return False
-        events = [
-            json.loads(line)
-            for line in store.events_path.read_text(encoding="utf-8").splitlines()
-        ]
-    except (OSError, ValueError, StopIteration, json.JSONDecodeError):
-        return False
-    failures = [
+            return None
+        events = [strict_json_object(line) for line in store.events_path.read_bytes().splitlines()]
+    except (OSError, ValueError, StopIteration):
+        return None
+    if any(event is None for event in events):
+        return None
+    terminals = [
         event for event in events
         if isinstance(event, dict)
-        and event.get("action") == "plan.integrity_failed"
+        and event.get("action") in _PLAN_TERMINALS
         and event.get("plan_id") == plan_id
     ]
+    if not terminals:
+        return None
+    failure = terminals[-1]
+    expected_path = str(original_result_path.resolve(strict=True))
+    if (
+        failure.get("action") != "plan.integrity_failed"
+        or failure.get("reason") != "unsafe_workflow_artifact"
+        or failure.get("attempt") != attempt
+        or failure.get("original_result_path") != expected_path
+        or failure.get("original_result_sha256") != original_digest
+    ):
+        return None
     if failed_unrepaired:
-        return bool(failures) and failures[-1].get("reason") == "unsafe_workflow_artifact"
+        return failure
     repairs = [
         event for event in events
         if isinstance(event, dict)
         and event.get("action") == "result.envelope_repaired"
         and event.get("plan_id") == plan_id
     ]
-    return len(repairs) == 1
+    return failure if len(repairs) == 1 else None
+
+
+def has_current_unsafe_envelope_failure(
+    *, run_root: Path, original_result_path: Path,
+) -> bool:
+    """Return whether the current attempt is bound to this exact unsafe result."""
+    with ExitStack() as stack:
+        try:
+            results_root = (run_root.resolve(strict=True) / "results").resolve(strict=True)
+        except OSError:
+            return False
+        proof = _open_verified_artifact(original_result_path, results_root, allow_absolute=True)
+        if proof is None:
+            return False
+        stack.enter_context(proof)
+        payload = strict_json_object(proof.payload)
+        return bool(
+            payload
+            and isinstance(payload.get("plan_id"), str)
+            and _bound_unsafe_failure(
+                run_root=run_root,
+                plan_id=str(payload["plan_id"]),
+                original_result_path=proof.canonical_path,
+                original_digest=proof.digest,
+            )
+        )
+
+
+def result_artifact_digest(run_root: Path, result_path: Path) -> str | None:
+    """Digest a component-safe private result artifact."""
+    try:
+        results_root = (run_root.resolve(strict=True) / "results").resolve(strict=True)
+    except OSError:
+        return None
+    proof = _open_verified_artifact(result_path, results_root, allow_absolute=True)
+    if proof is None:
+        return None
+    with proof:
+        return proof.digest
 
 
 def _write_immutable_result(path: Path, payload: bytes) -> bool:
@@ -769,153 +837,186 @@ def repair_result_envelope(
     original_result_path: Path,
 ) -> EnvelopeRepair | None:
     """Normalize only safe absolute workflow artifact spellings."""
-    try:
-        root = run_root.resolve(strict=True)
-        results_root = (root / "results").resolve(strict=True)
-        original = original_result_path.resolve(strict=True)
-        original.relative_to(results_root)
-        if original_result_path.is_symlink() or original != original_result_path:
+    with ExitStack() as stack:
+        try:
+            root = run_root.resolve(strict=True)
+            results_root = (root / "results").resolve(strict=True)
+        except OSError:
             return None
-        original_bytes = _read_regular(
-            original, missing_message="original result is unavailable",
+        original_proof = _open_verified_artifact(
+            original_result_path, results_root, allow_absolute=True,
         )
-    except (OSError, ValueError):
-        return None
-    payload = _strict_json_object(original_bytes)
-    if payload is None or not _valid_result_envelope(payload):
-        return None
-    plan_id = str(payload["plan_id"])
-    if not _original_failure_is_repairable(
-        run_root=root,
-        plan_id=plan_id,
-        original_result_path=original,
-    ):
-        return None
-    if (
-        _git_output(worktree, "rev-parse", "HEAD") != payload["head_commit"]
-        or _git_output(
-            worktree, "status", "--porcelain", "--untracked-files=all",
-        ) != ""
-    ):
-        return None
-
-    receipt = payload["workflow_receipt"]
-    assert isinstance(receipt, dict)
-    repaired = json.loads(json.dumps(payload))
-    repaired_receipt = repaired["workflow_receipt"]
-    assert isinstance(repaired_receipt, dict)
-    changed_fields: list[str] = []
-    artifacts: dict[str, Path] = {}
-    for field in ("ledger_path", "final_review_path"):
-        raw = receipt[field]
-        assert isinstance(raw, str)
-        declared = Path(raw)
-        artifact = _walk_owned_regular_file(
-            declared, worktree, allow_absolute=True,
-        )
-        if artifact is None:
+        if original_proof is None:
             return None
-        artifacts[field] = artifact
-        if declared.is_absolute():
-            repaired_receipt[field] = artifact.relative_to(
-                worktree.resolve(strict=True)
-            ).as_posix()
-            changed_fields.append(f"/workflow_receipt/{field}")
-    if not changed_fields or not _valid_result_envelope(repaired):
-        return None
-    if _semantic_projection(repaired) != _semantic_projection(payload):
-        return None
+        stack.enter_context(original_proof)
+        original = original_proof.canonical_path
+        original_bytes = original_proof.payload
+        payload = strict_json_object(original_bytes)
+        if payload is None or not _valid_result_envelope(payload):
+            return None
+        plan_id = str(payload["plan_id"])
+        if _bound_unsafe_failure(
+            run_root=root,
+            plan_id=plan_id,
+            original_result_path=original,
+            original_digest=original_proof.digest,
+        ) is None:
+            return None
+        if (
+            _git_output(worktree, "rev-parse", "HEAD") != payload["head_commit"]
+            or _git_output(worktree, "status", "--porcelain", "--untracked-files=all") != ""
+        ):
+            return None
 
-    try:
-        events = validate_execution_ledger(
-            artifacts["ledger_path"], expected_plan_id=plan_id,
+        receipt = payload["workflow_receipt"]
+        assert isinstance(receipt, dict)
+        repaired = json.loads(json.dumps(payload))
+        repaired_receipt = repaired["workflow_receipt"]
+        assert isinstance(repaired_receipt, dict)
+        changed_fields: list[str] = []
+        artifact_declarations: dict[str, tuple[Path, bool]] = {}
+        artifacts: dict[str, _VerifiedArtifact] = {}
+        for field in ("ledger_path", "final_review_path"):
+            declared = Path(str(receipt[field]))
+            proof = _open_verified_artifact(declared, worktree, allow_absolute=True)
+            if proof is None:
+                return None
+            stack.enter_context(proof)
+            artifacts[field] = proof
+            artifact_declarations[field] = (declared, True)
+            if declared.is_absolute():
+                repaired_receipt[field] = proof.relative_path.as_posix()
+                changed_fields.append(f"/workflow_receipt/{field}")
+        verification = payload["verification"]
+        assert isinstance(verification, list)
+        for index, item in enumerate(verification):
+            assert isinstance(item, dict)
+            raw_receipt = item.get("receipt_path")
+            if raw_receipt is None:
+                continue
+            declared = Path(str(raw_receipt))
+            proof = _open_verified_artifact(declared, worktree, allow_absolute=False)
+            if proof is None:
+                return None
+            stack.enter_context(proof)
+            key = f"verification:{index}"
+            artifacts[key] = proof
+            artifact_declarations[key] = (declared, False)
+        if not changed_fields or not _valid_result_envelope(repaired):
+            return None
+        if _semantic_projection(repaired) != _semantic_projection(payload):
+            return None
+        try:
+            events = _validate_execution_ledger_payload(
+                artifacts["ledger_path"].payload, expected_plan_id=plan_id,
+            )
+        except ValueError:
+            return None
+        expected_verification = {
+            (
+                str(item["command_id"]), str(item["argv_digest"]),
+                str(item["evidence_key"]),
+            )
+            for item in payload["verification"]
+            if isinstance(item, dict)
+        }
+        observed_verification = {
+            (
+                str(event["command_id"]), str(event["argv_digest"]),
+                str(event["evidence_key"]),
+            )
+            for event in events
+            if event.get("category") == "verification"
+            and event.get("action") == "verified"
+            and event.get("result") == "pass"
+        }
+        accepted_reviews = [
+            event for event in events
+            if event.get("category") == "review"
+            and event.get("action") == "approved"
+            and event.get("result") in {"accepted", "pass"}
+        ]
+        review_or_finding_drift = any(
+            (
+                event.get("category") == "review"
+                and (
+                    event.get("action") != "approved"
+                    or event.get("result") not in {"accepted", "pass"}
+                )
+            )
+            or (
+                event.get("category") == "finding_fix"
+                and event.get("result") != "closed"
+            )
+            for event in events
         )
-    except (OSError, ValueError):
-        return None
-    expected_verification = {
-        (
-            str(item["command_id"]), str(item["argv_digest"]),
-            str(item["evidence_key"]),
-        )
-        for item in payload["verification"]
-        if isinstance(item, dict)
-    }
-    observed_verification = {
-        (
-            str(event["command_id"]), str(event["argv_digest"]),
-            str(event["evidence_key"]),
-        )
-        for event in events
-        if event.get("category") == "verification"
-        and event.get("action") == "verified"
-        and event.get("result") == "pass"
-    }
-    accepted_reviews = [
-        event for event in events
-        if event.get("category") == "review"
-        and event.get("action") == "approved"
-        and event.get("result") in {"accepted", "pass"}
-    ]
-    review_or_finding_drift = any(
-        (
-            event.get("category") == "review"
-            and (
-                event.get("action") != "approved"
-                or event.get("result") not in {"accepted", "pass"}
+        latest_obligations: dict[str, dict[str, object]] = {}
+        for event in events:
+            if event.get("category") == "obligation":
+                latest_obligations[str(event["obligation_id"])] = event
+        open_obligations = sorted(
+            obligation_id for obligation_id, event in latest_obligations.items()
+            if not (
+                event.get("action") in {"satisfied", "waived", "resolved", "completed"}
+                and event.get("result") in {"pass", "accepted", "closed", "skipped"}
             )
         )
-        or (
-            event.get("category") == "finding_fix"
-            and event.get("result") != "closed"
-        )
-        for event in events
-    )
-    if (
-        expected_verification != observed_verification
-        or not accepted_reviews
-        or review_or_finding_drift
-    ):
-        return None
-
-    repaired_bytes = json.dumps(
-        repaired, sort_keys=True, separators=(",", ":"),
-    ).encode("utf-8")
-    original_digest = hashlib.sha256(original_bytes).hexdigest()
-    repaired_digest = hashlib.sha256(repaired_bytes).hexdigest()
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,200}", original.stem):
-        return None
-    repaired_root = results_root / "repaired"
-    try:
-        repaired_root.mkdir(mode=0o700, parents=True, exist_ok=True)
-        if repaired_root.is_symlink() or not repaired_root.is_dir():
-            return None
-        repaired_root.chmod(0o700)
-    except OSError:
-        return None
-    repaired_path = repaired_root / f"{original.stem}-{repaired_digest}.json"
-    if not _write_immutable_result(repaired_path, repaired_bytes):
-        return None
-    try:
-        descriptor = os.open(
-            original, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
-        )
+        declared_open = receipt.get("open_obligation_ids")
         if (
-            not stat.S_ISREG(os.fstat(descriptor).st_mode)
-            or _read_regular(
-                original, missing_message="original result is unavailable",
-            ) != original_bytes
+            not isinstance(declared_open, list)
+            or len(declared_open) != len(set(declared_open))
+            or sorted(declared_open) != open_obligations
+            or expected_verification != observed_verification
+            or not accepted_reviews
+            or review_or_finding_drift
         ):
-            os.close(descriptor)
             return None
-        os.fchmod(descriptor, 0o400)
-        os.fsync(descriptor)
-        os.close(descriptor)
-    except (OSError, ValueError):
-        return None
-    return EnvelopeRepair(
-        original_path=original,
-        repaired_path=repaired_path,
-        original_digest=original_digest,
-        repaired_digest=repaired_digest,
-        changed_fields=tuple(changed_fields),
-    )
+
+        # Re-open through the owned root immediately before acceptance and
+        # compare the complete descriptor proof to defeat component swaps.
+        for key, (declared, allow_absolute) in artifact_declarations.items():
+            current = _open_verified_artifact(
+                declared, worktree, allow_absolute=allow_absolute,
+            )
+            if current is None:
+                return None
+            stack.enter_context(current)
+            if not artifacts[key].same_identity(current):
+                return None
+        current_original = _open_verified_artifact(
+            original_result_path, results_root, allow_absolute=True,
+        )
+        if current_original is None:
+            return None
+        stack.enter_context(current_original)
+        if not original_proof.same_identity(current_original):
+            return None
+        repaired_bytes = json.dumps(
+            repaired, sort_keys=True, separators=(",", ":"),
+        ).encode("utf-8")
+        repaired_digest = hashlib.sha256(repaired_bytes).hexdigest()
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,200}", original.stem):
+            return None
+        repaired_root = results_root / "repaired"
+        try:
+            repaired_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+            if repaired_root.is_symlink() or not repaired_root.is_dir():
+                return None
+            repaired_root.chmod(0o700)
+        except OSError:
+            return None
+        repaired_path = repaired_root / f"{original.stem}-{repaired_digest}.json"
+        if not _write_immutable_result(repaired_path, repaired_bytes):
+            return None
+        try:
+            os.fchmod(original_proof.descriptor, 0o400)
+            os.fsync(original_proof.descriptor)
+        except OSError:
+            return None
+        return EnvelopeRepair(
+            original_path=original,
+            repaired_path=repaired_path,
+            original_digest=original_proof.digest,
+            repaired_digest=repaired_digest,
+            changed_fields=tuple(changed_fields),
+        )
