@@ -146,6 +146,20 @@ class SequentialCliTest(unittest.TestCase):
         self.assertEqual(relative.returncode, 1)
         self.assertEqual(json.loads(relative.stdout)["status"], "failed")
 
+    def test_checkpointed_run_uses_resume_exit_code(self) -> None:
+        self.plans[0].write_text("scenario:interrupted\n", encoding="utf-8")
+
+        result = self.command(
+            "run",
+            "--plan",
+            str(self.plans[0]),
+            "--workspace",
+            str(self.repo),
+        )
+
+        self.assertEqual(result.returncode, 3, result.stderr + result.stdout)
+        self.assertEqual(json.loads(result.stdout)["status"], "checkpointed")
+
     def test_repeated_spec_and_plan_flags_preserve_order(self) -> None:
         self.plans[0].write_text("scenario:blocked\n", encoding="utf-8")
         result = self.command(

@@ -12,7 +12,7 @@ from typing import Sequence
 from cpe_runtime.runner import SequentialRunner
 
 
-EXIT_CODES = {"completed": 0, "failed": 1, "blocked": 2, "interrupted": 3}
+EXIT_CODES = {"completed": 0, "failed": 1, "blocked": 2, "checkpointed": 3}
 
 
 class CliUsageError(ValueError):
@@ -73,7 +73,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         result = runner.inspect(run_id=args.run_id)
         return _emit(result, 0)
     except KeyboardInterrupt:
-        return _emit({"status": "interrupted", "error": "invocation interrupted"})
+        return _emit({"status": "checkpointed", "error": "invocation interrupted"})
     except (CliUsageError, OSError, RuntimeError, TypeError, ValueError, subprocess.SubprocessError) as exc:
         return _emit({"status": "failed", "error": _bounded_error(exc)}, 1)
 

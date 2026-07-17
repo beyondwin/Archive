@@ -279,6 +279,36 @@ print(json.dumps(result, sort_keys=True), flush=True)
         self.assertTrue((store.root / "evidence").is_dir())
         self.assertTrue((store.root / "reports").is_dir())
 
+    def test_checkpointed_result_is_durable_and_resumable(self) -> None:
+        runner = self.runner()
+        first = runner.run(
+            workspace=self.repo,
+            specs=[],
+            plans=[self.plan(1, "interrupted")],
+            run_id="checkpointed",
+        )
+        self.assertEqual(first["status"], "checkpointed")
+        self.assertEqual(first["plans"][0]["status"], "checkpointed")
+
+        resumed = runner.resume(run_id="checkpointed")
+
+        self.assertIn(resumed["status"], {"checkpointed", "completed"})
+
+    def test_missing_worktree_never_reports_source_commit_as_observed_head(self) -> None:
+        runner = self.runner()
+        result = runner.run(
+            workspace=self.repo,
+            specs=[],
+            plans=[self.plan(1, "blocked")],
+            run_id="missing-worktree-summary",
+        )
+        Path(result["worktree"]).rename(self.root / "moved-worktree")
+
+        inspected = runner.inspect(run_id="missing-worktree-summary")
+
+        self.assertIsNone(inspected["observed_head"])
+        self.assertEqual(inspected["last_known_head"], result["last_known_head"])
+
     def test_format_one_state_is_unsupported_without_mutation(self) -> None:
         root = self.home / "orchestrator" / "legacy-format-one"
         root.mkdir(parents=True, mode=0o700)
@@ -562,7 +592,7 @@ print(json.dumps(result, sort_keys=True), flush=True)
             second = self.runner(**environment).resume(
                 run_id="concurrent-resume"
             )
-            self.assertEqual(second["status"], "interrupted")
+            self.assertEqual(second["status"], "checkpointed")
             self.assertEqual(second["error"], "run_busy")
             self.assertEqual(len(self.invocations()), 1)
             unchanged = json.loads(
@@ -1585,16 +1615,22 @@ print(json.dumps(result, sort_keys=True), flush=True)
                 "status": "completed",
                 "head_commit": kwargs["current_commit"],
                 "verification": [
-                    {"command": "focused deterministic verify", "exit_code": 0}
+                    {
+                        "command_id": "focused-deterministic-verify",
+                        "argv_digest": "a" * 64,
+                        "phase": "branch_final",
+                        "evidence_key": "b" * 64,
+                        "exit_code": 0,
+                        "receipt_path": None,
+                    }
                 ],
                 "summary": "deterministic first-plan completion",
                 "workflow_receipt": {
-                    "mode": "subagent-driven-lean",
-                    "progress_ledger": ".superpowers/sdd/progress.md",
-                    "task_reviews": "complete",
-                    "final_review": "approved",
-                    "final_review_artifact": ".superpowers/sdd/final-review.md",
-                    "duplicate_verification": "none",
+                    "ledger_path": ".superpowers/sdd/progress.md",
+                    "final_review_path": ".superpowers/sdd/final-review.md",
+                    "final_review_head": kwargs["current_commit"],
+                    "open_finding_ids": [],
+                    "open_obligation_ids": [],
                 },
             }
             result_path.write_text(json.dumps(payload), encoding="utf-8")
@@ -1623,12 +1659,12 @@ print(json.dumps(result, sort_keys=True), flush=True)
         )
         first = runner.run(workspace=self.repo, specs=[], plans=[self.plan(1, "completed"), self.plan(2, "resume_completed")], run_id="resume")
         self.assertEqual(first["status"], "blocked")
-        prior_head = first["head_commit"]
+        prior_head = first["observed_head"]
         self.assertEqual(launch_plan_ids, ["plan-01", "plan-02"])
         self.assertEqual(len(self.invocations()), 1)
         resumed = runner.resume(run_id="resume")
         self.assertEqual(resumed["status"], "completed")
-        self.assertNotEqual(resumed["head_commit"], prior_head)
+        self.assertNotEqual(resumed["observed_head"], prior_head)
         self.assertEqual(
             launch_plan_ids,
             ["plan-01", "plan-02", "plan-02"],

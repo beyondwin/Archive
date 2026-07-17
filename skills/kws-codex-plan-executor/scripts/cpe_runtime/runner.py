@@ -31,16 +31,17 @@ _RECOVERY_RESULT_FIELDS = {
     "next_strategy",
 }
 _RESULT_OPTIONAL_FIELDS = {
+    "checkpoint",
+    "blocker",
     "workflow_receipt",
     *_RECOVERY_RESULT_FIELDS,
 }
 _WORKFLOW_RECEIPT_FIELDS = {
-    "mode",
-    "progress_ledger",
-    "task_reviews",
-    "final_review",
-    "final_review_artifact",
-    "duplicate_verification",
+    "ledger_path",
+    "final_review_path",
+    "final_review_head",
+    "open_finding_ids",
+    "open_obligation_ids",
 }
 _COMPLETED_TASK = re.compile(
     r"^Task\s+([1-9][0-9]*):\s+complete\b",
@@ -302,15 +303,11 @@ def _workflow_receipt_error(
 ) -> str | None:
     if not isinstance(receipt, dict) or set(receipt) != _WORKFLOW_RECEIPT_FIELDS:
         return "invalid_workflow_receipt"
-    expected = {
-        "mode": "subagent-driven-lean",
-        "task_reviews": "complete",
-        "final_review": "approved",
-        "duplicate_verification": "none",
-    }
-    if any(receipt.get(name) != value for name, value in expected.items()):
+    if receipt.get("final_review_head") != _git(worktree, "rev-parse", "HEAD"):
         return "invalid_workflow_receipt"
-    for name in ("progress_ledger", "final_review_artifact"):
+    if receipt.get("open_finding_ids") != [] or receipt.get("open_obligation_ids") != []:
+        return "invalid_workflow_receipt"
+    for name in ("ledger_path", "final_review_path"):
         if not _safe_worktree_artifact(worktree, receipt.get(name)):
             return "unsafe_workflow_artifact"
     return None
@@ -376,7 +373,7 @@ class SequentialRunner:
         try:
             with _RunLock(store.root / "run.lock") as lock_fd:
                 store = StateStore.open(store.root)
-                if store.state["status"] == "initializing":
+                if store.state["status"] == "preparing":
                     self._create_or_reconcile_worktree(store)
                 else:
                     self._verify_worktree(store)
@@ -459,7 +456,7 @@ class SequentialRunner:
             branch=branch,
             specs=specs,
             plans=plans,
-            initial_status="initializing",
+            initial_status="preparing",
         )
 
     def _add_new_worktree(self, store: StateStore) -> None:
@@ -584,11 +581,11 @@ class SequentialRunner:
         if not isinstance(payload, dict):
             payload = {}
         prior_status = payload.get("status")
-        if prior_status not in {"interrupted", "blocked", "failed"}:
+        if prior_status not in {"checkpointed", "blocked", "failed"}:
             prior_status = (
                 plan["status"]
-                if plan["status"] in {"interrupted", "blocked", "failed"}
-                else "interrupted"
+                if plan["status"] in {"checkpointed", "blocked", "failed"}
+                else "checkpointed"
             )
         signature = payload.get("failure_signature")
         if not isinstance(signature, str) or not signature.strip():
@@ -737,13 +734,14 @@ class SequentialRunner:
                     else str(self._synthetic_result(store, plan, outcome))
                 )
                 if outcome.timed_out:
-                    plan["status"] = "interrupted"
-                    state["status"] = "interrupted"
+                    plan["status"] = "checkpointed"
+                    plan["last_known_head"] = current_head
+                    state["status"] = "checkpointed"
                     store.save()
                     store.append_event(
                         "plan.attempt_incomplete",
                         plan_id=plan["plan_id"],
-                        status="interrupted",
+                        status="checkpointed",
                         timed_out=True,
                     )
                 else:
@@ -761,6 +759,7 @@ class SequentialRunner:
                     payload = outcome.payload
                     assert payload is not None
                     status = payload["status"]
+                    plan["last_known_head"] = payload["head_commit"]
                     if status == "completed":
                         self._seal_result(outcome.result_path)
                         plan["status"] = "completed"
@@ -779,6 +778,16 @@ class SequentialRunner:
                             head=payload["head_commit"],
                         )
                         break
+                    if status == "checkpointed":
+                        plan["status"] = "checkpointed"
+                        state["status"] = "checkpointed"
+                        store.save()
+                        store.append_event(
+                            "plan.checkpointed",
+                            plan_id=plan["plan_id"],
+                            head=payload["head_commit"],
+                        )
+                        return self._summary(store)
                     plan["status"] = status
                     state["status"] = status
                     if status == "blocked":
@@ -811,8 +820,8 @@ class SequentialRunner:
                         candidate = previous_payload.get("failure_signature")
                         if isinstance(candidate, str) and candidate.strip():
                             previous_signature = candidate
-                        elif previous_payload.get("status") == "interrupted":
-                            previous_signature = "status:interrupted"
+                        elif previous_payload.get("status") == "checkpointed":
+                            previous_signature = "status:checkpointed"
 
                 retry, reason, signature, strategy = _recovery_decision(
                     payload=outcome.payload,
@@ -857,8 +866,8 @@ class SequentialRunner:
         if not isinstance(payload, dict):
             return "invalid_result"
         # Strict structured outputs require every declared property at the wire
-        # boundary. Normalize nullable optionals back to the public format-1
-        # contract before validating their conditional presence semantics.
+        # boundary. Normalize nullable optionals before enforcing the format-2
+        # conditional-presence semantics.
         for name in _RESULT_OPTIONAL_FIELDS:
             if payload.get(name) is None:
                 payload.pop(name, None)
@@ -868,8 +877,15 @@ class SequentialRunner:
             or fields - _RESULT_REQUIRED_FIELDS - _RESULT_OPTIONAL_FIELDS
         ):
             return "invalid_result"
-        if payload.get("plan_id") != plan["plan_id"] or payload.get("status") not in {"completed", "interrupted", "blocked", "failed"}:
+        status = payload.get("status")
+        if payload.get("plan_id") != plan["plan_id"] or status not in {"completed", "checkpointed", "blocked", "failed"}:
             return "invalid_result"
+        if status == "completed" and "workflow_receipt" not in payload:
+            return "invalid_workflow_receipt"
+        if status == "checkpointed" and "checkpoint" not in payload:
+            return "invalid_checkpoint"
+        if status == "blocked" and "blocker" not in payload:
+            return "invalid_blocker"
         head = payload.get("head_commit")
         summary = payload.get("summary")
         verification = payload.get("verification")
@@ -890,9 +906,24 @@ class SequentialRunner:
                 or payload.get("status") == "completed"
             ):
                 return "invalid_result"
+        verification_fields = {"command_id", "argv_digest", "phase", "evidence_key", "exit_code", "receipt_path"}
         for item in verification:
-            if not isinstance(item, dict) or set(item) != {"command", "exit_code"} or not isinstance(item["command"], str) or not item["command"].strip() or not isinstance(item["exit_code"], int) or isinstance(item["exit_code"], bool):
+            if (
+                not isinstance(item, dict)
+                or set(item) != verification_fields
+                or not isinstance(item["command_id"], str)
+                or not item["command_id"].strip()
+                or not isinstance(item["argv_digest"], str)
+                or not re.fullmatch(r"[0-9a-f]{64}", item["argv_digest"])
+                or not isinstance(item["evidence_key"], str)
+                or not re.fullmatch(r"[0-9a-f]{64}", item["evidence_key"])
+                or not isinstance(item["exit_code"], int)
+                or isinstance(item["exit_code"], bool)
+                or (item["receipt_path"] is not None and not isinstance(item["receipt_path"], str))
+            ):
                 return "invalid_result"
+            if item["phase"] not in {"task", "affected", "branch_final"}:
+                return "invalid_verification_phase"
         worktree = Path(store.state["worktree"])
         observed = _git(worktree, "rev-parse", "HEAD")
         if head != observed:
@@ -986,7 +1017,7 @@ class SequentialRunner:
         target = store.root / "results" / f"{plan['plan_id']}-attempt-{plan['attempt_count']}-synthetic.json"
         worktree = Path(store.state["worktree"])
         observed = _git(worktree, "rev-parse", "HEAD") if worktree.is_dir() else store.state["source_commit"]
-        status = "interrupted" if outcome.timed_out else "failed"
+        status = "checkpointed" if outcome.timed_out else "failed"
         payload = {
             "plan_id": plan["plan_id"], "status": status, "head_commit": observed,
             "verification": [],
@@ -994,6 +1025,12 @@ class SequentialRunner:
         }
         if outcome.timed_out:
             payload.update(
+                checkpoint={
+                    "reason": "timeout_progress",
+                    "progress_fingerprint": "0" * 64,
+                    "completed_task_ids": [],
+                    "current_task_id": None,
+                },
                 retryable=True,
                 failure_signature="timeout",
                 next_strategy=(
@@ -1009,11 +1046,15 @@ class SequentialRunner:
     def _summary(store: StateStore, *, error: str | None = None) -> dict[str, Any]:
         state = store.state
         worktree = Path(state["worktree"])
-        head = _git(worktree, "rev-parse", "HEAD") if worktree.is_dir() else state["source_commit"]
+        observed_head = _git(worktree, "rev-parse", "HEAD") if worktree.is_dir() else None
+        last_known_head = observed_head
+        if last_known_head is None and state["plans"]:
+            last_known_head = state["plans"][max(0, state["current_plan_index"] - 1)]["last_known_head"]
         visible_plans = state["plans"][:100]
         result = {
             "run_id": state["run_id"], "status": state["status"], "source_commit": state["source_commit"],
-            "worktree": state["worktree"], "branch": state["branch"], "head_commit": head,
+            "worktree": state["worktree"], "branch": state["branch"],
+            "observed_head": observed_head, "last_known_head": last_known_head,
             "current_plan_index": state["current_plan_index"],
             "plan_count": len(state["plans"]),
             "plans_truncated": len(state["plans"]) > len(visible_plans),
@@ -1028,7 +1069,7 @@ class SequentialRunner:
 
     def _busy_summary(self, store: StateStore) -> dict[str, Any]:
         result = self._summary(store, error="run_busy")
-        result["status"] = "interrupted"
+        result["status"] = "checkpointed"
         return result
 
     def _record_interrupted(self, store: StateStore) -> dict[str, Any]:
@@ -1040,15 +1081,16 @@ class SequentialRunner:
             "completed",
             "blocked",
             "failed",
-            "interrupted",
+            "checkpointed",
         }:
             return self._summary(store)
         index = store.state["current_plan_index"]
         if index < len(store.state["plans"]):
             current = store.state["plans"][index]
             if current["status"] == "running":
-                current["status"] = "interrupted"
-        store.state["status"] = "interrupted"
+                current["status"] = "checkpointed"
+                current["last_known_head"] = _git(Path(store.state["worktree"]), "rev-parse", "HEAD")
+        store.state["status"] = "checkpointed"
         store.save()
         store.append_event("run.interrupted", plan_index=index)
         return self._summary(store)
