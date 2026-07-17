@@ -125,6 +125,7 @@ def _validate_nested_contract(compiled: dict[str, Any]) -> set[str]:
                 or not _unique_strings(phases) or not phases
                 or not set(phases) <= _BRANCH_PHASES
                 or type(item["deterministic"]) is not bool
+                or not isinstance(item["mutable_input_policy"], str)
                 or item["mutable_input_policy"] not in _MUTABLE_INPUT_POLICIES
                 or not _unique_strings(artifacts) or len(artifacts) > 64
                 or not all(_relative_artifact(path) for path in artifacts)):
@@ -153,9 +154,11 @@ def _validate_nested_contract(compiled: dict[str, Any]) -> set[str]:
     }
     for item in compiled["coordination_exceptions"]:
         if (not isinstance(item, dict) or set(item) != exception_fields
+                or not _identifier(item["task_id"])
                 or item["task_id"] not in known_tasks
                 or not isinstance(item["role"], str) or not 1 <= len(item["role"]) <= 64
                 or item["fork_turns"] != "all"
+                or not isinstance(item["reason_code"], str)
                 or item["reason_code"] not in _COORDINATION_REASONS):
             raise _schema_error()
     return known_tasks

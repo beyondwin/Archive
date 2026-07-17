@@ -476,6 +476,49 @@ print(json.dumps(result, sort_keys=True), flush=True)
         }]
         self.assertIs(validate_compiled_index(payload, store.state, contract), payload)
 
+    def test_compiler_repairs_unhashable_nested_schema_drift_once(self) -> None:
+        for name, mutate in (
+            ("list", lambda item: item.update(mutable_input_policy=[])),
+            ("object", lambda item: item.update(reason_code={})),
+        ):
+            with self.subTest(name=name):
+                store = self.create_compiler_store(f"compiler-repair-{name}")
+                valid = self.compiler_payload(store)
+                task = valid["plans"][0]["tasks"][0]
+                span = {
+                    "source_line_start": task["source_line_start"],
+                    "source_line_end": task["source_line_end"],
+                    "source_text_sha256": task["source_text_sha256"],
+                }
+                malformed = json.loads(json.dumps(valid))
+                if name == "list":
+                    item = {
+                        "command_id": "verify-01", "argv": ["make", "test"],
+                        "allowed_branch_phases": ["task_green"],
+                        "deterministic": True, "mutable_input_policy": "forbidden",
+                        "required_artifacts": [], **span,
+                    }
+                    mutate(item)
+                    malformed["plans"][0]["verifications"] = [item]
+                else:
+                    item = {
+                        "task_id": "task-01", "role": "implementer",
+                        "fork_turns": "all",
+                        "reason_code": "source_requires_shared_context", **span,
+                    }
+                    mutate(item)
+                    malformed["plans"][0]["coordination_exceptions"] = [item]
+                repairs = []
+
+                def compile_once(_store, _contract, repair):
+                    repairs.append(repair)
+                    return valid if repair else malformed
+
+                service = CompiledIndexService(compile_once=compile_once)
+                self.assertTrue(service.prepare(store).is_file())
+                self.assertEqual(service.compile_calls, 2)
+                self.assertEqual(repairs, [False, True])
+
     def test_cached_compiled_index_revalidates_nested_contract(self) -> None:
         store = self.create_compiler_store("compiler-cache-shape")
         payload = self.compiler_payload(store)
