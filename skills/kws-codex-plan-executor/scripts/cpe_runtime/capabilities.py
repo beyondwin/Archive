@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from hashlib import sha256
+import ipaddress
 import json
 import re
 from typing import Literal, Mapping, Sequence
@@ -27,6 +28,13 @@ _SECRET_LIKE_DETAIL_PARTS = {
     "apikey", "providerkey",
 }
 _REASON_CODE = re.compile(r"^[a-z]+(?:_[a-z]+)*$")
+_GIT_VERSION = re.compile(r"^[0-9]+(?:\.[0-9]+){1,3}$")
+_SANDBOX_POLICIES = {"read-only", "workspace-write", "danger-full-access"}
+_FILESYSTEM_TYPES = {
+    "apfs", "btrfs", "ext2", "ext3", "ext4", "fat32", "ntfs", "overlay",
+    "overlayfs", "tmpfs", "xfs", "zfs",
+}
+_BOOLEAN_STRINGS = {"true", "false"}
 
 
 @dataclass(frozen=True)
@@ -46,6 +54,29 @@ def _non_empty_string(value: object) -> bool:
 def _secret_like_detail_key(key: str) -> bool:
     normalized = "".join(character for character in key.lower() if character.isalnum())
     return any(part in normalized for part in _SECRET_LIKE_DETAIL_PARTS)
+
+
+def _safe_detail_value(capability: str, key: str, value: str) -> bool:
+    if key in _INCIDENTAL_DETAIL_KEYS:
+        return True
+    if key == "sandbox_policy":
+        return value in _SANDBOX_POLICIES
+    if capability == "loopback_bind" and key == "host":
+        try:
+            return ipaddress.ip_address(value).is_loopback
+        except ValueError:
+            return False
+    if capability == "loopback_bind" and key == "host_family":
+        return value in {"ipv4", "ipv6"}
+    if capability == "workspace_write" and key == "filesystem_type":
+        return value in _FILESYSTEM_TYPES
+    if capability == "git" and key == "version":
+        return _GIT_VERSION.fullmatch(value) is not None
+    if capability in {"git", "graphify_write"} and key in {
+        "worktree_supported", "configured",
+    }:
+        return value in _BOOLEAN_STRINGS
+    return False
 
 
 def validate_observation(observation: CapabilityObservation) -> None:
@@ -76,6 +107,8 @@ def validate_observation(observation: CapabilityObservation) -> None:
             raise ValueError("capability observation details must not include secrets")
         if key not in allowed_keys:
             raise ValueError("capability observation detail key is unsupported")
+        if not _safe_detail_value(observation.capability, key, value):
+            raise ValueError("capability observation detail value is unsupported")
 
 
 def canonicalize_observation(observation: CapabilityObservation) -> dict[str, object]:

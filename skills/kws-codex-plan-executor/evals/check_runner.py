@@ -153,6 +153,58 @@ class CapabilityTests(unittest.TestCase):
             canonicalize_observation(observation)["stable_details"],
         )
 
+    def test_validation_accepts_safe_declared_detail_values(self) -> None:
+        cases = (
+            (
+                "loopback_bind",
+                {"host": "127.0.0.1", "host_family": "ipv4", "sandbox_policy": "workspace-write"},
+            ),
+            (
+                "workspace_write",
+                {"filesystem_type": "apfs", "sandbox_policy": "read-only"},
+            ),
+            ("git", {"version": "2.44.0", "worktree_supported": "true"}),
+            (
+                "graphify_write",
+                {"configured": "false", "sandbox_policy": "danger-full-access"},
+            ),
+        )
+        for capability, details in cases:
+            with self.subTest(capability=capability):
+                validate_observation(
+                    CapabilityObservation(
+                        capability=capability,
+                        scope="workspace",
+                        outcome="available",
+                        reason_code="bound",
+                        observed_by="parent_observed",
+                        stable_details=details,
+                    )
+                )
+
+    def test_validation_rejects_unsafe_values_under_allowed_detail_keys(self) -> None:
+        cases = (
+            ("loopback_bind", {"host": "token=secret-value"}),
+            ("loopback_bind", {"sandbox_policy": "permission denied at /tmp/run"}),
+            ("workspace_write", {"filesystem_type": "PATH=/private/bin"}),
+            ("git", {"version": "git version 2.44.0; cookie=secret"}),
+            ("git", {"worktree_supported": "yes, use this token"}),
+            ("graphify_write", {"configured": "enabled because it succeeded"}),
+        )
+        for capability, details in cases:
+            with self.subTest(capability=capability, details=details):
+                with self.assertRaises(ValueError):
+                    validate_observation(
+                        CapabilityObservation(
+                            capability=capability,
+                            scope="workspace",
+                            outcome="unavailable",
+                            reason_code="permission_denied",
+                            observed_by="parent_observed",
+                            stable_details=details,
+                        )
+                    )
+
     def test_validation_rejects_empty_required_fields(self) -> None:
         for field in ("capability", "scope", "reason_code"):
             with self.subTest(field=field):
