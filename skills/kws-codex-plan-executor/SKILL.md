@@ -1,9 +1,9 @@
 ---
 name: kws-codex-plan-executor
-description: Execute one or more approved Superpowers implementation plans sequentially in one durable isolated worktree.
+description: Use when approved Superpowers implementation plans must run in fixed order and survive process interruption.
 metadata:
-  version: "1.3.2"
-  updated_at: "2026-07-15"
+  version: "1.3.3"
+  updated_at: "2026-07-18"
 ---
 
 # KWS Codex Plan Executor
@@ -12,13 +12,11 @@ Use CPE when approved Superpowers implementation plans must run in a fixed
 order and survive process interruption. For bounded same-session work, use the
 plan's Superpowers workflow directly.
 
-Version 1.3.2 preserves the lean-quality contract while restoring strict Codex
-structured-output compatibility and linked-worktree commit access. Nullable
-wire-only optional fields are normalized to the unchanged public format-version-1
-contract, and the sandbox receives only the exact resolved Git common directory
-needed for linked-worktree index, object, and ref writes. The
-atomic recovery fields, two-pipe drain behavior, real-process coverage, and CPE/Superpowers
-ownership boundary remain unchanged.
+Version 1.3.3 removes Graphify from the project-default execution toolset. A
+controller loads or generates Graphify output only when the approved plan
+explicitly requires it. The strict structured-output, linked-worktree,
+atomic recovery fields, two-pipe drain, process-lifecycle, and
+CPE/Superpowers ownership contracts remain unchanged.
 
 ## Commands
 
@@ -55,6 +53,13 @@ operator-initiated attempt.
 The existing attempt-finished event may record aggregate usage totals from the
 Codex session. Those totals can include the root controller and subagents and
 are not claimed as a root-versus-subagent split.
+
+## Project Tool Policy
+
+Graphify is not a project-default tool. Controllers, implementers, and
+reviewers do not load its skill, build or refresh a graph, or add Graphify to
+verification merely because they are working in a codebase. Use it only when
+the approved plan explicitly names Graphify or requires a Graphify artifact.
 
 ## Operational Safety
 

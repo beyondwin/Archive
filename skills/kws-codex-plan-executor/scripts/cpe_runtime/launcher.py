@@ -350,6 +350,7 @@ class CodexLauncher:
                 "Resolve one task finding set with one consolidated fix subagent, then review only the finding delta and affected evidence.",
                 "After all tasks, perform one cross-task final review and one full verification at the final HEAD.",
                 "Do not run the same normalized verification command twice at the same HEAD unless a transient failure is recorded.",
+                "Graphify is opt-in, not a project-default tool; do not load its skill or generate a graph unless the approved plan explicitly requires it.",
                 "Keep controller context to task status, commits, one-line test evidence, finding IDs, decisions, and the next action.",
                 "For completed, leave a clean worktree, report exact HEAD and successful final verification, and include workflow_receipt.",
                 "Return only the fixed schema object as the final response. Do not merge, push, deploy, or modify files outside the worktree.",
