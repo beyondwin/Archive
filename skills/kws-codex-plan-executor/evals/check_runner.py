@@ -152,6 +152,23 @@ class VerificationReceiptTests(unittest.TestCase):
                     verification_cache_key(changed),
                 )
 
+    def test_digest_complete_requires_non_placeholder_lowercase_sha256(self) -> None:
+        valid = self.request(
+            mutable_input_policy="digest_complete",
+            input_digest="1" * 64,
+        )
+        self.assertEqual(64, len(verification_cache_key(valid)))
+
+        for invalid in ("", "not-a-digest", "A" * 64, "0" * 64):
+            with self.subTest(input_digest=invalid):
+                with self.assertRaisesRegex(ValueError, "input digest"):
+                    verification_cache_key(
+                        dataclasses.replace(valid, input_digest=invalid)
+                    )
+
+        immutable_sentinel = self.request(input_digest="immutable")
+        self.assertEqual(64, len(verification_cache_key(immutable_sentinel)))
+
     def test_passing_receipt_is_reusable_only_for_exact_same_run_request(self) -> None:
         request = self.request()
         receipt = execute_verification(self.evidence_root, request)

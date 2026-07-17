@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import stat
 import subprocess
 import tempfile
@@ -23,6 +24,7 @@ MAX_VERIFICATION_LOG_BYTES = 1 * 1024 * 1024
 MAX_REQUIRED_ARTIFACTS = 64
 _PHASES = {"task", "affected", "branch_final", "merged_main"}
 _MUTABLE_POLICIES = {"immutable", "digest_complete", "always_execute"}
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
 @dataclass(frozen=True)
@@ -116,6 +118,13 @@ def _validate_request(request: VerificationRequest) -> None:
         raise ValueError("verification phase is invalid")
     if request.mutable_input_policy not in _MUTABLE_POLICIES:
         raise ValueError("mutable input policy is invalid")
+    if request.mutable_input_policy == "digest_complete" and (
+        not _SHA256.fullmatch(request.input_digest)
+        or request.input_digest == "0" * 64
+    ):
+        raise ValueError(
+            "digest-complete verification requires a non-placeholder input digest"
+        )
     if not isinstance(request.deterministic, bool):
         raise ValueError("deterministic must be boolean")
     if isinstance(request.timeout_seconds, bool) or request.timeout_seconds <= 0:
