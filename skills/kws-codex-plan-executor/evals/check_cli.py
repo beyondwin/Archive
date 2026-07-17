@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -231,46 +232,80 @@ class SequentialCliTest(unittest.TestCase):
     def test_skill_docs_match_hardened_public_contract(self) -> None:
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        contract = " ".join((skill + readme).split())
-        self.assertIn('version: "2.0.0"', skill)
-        for phrase in (
-            "process group",
-            "bounded",
-            "run_busy",
-            "format-version-2",
-            "does not read or migrate format-1 run state",
-            "parent-observed",
-            "same environment fingerprint",
-            "zero compiler, model, or verification",
-            "productive_timeout",
-            "second_no_progress_slice",
-            "3600 seconds",
-            "6 productive progress checkpoints",
-            "21600 seconds",
-            "8 controller launches",
-            "checkpointed` is a durable",
-            "workflow receipt",
-            "ledger_path",
-            "final_review_path",
-            "zero model turns",
-            "~/.codex/orchestrator/<run-id>/",
-            "Superpowers owns",
-            "another controller slice",
-            "focused",
-            "final `HEAD`",
-            "optimization reports",
-            "Change Protocol",
-            "two-pipe drain",
-            "linked",
-        ):
-            self.assertIn(phrase, contract)
-        for stale in (
-            'version: "1.3.2"',
-            "format-version-1",
-            "recovery capsule",
-            "initializing",
-        ):
-            self.assertNotIn(stale, contract)
+
+        frontmatter_parts = skill.split("---", 2)
+        self.assertEqual(len(frontmatter_parts), 3)
+        metadata_lines = [
+            line.strip() for line in frontmatter_parts[1].splitlines()
+            if line.startswith("  version:")
+        ]
+        self.assertEqual(metadata_lines, ['version: "2.0.0"'])
+        self.assertIn("Version 2.0.0", readme)
+
+        def section(document: str, heading: str) -> str:
+            start = document.index(heading)
+            following = document.find("\n## ", start + len(heading))
+            return document[start:following if following >= 0 else None]
+
+        documents = (
+            ("SKILL.md", skill, section(skill, "## Recovery Contract")),
+            (
+                "README.md",
+                readme,
+                section(readme, "## Completion, Failure, And Recovery"),
+            ),
+        )
+        stale_patterns = (
+            r"\bversion 1\.[0-9]",
+            r"version:\s*[\"']1\.",
+            r"format(?:-| )version(?:-| )1 (?:remains|is) authoritative",
+            r"(?:public )?format-version-1 contract",
+            r"recovery capsule",
+            r"\binitializing\b",
+            r"preserves legacy|legacy support",
+        )
+        for name, document, recovery in documents:
+            normalized = " ".join(document.split())
+            normalized_recovery = " ".join(recovery.split())
+            with self.subTest(document=name):
+                self.assertRegex(normalized, r"format(?:-version)?-2")
+                self.assertRegex(
+                    normalized,
+                    r"(?:does not (?:read|support).*format-1|format-1.*neither read nor migrated)",
+                )
+                for phrase in (
+                    "parent-observed", "environment fingerprint", "changed fingerprint",
+                    "bounded", "progress fingerprint", "productive", "no-progress",
+                    "checkpointed", "durable", "ledger_path", "final_review_path",
+                    "original", "~/.codex/orchestrator/<run-id>/", "Superpowers owns",
+                    "CPE owns",
+                ):
+                    self.assertIn(phrase, normalized_recovery if phrase not in {
+                        "~/.codex/orchestrator/<run-id>/", "Superpowers owns", "CPE owns",
+                    } else normalized)
+                self.assertRegex(
+                    normalized_recovery,
+                    r"(?:zero|no) compiler.*model.*verification",
+                )
+                if name == "README.md":
+                    for row in (
+                        "controller slice timeout | 3600 seconds",
+                        "productive progress checkpoints | 6",
+                        "plan wall time | 21600 seconds",
+                        "controller launches | 8",
+                    ):
+                        self.assertIn(row, normalized_recovery)
+                else:
+                    self.assertRegex(normalized_recovery, r"3600-second controller slice")
+                    self.assertRegex(normalized_recovery, r"6 productive progress checkpoints")
+                    self.assertRegex(normalized_recovery, r"21600 seconds of wall time")
+                    self.assertRegex(normalized_recovery, r"8 controller launches")
+                self.assertRegex(normalized_recovery, r"checkpointed.*not (?:a |a synonym for )?failure")
+                self.assertRegex(normalized_recovery, r"zero model (?:turns|calls)")
+                self.assertRegex(normalized, r"(?:justif.*slice|slice.*justif)")
+                for stale in stale_patterns:
+                    self.assertIsNone(re.search(stale, normalized, re.IGNORECASE))
+
         root_index = (ROOT.parent / "README.md").read_text(encoding="utf-8")
         self.assertNotIn("내보내기", root_index)
 

@@ -7,9 +7,10 @@ incomplete plan.
 
 ## Release And Installation
 
-Version 2.0.0 is the format-2 release. Run state, child results, compiled
+Version 2.0.0 is the format-version-2 release. Run state, child results, compiled
 indexes, and optimization reports use only their current format-2 contracts;
-format-1 run state is neither read nor migrated. Format 2 consumes a strict
+the runner does not support format-1 run state and neither reads nor migrates
+it. Format 2 consumes a strict
 append-only execution-ledger event schema. The release adds typed
 parent-observed capability blockers, progress-aware controller slices, fixed
 checkpoint and launch budgets, strict evidence ingestion, and local result
@@ -167,18 +168,19 @@ before Git mutation or child launch.
 - `failed` (exit 1): invocation failure, runner-integrity failure, or exhausted
   plan attempts.
 - `blocked` (exit 2): the current plan or pre-execution environment requires
-  operator-owned resolution. A worktree-creation failure returns this operator
-  status while preserving durable internal `failed` state for explicit resume
-  handling.
+  operator-owned resolution. A worktree creation or reconciliation failure is
+  durably `blocked` in both run and current-plan state before any plan attempt
+  or controller launch.
 - `checkpointed` (exit 3): durable state remains available for resume. This is
-  a first-class recovery boundary, not a failure synonym.
+  a first-class recovery boundary, not a failure state.
 
 Automatic recovery is conditional and evidence-driven:
 
 | Observation | Action |
 |---|---|
-| unchanged parent-observed blocker fingerprint | stop with zero compiler, model, or verification child launches |
-| changed capability fingerprint | permit a resume, subject to every plan budget |
+| unchanged parent-observed environment fingerprint | stop with zero compiler, model, or verification child launches |
+| changed fingerprint | permit a bounded resume, subject to every plan budget |
+| pre-execution worktree creation or reconciliation failure | persist a typed parent-observed, operator-owned blocker with zero attempts and controller launches |
 | timeout with changed durable progress fingerprint | continue as `productive_timeout`, subject to every plan budget |
 | first timeout with unchanged progress | permit one bounded confirmation slice as `first_no_progress_slice` |
 | second consecutive timeout with unchanged progress | stop stalled as `second_no_progress_slice` |
@@ -187,12 +189,23 @@ Automatic recovery is conditional and evidence-driven:
 | child returns `blocked` or `failed` | preserve the typed terminal state; only explicit operator retry can reconsider a failed run |
 | invalid result, wrong `HEAD`, broken ancestry, dirty handoff, or evidence drift | fail closed without product retry |
 
-The capability fingerprint is derived from canonical parent probes. Incidental
+The environment fingerprint is derived from canonical parent capability probes. Incidental
 probe details and a child hypothesis cannot manufacture a typed blocker. Once
 an unavailable capability is parent-observed, resuming against the unchanged
 fingerprint produces no compiler call, model turn, verification process, new
 attempt, or controller-launch increment. A changed fingerprint removes that
 specific stop, but does not bypass budgets or correctness gates.
+
+A pre-execution worktree blocker is recoverable with plain `resume`; it does
+not require `--retry-failed`. Resume safely retries the exact recorded branch
+and path before ordinary worktree verification. If creation fails again, the
+run and current plan remain durably `blocked` with zero plan attempts,
+controller launches, compiler calls, model turns, or verification launches. If
+the environment recovers, CPE clears only that typed blocker, transitions
+through valid `ready`/`pending` state, creates or reconciles the worktree, and
+executes with the existing compiled index without recompilation. An unowned
+path collision is preserved. By contrast, a missing or deleted worktree after
+plan execution has begun remains an integrity error and fails closed.
 
 The durable progress fingerprint covers `HEAD`, completed task IDs, current
 task ID, accepted review IDs, and closed finding IDs. The fixed per-plan
@@ -221,7 +234,7 @@ those spellings locally to verified worktree-relative paths. The repair:
 - records exact before/after digests and the changed JSON pointer paths;
 - changes no status, summary, commit, verification, finding, obligation, or
   other semantic result field;
-- uses zero compiler calls, model turns, verification launches, controller
+- uses zero model turns, compiler calls, verification launches, controller
   launches, or attempts.
 
 Verification receipt paths are validated but are not rewritten. A semantic
@@ -236,8 +249,8 @@ and budget stops. The optimization reports keep the corresponding trust-labelled
 findings and evidence references, so each avoided launch, continuation, and
 budget stop is explainable without adding mutable counters to `state.json`.
 
-Recovery remains plan-level. CPE persists evidence and decides whether another
-slice is justified; it does not interpret plan prose, redispatch completed
+Recovery remains plan-level. CPE owns the durable recovery boundary and decides
+whether another slice is justified; it does not interpret plan prose, redispatch completed
 ledger tasks, judge product quality, merge, or push. Superpowers owns the
 correctness of implementation, review, fixes, and final verification.
 

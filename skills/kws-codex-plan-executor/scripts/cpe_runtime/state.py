@@ -38,6 +38,12 @@ DEFAULT_PLAN_BUDGET = {
     "plan_wall_budget_seconds": 21_600,
     "max_controller_launches": 8,
 }
+PRE_EXECUTION_WORKTREE_BLOCKER = {
+    "kind": "verification_environment",
+    "code": "worktree_creation_failed",
+    "operation": "create_or_reconcile_worktree",
+    "owner": "operator",
+}
 _SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 _DIGEST_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _DECISION_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
@@ -238,6 +244,7 @@ class StateStore:
             "operator_contract_sha256": None,
             "compiled_run_index_path": None,
             "compiled_run_index_sha256": None,
+            "pre_execution_blocker": None,
         }
         store = cls(run_root.resolve(), state)
         store._validate()
@@ -272,6 +279,7 @@ class StateStore:
             "worktree", "branch", "current_plan_index", "inputs", "plans",
             "operator_contract_path", "operator_contract_sha256",
             "compiled_run_index_path", "compiled_run_index_sha256",
+            "pre_execution_blocker",
         }
         if set(state) != required or state.get("format_version") != FORMAT_VERSION:
             raise ValueError("invalid format-version-2 state")
@@ -285,6 +293,9 @@ class StateStore:
             raise ValueError("invalid source commit")
         if not isinstance(state["inputs"], list) or not isinstance(state["plans"], list) or not state["plans"]:
             raise ValueError("state inputs and plans are invalid")
+        blocker = state["pre_execution_blocker"]
+        if blocker is not None and blocker != PRE_EXECUTION_WORKTREE_BLOCKER:
+            raise ValueError("pre-execution blocker is invalid")
         index = state["current_plan_index"]
         if not isinstance(index, int) or isinstance(index, bool) or not 0 <= index <= len(state["plans"]):
             raise ValueError("current plan index is invalid")
@@ -626,12 +637,24 @@ class StateStore:
                     raise ValueError("future plan is not pristine")
 
         if completed_prefix == len(plans):
+            if state["pre_execution_blocker"] is not None:
+                raise ValueError("completed run cannot retain a pre-execution blocker")
             if state["status"] not in {"completed", "failed"}:
                 raise ValueError("all plans complete but run is not terminal")
             return
 
         current = plans[completed_prefix]
-        if current["status"] == "pending":
+        if state["pre_execution_blocker"] is not None:
+            expected = {"plan_id": current["plan_id"], **pristine_fields}
+            expected["status"] = "blocked"
+            if (
+                state["status"] != "blocked"
+                or current != expected
+                or state["operator_contract_path"] is None
+                or state["compiled_run_index_path"] is None
+            ):
+                raise ValueError("pre-execution blocker state is invalid")
+        elif current["status"] == "pending":
             expected = {"plan_id": current["plan_id"], **pristine_fields}
             if current != expected:
                 raise ValueError("pending current plan is not pristine")

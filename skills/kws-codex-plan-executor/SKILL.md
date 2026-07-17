@@ -52,6 +52,14 @@ recorded evidence, and the complete gate runs once at the final `HEAD`.
 - A parent-observed unavailable capability is a typed blocker. Resuming with
   the same environment fingerprint launches zero compiler, model, or
   verification children. A changed fingerprint permits a bounded resume.
+- A pre-execution worktree creation or reconciliation environment failure is
+  durably `blocked` in both run and current-plan state with a typed
+  parent-observed, operator-owned reason. It consumes zero plan attempts and
+  controller launches. `inspect` and plain `resume` agree on `blocked`; plain
+  resume safely retries creation without recompiling, and either remains
+  blocked with zero compiler, model, or verification launches or recovers and
+  executes with the existing compiled index. A missing worktree after plan
+  execution began remains a fail-closed integrity error.
 - The progress fingerprint covers durable `HEAD`, completed task IDs, current
   task ID, accepted review IDs, and closed finding IDs. A timed-out slice with
   a changed fingerprint is productive and may continue within budget. The first
@@ -60,8 +68,8 @@ recorded evidence, and the complete gate runs once at the final `HEAD`.
 - The fixed per-plan defaults are a 3600-second controller slice, 6 productive
   progress checkpoints, 21600 seconds of wall time, and 8 controller launches.
   Every budget is checked before another launch.
-- `checkpointed` is a durable resumable state and exit 3, not a synonym for
-  failure. Child checkpoints remain subject to the same post-slice budgets.
+- `checkpointed` is a durable resumable state and exit 3, not a failure state.
+  Child checkpoints remain subject to the same post-slice budgets.
 - Safe result-envelope repair changes only absolute workflow-receipt
   `ledger_path` and `final_review_path` spellings into verified worktree-relative
   paths. It preserves the immutable original result and its digest, writes a
