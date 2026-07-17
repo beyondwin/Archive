@@ -164,6 +164,10 @@ before Git mutation or child launch.
 
 ## Completion, Failure, And Recovery
 
+These exit mappings apply only to `run` and `resume`. A successful read-only
+`inspect` exits 0 even when the stored status is `blocked`, `failed`, or
+`checkpointed`.
+
 - `completed` (exit 0): every ordered plan has an accepted clean commit.
 - `failed` (exit 1): invocation failure, runner-integrity failure, or exhausted
   plan attempts.
@@ -196,16 +200,17 @@ fingerprint produces no compiler call, model turn, verification process, new
 attempt, or controller-launch increment. A changed fingerprint removes that
 specific stop, but does not bypass budgets or correctness gates.
 
-A pre-execution worktree blocker is recoverable with plain `resume`; it does
-not require `--retry-failed`. Resume safely retries the exact recorded branch
-and path before ordinary worktree verification. If creation fails again, the
-run and current plan remain durably `blocked` with zero plan attempts,
-controller launches, compiler calls, model turns, or verification launches. If
-the environment recovers, CPE clears only that typed blocker, transitions
+A pre-execution worktree blocker is recoverable with plain `resume`. Plain
+`resume` safely retries the exact recorded branch and path before ordinary
+worktree verification. Across `run`, `inspect`, and plain `resume`, the durable
+status is `blocked`; this boundary never persists `failed` and never requires
+`--retry-failed`. Repeated failure consumes zero plan attempts, controller
+launches, or recompilation and launches no model or verification child. After
+the environment recovers, plain `resume` clears only that typed blocker
 through valid `ready`/`pending` state, creates or reconciles the worktree, and
-executes with the existing compiled index without recompilation. An unowned
-path collision is preserved. By contrast, a missing or deleted worktree after
-plan execution has begun remains an integrity error and fails closed.
+executes with the existing compiled index. An unowned path collision is
+preserved. By contrast, a missing or deleted worktree after plan execution has
+begun remains a fail-closed integrity error.
 
 The durable progress fingerprint covers `HEAD`, completed task IDs, current
 task ID, accepted review IDs, and closed finding IDs. The fixed per-plan
