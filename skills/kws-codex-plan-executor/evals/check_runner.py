@@ -215,6 +215,38 @@ class SequentialRunnerTest(unittest.TestCase):
         self.assertEqual(report["usage"]["total_kind"], "lower_bound")
         self.assertEqual(report["findings"][0]["source"], "derived")
 
+    def test_report_rejects_missing_or_invalid_trust_source(self) -> None:
+        for source in (None, "trusted_by_default"):
+            finding = {
+                "signal": "timeout",
+                "evidence_refs": ["events.jsonl:2"],
+            }
+            if source is not None:
+                finding["source"] = source
+            with self.subTest(source=source), self.assertRaisesRegex(
+                ValueError, "trust source"
+            ):
+                build_optimization_report(
+                    run_id="invalid-trust",
+                    events=[],
+                    findings=[finding],
+                )
+
+    def test_report_rejects_unsafe_evidence_references(self) -> None:
+        for reference in ("../events.jsonl", "/tmp/evidence", "receipts\\escape"):
+            with self.subTest(reference=reference), self.assertRaisesRegex(
+                ValueError, "evidence reference"
+            ):
+                build_optimization_report(
+                    run_id="unsafe-reference",
+                    events=[],
+                    findings=[{
+                        "signal": "timeout",
+                        "source": "derived",
+                        "evidence_refs": [reference],
+                    }],
+                )
+
     def test_run_prepares_index_before_worktree_and_reports_after_plan(self) -> None:
         result = self.runner().run(
             workspace=self.repo,

@@ -3,16 +3,92 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
+from pathlib import PurePosixPath
 
-from .state import atomic_private_write
+from .state import TRUST_LEVELS, atomic_private_write
 
 
 MAX_REPORT_BYTES = 1024 * 1024
+_RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_SIGNAL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+_FINDING_REQUIRED = {"signal", "source", "evidence_refs"}
+_FINDING_OPTIONAL = {
+    "impact", "action", "outcome", "recurrence", "recommendation",
+}
 
 
 class OptimizationMarkdownError(RuntimeError):
     """The authoritative JSON report succeeded but its derivative did not."""
+
+
+def _validate_evidence_reference(reference: object) -> None:
+    if (
+        not isinstance(reference, str)
+        or not reference
+        or len(reference) > 500
+        or "\\" in reference
+    ):
+        raise ValueError("optimization finding evidence reference is invalid")
+    path = PurePosixPath(reference)
+    if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+        raise ValueError("optimization finding evidence reference is unsafe")
+
+
+def _validate_finding(finding: object) -> None:
+    if not isinstance(finding, dict):
+        raise ValueError("optimization finding must be an object")
+    fields = set(finding)
+    if finding.get("source") not in TRUST_LEVELS:
+        raise ValueError("optimization finding trust source is invalid")
+    if not _FINDING_REQUIRED.issubset(fields) or fields - _FINDING_REQUIRED - _FINDING_OPTIONAL:
+        raise ValueError("optimization finding fields are invalid")
+    signal = finding["signal"]
+    if not isinstance(signal, str) or not _SIGNAL.fullmatch(signal):
+        raise ValueError("optimization finding signal is invalid")
+    references = finding["evidence_refs"]
+    if not isinstance(references, list) or not references or len(references) > 128:
+        raise ValueError("optimization finding evidence references are invalid")
+    for reference in references:
+        _validate_evidence_reference(reference)
+    for name in _FINDING_OPTIONAL & fields:
+        value = finding[name]
+        if not isinstance(value, str) or not value or len(value) > 2000:
+            raise ValueError(f"optimization finding {name} is invalid")
+
+
+def validate_optimization_report(report: object) -> dict[str, object]:
+    if not isinstance(report, dict) or set(report) != {
+        "format_version", "run_id", "usage", "duration_ms", "findings",
+    }:
+        raise ValueError("optimization report fields are invalid")
+    if report["format_version"] != 2:
+        raise ValueError("optimization report format version is invalid")
+    run_id = report["run_id"]
+    if not isinstance(run_id, str) or not _RUN_ID.fullmatch(run_id):
+        raise ValueError("optimization report run identity is invalid")
+    duration = report["duration_ms"]
+    if not isinstance(duration, int) or isinstance(duration, bool) or duration < 0:
+        raise ValueError("optimization report duration is invalid")
+    usage = report["usage"]
+    if not isinstance(usage, dict) or set(usage) != {
+        "observed_input_tokens", "unknown_attempt_count", "total_kind",
+    }:
+        raise ValueError("optimization report usage is invalid")
+    for name in ("observed_input_tokens", "unknown_attempt_count"):
+        value = usage[name]
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise ValueError("optimization report usage is invalid")
+    expected_kind = "exact" if usage["unknown_attempt_count"] == 0 else "lower_bound"
+    if usage["total_kind"] != expected_kind:
+        raise ValueError("optimization report usage kind is invalid")
+    findings = report["findings"]
+    if not isinstance(findings, list) or len(findings) > 1024:
+        raise ValueError("optimization report findings are invalid")
+    for finding in findings:
+        _validate_finding(finding)
+    return report
 
 
 def build_optimization_report(
@@ -33,7 +109,7 @@ def build_optimization_report(
             observed += tokens
         else:
             unknown += 1
-    return {
+    report: dict[str, object] = {
         "format_version": 2,
         "run_id": run_id,
         "usage": {
@@ -44,6 +120,7 @@ def build_optimization_report(
         "duration_ms": duration,
         "findings": findings,
     }
+    return validate_optimization_report(report)
 
 
 def render_optimization_markdown(report: dict[str, object]) -> str:
@@ -88,6 +165,7 @@ def write_optimization_reports(
     reports_root: Path,
     report: dict[str, object],
 ) -> tuple[Path, Path]:
+    validate_optimization_report(report)
     encoded = json.dumps(
         report, ensure_ascii=False, sort_keys=True, indent=2
     ).encode("utf-8")
