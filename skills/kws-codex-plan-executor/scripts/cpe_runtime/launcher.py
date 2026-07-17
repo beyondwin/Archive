@@ -347,6 +347,7 @@ class CodexLauncher:
         recovery_path: Path | None,
         compiled_run_index: Path | None = None,
         execution_ledger: Path | None = None,
+        verification_helper_descriptor: Path | None = None,
     ) -> str:
         lines = [
             "Execute one approved implementation plan in the isolated worktree.",
@@ -357,6 +358,7 @@ class CodexLauncher:
             f"CURRENT_COMMIT: {current_commit}",
             f"COMPILED_RUN_INDEX: {compiled_run_index or 'unavailable'}",
             f"EXECUTION_LEDGER: {execution_ledger or 'unavailable'}",
+            f"VERIFICATION_HELPER_DESCRIPTOR: {verification_helper_descriptor or 'unavailable'}",
             "SPECIFICATIONS_REFERENCE_ONLY_IN_ORDER:",
         ]
         lines.extend(f"- {path}" for path in spec_paths)
@@ -371,6 +373,11 @@ class CodexLauncher:
                 "Use task-brief, report files, review-package, task review files, and .superpowers/sdd/progress.md as file-backed handoffs.",
                 "On recovery, read the capsule, progress ledger, Git status/log, and current task artifacts in that order; never redispatch a completed ledger task.",
                 "Implementers run plan-declared focused RED/GREEN and tests affected by fixes; there is no automatic full-suite run per task.",
+                "For deterministic declared test/lint/build commands, read the descriptor and invoke its argv_prefix with --run-id, stable --command-id, real --phase task|affected|branch_final, --input-digest, --mutable-input-policy, --cwd, then -- and the exact compiled argv.",
+                "Use task or affected for branch work and branch_final only for the final branch gate; task review delta is not a verification phase and merged_main is parent-integration-only.",
+                "Digest every declared non-Git mutable input completely; use always_execute when mutable external state cannot be decision-completely digested.",
+                "Never claim a cache hit without the helper receipt, and never rerun an exact cached same-key pass merely for reassurance.",
+                "If the helper returns uncached_command_required or is unavailable, execute the exact command once, record child-attested uncached verification evidence with a null receipt, and never treat fallback as a skipped verification.",
                 "Reviewers reuse evidenced tests, write full findings to files, and return only verdicts, finding IDs, severities, and artifact paths.",
                 "Resolve one task finding set with one consolidated fix subagent, then review only the finding delta and affected evidence.",
                 "After all tasks, perform one cross-task final review and one full verification at the final HEAD.",
@@ -397,6 +404,7 @@ class CodexLauncher:
         recovery_path: Path | None = None,
         compiled_run_index: Path | None = None,
         execution_ledger: Path | None = None,
+        verification_helper_descriptor: Path | None = None,
     ) -> LaunchResult:
         """Launch one attempt using caller-owned paths and the held run lock."""
         request = StructuredLaunchRequest(
@@ -409,6 +417,7 @@ class CodexLauncher:
                 recovery_path=recovery_path,
                 compiled_run_index=compiled_run_index,
                 execution_ledger=execution_ledger,
+                verification_helper_descriptor=verification_helper_descriptor,
             ),
             result_path=result_path,
             log_path=log_path,

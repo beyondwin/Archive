@@ -327,6 +327,154 @@ class VerificationReceiptTests(unittest.TestCase):
             materialize_helper_descriptor(self.root / "other-run", symlink)
 
 
+class VerificationReuseIntegrationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory(prefix="cpe-verify-ingest-")
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.home = self.root / "codex-home"
+        self.repo = self.root / "repo"
+        self.home.mkdir(mode=0o700)
+        self.repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
+        subprocess.run(
+            ["git", "-C", str(self.repo), "config", "user.email", "cpe@example.invalid"],
+            check=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(self.repo), "config", "user.name", "CPE Eval"],
+            check=True,
+        )
+        plan = self.repo / "plan.md"
+        plan.write_text("Verify once.\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(self.repo), "add", "plan.md"], check=True)
+        subprocess.run(
+            ["git", "-C", str(self.repo), "commit", "-q", "-m", "seed"],
+            check=True,
+        )
+        self.run_id = "verification-ingest"
+        subprocess.run(
+            ["git", "-C", str(self.repo), "checkout", "-q", "-b", f"codex/{self.run_id}"],
+            check=True,
+        )
+        self.store = StateStore.create(
+            run_root=self.home / "orchestrator" / self.run_id,
+            run_id=self.run_id,
+            source_repository=self.repo,
+            source_commit=git(self.repo, "rev-parse", "HEAD"),
+            worktree=self.repo,
+            branch=f"codex/{self.run_id}",
+            specs=[],
+            plans=[plan],
+        )
+
+    def test_prompt_exposes_digest_bound_helper_and_fallback_rules(self) -> None:
+        descriptor = self.store.root / "tools" / "run-and-record.json"
+        prompt = CodexLauncher._prompt(
+            worktree=self.repo,
+            plan_id="plan-01",
+            plan_path=self.store.root / "inputs" / "plan-01.md",
+            spec_paths=[],
+            starting_commit=git(self.repo, "rev-parse", "HEAD"),
+            current_commit=git(self.repo, "rev-parse", "HEAD"),
+            recovery_path=None,
+            compiled_run_index=self.store.root / "compiled-run-index.json",
+            execution_ledger=self.repo / ".superpowers" / "sdd" / "execution-ledger.jsonl",
+            verification_helper_descriptor=descriptor,
+        )
+
+        self.assertIn(f"VERIFICATION_HELPER_DESCRIPTOR: {descriptor}", prompt)
+        self.assertIn("stable --command-id", prompt)
+        self.assertIn("task|affected|branch_final", prompt)
+        self.assertIn("merged_main is parent-integration-only", prompt)
+        self.assertIn("never rerun an exact cached same-key pass", prompt)
+        self.assertIn("uncached_command_required", prompt)
+        self.assertIn("never treat fallback as a skipped verification", prompt)
+
+    def test_replaced_helper_descriptor_becomes_recorded_direct_fallback(self) -> None:
+        descriptor = materialize_helper_descriptor(
+            self.store.root, ROOT / "scripts" / "cpe.py"
+        )
+        descriptor.chmod(0o600)
+        descriptor.write_text("{}", encoding="utf-8")
+        descriptor.chmod(0o400)
+        runner = SequentialRunner(codex_home=self.home)
+
+        self.assertIsNone(runner._verification_helper_descriptor_for_launch(self.store))
+
+        events = [
+            json.loads(line)
+            for line in self.store.events_path.read_text(encoding="utf-8").splitlines()
+        ]
+        fallback = [
+            event for event in events
+            if event.get("action") == "verification.helper_fallback"
+        ]
+        self.assertEqual(1, len(fallback))
+        self.assertEqual("verification_helper_fallback", fallback[0]["reason"])
+
+    def test_parent_ingests_nonreusable_receipt_once_without_relabelling_pass(self) -> None:
+        evidence_root = self.repo / ".superpowers" / "sdd" / "verification"
+        request = VerificationRequest(
+            run_id=self.run_id,
+            command_id="unit",
+            argv=(sys.executable, "-c", "print('ok')"),
+            cwd=self.repo,
+            head=git(self.repo, "rev-parse", "HEAD"),
+            environment_fingerprint="e" * 64,
+            phase="task",
+            input_digest="immutable",
+            deterministic=True,
+            mutable_input_policy="always_execute",
+            required_artifact_paths=(),
+            timeout_seconds=10,
+        )
+        receipt = execute_verification(evidence_root, request)
+        argv_digest = hashlib.sha256(
+            json.dumps(list(request.argv), separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        child_event_id = "verification.executed:" + "a" * 32
+        append_execution_event(
+            self.repo / ".superpowers" / "sdd" / "execution-ledger.jsonl",
+            {
+                "event_id": child_event_id,
+                "source": "child_attested",
+                "plan_id": "plan-01",
+                "category": "verification",
+                "action": "verified",
+                "result": "pass",
+                "evidence_refs": [
+                    f"verification/receipts/{receipt.receipt_id}.json",
+                    f"verification/{receipt.stdout_path}",
+                    f"verification/{receipt.stderr_path}",
+                ],
+                "command_id": "unit",
+                "argv_digest": argv_digest,
+                "evidence_key": receipt.cache_key,
+                "duration_ms": 1,
+            },
+        )
+        runner = SequentialRunner(codex_home=self.home)
+
+        runner._ingest_verification_observations(self.store)
+        runner._ingest_verification_observations(self.store)
+
+        events = [
+            json.loads(line)
+            for line in self.store.events_path.read_text(encoding="utf-8").splitlines()
+        ]
+        ingested = [
+            event for event in events
+            if event.get("action") == "verification.evidence_ingested"
+        ]
+        self.assertEqual(1, len(ingested))
+        self.assertEqual("parent_observed", ingested[0]["source"])
+        self.assertEqual("child_attested", ingested[0]["semantic_source"])
+        self.assertEqual("executed", ingested[0]["decision"])
+        self.assertEqual(receipt.receipt_id, ingested[0]["receipt_id"])
+        self.assertNotIn("result", ingested[0])
+
+
 class CapabilityTests(unittest.TestCase):
     def test_fingerprint_ignores_incidental_probe_details(self) -> None:
         first = CapabilityObservation(

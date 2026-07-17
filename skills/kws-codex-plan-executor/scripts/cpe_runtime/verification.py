@@ -408,14 +408,12 @@ def _load_json(path: Path) -> dict[str, object]:
     return document
 
 
-def find_reusable_receipt(
+def validate_recorded_receipt(
     evidence_root: Path,
     request: VerificationRequest,
 ) -> VerificationReceipt | None:
-    """Return a strict successful same-run receipt, or ``None`` on any miss."""
+    """Return a strict successful same-run receipt, even when it is nonreusable."""
     _validate_request(request)
-    if not request.deterministic or request.mutable_input_policy == "always_execute":
-        return None
     root, worktree, _cwd = _prepare_layout(evidence_root, request.cwd)
     cache_key = verification_cache_key(request)
     index_path = root / "indexes" / f"{cache_key}.json"
@@ -474,6 +472,17 @@ def find_reusable_receipt(
     except (KeyError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
         _corruption_event(root, cache_key, "invalid_receipt_evidence")
         return None
+
+
+def find_reusable_receipt(
+    evidence_root: Path,
+    request: VerificationRequest,
+) -> VerificationReceipt | None:
+    """Return a strict successful reusable receipt, or ``None`` on any miss."""
+    _validate_request(request)
+    if not request.deterministic or request.mutable_input_policy == "always_execute":
+        return None
+    return validate_recorded_receipt(evidence_root, request)
 
 
 def _regular_source(path: Path) -> Path:

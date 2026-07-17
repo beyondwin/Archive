@@ -23,9 +23,14 @@ from .capabilities import (
     environment_fingerprint,
     typed_blockers,
 )
-from .compiler import CompiledIndexService
+from .compiler import (
+    CompiledIndexService,
+    default_operator_contract,
+    validate_compiled_index,
+)
 from .evidence import (
     EnvelopeRepair,
+    append_execution_event,
     execution_event_digest,
     has_current_unsafe_envelope_failure,
     ingest_plan_evidence,
@@ -60,6 +65,14 @@ from .result_validation import (
     strict_json_object,
 )
 from .state import PRE_EXECUTION_WORKTREE_BLOCKER, StateStore
+from .verification import (
+    VerificationRequest,
+    execute_verification,
+    find_reusable_receipt,
+    materialize_helper_descriptor,
+    validate_recorded_receipt,
+    verification_cache_key,
+)
 
 
 _RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
@@ -72,6 +85,15 @@ _COMPLETED_TASK = re.compile(
     r"^Task\s+([1-9][0-9]*):\s+complete\b",
     re.IGNORECASE | re.MULTILINE,
 )
+_VERIFY_PHASES = {
+    "task": {"task_red", "task_green"},
+    "affected": {"task_green"},
+    "branch_final": {"final_verification"},
+}
+_VERIFY_POLICIES = {
+    "forbidden": {"immutable"},
+    "declared_external_state": {"digest_complete", "always_execute"},
+}
 
 
 def _capability_ids(compiled_index: Mapping[str, object]) -> set[str]:
@@ -821,6 +843,117 @@ class SequentialRunner:
         plan["execution_ledger_event_digests"] = current_digests
         return snapshot
 
+    @staticmethod
+    def _ingest_verification_observations(store: StateStore) -> None:
+        """Validate helper receipts and record only parent-observed metadata."""
+        state = store.state
+        plan_index = state["current_plan_index"]
+        if not isinstance(plan_index, int) or not 0 <= plan_index < len(state["plans"]):
+            raise ValueError("current plan is unavailable for verification ingest")
+        plan = state["plans"][plan_index]
+        worktree = Path(state["worktree"]).resolve(strict=True)
+        ledger = worktree / ".superpowers" / "sdd" / "execution-ledger.jsonl"
+        events = validate_execution_ledger(ledger, expected_plan_id=plan["plan_id"])
+        prior = [
+            strict_json_object(line)
+            for line in store.events_path.read_bytes().splitlines()
+        ]
+        ingested_child_ids = {
+            event.get("child_event_id")
+            for event in prior
+            if isinstance(event, dict)
+            and event.get("action") == "verification.evidence_ingested"
+        }
+        evidence_root = worktree / ".superpowers" / "sdd" / "verification"
+        for event in events:
+            event_id = str(event["event_id"])
+            if (
+                event_id in ingested_child_ids
+                or event.get("category") != "verification"
+                or event.get("action") != "verified"
+                or event.get("result") != "pass"
+                or not event_id.startswith(("verification.reused:", "verification.executed:"))
+            ):
+                continue
+            references = event.get("evidence_refs")
+            if (
+                not isinstance(references, list)
+                or len(references) != 3
+                or not all(isinstance(reference, str) for reference in references)
+                or not references[0].startswith("verification/receipts/")
+            ):
+                raise ValueError("verification helper receipt reference is invalid")
+            relative = Path(references[0])
+            receipt_path = worktree / ".superpowers" / "sdd" / relative
+            try:
+                resolved_receipt = receipt_path.resolve(strict=True)
+                resolved_receipt.relative_to(evidence_root.resolve(strict=True))
+                metadata = receipt_path.lstat()
+            except (OSError, ValueError) as exc:
+                raise ValueError("verification helper receipt is unavailable") from exc
+            if (
+                receipt_path.is_symlink()
+                or not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_size > 1024 * 1024
+            ):
+                raise ValueError("verification helper receipt is unsafe")
+            document = json.loads(resolved_receipt.read_text(encoding="utf-8"))
+            request_document = document.get("request")
+            if not isinstance(request_document, dict):
+                raise ValueError("verification helper receipt request is invalid")
+            try:
+                request = VerificationRequest(
+                    run_id=request_document["run_id"],
+                    command_id=request_document["command_id"],
+                    argv=tuple(request_document["argv"]),
+                    cwd=Path(request_document["cwd"]),
+                    head=request_document["head"],
+                    environment_fingerprint=request_document["environment_fingerprint"],
+                    phase=request_document["phase"],
+                    input_digest=request_document["input_digest"],
+                    deterministic=request_document["deterministic"],
+                    mutable_input_policy=request_document["mutable_input_policy"],
+                    required_artifact_paths=tuple(
+                        request_document["required_artifact_paths"]
+                    ),
+                    timeout_seconds=request_document["timeout_seconds"],
+                )
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError("verification helper receipt request is invalid") from exc
+            receipt = validate_recorded_receipt(evidence_root, request)
+            argv_digest = hashlib.sha256(
+                json.dumps(
+                    list(request.argv), separators=(",", ":")
+                ).encode("utf-8")
+            ).hexdigest()
+            if (
+                receipt is None
+                or resolved_receipt.name != f"{receipt.receipt_id}.json"
+                or receipt.receipt_id != document.get("receipt_id")
+                or event.get("command_id") != request.command_id
+                or event.get("argv_digest") != argv_digest
+                or event.get("evidence_key") != receipt.cache_key
+                or references[1:] != [
+                    f"verification/{receipt.stdout_path}",
+                    f"verification/{receipt.stderr_path}",
+                ]
+            ):
+                raise ValueError("verification helper receipt binding is invalid")
+            decision = "reused" if event_id.startswith("verification.reused:") else "executed"
+            store.append_event(
+                "verification.evidence_ingested",
+                child_event_id=event_id,
+                plan_id=plan["plan_id"],
+                command_id=request.command_id,
+                phase=request.phase,
+                cache_key=receipt.cache_key,
+                receipt_id=receipt.receipt_id,
+                receipt_path=references[0],
+                decision=decision,
+                semantic_source="child_attested",
+            )
+            ingested_child_ids.add(event_id)
+
     def _apply_pending_decision(self, store: StateStore) -> str | None:
         """Idempotently apply one journaled decision and clear it atomically."""
         state = store.state
@@ -861,6 +994,7 @@ class SequentialRunner:
                     accepted_head=pending["head"],
                     expected_manifest_sha256=pending["evidence_manifest_sha256"],
                 )
+                self._ingest_verification_observations(store)
                 repaired_digest = self._repaired_result_digest(store, plan)
                 self._seal_result(
                     Path(plan["result_path"]),
@@ -1072,6 +1206,192 @@ class SequentialRunner:
             raise ValueError("run ID contains unsupported characters")
         store = StateStore.open(self.codex_home / "orchestrator" / run_id)
         return self._summary(store)
+
+    @staticmethod
+    def _verification_helper_descriptor_for_launch(
+        store: StateStore,
+    ) -> Path | None:
+        try:
+            return materialize_helper_descriptor(
+                store.root,
+                Path(__file__).resolve().parent.parent / "cpe.py",
+            )
+        except (OSError, ValueError) as exc:
+            store.append_event(
+                "verification.helper_fallback",
+                reason="verification_helper_fallback",
+                detail=(str(exc).strip() or type(exc).__name__)[:2000],
+            )
+            return None
+
+    def verify(
+        self,
+        *,
+        run_id: str,
+        command_id: str,
+        phase: str,
+        input_digest: str,
+        mutable_input_policy: str,
+        cwd: Path,
+        argv: Sequence[str],
+    ) -> dict[str, object]:
+        """Execute one source-declared verification or reuse its exact receipt."""
+        if not _RUN_ID.fullmatch(run_id):
+            raise ValueError("run ID contains unsupported characters")
+        if phase not in _VERIFY_PHASES or mutable_input_policy not in {
+            "immutable", "digest_complete", "always_execute",
+        }:
+            raise ValueError("verification request enum is invalid")
+        if not argv or any(not isinstance(item, str) or not item for item in argv):
+            raise ValueError("verification command argv must not be empty")
+
+        store = StateStore.open(self.codex_home / "orchestrator" / run_id)
+        state = store.state
+        if state["status"] not in {"ready", "running"}:
+            raise ValueError("verification requires an active run")
+        self._verify_worktree(store)
+        worktree = Path(state["worktree"]).resolve(strict=True)
+        declared_cwd = cwd.absolute()
+        resolved_cwd = declared_cwd.resolve(strict=True)
+        try:
+            relative_cwd = resolved_cwd.relative_to(worktree)
+        except ValueError as exc:
+            raise ValueError("verification cwd is outside the saved worktree") from exc
+        current = worktree
+        for component in relative_cwd.parts:
+            current /= component
+            if current.is_symlink():
+                raise ValueError("verification cwd contains a symlink")
+        descriptor = store.root / "tools" / "run-and-record.json"
+        if not descriptor.exists() or descriptor.is_symlink():
+            raise ValueError("verification helper descriptor is unavailable")
+        cpe_script = Path(__file__).resolve().parent.parent / "cpe.py"
+        materialize_helper_descriptor(store.root, cpe_script)
+
+        contract_path = Path(state["operator_contract_path"])
+        compiled_path = Path(state["compiled_run_index_path"])
+        contract = json.loads(contract_path.read_text(encoding="utf-8"))
+        if contract != default_operator_contract(state):
+            raise ValueError("operator contract no longer matches run state")
+        compiled = json.loads(compiled_path.read_text(encoding="utf-8"))
+        validate_compiled_index(compiled, state, contract)
+        plan_index = state["current_plan_index"]
+        plans = compiled["plans"]
+        if not isinstance(plan_index, int) or not 0 <= plan_index < len(plans):
+            raise ValueError("current compiled plan is unavailable")
+        compiled_plan = plans[plan_index]
+        candidates = [
+            item
+            for item in compiled_plan["verifications"]
+            if item["command_id"] == command_id
+            and item["argv"] == list(argv)
+            and bool(set(item["allowed_branch_phases"]) & _VERIFY_PHASES[phase])
+            and mutable_input_policy
+            in _VERIFY_POLICIES[item["mutable_input_policy"]]
+        ]
+        if len(candidates) != 1:
+            return {
+                "schema_version": 1,
+                "status": "uncached_command_required",
+                "reason": "command_not_exactly_source_declared",
+                "reused": False,
+                "receipt_path": None,
+            }
+        declaration = candidates[0]
+
+        observations = _observe_capabilities(
+            worktree, {"plans": [compiled_plan]},
+        )
+        current_environment = environment_fingerprint(observations)
+        saved_environment = state["plans"][plan_index]["environment_fingerprint"]
+        if saved_environment is not None and saved_environment != current_environment:
+            raise ValueError("verification environment no longer matches saved evidence")
+        head = _current_head(worktree)
+        request = VerificationRequest(
+            run_id=run_id,
+            command_id=command_id,
+            argv=tuple(argv),
+            cwd=resolved_cwd,
+            head=head,
+            environment_fingerprint=current_environment,
+            phase=phase,  # type: ignore[arg-type]
+            input_digest=input_digest,
+            deterministic=declaration["deterministic"],
+            mutable_input_policy=mutable_input_policy,  # type: ignore[arg-type]
+            required_artifact_paths=tuple(declaration["required_artifacts"]),
+            timeout_seconds=3600,
+        )
+        evidence_root = worktree / ".superpowers" / "sdd" / "verification"
+        corruption_log = evidence_root / "corruption-events.jsonl"
+        corruption_bytes = corruption_log.stat().st_size if corruption_log.exists() else 0
+        receipt = find_reusable_receipt(evidence_root, request)
+        fallback = (
+            receipt is None
+            and corruption_log.exists()
+            and corruption_log.stat().st_size > corruption_bytes
+        )
+        reused = receipt is not None
+        if receipt is None:
+            if fallback:
+                cache_key = verification_cache_key(request)
+                index = evidence_root / "indexes" / f"{cache_key}.json"
+                if index.exists():
+                    quarantine = evidence_root / "quarantine"
+                    quarantine.mkdir(mode=0o700, exist_ok=True)
+                    os.replace(
+                        index,
+                        quarantine / f"{cache_key}-{uuid.uuid4().hex}.json",
+                    )
+            receipt = execute_verification(evidence_root, request)
+
+        receipt_relative = (
+            Path(".superpowers")
+            / "sdd"
+            / "verification"
+            / "receipts"
+            / f"{receipt.receipt_id}.json"
+        )
+        receipt_document = json.loads(
+            (worktree / receipt_relative).read_text(encoding="utf-8")
+        )
+        argv_digest = hashlib.sha256(
+            json.dumps(list(argv), separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        decision = "reused" if reused else "executed"
+        receipt_reference = receipt_relative.relative_to(
+            Path(".superpowers") / "sdd"
+        ).as_posix()
+        append_execution_event(
+            worktree / ".superpowers" / "sdd" / "execution-ledger.jsonl",
+            {
+                "event_id": f"verification.{decision}:{uuid.uuid4().hex}",
+                "source": "child_attested",
+                "plan_id": state["plans"][plan_index]["plan_id"],
+                "category": "verification",
+                "action": "verified",
+                "result": "pass" if receipt.status == "passed" else "fail",
+                "evidence_refs": [
+                    receipt_reference,
+                    f"verification/{receipt.stdout_path}",
+                    f"verification/{receipt.stderr_path}",
+                ],
+                "command_id": command_id,
+                "argv_digest": argv_digest,
+                "evidence_key": receipt.cache_key,
+                "duration_ms": int(receipt_document.get("duration_ms", 0)),
+            },
+        )
+        response: dict[str, object] = {
+            "schema_version": 1,
+            "reused": reused,
+            "receipt_path": receipt_relative.as_posix(),
+            "receipt_id": receipt.receipt_id,
+            "status": receipt.status,
+            "cache_key": receipt.cache_key,
+        }
+        if fallback:
+            response["reason"] = "verification_helper_fallback"
+        return response
 
     @staticmethod
     def _validate_workspace(repository: Path) -> None:
@@ -1692,6 +2012,9 @@ class SequentialRunner:
                 )
                 plan_input = next(record for record in state["inputs"] if record["document_id"] == plan["plan_id"])
                 spec_paths = [Path(record["snapshot_path"]) for record in state["inputs"] if record["role"] == "spec"]
+                verification_helper_descriptor = (
+                    self._verification_helper_descriptor_for_launch(store)
+                )
                 request = StructuredLaunchRequest(
                     command=self.launcher._command(worktree, result_path),
                     cwd=worktree,
@@ -1707,6 +2030,7 @@ class SequentialRunner:
                         execution_ledger=(
                             worktree / ".superpowers" / "sdd" / "execution-ledger.jsonl"
                         ),
+                        verification_helper_descriptor=verification_helper_descriptor,
                     ),
                     result_path=result_path,
                     log_path=log_path,
