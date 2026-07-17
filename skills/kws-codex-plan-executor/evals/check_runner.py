@@ -378,6 +378,85 @@ print(json.dumps(result, sort_keys=True), flush=True)
         self.assertIn("Do not modify files", request.prompt)
         self.assertIn("Do not spawn subagents", request.prompt)
 
+    def test_compiler_repair_prompt_names_sealed_output_and_validation_code(self) -> None:
+        prompt_log = self.root / "compiler-prompts.jsonl"
+        store = self.create_compiler_store("compiler-repair-prompt")
+        launcher = self.runner(
+            CPE_FAKE_COMPILER_INVALID_FIRST="1",
+            CPE_FAKE_COMPILER_PROMPT_LOG=str(prompt_log),
+        ).launcher
+        path = CompiledIndexService(compile_once=launcher.compile_index).prepare(store)
+        self.assertTrue(path.is_file())
+        prompts = [json.loads(line) for line in prompt_log.read_text().splitlines()]
+        self.assertEqual(len(prompts), 2)
+        attempt_one = store.root / "results" / "compiler-attempt-1.json"
+        self.assertIn(f"PREVIOUS_OUTPUT_PATH: {attempt_one}", prompts[1])
+        self.assertIn(
+            "PREVIOUS_ERROR_CODE: compiled_index_format_is_invalid",
+            prompts[1],
+        )
+        self.assertEqual(attempt_one.stat().st_mode & 0o777, 0o400)
+
+    def test_compiler_preserves_and_seals_all_produced_failure_outputs(self) -> None:
+        cases = (
+            ("malformed", b"{", None, 0, "compiler launch failed"),
+            ("non-object", b"[]", None, 0, "compiler launch failed"),
+            (
+                "oversized",
+                b"x" * (MAX_COMPILER_OUTPUT_BYTES + 1),
+                None,
+                0,
+                "compiler output exceeds size limit",
+            ),
+            ("nonzero", b"{}", {}, 1, "compiler launch failed"),
+        )
+        for name, content, payload, returncode, message in cases:
+            with self.subTest(name=name):
+                store = self.create_compiler_store(f"compiler-evidence-{name}")
+                launcher = self.runner().launcher
+                result_path = store.root / "results" / "compiler-attempt-1.json"
+
+                def fake_launch(request, _lock_fd):
+                    request.result_path.write_bytes(content)
+                    request.result_path.chmod(0o600)
+                    return LaunchResult(
+                        payload=payload, returncode=returncode,
+                        timed_out=False, forced_cleanup=False,
+                        discarded_log_bytes=0,
+                        result_path=request.result_path,
+                        log_path=request.log_path, duration_ms=1,
+                        input_tokens=None, cached_input_tokens=None,
+                        output_tokens=None, reasoning_output_tokens=None,
+                        launcher_prompt_bytes=len(request.prompt.encode()),
+                    )
+
+                with mock.patch.object(
+                    launcher, "_launch_structured", side_effect=fake_launch
+                ):
+                    with self.assertRaisesRegex(ValueError, message):
+                        launcher.compile_index(
+                            store, default_operator_contract(store.state), False
+                        )
+                self.assertEqual(result_path.read_bytes(), content)
+                self.assertEqual(result_path.stat().st_mode & 0o777, 0o400)
+
+    def test_compiler_never_overwrites_existing_attempt_output(self) -> None:
+        store = self.create_compiler_store("compiler-existing-evidence")
+        launcher = self.runner().launcher
+        result_path = store.root / "results" / "compiler-attempt-1.json"
+        result_path.write_bytes(b"existing evidence")
+        result_path.chmod(0o600)
+        with mock.patch.object(launcher, "_launch_structured") as launch:
+            with self.assertRaisesRegex(
+                ValueError, "compiler attempt output already exists"
+            ):
+                launcher.compile_index(
+                    store, default_operator_contract(store.state), False
+                )
+        launch.assert_not_called()
+        self.assertEqual(result_path.read_bytes(), b"existing evidence")
+        self.assertEqual(result_path.stat().st_mode & 0o777, 0o400)
+
     def test_compiled_index_requires_exact_plan_source_spans(self) -> None:
         store = self.create_compiler_store("compiler-source")
         contract = default_operator_contract(store.state)

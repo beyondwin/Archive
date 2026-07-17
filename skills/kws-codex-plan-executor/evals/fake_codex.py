@@ -125,6 +125,17 @@ def write_progress(worktree: Path) -> None:
 
 
 def compile_index(arguments: list[str], prompt: str, result_path: Path) -> int:
+    prompt_log = os.environ.get("CPE_FAKE_COMPILER_PROMPT_LOG")
+    if prompt_log:
+        with Path(prompt_log).open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(prompt) + "\n")
+    if (
+        os.environ.get("CPE_FAKE_COMPILER_INVALID_FIRST") == "1"
+        and marker(prompt, "REPAIR_PREVIOUS_OUTPUT") == "no"
+    ):
+        result_path.parent.mkdir(parents=True, exist_ok=True)
+        result_path.write_text("{}", encoding="utf-8")
+        return 0
     contract_path = Path(marker(prompt, "OPERATOR_CONTRACT"))
     contract = json.loads(contract_path.read_text(encoding="utf-8"))
     snapshot_lines = prompt.split("SNAPSHOTS:\n", 1)[1].split(

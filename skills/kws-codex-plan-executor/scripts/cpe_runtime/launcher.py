@@ -6,6 +6,7 @@ import json
 import os
 import selectors
 import signal
+import stat
 import subprocess
 import threading
 import time
@@ -237,6 +238,16 @@ def _drain_registered(selector: selectors.BaseSelector) -> None:
         selector.unregister(key.fileobj)
 
 
+def _seal_regular_output(path: Path) -> os.stat_result | None:
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return None
+    if stat.S_ISREG(metadata.st_mode) and not path.is_symlink():
+        path.chmod(0o400)
+    return metadata
+
+
 @dataclass(frozen=True)
 class LaunchResult:
     payload: dict[str, object] | None
@@ -461,6 +472,20 @@ class CodexLauncher:
         previous_output = (
             root / "results" / "compiler-attempt-1.json" if repair else None
         )
+        previous_error_code = None
+        if repair:
+            error_path = root / "results" / "compiler-attempt-1.error-code"
+            metadata = error_path.lstat()
+            if (
+                error_path.is_symlink()
+                or not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_size > 128
+                or stat.S_IMODE(metadata.st_mode) != 0o400
+            ):
+                raise ValueError("compiler validation error evidence is invalid")
+            previous_error_code = error_path.read_text(encoding="ascii")
+            if not previous_error_code:
+                raise ValueError("compiler validation error evidence is invalid")
         request = self.compiler_request(
             run_root=root,
             snapshot_paths=[Path(item["snapshot_path"]) for item in state["inputs"]],
@@ -468,17 +493,26 @@ class CodexLauncher:
             result_path=result_path,
             repair=repair,
             previous_output_path=previous_output,
-            previous_error_code=None,
+            previous_error_code=previous_error_code,
         )
-        result = self._launch_structured(request, 0)
-        if result.returncode != 0 or result.payload is None:
+        if result_path.exists() or result_path.is_symlink():
+            _seal_regular_output(result_path)
+            raise ValueError("compiler attempt output already exists")
+        result: LaunchResult | None = None
+        try:
+            result = self._launch_structured(request, 0)
+        finally:
+            _seal_regular_output(result_path)
+        if result is None:
             raise ValueError("compiler launch failed")
         try:
-            if result_path.stat().st_size > 1_048_576:
-                raise ValueError("compiler output exceeds size limit")
-            result_path.chmod(0o400)
+            result_size = result_path.lstat().st_size
         except OSError as exc:
             raise ValueError("compiler output is unavailable") from exc
+        if result_size > 1_048_576:
+            raise ValueError("compiler output exceeds size limit")
+        if result.returncode != 0 or result.payload is None:
+            raise ValueError("compiler launch failed")
         return result.payload
 
     def _launch_structured(
