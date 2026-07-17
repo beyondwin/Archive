@@ -29,6 +29,7 @@ from cpe_runtime.launcher import (
 )
 from cpe_runtime.compiler import (
     CompiledIndexService,
+    MAX_COMPILER_OUTPUT_BYTES,
     compiler_cache_key,
     default_operator_contract,
     validate_compiled_index,
@@ -380,6 +381,136 @@ print(json.dumps(result, sort_keys=True), flush=True)
         self.assertEqual(service.compile_calls, 1)
         self.assertEqual(service.prepare(store), path)
         self.assertEqual(service.compile_calls, 1)
+
+    def test_compiled_index_rejects_invalid_authorization_shapes(self) -> None:
+        store = self.create_compiler_store("compiler-shapes")
+        contract = default_operator_contract(store.state)
+        valid = self.compiler_payload(store)
+        cases = []
+        task_extra = json.loads(json.dumps(valid))
+        task_extra["plans"][0]["tasks"][0]["shell"] = "make test"
+        cases.append(task_extra)
+        task_missing_id = json.loads(json.dumps(valid))
+        del task_missing_id["plans"][0]["tasks"][0]["task_id"]
+        cases.append(task_missing_id)
+        task = valid["plans"][0]["tasks"][0]
+        verification = {
+            "command_id": "verify-01", "argv": ["make", "test"],
+            "allowed_branch_phases": ["task_green"], "deterministic": True,
+            "mutable_input_policy": "forbidden", "required_artifacts": [],
+            "source_line_start": task["source_line_start"],
+            "source_line_end": task["source_line_end"],
+            "source_text_sha256": task["source_text_sha256"],
+        }
+        for field, invalid in (
+            ("argv", "make test"),
+            ("allowed_branch_phases", ["deployment"]),
+            ("deterministic", 1),
+            ("mutable_input_policy", "unrestricted"),
+            ("required_artifacts", ["/tmp/result.json"]),
+        ):
+            invalid_verification = json.loads(json.dumps(valid))
+            candidate = dict(verification, **{field: invalid})
+            invalid_verification["plans"][0]["verifications"] = [candidate]
+            cases.append(invalid_verification)
+        verification_extra = json.loads(json.dumps(valid))
+        verification_extra["plans"][0]["verifications"] = [
+            dict(verification, shell=True)
+        ]
+        cases.append(verification_extra)
+        invalid_capability = json.loads(json.dumps(valid))
+        invalid_capability["plans"][0]["capabilities"] = [{
+            "capability_id": "browser", "task_ids": ["missing-task"],
+        }]
+        cases.append(invalid_capability)
+        capability_extra = json.loads(json.dumps(valid))
+        capability_extra["plans"][0]["capabilities"] = [{
+            "capability_id": "browser", "task_ids": ["task-01"], "grant": True,
+        }]
+        cases.append(capability_extra)
+        invalid_exception = json.loads(json.dumps(valid))
+        invalid_exception["plans"][0]["coordination_exceptions"] = [{
+            "task_id": "missing-task", "role": "implementer", "fork_turns": "all",
+            "reason_code": "unbounded-reason",
+            "source_line_start": task["source_line_start"],
+            "source_line_end": task["source_line_end"],
+            "source_text_sha256": task["source_text_sha256"],
+        }]
+        cases.append(invalid_exception)
+        exception_extra = json.loads(json.dumps(valid))
+        exception_extra["plans"][0]["coordination_exceptions"] = [{
+            "task_id": "task-01", "role": "x" * 65, "fork_turns": "all",
+            "reason_code": "source_requires_shared_context", "authority": "extra",
+            "source_line_start": task["source_line_start"],
+            "source_line_end": task["source_line_end"],
+            "source_text_sha256": task["source_text_sha256"],
+        }]
+        cases.append(exception_extra)
+        for payload in cases:
+            with self.subTest(payload=payload):
+                with self.assertRaisesRegex(ValueError, "compiled index schema"):
+                    validate_compiled_index(payload, store.state, contract)
+
+    def test_compiled_index_accepts_source_backed_authorization_shapes(self) -> None:
+        store = self.create_compiler_store("compiler-valid-shapes")
+        contract = default_operator_contract(store.state)
+        payload = self.compiler_payload(store)
+        task = payload["plans"][0]["tasks"][0]
+        span = {
+            "source_line_start": task["source_line_start"],
+            "source_line_end": task["source_line_end"],
+            "source_text_sha256": task["source_text_sha256"],
+        }
+        payload["plans"][0]["verifications"] = [{
+            "command_id": "verify-01", "argv": ["python3", "-m", "unittest"],
+            "allowed_branch_phases": ["task_green"], "deterministic": True,
+            "mutable_input_policy": "forbidden",
+            "required_artifacts": ["reports/result.json"], **span,
+        }]
+        payload["plans"][0]["capabilities"] = [{
+            "capability_id": "browser", "task_ids": ["task-01"],
+        }]
+        payload["plans"][0]["coordination_exceptions"] = [{
+            "task_id": "task-01", "role": "implementer", "fork_turns": "all",
+            "reason_code": "source_requires_shared_context", **span,
+        }]
+        self.assertIs(validate_compiled_index(payload, store.state, contract), payload)
+
+    def test_cached_compiled_index_revalidates_nested_contract(self) -> None:
+        store = self.create_compiler_store("compiler-cache-shape")
+        payload = self.compiler_payload(store)
+        payload["plans"][0]["tasks"][0]["unexpected"] = True
+        target = store.root / "compiled-run-index.json"
+        target.write_text(json.dumps(payload), encoding="utf-8")
+        target.chmod(0o600)
+        service = CompiledIndexService(compile_once=lambda *_args: payload)
+        with self.assertRaisesRegex(ValueError, "compiled index schema"):
+            service.prepare(store)
+        self.assertEqual(service.compile_calls, 0)
+
+    def test_cached_compiled_index_requires_bounded_private_regular_file(self) -> None:
+        stores = {
+            name: self.create_compiler_store(f"compiler-cache-{name}")
+            for name in ("symlink", "mode", "oversized")
+        }
+        symlink_target = self.root / "external-index.json"
+        symlink_target.write_text("not-json", encoding="utf-8")
+        (stores["symlink"].root / "compiled-run-index.json").symlink_to(symlink_target)
+        mode_target = stores["mode"].root / "compiled-run-index.json"
+        mode_target.write_text(json.dumps(self.compiler_payload(stores["mode"])), encoding="utf-8")
+        mode_target.chmod(0o644)
+        oversized_target = stores["oversized"].root / "compiled-run-index.json"
+        oversized_target.write_bytes(b" " * (MAX_COMPILER_OUTPUT_BYTES + 1))
+        oversized_target.chmod(0o600)
+        for name, message in (
+            ("symlink", "symlink"), ("mode", "private mode"),
+            ("oversized", "size limit"),
+        ):
+            with self.subTest(name=name):
+                service = CompiledIndexService(compile_once=lambda *_args: {})
+                with self.assertRaisesRegex(ValueError, message):
+                    service.prepare(stores[name])
+                self.assertEqual(service.compile_calls, 0)
 
     def test_format_two_state_has_preparation_and_budget_fields(self) -> None:
         source_commit = git(self.repo, "rev-parse", "HEAD")

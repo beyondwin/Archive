@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import re
+import stat
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -16,6 +19,13 @@ SAFETY_UNKNOWN_PREFIXES = (
     "workspace:", "repository:", "source_commit:", "plan_order:", "remote_policy:",
 )
 CompilerCallback = Callable[[StateStore, dict[str, object], bool], dict[str, object]]
+_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_BRANCH_PHASES = {"task_red", "task_green", "task_review", "final_verification"}
+_MUTABLE_INPUT_POLICIES = {"forbidden", "declared_external_state"}
+_COORDINATION_REASONS = {
+    "source_requires_shared_context", "source_requires_cross_task_coordination",
+    "source_requires_integrated_review",
+}
 
 
 def _sha256(payload: bytes) -> str:
@@ -62,6 +72,134 @@ def _validate_span(item: dict[str, Any], lines: list[str], label: str) -> None:
         raise ValueError(f"compiled {label} span digest is invalid")
 
 
+def _schema_error() -> ValueError:
+    return ValueError("compiled index schema is invalid")
+
+
+def _identifier(value: object) -> bool:
+    return isinstance(value, str) and _IDENTIFIER.fullmatch(value) is not None
+
+
+def _unique_strings(values: object) -> bool:
+    return (isinstance(values, list) and all(isinstance(value, str) for value in values)
+            and len(values) == len(set(values)))
+
+
+def _relative_artifact(value: object) -> bool:
+    if not isinstance(value, str) or not value or len(value) > 512 or value.startswith("/"):
+        return False
+    return ".." not in value.split("/")
+
+
+def _validate_nested_contract(compiled: dict[str, Any]) -> set[str]:
+    task_fields = {
+        "task_id", "order", "source_line_start", "source_line_end",
+        "source_text_sha256",
+    }
+    task_ids: list[str] = []
+    for order, task in enumerate(compiled["tasks"]):
+        if (not isinstance(task, dict) or set(task) != task_fields
+                or not _identifier(task.get("task_id"))
+                or type(task.get("order")) is not int or task["order"] != order):
+            raise _schema_error()
+        task_ids.append(task["task_id"])
+    if len(task_ids) != len(set(task_ids)):
+        raise _schema_error()
+    known_tasks = set(task_ids)
+
+    verification_fields = {
+        "command_id", "argv", "allowed_branch_phases", "deterministic",
+        "mutable_input_policy", "required_artifacts", "source_line_start",
+        "source_line_end", "source_text_sha256",
+    }
+    command_ids: list[str] = []
+    for item in compiled["verifications"]:
+        if not isinstance(item, dict) or set(item) != verification_fields:
+            raise _schema_error()
+        argv, phases, artifacts = (
+            item["argv"], item["allowed_branch_phases"], item["required_artifacts"]
+        )
+        if (not _identifier(item["command_id"])
+                or not isinstance(argv, list) or not 1 <= len(argv) <= 128
+                or not all(isinstance(arg, str) and len(arg) <= 4096 for arg in argv)
+                or not _unique_strings(phases) or not phases
+                or not set(phases) <= _BRANCH_PHASES
+                or type(item["deterministic"]) is not bool
+                or item["mutable_input_policy"] not in _MUTABLE_INPUT_POLICIES
+                or not _unique_strings(artifacts) or len(artifacts) > 64
+                or not all(_relative_artifact(path) for path in artifacts)):
+            raise _schema_error()
+        command_ids.append(item["command_id"])
+    if len(command_ids) != len(set(command_ids)):
+        raise _schema_error()
+
+    capability_fields = {"capability_id", "task_ids"}
+    capability_ids: list[str] = []
+    for item in compiled["capabilities"]:
+        if not isinstance(item, dict) or set(item) != capability_fields:
+            raise _schema_error()
+        references = item["task_ids"]
+        if (not _identifier(item["capability_id"]) or not _unique_strings(references)
+                or not references or not all(_identifier(value) for value in references)
+                or not set(references) <= known_tasks):
+            raise _schema_error()
+        capability_ids.append(item["capability_id"])
+    if len(capability_ids) != len(set(capability_ids)):
+        raise _schema_error()
+
+    exception_fields = {
+        "task_id", "role", "fork_turns", "reason_code", "source_line_start",
+        "source_line_end", "source_text_sha256",
+    }
+    for item in compiled["coordination_exceptions"]:
+        if (not isinstance(item, dict) or set(item) != exception_fields
+                or item["task_id"] not in known_tasks
+                or not isinstance(item["role"], str) or not 1 <= len(item["role"]) <= 64
+                or item["fork_turns"] != "all"
+                or item["reason_code"] not in _COORDINATION_REASONS):
+            raise _schema_error()
+    return known_tasks
+
+
+def _read_private_cache(path: Path) -> bytes:
+    if path.is_symlink():
+        raise ValueError("compiled index cache must not be a symlink")
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        raise
+    if not stat.S_ISREG(metadata.st_mode):
+        raise ValueError("compiled index cache must be a regular file")
+    if stat.S_IMODE(metadata.st_mode) & 0o077:
+        raise ValueError("compiled index cache must have private mode")
+    if metadata.st_size > MAX_COMPILER_OUTPUT_BYTES:
+        raise ValueError("compiled index cache exceeds size limit")
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        opened = os.fstat(descriptor)
+        if (not stat.S_ISREG(opened.st_mode) or opened.st_ino != metadata.st_ino
+                or opened.st_dev != metadata.st_dev):
+            raise ValueError("compiled index cache changed during validation")
+        if stat.S_IMODE(opened.st_mode) & 0o077:
+            raise ValueError("compiled index cache must have private mode")
+        if opened.st_size > MAX_COMPILER_OUTPUT_BYTES:
+            raise ValueError("compiled index cache exceeds size limit")
+        chunks: list[bytes] = []
+        remaining = MAX_COMPILER_OUTPUT_BYTES + 1
+        while remaining:
+            chunk = os.read(descriptor, min(65_536, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        payload = b"".join(chunks)
+        if len(payload) > MAX_COMPILER_OUTPUT_BYTES:
+            raise ValueError("compiled index cache exceeds size limit")
+        return payload
+    finally:
+        os.close(descriptor)
+
+
 def validate_compiled_index(payload: dict[str, Any], state: dict[str, Any], contract: dict[str, object]) -> dict[str, object]:
     if not isinstance(payload, dict) or payload.get("format_version") != 2:
         raise ValueError("compiled index format is invalid")
@@ -83,40 +221,45 @@ def validate_compiled_index(payload: dict[str, Any], state: dict[str, Any], cont
         }
         if set(compiled) != required_plan_fields:
             raise ValueError("compiled plan fields are invalid")
+        for field in (
+            "tasks", "verifications", "capabilities", "coordination_exceptions",
+            "execution_advisories", "unknowns",
+        ):
+            if not isinstance(compiled[field], list):
+                raise _schema_error()
+        _validate_nested_contract(compiled)
         if compiled.get("source_sha256") != record["sha256"]:
             raise ValueError("compiled plan source digest is invalid")
         lines = _source_lines(record)
-        if compiled.get("byte_length") != record["byte_length"] or compiled.get("line_count") != len(lines):
+        if (type(compiled.get("byte_length")) is not int
+                or type(compiled.get("line_count")) is not int
+                or compiled["byte_length"] != record["byte_length"]
+                or compiled["line_count"] != len(lines)):
             raise ValueError("compiled plan source metadata is invalid")
         tasks = compiled["tasks"]
-        if not isinstance(tasks, list):
-            raise ValueError("compiled tasks are invalid")
         for order, task in enumerate(tasks):
             if not isinstance(task, dict) or task.get("order") != order:
                 raise ValueError("compiled task order is invalid")
             _validate_span(task, lines, "source")
         verifications = compiled["verifications"]
-        if not isinstance(verifications, list):
-            raise ValueError("compiled verifications are invalid")
         command_ids = [item.get("command_id") for item in verifications if isinstance(item, dict)]
         if len(command_ids) != len(verifications) or len(command_ids) != len(set(command_ids)):
             raise ValueError("compiled verification command IDs are invalid")
         for verification in verifications:
             _validate_span(verification, lines, "verification source")
         exceptions = compiled["coordination_exceptions"]
-        if not isinstance(exceptions, list):
-            raise ValueError("compiled coordination exceptions are invalid")
         for exception in exceptions:
             if not isinstance(exception, dict) or exception.get("fork_turns") != "all":
                 raise ValueError("compiled coordination exception is invalid")
             _validate_span(exception, lines, "coordination exception source")
         unknowns = compiled.get("unknowns", [])
-        if not isinstance(unknowns, list) or not all(isinstance(item, str) for item in unknowns):
+        if (not isinstance(unknowns, list)
+                or not all(isinstance(item, str) and 1 <= len(item) <= 512 for item in unknowns)):
             raise ValueError("compiled unknowns are invalid")
         if any(item.startswith(SAFETY_UNKNOWN_PREFIXES) for item in unknowns):
             raise ValueError("compiled safety field is ambiguous")
         advisories = compiled["execution_advisories"]
-        if not isinstance(advisories, list) or any(item not in {
+        if not _unique_strings(advisories) or any(item not in {
             "split_or_checkpoint_required", "handoff_to_waygent",
         } for item in advisories):
             raise ValueError("compiled execution advisories are invalid")
@@ -136,13 +279,14 @@ class CompiledIndexService:
         store.state["operator_contract_path"] = str(contract_path.resolve())
         store.state["operator_contract_sha256"] = _sha256(contract_bytes)
         target = store.root / "compiled-run-index.json"
-        if target.is_file():
-            cached = json.loads(target.read_text(encoding="utf-8"))
+        if target.exists() or target.is_symlink():
+            cache_bytes = _read_private_cache(target)
+            cached = json.loads(cache_bytes)
             validate_compiled_index(cached, store.state, contract)
-            store.state["compiled_run_index_path"] = str(target.resolve())
-            store.state["compiled_run_index_sha256"] = _sha256(target.read_bytes())
+            store.state["compiled_run_index_path"] = str(target)
+            store.state["compiled_run_index_sha256"] = _sha256(cache_bytes)
             store.save()
-            return target.resolve()
+            return target
         input_bytes = sum(record["byte_length"] for record in store.state["inputs"]) + len(contract_bytes)
         if input_bytes > MAX_COMPILER_INPUT_BYTES:
             raise ValueError("compiler input exceeds size limit")
