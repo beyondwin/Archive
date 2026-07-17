@@ -4,17 +4,38 @@ from __future__ import annotations
 
 import fcntl
 import json
+import math
 import os
 import re
+import socket
 import stat
 import subprocess
+import time
 import uuid
+from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
+from .capabilities import (
+    CapabilityObservation,
+    environment_fingerprint,
+    typed_blockers,
+)
 from .compiler import CompiledIndexService
-from .evidence import ingest_plan_evidence
-from .launcher import CodexLauncher, LaunchResult
+from .evidence import ingest_plan_evidence, read_progress_snapshot
+from .launcher import (
+    CodexLauncher,
+    LaunchResult,
+    StructuredLaunchRequest,
+)
+from .progress import (
+    CheckpointBudget,
+    CheckpointDecision,
+    ProgressSnapshot,
+    decide_checkpoint,
+    progress_fingerprint,
+)
 from .reporting import (
     OptimizationMarkdownError,
     build_optimization_report,
@@ -48,6 +69,171 @@ _COMPLETED_TASK = re.compile(
     r"^Task\s+([1-9][0-9]*):\s+complete\b",
     re.IGNORECASE | re.MULTILINE,
 )
+
+
+def _capability_ids(compiled_index: Mapping[str, object]) -> set[str]:
+    identifiers: set[str] = set()
+    plans = compiled_index.get("plans")
+    if not isinstance(plans, list):
+        return identifiers
+    for plan in plans:
+        if not isinstance(plan, Mapping):
+            continue
+        capabilities = plan.get("capabilities")
+        if not isinstance(capabilities, list):
+            continue
+        for capability in capabilities:
+            if isinstance(capability, Mapping):
+                identifier = capability.get("capability_id")
+                if isinstance(identifier, str):
+                    identifiers.add(identifier)
+    return identifiers
+
+
+def _observe_capabilities(
+    workspace: Path,
+    compiled_index: Mapping[str, object],
+) -> list[CapabilityObservation]:
+    """Run only CPE-required probes plus explicitly declared loopback binding."""
+    observations: list[CapabilityObservation] = []
+    try:
+        descriptor = os.open(
+            workspace,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
+        )
+        os.close(descriptor)
+        repository_outcome, repository_reason = "available", "readable"
+    except OSError:
+        repository_outcome, repository_reason = "unavailable", "not_readable"
+    observations.append(CapabilityObservation(
+        "repository_read", "workspace", repository_outcome, repository_reason,
+        "parent_observed", {},
+    ))
+
+    probe = workspace / f".cpe-write-probe-{uuid.uuid4().hex}"
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(
+            probe,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        os.fsync(descriptor)
+        os.close(descriptor)
+        descriptor = None
+        probe.unlink()
+        write_outcome, write_reason = "available", "writable"
+    except OSError:
+        if descriptor is not None:
+            os.close(descriptor)
+        try:
+            probe.unlink()
+        except OSError:
+            pass
+        write_outcome, write_reason = "unavailable", "not_writable"
+    observations.append(CapabilityObservation(
+        "workspace_write", "workspace", write_outcome, write_reason,
+        "parent_observed", {},
+    ))
+
+    try:
+        completed = subprocess.run(
+            ["git", "--version"],
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        git_available = completed.returncode == 0
+    except OSError:
+        git_available = False
+    observations.append(CapabilityObservation(
+        "git", "workspace", "available" if git_available else "unavailable",
+        "available" if git_available else "command_unavailable",
+        "parent_observed", {},
+    ))
+
+    if "loopback_bind" in _capability_ids(compiled_index):
+        loopback = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            loopback.bind(("127.0.0.1", 0))
+            loopback_outcome, loopback_reason = "available", "bound"
+        except OSError:
+            loopback_outcome, loopback_reason = "unavailable", "permission_denied"
+        finally:
+            loopback.close()
+        observations.append(CapabilityObservation(
+            "loopback_bind", "workspace", loopback_outcome, loopback_reason,
+            "parent_observed", {"host": "127.0.0.1"},
+        ))
+    return observations
+
+
+def _current_head(worktree: Path) -> str:
+    return _git(worktree, "rev-parse", "HEAD")
+
+
+def _resume_preflight(
+    state: Mapping[str, object],
+    observations: Sequence[CapabilityObservation],
+) -> str:
+    plans = state.get("plans")
+    index = state.get("current_plan_index")
+    if not isinstance(plans, list) or not isinstance(index, int) or index >= len(plans):
+        return "launch"
+    plan = plans[index]
+    if not isinstance(plan, Mapping):
+        return "launch"
+    previous = plan.get("environment_fingerprint")
+    blockers = typed_blockers(observations)
+    if not blockers or not isinstance(previous, str):
+        return "environment_changed" if isinstance(previous, str) else "launch"
+    current = environment_fingerprint(observations)
+    return (
+        "unchanged_environment_blocker"
+        if current == previous
+        else "environment_changed"
+    )
+
+
+def _record_checkpoint(
+    state: dict[str, object],
+    decision: CheckpointDecision,
+) -> None:
+    plans = state["plans"]
+    index = state["current_plan_index"]
+    assert isinstance(plans, list) and isinstance(index, int)
+    plan = plans[index]
+    assert isinstance(plan, dict)
+    changed = plan["progress_fingerprint"] != decision.progress_fingerprint
+    plan["checkpoint_count"] += 1
+    if changed:
+        plan["progress_checkpoint_count"] += 1
+        plan["consecutive_no_progress_slices"] = 0
+    else:
+        plan["consecutive_no_progress_slices"] += 1
+    plan["progress_fingerprint"] = decision.progress_fingerprint
+
+
+def _launch_plan_slice(
+    *,
+    runner: "SequentialRunner",
+    plan_state: Mapping[str, object],
+    request: StructuredLaunchRequest,
+) -> LaunchResult:
+    budget = plan_state.get("budget")
+    if not isinstance(budget, Mapping):
+        raise ValueError("plan budget is unavailable")
+    timeout = budget.get("controller_slice_timeout_seconds")
+    if not isinstance(timeout, int) or isinstance(timeout, bool) or timeout <= 0:
+        raise ValueError("controller slice timeout is invalid")
+    lock_fd = getattr(runner, "_active_lock_fd", None)
+    if not isinstance(lock_fd, int):
+        raise RuntimeError("run lock is unavailable for controller launch")
+    return runner.launcher._launch_structured(
+        replace(request, timeout_seconds=float(timeout)),
+        lock_fd,
+    )
 
 
 def _git(repository: Path, *arguments: str, check: bool = True) -> str:
@@ -382,6 +568,46 @@ class SequentialRunner:
                     if retry_failed:
                         raise ValueError("retry-failed requires a failed run")
                     return self._summary(store)
+                if store.state["current_plan_index"] < len(store.state["plans"]):
+                    plan = store.state["plans"][store.state["current_plan_index"]]
+                    if plan["environment_fingerprint"] is not None:
+                        compiled = self._compiled_plan(store)
+                        observations = _observe_capabilities(
+                            Path(store.state["worktree"]), compiled,
+                        )
+                        preflight = _resume_preflight(store.state, observations)
+                        if preflight == "unchanged_environment_blocker":
+                            plan["status"] = "blocked"
+                            store.state["status"] = "blocked"
+                            store.save()
+                            store.append_event(
+                                "run.resumed", retry_failed=retry_failed,
+                            )
+                            store.append_event(
+                                "resume.stopped_unchanged_blocker",
+                                plan_id=plan["plan_id"],
+                                reason=preflight,
+                                environment_fingerprint=environment_fingerprint(
+                                    observations
+                                ),
+                            )
+                            return self._report_and_summary(store)
+                        current_environment = environment_fingerprint(observations)
+                        if typed_blockers(observations):
+                            plan["environment_fingerprint"] = current_environment
+                            plan["capability_probe_ids"] = sorted({
+                                observation.capability for observation in observations
+                            })
+                        else:
+                            plan["environment_fingerprint"] = None
+                            plan["capability_probe_ids"] = []
+                        store.save()
+                        store.append_event(
+                            "resume.environment_changed",
+                            plan_id=plan["plan_id"],
+                            reason=preflight,
+                            environment_fingerprint=current_environment,
+                        )
                 if retry_failed != (status == "failed"):
                     if status == "failed":
                         raise ValueError("failed run requires --retry-failed")
@@ -398,6 +624,76 @@ class SequentialRunner:
                     return self._record_interrupted(store)
         except RunBusyError:
             return self._busy_summary(store)
+
+    @staticmethod
+    def _compiled_plan(store: StateStore) -> dict[str, object]:
+        path = Path(store.state["compiled_run_index_path"])
+        compiled = json.loads(path.read_text(encoding="utf-8"))
+        plans = compiled.get("plans")
+        index = store.state["current_plan_index"]
+        if not isinstance(plans, list) or not 0 <= index < len(plans):
+            raise ValueError("compiled plan is unavailable")
+        return {"plans": [plans[index]]}
+
+    @staticmethod
+    def _progress_snapshot(
+        store: StateStore,
+        *,
+        plan_index: int,
+        head: str,
+    ) -> ProgressSnapshot:
+        ledger = (
+            Path(store.state["worktree"])
+            / ".superpowers"
+            / "sdd"
+            / "execution-ledger.jsonl"
+        )
+        if not ledger.exists():
+            return ProgressSnapshot(head, (), None, (), ())
+        return read_progress_snapshot(
+            store.root, plan_index=plan_index, head=head,
+        )
+
+    @staticmethod
+    def _checkpoint_budget(plan: Mapping[str, object]) -> CheckpointBudget:
+        budget = plan["budget"]
+        assert isinstance(budget, Mapping)
+        return CheckpointBudget(
+            max_progress_checkpoints=int(budget["max_progress_checkpoints"]),
+            max_controller_launches=int(budget["max_controller_launches"]),
+            plan_wall_seconds=int(budget["plan_wall_budget_seconds"]),
+        )
+
+    @staticmethod
+    def _controller_stop_result(
+        store: StateStore,
+        plan: dict[str, Any],
+        decision: CheckpointDecision,
+        head: str,
+    ) -> Path:
+        target = (
+            store.root
+            / "results"
+            / f"{plan['plan_id']}-controller-stop-{plan['checkpoint_count']}.json"
+        )
+        payload = {
+            "plan_id": plan["plan_id"],
+            "status": "blocked",
+            "head_commit": head,
+            "verification": [],
+            "summary": f"controller stopped recovery: {decision.reason_code}",
+            "blocker": {
+                "kind": "operator_owned",
+                "code": decision.reason_code,
+                "resource": plan["plan_id"],
+                "operation": "continue_controller",
+                "errno": None,
+                "retry_condition": "durable progress or operator budget changes",
+                "fingerprint": decision.progress_fingerprint,
+            },
+        }
+        _write_private_json(target, payload)
+        return target.resolve()
 
     def inspect(self, *, run_id: str) -> dict[str, Any]:
         if not _RUN_ID.fullmatch(run_id):
@@ -663,9 +959,16 @@ class SequentialRunner:
             explicit_retry = False
             while True:
                 worktree = Path(state["worktree"])
-                current_head = _git(worktree, "rev-parse", "HEAD")
+                current_head = _current_head(worktree)
                 if plan["starting_commit"] is None:
                     plan["starting_commit"] = current_head
+                previous_snapshot = (
+                    self._progress_snapshot(
+                        store, plan_index=index, head=current_head,
+                    )
+                    if plan["progress_fingerprint"] is not None
+                    else ProgressSnapshot(current_head, (), None, (), ())
+                )
                 previous_attempt = plan["attempt_count"]
                 prior_result = (
                     Path(plan["result_path"])
@@ -715,19 +1018,56 @@ class SequentialRunner:
                     os.close(result_directory)
                 plan["result_path"] = str(result_path.resolve())
                 plan["status"] = "running"
+                if plan["plan_started_at"] is None:
+                    plan["plan_started_at"] = datetime.now(timezone.utc).isoformat()
+                if plan["progress_fingerprint"] is None:
+                    plan["progress_fingerprint"] = progress_fingerprint(
+                        previous_snapshot
+                    )
+                plan["controller_launch_count"] += 1
+                plan["last_known_head"] = current_head
                 state["status"] = "running"
                 store.save()
-                store.append_event("plan.attempt_started", plan_id=plan["plan_id"], attempt=plan["attempt_count"], head=current_head)
+                store.append_event(
+                    "plan.attempt_started",
+                    plan_id=plan["plan_id"],
+                    attempt=plan["attempt_count"],
+                    controller_launch_count=plan["controller_launch_count"],
+                    head=current_head,
+                    timeout_seconds=plan["budget"]["controller_slice_timeout_seconds"],
+                )
                 plan_input = next(record for record in state["inputs"] if record["document_id"] == plan["plan_id"])
                 spec_paths = [Path(record["snapshot_path"]) for record in state["inputs"] if record["role"] == "spec"]
-                outcome = self.launcher.launch(
-                    worktree=worktree, plan_id=plan["plan_id"], plan_path=Path(plan_input["snapshot_path"]),
-                    spec_paths=spec_paths, starting_commit=plan["starting_commit"], current_commit=current_head,
-                    result_path=result_path, log_path=log_path, lock_fd=lock_fd,
-                    recovery_path=recovery_path,
-                    compiled_run_index=Path(state["compiled_run_index_path"]),
-                    execution_ledger=worktree / ".superpowers" / "sdd" / "execution-ledger.jsonl",
+                request = StructuredLaunchRequest(
+                    command=self.launcher._command(worktree, result_path),
+                    cwd=worktree,
+                    prompt=self.launcher._prompt(
+                        worktree=worktree,
+                        plan_id=plan["plan_id"],
+                        plan_path=Path(plan_input["snapshot_path"]),
+                        spec_paths=spec_paths,
+                        starting_commit=plan["starting_commit"],
+                        current_commit=current_head,
+                        recovery_path=recovery_path,
+                        compiled_run_index=Path(state["compiled_run_index_path"]),
+                        execution_ledger=(
+                            worktree / ".superpowers" / "sdd" / "execution-ledger.jsonl"
+                        ),
+                    ),
+                    result_path=result_path,
+                    log_path=log_path,
+                    timeout_seconds=self.launcher.timeout_seconds,
                 )
+                self._active_lock_fd = lock_fd
+                try:
+                    outcome = _launch_plan_slice(
+                        runner=self,
+                        plan_state=plan,
+                        request=request,
+                    )
+                finally:
+                    del self._active_lock_fd
+                parent_active_started = time.monotonic()
                 store.append_event(
                     "plan.attempt_finished",
                     plan_id=plan["plan_id"],
@@ -748,17 +1088,67 @@ class SequentialRunner:
                     if outcome.payload is not None
                     else str(self._synthetic_result(store, plan, outcome))
                 )
+                observed_head = _current_head(worktree)
+                current_snapshot = self._progress_snapshot(
+                    store, plan_index=index, head=observed_head,
+                )
+                plan["plan_elapsed_seconds"] += math.ceil(
+                    outcome.duration_ms / 1000
+                )
+                plan["plan_elapsed_seconds"] += math.ceil(
+                    time.monotonic() - parent_active_started
+                )
+                payload_status = (
+                    outcome.payload.get("status")
+                    if isinstance(outcome.payload, dict)
+                    else None
+                )
+                decision = decide_checkpoint(
+                    previous=previous_snapshot,
+                    current=current_snapshot,
+                    timed_out=outcome.timed_out,
+                    consecutive_no_progress=plan["consecutive_no_progress_slices"],
+                    progress_checkpoints=plan["progress_checkpoint_count"],
+                    controller_launches=plan["controller_launch_count"],
+                    plan_elapsed_seconds=plan["plan_elapsed_seconds"],
+                    budget=self._checkpoint_budget(plan),
+                    child_completed=payload_status == "completed",
+                )
+                _record_checkpoint(state, decision)
+                plan["last_known_head"] = observed_head
+                store.save()
+                store.append_event(
+                    "plan.checkpoint_decided",
+                    plan_id=plan["plan_id"],
+                    attempt=plan["attempt_count"],
+                    decision=decision.action,
+                    reason=decision.reason_code,
+                    progress_fingerprint=decision.progress_fingerprint,
+                    timed_out=outcome.timed_out,
+                )
                 if outcome.timed_out:
-                    observed_head = _git(worktree, "rev-parse", "HEAD")
-                    plan["status"] = "checkpointed"
-                    plan["last_known_head"] = observed_head
-                    state["status"] = "checkpointed"
+                    if decision.action == "continue":
+                        plan["status"] = "checkpointed"
+                        state["status"] = "checkpointed"
+                        store.save()
+                        store.append_event(
+                            "plan.continuation_scheduled",
+                            plan_id=plan["plan_id"],
+                            reason=decision.reason_code,
+                            head=observed_head,
+                        )
+                        continue
+                    plan["result_path"] = str(self._controller_stop_result(
+                        store, plan, decision, observed_head,
+                    ))
+                    plan["status"] = "blocked"
+                    state["status"] = "blocked"
                     store.save()
                     store.append_event(
-                        "plan.attempt_incomplete",
+                        "plan.recovery_stopped",
                         plan_id=plan["plan_id"],
-                        status="checkpointed",
-                        timed_out=True,
+                        reason=decision.reason_code,
+                        failure_signature=decision.progress_fingerprint,
                     )
                     return self._report_and_summary(store)
                 else:
@@ -778,6 +1168,7 @@ class SequentialRunner:
                     status = payload["status"]
                     plan["last_known_head"] = payload["head_commit"]
                     if status == "completed":
+                        acceptance_started = time.monotonic()
                         try:
                             ingest_plan_evidence(
                                 run_root=store.root,
@@ -793,6 +1184,9 @@ class SequentialRunner:
                             store.append_event("plan.evidence_failed", plan_id=plan["plan_id"], reason=reason)
                             return self._report_and_summary(store, error=reason)
                         self._seal_result(outcome.result_path)
+                        plan["plan_elapsed_seconds"] += math.ceil(
+                            time.monotonic() - acceptance_started
+                        )
                         plan["status"] = "completed"
                         plan["accepted_commit"] = payload["head_commit"]
                         state["current_plan_index"] += 1
@@ -825,10 +1219,34 @@ class SequentialRunner:
                     plan["status"] = status
                     state["status"] = status
                     if status == "blocked":
+                        probe_started = time.monotonic()
+                        observations = _observe_capabilities(
+                            worktree, self._compiled_plan(store),
+                        )
+                        blockers = typed_blockers(observations)
+                        if blockers:
+                            plan["environment_fingerprint"] = environment_fingerprint(
+                                observations
+                            )
+                            plan["capability_probe_ids"] = sorted({
+                                observation.capability
+                                for observation in observations
+                            })
+                        else:
+                            plan["environment_fingerprint"] = None
+                            plan["capability_probe_ids"] = []
+                        plan["plan_elapsed_seconds"] += math.ceil(
+                            time.monotonic() - probe_started
+                        )
                         store.save()
                         store.append_event(
                             "plan.blocked",
                             plan_id=plan["plan_id"],
+                            parent_confirmed=bool(blockers),
+                            environment_fingerprint=(
+                                plan["environment_fingerprint"]
+                                if blockers else None
+                            ),
                         )
                         return self._report_and_summary(store)
                     store.save()
@@ -1122,6 +1540,45 @@ class SequentialRunner:
                 for plan in visible_plans
             ],
         }
+        last_decision = None
+        try:
+            events = [
+                json.loads(line)
+                for line in store.events_path.read_text(encoding="utf-8").splitlines()
+            ]
+            last_decision = next(
+                (
+                    event.get("reason")
+                    for event in reversed(events)
+                    if event.get("action") in {
+                        "plan.checkpoint_decided",
+                        "plan.recovery_stopped",
+                        "resume.environment_changed",
+                        "resume.stopped_unchanged_blocker",
+                    }
+                    and isinstance(event.get("reason"), str)
+                ),
+                None,
+            )
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            pass
+        if last_decision is not None:
+            result["last_decision_reason"] = last_decision
+        try:
+            compiled = json.loads(
+                Path(state["compiled_run_index_path"]).read_text(encoding="utf-8")
+            )
+            advisories = sorted({
+                advisory
+                for plan in compiled.get("plans", [])
+                if isinstance(plan, dict)
+                for advisory in plan.get("execution_advisories", [])
+                if isinstance(advisory, str)
+            })
+            if advisories:
+                result["execution_advisories"] = advisories
+        except (OSError, TypeError, UnicodeDecodeError, json.JSONDecodeError):
+            pass
         if error:
             result["error"] = error
         return result

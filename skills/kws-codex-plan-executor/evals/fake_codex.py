@@ -25,6 +25,8 @@ SCENARIOS = {
     "blocking_completed",
     "timeout_grandchild",
     "timeout_after_commit",
+    "timeout_with_progress",
+    "timeout_without_progress",
     "completed_with_grandchild",
     "large_log",
     "oversized_usage",
@@ -81,6 +83,15 @@ def invocation_number(
     )
     path.write_text("".join(json.dumps(entry) + "\n" for entry in entries))
     return count
+
+
+def record_compiler_invocation() -> None:
+    declared = os.environ.get("CPE_FAKE_COMPILER_INVOCATION_LOG")
+    if declared:
+        path = Path(declared)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as stream:
+            stream.write("compiler\n")
 
 
 def commit_plan(worktree: Path, plan_id: str, suffix: str = "") -> str:
@@ -159,7 +170,59 @@ def write_progress(worktree: Path) -> None:
     )
 
 
+def write_checkpoint_ledger(worktree: Path, plan_id: str) -> None:
+    evidence = worktree / ".superpowers" / "sdd"
+    evidence.mkdir(parents=True, exist_ok=True)
+    (evidence / ".gitignore").write_text("*\n", encoding="utf-8")
+    receipt = evidence / "receipts" / "checkpoint-task.txt"
+    receipt.parent.mkdir(exist_ok=True)
+    receipt.write_text("task: pass\n", encoding="utf-8")
+    event = {
+        "schema_version": 1,
+        "event_id": "checkpoint-task-1",
+        "source": "child_attested",
+        "plan_id": plan_id,
+        "category": "task",
+        "action": "completed",
+        "result": "pass",
+        "evidence_refs": ["receipts/checkpoint-task.txt"],
+        "task_id": "task-01",
+        "duration_ms": 1,
+    }
+    (evidence / "execution-ledger.jsonl").write_text(
+        json.dumps(event, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def checkpoint_payload(plan_id: str, head: str, scenario: str, attempt: int) -> dict[str, object]:
+    return {
+        "plan_id": plan_id,
+        "status": "checkpointed",
+        "head_commit": head,
+        "summary": f"fake {scenario} attempt {attempt}",
+        "verification": [],
+        "checkpoint": {
+            "reason": "timeout_progress",
+            "progress_fingerprint": "1" * 64,
+            "completed_task_ids": ["task-01"] if scenario == "timeout_with_progress" else [],
+            "current_task_id": None,
+        },
+        "blocker": None,
+        "workflow_receipt": None,
+    }
+
+
+def wait_for_launcher_timeout(result_path: Path, payload: dict[str, object]) -> None:
+    result_path.parent.mkdir(parents=True, exist_ok=True)
+    result_path.write_text(json.dumps(payload), encoding="utf-8")
+    print(json.dumps({"type": "result", "status": "checkpointed"}), flush=True)
+    while True:
+        time.sleep(0.05)
+
+
 def compile_index(arguments: list[str], prompt: str, result_path: Path) -> int:
+    record_compiler_invocation()
     prompt_log = os.environ.get("CPE_FAKE_COMPILER_PROMPT_LOG")
     if prompt_log:
         with Path(prompt_log).open("a", encoding="utf-8") as stream:
@@ -195,6 +258,12 @@ def compile_index(arguments: list[str], prompt: str, result_path: Path) -> int:
     ):
         source = path.read_bytes()
         line_count = len(source.decode("utf-8").splitlines(keepends=True))
+        capabilities = []
+        if "loopback_bind" in source.decode("utf-8"):
+            capabilities.append({
+                "capability_id": "loopback_bind",
+                "task_ids": ["task-01"],
+            })
         plans.append({
             "plan_id": f"plan-{order:02d}",
             "source_sha256": hashlib.sha256(source).hexdigest(),
@@ -208,7 +277,7 @@ def compile_index(arguments: list[str], prompt: str, result_path: Path) -> int:
                 "source_text_sha256": hashlib.sha256(source).hexdigest(),
             }],
             "verifications": [],
-            "capabilities": [],
+            "capabilities": capabilities,
             "coordination_exceptions": [],
             "execution_advisories": [],
             "unknowns": [],
@@ -255,6 +324,7 @@ def main() -> int:
     elif scenario == "resume_completed":
         if attempt == 1:
             head = commit_plan(worktree, plan_id, "-progress")
+            write_checkpoint_ledger(worktree, plan_id)
             status = "blocked"
         else:
             head = commit_plan(worktree, plan_id)
@@ -297,10 +367,26 @@ def main() -> int:
             print("waiting for timeout", flush=True)
             time.sleep(0.05)
     elif scenario == "timeout_after_commit":
-        commit_plan(worktree, plan_id)
+        if attempt == 1:
+            commit_plan(worktree, plan_id)
         while True:
             print("waiting for timeout after commit", flush=True)
             time.sleep(0.05)
+    elif scenario == "timeout_with_progress":
+        if attempt == 1:
+            head = commit_plan(worktree, plan_id, "-progress")
+            write_checkpoint_ledger(worktree, plan_id)
+            wait_for_launcher_timeout(
+                result_path,
+                checkpoint_payload(plan_id, head, scenario, attempt),
+            )
+        head = commit_plan(worktree, plan_id)
+        status = "completed"
+    elif scenario == "timeout_without_progress":
+        wait_for_launcher_timeout(
+            result_path,
+            checkpoint_payload(plan_id, head, scenario, attempt),
+        )
     elif scenario == "completed_with_grandchild":
         pid_path = Path(os.environ["CPE_FAKE_GRANDCHILD_PID"])
         grandchild = subprocess.Popen(
