@@ -6,16 +6,11 @@ fresh Codex process per plan, and resumes at the first incomplete plan.
 
 ## Release And Installation
 
-Version 1.3.2 preserves the lean-quality contract and restores compatibility
-with strict Codex structured-output schemas plus linked-worktree commits. It
-normalizes nullable wire-only optional fields before public contract validation
-and grants the child sandbox only the exact resolved Git common directory needed
-for linked-worktree index, object, and ref writes. Focused deterministic tests
-still reject partial or completed recovery-field triples and exercise two-pipe
-drain behavior during timeout and exceptional launcher cleanup. Test fixtures
-avoid child processes when the contract is purely a state or decision boundary,
-while real processes remain mandatory for process groups, advisory locking,
-coordinator loss, resume continuity, and result isolation.
+Version 1.3.3 removes Graphify from the project-default execution toolset.
+Controllers do not load its skill, generate or refresh a graph, or add Graphify
+to verification unless the approved plan explicitly requires it. The strict
+structured-output, linked-worktree, atomic recovery fields, two-pipe drain,
+process-lifecycle, and lean-quality contracts remain unchanged.
 
 The tracked skill directory is the release source of truth. Local Codex and
 Claude Code installations should be linked to this directory rather than
@@ -195,6 +190,11 @@ task execution, TDD, reviews, consolidated fixes, the cross-task final review,
 final product verification, and commits. CPE owns the durable plan boundary,
 bounded recovery, and mechanical handoff validation; it does not independently
 prove review quality.
+
+Graphify is not part of the default project toolset. Controllers,
+implementers, and reviewers use it only when the approved plan explicitly
+names Graphify or requires a Graphify artifact; ordinary implementation,
+review, verification, and merge work must not load or generate it.
 
 - The controller uses file-backed task briefs, implementer reports, review
   packages, task review files, a final-review file, and

@@ -825,6 +825,8 @@ print(json.dumps(result, sort_keys=True), flush=True)
         self.assertIn("one consolidated fix subagent", prompt)
         self.assertIn("cross-task final review", prompt)
         self.assertIn("same normalized verification command", prompt)
+        self.assertIn("Graphify is opt-in", prompt)
+        self.assertIn("do not load its skill or generate a graph", prompt)
         self.assertIn("workflow_receipt", prompt)
         self.assertLess(len(prompt.encode("utf-8")), 2_400)
 
