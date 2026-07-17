@@ -734,8 +734,9 @@ class SequentialRunner:
                     else str(self._synthetic_result(store, plan, outcome))
                 )
                 if outcome.timed_out:
+                    observed_head = _git(worktree, "rev-parse", "HEAD")
                     plan["status"] = "checkpointed"
-                    plan["last_known_head"] = current_head
+                    plan["last_known_head"] = observed_head
                     state["status"] = "checkpointed"
                     store.save()
                     store.append_event(
@@ -744,6 +745,7 @@ class SequentialRunner:
                         status="checkpointed",
                         timed_out=True,
                     )
+                    return self._summary(store)
                 else:
                     integrity_error = self._handoff_error(store, plan, outcome)
                     if integrity_error is not None:
