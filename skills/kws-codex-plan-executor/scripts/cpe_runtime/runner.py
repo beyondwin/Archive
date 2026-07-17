@@ -27,10 +27,12 @@ from .compiler import CompiledIndexService
 from .evidence import (
     EnvelopeRepair,
     execution_event_digest,
+    has_current_unsafe_envelope_failure,
     ingest_plan_evidence,
     prepare_plan_evidence,
     read_progress_snapshot,
     repair_result_envelope,
+    result_artifact_digest,
     validate_execution_ledger,
 )
 from .launcher import (
@@ -50,6 +52,10 @@ from .reporting import (
     build_optimization_report,
     write_optimization_reports,
 )
+from .result_validation import (
+    WORKFLOW_RECEIPT_FIELDS,
+    normalize_result_v2,
+)
 from .state import StateStore
 
 
@@ -58,25 +64,6 @@ _SHA = re.compile(r"^[0-9a-f]{40}$")
 _EVENT_ID = re.compile(r"^[0-9a-f]{32}$")
 _RUN_COMPLETED_FIELDS = {
     "event_id", "at", "source", "run_id", "category", "action", "head",
-}
-_RESULT_REQUIRED_FIELDS = {
-    "plan_id",
-    "status",
-    "head_commit",
-    "verification",
-    "summary",
-}
-_RESULT_OPTIONAL_FIELDS = {
-    "checkpoint",
-    "blocker",
-    "workflow_receipt",
-}
-_WORKFLOW_RECEIPT_FIELDS = {
-    "ledger_path",
-    "final_review_path",
-    "final_review_head",
-    "open_finding_ids",
-    "open_obligation_ids",
 }
 _COMPLETED_TASK = re.compile(
     r"^Task\s+([1-9][0-9]*):\s+complete\b",
@@ -587,7 +574,7 @@ def _workflow_receipt_error(
     worktree: Path,
     receipt: object,
 ) -> str | None:
-    if not isinstance(receipt, dict) or set(receipt) != _WORKFLOW_RECEIPT_FIELDS:
+    if not isinstance(receipt, dict) or set(receipt) != WORKFLOW_RECEIPT_FIELDS:
         return "invalid_workflow_receipt"
     if receipt.get("final_review_head") != _git(worktree, "rev-parse", "HEAD"):
         return "invalid_workflow_receipt"
@@ -1265,6 +1252,7 @@ class SequentialRunner:
     def _recorded_envelope_repair(
         store: StateStore,
         plan: Mapping[str, object],
+        repair: EnvelopeRepair,
     ) -> EnvelopeRepair | None:
         original_raw = plan.get("original_result_path")
         repaired_raw = plan.get("result_path")
@@ -1284,50 +1272,30 @@ class SequentialRunner:
         event = matches[0]
         original = Path(original_raw)
         repaired = Path(repaired_raw)
-        try:
-            original_bytes = original.read_bytes()
-            repaired_bytes = repaired.read_bytes()
-            changed = event.get("changed_fields")
-            allowed_changes = {
-                ("/workflow_receipt/ledger_path",),
-                ("/workflow_receipt/final_review_path",),
-                (
-                    "/workflow_receipt/ledger_path",
-                    "/workflow_receipt/final_review_path",
-                ),
-            }
-            if (
-                event.get("source") != "parent_observed"
-                or event.get("run_id") != store.state["run_id"]
-                or event.get("category") != "result"
-                or original.is_symlink()
-                or repaired.is_symlink()
-                or not original.is_file()
-                or not repaired.is_file()
-                or stat.S_IMODE(original.stat().st_mode) != 0o400
-                or stat.S_IMODE(repaired.stat().st_mode) != 0o400
-                or not isinstance(changed, list)
-                or not all(isinstance(field, str) for field in changed)
-                or tuple(changed) not in allowed_changes
-                or not isinstance(event.get("original_digest"), str)
-                or not re.fullmatch(r"[0-9a-f]{64}", event["original_digest"])
-                or not isinstance(event.get("repaired_digest"), str)
-                or not re.fullmatch(r"[0-9a-f]{64}", event["repaired_digest"])
-                or hashlib.sha256(original_bytes).hexdigest()
-                != event.get("original_digest")
-                or hashlib.sha256(repaired_bytes).hexdigest()
-                != event.get("repaired_digest")
-            ):
-                raise ValueError("result envelope repair event does not match artifacts")
-        except OSError as exc:
-            raise ValueError("result envelope repair artifacts are unavailable") from exc
-        return EnvelopeRepair(
-            original_path=original,
-            repaired_path=repaired,
-            original_digest=str(event["original_digest"]),
-            repaired_digest=str(event["repaired_digest"]),
-            changed_fields=tuple(changed),
-        )
+        changed = event.get("changed_fields")
+        allowed_changes = {
+            ("/workflow_receipt/ledger_path",),
+            ("/workflow_receipt/final_review_path",),
+            (
+                "/workflow_receipt/ledger_path",
+                "/workflow_receipt/final_review_path",
+            ),
+        }
+        if (
+            event.get("source") != "parent_observed"
+            or event.get("run_id") != store.state["run_id"]
+            or event.get("category") != "result"
+            or not isinstance(changed, list)
+            or not all(isinstance(field, str) for field in changed)
+            or tuple(changed) not in allowed_changes
+            or original != repair.original_path
+            or repaired != repair.repaired_path
+            or event.get("original_digest") != repair.original_digest
+            or event.get("repaired_digest") != repair.repaired_digest
+            or tuple(changed) != repair.changed_fields
+        ):
+            raise ValueError("result envelope repair event does not match artifacts")
+        return repair
 
     def _resume_envelope_repair(
         self,
@@ -1338,27 +1306,34 @@ class SequentialRunner:
     ) -> tuple[str | None, str | None]:
         state = store.state
         repair: EnvelopeRepair | None = None
-        recorded = self._recorded_envelope_repair(store, plan)
-        if recorded is not None:
+        original_raw = plan.get("original_result_path")
+        if isinstance(original_raw, str):
             repair = repair_result_envelope(
                 run_root=store.root,
                 worktree=Path(state["worktree"]),
-                original_result_path=recorded.original_path,
+                original_result_path=Path(original_raw),
             )
-            if repair != recorded:
+            if repair is None:
                 raise ValueError(
                     "recorded result envelope repair no longer validates"
                 )
+            self._recorded_envelope_repair(store, plan, repair)
         else:
             result_raw = plan.get("result_path")
             if not isinstance(result_raw, str):
                 return None, None
+            candidate = has_current_unsafe_envelope_failure(
+                run_root=store.root,
+                original_result_path=Path(result_raw),
+            )
             repair = repair_result_envelope(
                 run_root=store.root,
                 worktree=Path(state["worktree"]),
                 original_result_path=Path(result_raw),
             )
             if repair is None:
+                if candidate:
+                    return "failed", "unsafe_workflow_artifact"
                 return None, None
             matches = [
                 event for event in (
@@ -1671,10 +1646,21 @@ class SequentialRunner:
                     plan["status"] = "failed"
                     state["status"] = "failed"
                     store.save()
+                    failure_fields: dict[str, object] = {}
+                    if integrity_error == "unsafe_workflow_artifact":
+                        result_path = Path(str(plan["result_path"]))
+                        digest = result_artifact_digest(store.root, result_path)
+                        if digest is not None:
+                            failure_fields = {
+                                "attempt": plan["attempt_count"],
+                                "original_result_path": str(result_path.resolve()),
+                                "original_result_sha256": digest,
+                            }
                     store.append_event(
                         "plan.integrity_failed",
                         plan_id=plan["plan_id"],
                         reason=integrity_error,
+                        **failure_fields,
                     )
                     return self._report_and_summary(
                         store, error=integrity_error,
@@ -1856,52 +1842,18 @@ class SequentialRunner:
 
     def _handoff_error(self, store: StateStore, plan: dict[str, Any], outcome: LaunchResult) -> str | None:
         payload = outcome.payload
-        if not isinstance(payload, dict):
-            return "invalid_result"
-        # Strict structured outputs require every declared property at the wire
-        # boundary. Normalize nullable optionals before enforcing the format-2
-        # conditional-presence semantics.
-        for name in _RESULT_OPTIONAL_FIELDS:
-            if payload.get(name) is None:
-                payload.pop(name, None)
-        fields = set(payload)
-        if (
-            not _RESULT_REQUIRED_FIELDS.issubset(fields)
-            or fields - _RESULT_REQUIRED_FIELDS - _RESULT_OPTIONAL_FIELDS
-        ):
-            return "invalid_result"
+        normalized, validation_error = normalize_result_v2(payload)
+        if validation_error is not None or normalized is None:
+            return validation_error or "invalid_result"
+        assert isinstance(payload, dict)
+        payload.clear()
+        payload.update(normalized)
         status = payload.get("status")
-        if payload.get("plan_id") != plan["plan_id"] or status not in {"completed", "checkpointed", "blocked", "failed"}:
+        if payload.get("plan_id") != plan["plan_id"]:
             return "invalid_result"
-        if status == "completed" and "workflow_receipt" not in payload:
-            return "invalid_workflow_receipt"
-        if status == "checkpointed" and "checkpoint" not in payload:
-            return "invalid_checkpoint"
-        if status == "blocked" and "blocker" not in payload:
-            return "invalid_blocker"
         head = payload.get("head_commit")
-        summary = payload.get("summary")
         verification = payload.get("verification")
-        if not isinstance(head, str) or not _SHA.fullmatch(head) or not isinstance(summary, str) or not summary.strip() or len(summary) > 2000 or not isinstance(verification, list):
-            return "invalid_result"
-        verification_fields = {"command_id", "argv_digest", "phase", "evidence_key", "exit_code", "receipt_path"}
-        for item in verification:
-            if (
-                not isinstance(item, dict)
-                or set(item) != verification_fields
-                or not isinstance(item["command_id"], str)
-                or not item["command_id"].strip()
-                or not isinstance(item["argv_digest"], str)
-                or not re.fullmatch(r"[0-9a-f]{64}", item["argv_digest"])
-                or not isinstance(item["evidence_key"], str)
-                or not re.fullmatch(r"[0-9a-f]{64}", item["evidence_key"])
-                or not isinstance(item["exit_code"], int)
-                or isinstance(item["exit_code"], bool)
-                or (item["receipt_path"] is not None and not isinstance(item["receipt_path"], str))
-            ):
-                return "invalid_result"
-            if item["phase"] not in {"task", "affected", "branch_final"}:
-                return "invalid_verification_phase"
+        assert isinstance(head, str) and isinstance(verification, list)
         worktree = Path(store.state["worktree"])
         observed = _git(worktree, "rev-parse", "HEAD")
         if head != observed:
