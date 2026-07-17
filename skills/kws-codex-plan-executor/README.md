@@ -60,6 +60,8 @@ CODEX_HOME/orchestrator/RUN_ID/
   inputs/
   results/
   logs/
+  evidence/
+  reports/
 
 CODEX_HOME/worktrees/RUN_ID/
 ```
@@ -67,7 +69,8 @@ CODEX_HOME/worktrees/RUN_ID/
 `state.json` format version 1 remains authoritative and is atomically replaced;
 no task, review, or usage records are added to it. Run creation records
 `initializing`, verifies the exact branch, repository, path, and source commit,
-then transitions to `running`. Inputs are copied before launch with their
+then prepares a non-authoritative compiled run index, transitions through
+`ready`, and creates the worktree before entering `running`. Inputs are copied before launch with their
 SHA-256 digest, size, role, and role-local order. Private state uses `0700`
 directories and `0600` files.
 
@@ -278,8 +281,14 @@ evals/fake_codex.py
 evals/run.sh
 scripts/cpe.py
 scripts/cpe_runtime/__init__.py
+scripts/cpe_runtime/compiler.py
+scripts/cpe_runtime/evidence.py
 scripts/cpe_runtime/launcher.py
+scripts/cpe_runtime/reporting.py
 scripts/cpe_runtime/runner.py
 scripts/cpe_runtime/state.py
+templates/compiled-run-index.schema.json
+templates/execution-ledger.schema.json
+templates/optimization-report.schema.json
 templates/plan-result-schema.json
 ```

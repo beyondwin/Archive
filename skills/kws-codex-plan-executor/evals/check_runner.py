@@ -41,6 +41,7 @@ from cpe_runtime.evidence import (
     ingest_plan_evidence,
     validate_execution_ledger,
 )
+from cpe_runtime.reporting import build_optimization_report
 from cpe_runtime.runner import (
     SequentialRunner,
     _ledger_progress,
@@ -195,6 +196,37 @@ class SequentialRunnerTest(unittest.TestCase):
 
     def invocations(self) -> list[dict[str, object]]:
         return [json.loads(line) for line in self.log.read_text().splitlines()]
+
+    def test_report_marks_missing_usage_as_lower_bound(self) -> None:
+        report = build_optimization_report(
+            run_id="report-lower-bound",
+            events=[
+                {"action": "plan.attempt_finished", "source": "parent_observed", "duration_ms": 1000, "input_tokens": 41},
+                {"action": "plan.attempt_finished", "source": "parent_observed", "duration_ms": 2000, "input_tokens": None},
+            ],
+            findings=[{
+                "signal": "timeout",
+                "source": "derived",
+                "evidence_refs": ["events.jsonl:2"],
+            }],
+        )
+        self.assertEqual(report["usage"]["observed_input_tokens"], 41)
+        self.assertEqual(report["usage"]["unknown_attempt_count"], 1)
+        self.assertEqual(report["usage"]["total_kind"], "lower_bound")
+        self.assertEqual(report["findings"][0]["source"], "derived")
+
+    def test_run_prepares_index_before_worktree_and_reports_after_plan(self) -> None:
+        result = self.runner().run(
+            workspace=self.repo,
+            specs=[],
+            plans=[self.plan(1, "completed")],
+            run_id="prepared-run",
+        )
+        root = self.home / "orchestrator" / "prepared-run"
+        self.assertEqual(result["status"], "completed")
+        self.assertTrue((root / "compiled-run-index.json").is_file())
+        self.assertTrue((root / "evidence" / "plan-01" / "evidence-manifest.json").is_file())
+        self.assertTrue((root / "reports" / "optimization-report.json").is_file())
 
     def start_run_process(
         self,

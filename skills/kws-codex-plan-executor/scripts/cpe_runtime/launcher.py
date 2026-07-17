@@ -345,6 +345,8 @@ class CodexLauncher:
         starting_commit: str,
         current_commit: str,
         recovery_path: Path | None,
+        compiled_run_index: Path | None = None,
+        execution_ledger: Path | None = None,
     ) -> str:
         lines = [
             "Execute one approved implementation plan in the isolated worktree.",
@@ -353,6 +355,8 @@ class CodexLauncher:
             f"CURRENT_PLAN: {plan_path}",
             f"STARTING_COMMIT: {starting_commit}",
             f"CURRENT_COMMIT: {current_commit}",
+            f"COMPILED_RUN_INDEX: {compiled_run_index or 'unavailable'}",
+            f"EXECUTION_LEDGER: {execution_ledger or 'unavailable'}",
             "SPECIFICATIONS_REFERENCE_ONLY_IN_ORDER:",
         ]
         lines.extend(f"- {path}" for path in spec_paths)
@@ -391,6 +395,8 @@ class CodexLauncher:
         log_path: Path,
         lock_fd: int,
         recovery_path: Path | None = None,
+        compiled_run_index: Path | None = None,
+        execution_ledger: Path | None = None,
     ) -> LaunchResult:
         """Launch one attempt using caller-owned paths and the held run lock."""
         request = StructuredLaunchRequest(
@@ -401,6 +407,8 @@ class CodexLauncher:
                 spec_paths=spec_paths, starting_commit=starting_commit,
                 current_commit=current_commit,
                 recovery_path=recovery_path,
+                compiled_run_index=compiled_run_index,
+                execution_ledger=execution_ledger,
             ),
             result_path=result_path,
             log_path=log_path,

@@ -12,7 +12,14 @@ import uuid
 from pathlib import Path
 from typing import Any, Sequence
 
+from .compiler import CompiledIndexService
+from .evidence import ingest_plan_evidence
 from .launcher import CodexLauncher, LaunchResult
+from .reporting import (
+    OptimizationMarkdownError,
+    build_optimization_report,
+    write_optimization_reports,
+)
 from .state import StateStore
 
 
@@ -306,10 +313,14 @@ class SequentialRunner:
         *,
         codex_home: Path | None = None,
         launcher: CodexLauncher | None = None,
+        compiler: CompiledIndexService | None = None,
     ) -> None:
         self.codex_home = (codex_home or Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))).expanduser().resolve()
         schema = Path(__file__).resolve().parents[2] / "templates" / "plan-result-schema.json"
         self.launcher = launcher or CodexLauncher(schema_path=schema)
+        self.compiler = compiler or CompiledIndexService(
+            compile_once=self.launcher.compile_index
+        )
 
     def run(
         self,
@@ -328,6 +339,8 @@ class SequentialRunner:
             plans=plans,
             run_id=identifier,
         )
+        if store.state["status"] == "failed":
+            return self._summary(store, error="compiled_index_preparation_failed")
         try:
             with _RunLock(store.root / "run.lock") as lock_fd:
                 try:
@@ -360,7 +373,7 @@ class SequentialRunner:
         try:
             with _RunLock(store.root / "run.lock") as lock_fd:
                 store = StateStore.open(store.root)
-                if store.state["status"] == "preparing":
+                if store.state["status"] in {"preparing", "ready"}:
                     self._create_or_reconcile_worktree(store)
                 else:
                     self._verify_worktree(store)
@@ -434,7 +447,7 @@ class SequentialRunner:
         ).returncode == 0
         if branch_exists:
             raise ValueError("run branch already exists")
-        return StateStore.create(
+        store = StateStore.create(
             run_root=run_root,
             run_id=run_id,
             source_repository=repository,
@@ -445,6 +458,19 @@ class SequentialRunner:
             plans=plans,
             initial_status="preparing",
         )
+        try:
+            self.compiler.prepare(store)
+            store.state["status"] = "ready"
+            store.save()
+            store.append_event("run.prepared")
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            store.state["status"] = "failed"
+            store.save()
+            store.append_event(
+                "run.preparation_failed",
+                reason=(str(exc).strip() or type(exc).__name__)[:2000],
+            )
+        return store
 
     def _add_new_worktree(self, store: StateStore) -> None:
         state = store.state
@@ -699,6 +725,8 @@ class SequentialRunner:
                     spec_paths=spec_paths, starting_commit=plan["starting_commit"], current_commit=current_head,
                     result_path=result_path, log_path=log_path, lock_fd=lock_fd,
                     recovery_path=recovery_path,
+                    compiled_run_index=Path(state["compiled_run_index_path"]),
+                    execution_ledger=worktree / ".superpowers" / "sdd" / "execution-ledger.jsonl",
                 )
                 store.append_event(
                     "plan.attempt_finished",
@@ -732,7 +760,7 @@ class SequentialRunner:
                         status="checkpointed",
                         timed_out=True,
                     )
-                    return self._summary(store)
+                    return self._report_and_summary(store)
                 else:
                     integrity_error = self._handoff_error(store, plan, outcome)
                     if integrity_error is not None:
@@ -744,12 +772,26 @@ class SequentialRunner:
                             plan_id=plan["plan_id"],
                             reason=integrity_error,
                         )
-                        return self._summary(store, error=integrity_error)
+                        return self._report_and_summary(store, error=integrity_error)
                     payload = outcome.payload
                     assert payload is not None
                     status = payload["status"]
                     plan["last_known_head"] = payload["head_commit"]
                     if status == "completed":
+                        try:
+                            ingest_plan_evidence(
+                                run_root=store.root,
+                                worktree=worktree,
+                                plan_id=plan["plan_id"],
+                                accepted_head=payload["head_commit"],
+                            )
+                        except (OSError, ValueError) as exc:
+                            plan["status"] = "failed"
+                            state["status"] = "failed"
+                            store.save()
+                            reason = (str(exc).strip() or type(exc).__name__)[:2000]
+                            store.append_event("plan.evidence_failed", plan_id=plan["plan_id"], reason=reason)
+                            return self._report_and_summary(store, error=reason)
                         self._seal_result(outcome.result_path)
                         plan["status"] = "completed"
                         plan["accepted_commit"] = payload["head_commit"]
@@ -766,6 +808,9 @@ class SequentialRunner:
                             plan_id=plan["plan_id"],
                             head=payload["head_commit"],
                         )
+                        report_error = self._update_reports(store)
+                        if report_error is not None:
+                            return self._summary(store, error=report_error)
                         break
                     if status == "checkpointed":
                         plan["status"] = "checkpointed"
@@ -776,7 +821,7 @@ class SequentialRunner:
                             plan_id=plan["plan_id"],
                             head=payload["head_commit"],
                         )
-                        return self._summary(store)
+                        return self._report_and_summary(store)
                     plan["status"] = status
                     state["status"] = status
                     if status == "blocked":
@@ -785,7 +830,7 @@ class SequentialRunner:
                             "plan.blocked",
                             plan_id=plan["plan_id"],
                         )
-                        return self._summary(store)
+                        return self._report_and_summary(store)
                     store.save()
                     store.append_event(
                         "plan.attempt_incomplete",
@@ -843,12 +888,57 @@ class SequentialRunner:
                     plan_id=plan["plan_id"],
                     attempts=plan["attempt_count"],
                 )
-                return self._summary(store)
+                return self._report_and_summary(store)
 
         state["status"] = "completed"
         store.save()
         store.append_event("run.completed", head=_git(Path(state["worktree"]), "rev-parse", "HEAD"))
+        report_error = self._update_reports(store)
+        if report_error is not None:
+            return self._summary(store, error=report_error)
         return self._summary(store)
+
+    def _report_and_summary(
+        self, store: StateStore, *, error: str | None = None
+    ) -> dict[str, Any]:
+        report_error = self._update_reports(store)
+        return self._summary(store, error=report_error or error)
+
+    @staticmethod
+    def _update_reports(store: StateStore) -> str | None:
+        try:
+            events: list[dict[str, object]] = []
+            for line in store.events_path.read_text(encoding="utf-8").splitlines():
+                payload = json.loads(line)
+                if isinstance(payload, dict):
+                    events.append(payload)
+            findings = [
+                {
+                    "signal": str(event.get("action")),
+                    "source": "derived",
+                    "impact": "terminal plan outcome",
+                    "action": "inspect referenced run evidence",
+                    "outcome": str(event.get("status", event.get("reason", "recorded"))),
+                    "recurrence": "unavailable",
+                    "recommendation": "review before changing execution policy",
+                    "evidence_refs": [f"events.jsonl:{position}"],
+                }
+                for position, event in enumerate(events, 1)
+                if event.get("action") in {"plan.integrity_failed", "plan.evidence_failed", "plan.failed", "plan.blocked"}
+            ]
+            report = build_optimization_report(
+                run_id=store.state["run_id"], events=events, findings=findings
+            )
+            write_optimization_reports(reports_root=store.root / "reports", report=report)
+        except OptimizationMarkdownError as exc:
+            store.append_event("report.derivative_failed", reason=str(exc)[:2000])
+        except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            reason = (str(exc).strip() or type(exc).__name__)[:2000]
+            store.state["status"] = "failed"
+            store.save()
+            store.append_event("report.failed", reason=reason)
+            return reason
+        return None
 
     def _handoff_error(self, store: StateStore, plan: dict[str, Any], outcome: LaunchResult) -> str | None:
         payload = outcome.payload
