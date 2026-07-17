@@ -71,6 +71,7 @@ the Waygent product runtime.
 - [Roadmap](roadmap/README.md)
 - [Migration history](roadmap/migration-history.md)
 - [Migration records](migration/)
+- [CPE 2.0 token evidence and observability addendum](superpowers/specs/2026-07-17-cpe-2.0-token-evidence-observability-addendum.md)
 - [Superpowers plans](superpowers/plans/)
 - [Superpowers specs](superpowers/specs/)
 

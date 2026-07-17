@@ -10,6 +10,12 @@
 
 **독자:** CPE 구현 에이전트, 리뷰어, 릴리스 담당자
 
+**실측 보강:**
+[`2026-07-17-cpe-2.0-token-evidence-observability-addendum.md`](./2026-07-17-cpe-2.0-token-evidence-observability-addendum.md)는
+이 설계를 대체하지 않고, 이후 Canvas run에서 확인된 cached/uncached usage,
+timeout usage darkness, review artifact pressure를 미실행 Wave 3과 Wave 4에
+연결한다.
+
 ## 1. 결정 요약
 
 CPE 2.0은 승인된 Superpowers spec과 plan을 지금과 같은 방식으로 받아
@@ -1046,6 +1052,12 @@ port와 문구만 바뀐 채 반복됐다. 동일 환경에서 controller resume
 이 사례는 blocker canonicalization, unchanged-environment guard, recurrence
 inspect의 regression fixture로 축소한다. Full result나 transcript를 repo에
 복사하지 않는다.
+
+이 항목의 17-attempt 관측은 설계 당시의 초기 snapshot이다. Plan 04 attempt
+22가 실행 중일 때 수집한 run 전체 usage lower bound와 SDD artifact inventory는
+[token evidence and observability addendum](./2026-07-17-cpe-2.0-token-evidence-observability-addendum.md)에
+별도 보존한다. 새 snapshot은 format-1 forensic baseline이며 format-2 runtime
+효과를 증명하지 않는다.
 
 ## Appendix B. ReadMates 비교 근거
 

@@ -17,7 +17,8 @@
 - Keep `run --spec --plan --workspace` as the primary input workflow; the compiled index remains internal.
 - All operational commands are read-only except `run`, `resume`, the internal `verify` helper, and explicit report materialization inside the run root.
 - Never include prompts, transcripts, source file bodies, secrets, or arbitrary child stdout in summaries/backlogs.
-- Cross-run promotion requires either two independent runs with the same normalized signal, or the same signal at least three times with cumulative duration at least 30 minutes.
+- Follow the approved [token evidence and observability addendum](../specs/2026-07-17-cpe-2.0-token-evidence-observability-addendum.md). Report cached, uncached, output, reasoning, completeness, aggregate scope, and artifact/context pressure without fabricating per-role attribution.
+- Cross-run promotion requires either two independent runs with the same normalized signal, or the category-specific same-run threshold. Duration-based categories retain the existing three occurrences and cumulative 30-minute threshold; artifact/context categories use the approved byte/count thresholds from the addendum.
 - A completed CPE run means plan execution finished on an isolated branch. It does not mean merge, push, deployment, or product acceptance completed.
 - Release version `2.0.0` only after the live canary and complete suite pass.
 - Use test-driven development and commit after each task.
@@ -162,6 +163,7 @@ git commit -m "feat(cpe): add run discovery and doctor"
 - Modify: `skills/kws-codex-plan-executor/scripts/cpe_runtime/operations.py`
 - Modify: `skills/kws-codex-plan-executor/scripts/cpe.py`
 - Modify: `skills/kws-codex-plan-executor/templates/optimization-report.schema.json`
+- Create: `skills/kws-codex-plan-executor/evals/fixtures/canvas-format1-token-forensic.json`
 - Modify: `skills/kws-codex-plan-executor/evals/check_cli.py`
 - Modify: `skills/kws-codex-plan-executor/evals/check_runner.py`
 
@@ -221,7 +223,71 @@ Write the RED test against this complete stable shape, then update `templates/op
     "fork_turns_none": 4,
     "fork_turns_all": 0,
     "unjustified_full_context_forks": 0,
-    "compactions": 0
+    "compactions": 0,
+    "declared_context_refs": 12,
+    "declared_context_bytes": 193536,
+    "context_measurement_kind": "declared_refs_not_provider_ingestion",
+    "usage_scope": "controller_and_nested_agents_aggregate",
+    "usage_attribution": "unavailable",
+    "usage_attribution_unavailable_reason": "provider_event_not_agent_scoped"
+  },
+  "usage": {
+    "attempts_finished": 3,
+    "attempts_fully_observed": 2,
+    "input": {
+      "observed_tokens": 4100,
+      "known_attempts": 2,
+      "unknown_attempts": 1,
+      "total_kind": "lower_bound"
+    },
+    "cached_input": {
+      "observed_tokens": 3075,
+      "known_attempts": 2,
+      "unknown_attempts": 1,
+      "total_kind": "lower_bound"
+    },
+    "uncached_input": {
+      "observed_tokens": 1025,
+      "known_attempts": 2,
+      "unknown_attempts": 1,
+      "derivation": "input_minus_cached_per_attempt",
+      "total_kind": "lower_bound"
+    },
+    "output": {
+      "observed_tokens": 210,
+      "known_attempts": 2,
+      "unknown_attempts": 1,
+      "total_kind": "lower_bound"
+    },
+    "reasoning_output": {
+      "observed_tokens": 40,
+      "known_attempts": 2,
+      "unknown_attempts": 1,
+      "total_kind": "lower_bound"
+    },
+    "launcher_prompt": {
+      "observed_bytes": 7497,
+      "known_attempts": 3,
+      "unknown_attempts": 0,
+      "unit": "bytes"
+    },
+    "paired_observation_cache_ratio": 0.75,
+    "unknown_attempt_duration_ms": 3600000,
+    "unknown_attempts_by_reason": {"timeout": 1},
+    "scope": "controller_and_nested_agents_aggregate",
+    "attribution": "unavailable"
+  },
+  "context_artifacts": {
+    "produced_files": 37,
+    "produced_bytes": 712704,
+    "declared_context_refs": 12,
+    "declared_context_bytes": 193536,
+    "review_diff_files": 8,
+    "review_diff_bytes": 524288,
+    "largest_review_diff_bytes": 131072,
+    "duplicate_review_diff_digests": 1,
+    "measurement_kind": "produced_and_declared_refs",
+    "sealed_evidence_limit_exceeded": false
   },
   "duration_seconds": {
     "total": 2400,
@@ -231,13 +297,20 @@ Write the RED test against this complete stable shape, then update `templates/op
     "blocked": 188
   },
   "data_quality": {
-    "complete": true,
-    "warnings": []
+    "complete": false,
+    "usage_completeness_ratio": 0.6667,
+    "coordination_telemetry_available": true,
+    "declared_context_metadata_available": true,
+    "artifact_inventory_available": true,
+    "usage_includes_nested_agents": true,
+    "warnings": ["one attempt ended without final usage"]
   }
 }
 ```
 
-Derive all values from validated events/receipts; do not trust child-provided aggregate totals.
+Derive all values from validated events/receipts; do not trust child-provided aggregate totals. Each usage field has independent known/unknown counts. Derive uncached input per attempt only when both input and cached input are valid, then sum. Compute the cache ratio only over those paired observations. Reject booleans, negative/overflowing counters, and cached input greater than paired input. Unknown values remain `null` or increase the relevant unknown counter; they never become zero.
+
+The aggregate usage scope is always explicit. `controller_and_nested_agents_aggregate` may not be allocated to implementer/reviewer roles unless independently attributable provider events exist. Launcher prompt bytes, produced artifact bytes, declared context bytes, bounded output bytes, and model tokens remain separate units.
 
 - [ ] **Step 2: Write failing report safety tests**
 
@@ -246,6 +319,11 @@ Prove:
 - report size is capped at 1 MiB;
 - report contains normalized reason codes and artifact references, not full logs/source/prompts;
 - corrupt events produce `data_quality.warnings` and cannot inflate avoided-work metrics;
+- timeout attempts without a final usage event contribute their duration and normalized reason to usage-darkness fields;
+- partial usage fields preserve independent completeness and never fabricate uncached input;
+- produced artifact inventory is metadata-only and is not labelled as model-consumed context;
+- missing declared-context bytes remain `null`, not zero;
+- raw review diff bodies never appear in reports or sealed evidence;
 - materialization uses an atomic replace and a deterministic canonical digest;
 - `report --write` cannot write outside the selected run root;
 - missing worktree reports `observed_head=null` plus `last_known_head`, never substitutes the source commit.
@@ -262,9 +340,17 @@ python3 -m unittest \
 
 Expected: missing schemas/commands.
 
+- [ ] **Step 3a: Add the sanitized format-1 forensic fixture**
+
+Create `evals/fixtures/canvas-format1-token-forensic.json` from the approved addendum snapshot. It must declare `provenance=direct_cpe_format1_forensic`, `count_as_format2_runtime_metrics=false`, `sanitized=true`, and `snapshot_state=running`. Preserve stable aggregate attempt, usage, duration, timeout, and artifact-class counts only. Reject prompt, transcript, raw log, source body, arbitrary error prose, secrets, absolute home paths, or format-2 success claims.
+
+Add fixture tests proving it can exercise report completeness and privacy logic but cannot enter format-2 lifecycle success, savings, or cross-run promotion totals.
+
 - [ ] **Step 4: Implement one derivation pipeline for inspect and report**
 
-`inspect --efficiency` and `report` must call the same `build_efficiency_summary()`. The report adds run identity, plan outcomes, blockers, obligations, evidence references, branch handoff, and data-quality warnings. No command may independently maintain counters.
+`inspect --efficiency` and `report` must call the same `build_efficiency_summary()`. The report adds run identity, plan outcomes, blockers, obligations, evidence references, branch handoff, field-complete usage, context artifact pressure, and data-quality warnings. No command may independently maintain counters.
+
+The Wave 1 minimal usage object is intentionally replaced here. Preserve observed input, cached input, output, reasoning output, launcher prompt bytes, per-field known/unknown counts, paired uncached derivation, cache ratio, unknown attempt duration/reasons, aggregate scope, and attribution availability. Launcher prompt size remains bytes, not tokens. Do not embed provider prices.
 
 Update `optimization-report.schema.json` to mirror this result with `additionalProperties=false` at every object boundary. Preserve `format_version=2` for the durable run contract and `schema_version=1` for this report shape.
 
@@ -283,6 +369,7 @@ git add skills/kws-codex-plan-executor/scripts/cpe_runtime/reporting.py \
   skills/kws-codex-plan-executor/scripts/cpe_runtime/operations.py \
   skills/kws-codex-plan-executor/scripts/cpe.py \
   skills/kws-codex-plan-executor/templates/optimization-report.schema.json \
+  skills/kws-codex-plan-executor/evals/fixtures/canvas-format1-token-forensic.json \
   skills/kws-codex-plan-executor/evals/check_cli.py \
   skills/kws-codex-plan-executor/evals/check_runner.py
 git commit -m "feat(cpe): expose efficiency and run reports"
@@ -307,11 +394,16 @@ class OptimizationSignal:
     signal_key: str
     category: Literal[
         "repeated_blocker", "verification_duplication", "review_duplication",
-        "context_overfork", "no_progress_recovery", "envelope_repair"
+        "context_overfork", "no_progress_recovery", "envelope_repair",
+        "usage_darkness", "artifact_growth", "context_payload_amplification"
     ]
     reason_code: str
     run_ids: tuple[str, ...]
     occurrence_count: int
+    metric_kind: Literal[
+        "duration_seconds", "artifact_bytes", "declared_context_bytes"
+    ]
+    cumulative_metric_value: int
     cumulative_duration_seconds: int
     evidence_refs: tuple[str, ...]
     confidence: Literal["candidate", "promotable"]
@@ -345,6 +437,12 @@ Required cases:
 - corrupt or data-quality-incomplete runs cannot make a signal promotable;
 - evidence refs are bounded to 20 and contain only relative paths/digests.
 - the sanitized Canvas direct-CPE fixture may produce regression signals from its two run IDs, while ReadMates and GasStation comparative fixtures remain excluded from promotion counts and CPE efficiency totals.
+- the format-1 token forensic fixture is excluded from format-2 efficiency and promotion totals but remains usable as a report/data-quality regression baseline;
+- `usage_darkness` is promotable from two independent format-2 runs, or three same-run attempts with at least 1800 seconds of unknown-usage duration;
+- `artifact_growth` is promotable from two independent format-2 runs, or three same-run checkpoints whose produced inventory exceeds the 128-file or 8-MiB sealed-evidence boundary;
+- `context_payload_amplification` is promotable from two independent format-2 runs, or three same-scope review observations with increasing declared context bytes totaling at least 8 MiB;
+- production artifact bytes without declared context metadata cannot promote `context_payload_amplification`;
+- byte-based categories do not reuse duration thresholds, and duration-based categories do not infer bytes.
 
 - [ ] **Step 3: Write failing CLI privacy and filtering tests**
 
@@ -355,7 +453,7 @@ Prove `analyze`:
 - emits no source snippets, prompts, transcripts, or arbitrary error prose;
 - is read-only and launches no children;
 - marks legacy runs unsupported in warnings;
-- returns deterministic ordering by confidence, occurrence count, duration, then signal key.
+- returns deterministic ordering by confidence, occurrence count, metric kind, cumulative metric value, duration, then signal key.
 
 - [ ] **Step 4: Run focused tests and confirm RED**
 
@@ -370,7 +468,7 @@ Expected: missing analysis module/command.
 
 - [ ] **Step 5: Implement bounded analysis**
 
-Use streaming JSONL reads with the Wave 1 event-size limit. Analyze at most 1000 selected runs and at most 100,000 valid events. Return an explicit truncation warning when either cap is hit. The command creates no issue, commit, task, or network request; it only produces evidence-backed local candidates.
+Use streaming JSONL reads with the Wave 1 event-size limit. Analyze at most 1000 selected runs and at most 100,000 valid events. Normalize each category to its approved `metric_kind`; never compare byte-valued thresholds with duration-valued thresholds. Return an explicit truncation warning when either cap is hit. The command creates no issue, commit, task, or network request; it only produces evidence-backed local candidates.
 
 - [ ] **Step 6: Run focused tests and confirm GREEN**
 
@@ -629,7 +727,9 @@ The fixture must not require network access, package installation, browser state
 7. assert the canary unit test passes in the isolated worktree;
 8. assert no runtime artifact was written into the product repository;
 9. run `inspect --efficiency` and `report` successfully;
-10. print the run ID and preserve the run root for audit while removing the disposable product repository.
+10. assert the usage report distinguishes cached/uncached/output/reasoning fields, even when the fake workload produces zero or missing values;
+11. assert produced artifacts and declared context refs are separate and contain no raw content;
+12. print the run ID and preserve the run root for audit while removing the disposable product repository.
 
 Reject an empty, `/`, home directory, workspace root, or unresolved temp path before cleanup.
 
@@ -664,6 +764,8 @@ If the canary exposes a product defect, add one focused deterministic regression
 - [ ] **Step 5: Inspect the canary flight recorder**
 
 Review the three JSON outputs produced in Step 4. Confirm there are no missing digests, unexplained launches, open obligations, stale final reviews, or false integration claims.
+
+Also confirm usage scope/completeness is explicit, no aggregate usage is silently assigned to roles, and artifact production bytes are not reported as consumed tokens.
 
 - [ ] **Step 6: Document the live gate and commit Task 6**
 
@@ -707,6 +809,7 @@ Set the skill/runtime version to `2.0.0` only now. Document:
 - `doctor`, `list`, `inspect --efficiency`, `report`, and `analyze` commands;
 - branch-handoff meaning and the separate integration-receipt boundary;
 - live canary usage and cost warning.
+- field-complete token evidence, lower-bound semantics, aggregate attribution limits, and context-artifact measurement boundaries from the observability addendum;
 - POSIX support boundary and the non-binding `split_or_checkpoint_required` / `handoff_to_waygent` advisories; CPE never launches Waygent automatically.
 
 - [ ] **Step 2: Reconcile the tracked inventory**
@@ -818,7 +921,10 @@ Expected: complete suite passes once on the release commit and the worktree is c
 - `doctor` diagnoses CPE prerequisites without launching children or mutating runs.
 - `list` discovers valid format-2 runs safely and reports legacy roots as unsupported.
 - `inspect --efficiency` and `report` share one evidence-derived metrics pipeline.
+- Usage reports preserve cached, uncached, output, reasoning, completeness, unknown duration/reason, aggregate scope, and attribution availability.
+- Produced artifact inventory and declared context refs remain separate from model token totals.
 - `analyze` promotes only repeated, corroborated, privacy-safe optimization signals at the approved threshold.
+- Usage-darkness and artifact/context amplification signals use their approved category-specific thresholds.
 - Missing worktrees report `observed_head=null` and retain a separate `last_known_head`.
 - Completion produces a truthful branch handoff and never implies merge/push/deploy/integration without a separate receipt.
 - The unchanged `--spec --plan --workspace` workflow succeeds in a disposable real-Codex canary.
