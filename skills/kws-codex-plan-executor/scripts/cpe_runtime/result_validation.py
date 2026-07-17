@@ -109,7 +109,6 @@ def normalize_result_v2(
                 receipt_path is not None
                 and (
                     not isinstance(receipt_path, str)
-                    or not receipt_path
                     or len(receipt_path) > 500
                 )
             )

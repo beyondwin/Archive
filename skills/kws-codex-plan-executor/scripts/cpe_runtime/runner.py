@@ -30,9 +30,11 @@ from .evidence import (
     has_current_unsafe_envelope_failure,
     ingest_plan_evidence,
     prepare_plan_evidence,
+    read_private_result,
     read_progress_snapshot,
     repair_result_envelope,
     result_artifact_digest,
+    seal_private_result,
     validate_execution_ledger,
 )
 from .launcher import (
@@ -55,6 +57,7 @@ from .reporting import (
 from .result_validation import (
     WORKFLOW_RECEIPT_FIELDS,
     normalize_result_v2,
+    strict_json_object,
 )
 from .state import StateStore
 
@@ -805,7 +808,12 @@ class SequentialRunner:
                     accepted_head=pending["head"],
                     expected_manifest_sha256=pending["evidence_manifest_sha256"],
                 )
-                self._seal_result(Path(plan["result_path"]))
+                repaired_digest = self._repaired_result_digest(store, plan)
+                self._seal_result(
+                    Path(plan["result_path"]),
+                    run_root=store.root,
+                    expected_digest=repaired_digest,
+                )
             except (OSError, ValueError) as exc:
                 reason = (str(exc).strip() or type(exc).__name__)[:2000]
                 _ensure_decision_scoped_event(
@@ -1249,6 +1257,36 @@ class SequentialRunner:
         )
 
     @staticmethod
+    def _repaired_result_digest(
+        store: StateStore,
+        plan: Mapping[str, object],
+    ) -> str | None:
+        if not isinstance(plan.get("original_result_path"), str):
+            return None
+        matches = [
+            event for event in (
+                strict_json_object(line)
+                for line in store.events_path.read_bytes().splitlines()
+            )
+            if isinstance(event, dict)
+            and event.get("action") == "result.envelope_repaired"
+            and event.get("plan_id") == plan.get("plan_id")
+        ]
+        if len(matches) != 1:
+            raise ValueError("result envelope repair event is missing or duplicated")
+        event = matches[0]
+        digest = event.get("repaired_digest")
+        if (
+            event.get("source") != "parent_observed"
+            or event.get("run_id") != store.state["run_id"]
+            or event.get("category") != "result"
+            or not isinstance(digest, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", digest)
+        ):
+            raise ValueError("result envelope repair digest is invalid")
+        return digest
+
+    @staticmethod
     def _recorded_envelope_repair(
         store: StateStore,
         plan: Mapping[str, object],
@@ -1308,6 +1346,13 @@ class SequentialRunner:
         repair: EnvelopeRepair | None = None
         original_raw = plan.get("original_result_path")
         if isinstance(original_raw, str):
+            expected_repaired_digest = self._repaired_result_digest(store, plan)
+            assert expected_repaired_digest is not None
+            read_private_result(
+                run_root=store.root,
+                result_path=Path(str(plan["result_path"])),
+                expected_digest=expected_repaired_digest,
+            )
             repair = repair_result_envelope(
                 run_root=store.root,
                 worktree=Path(state["worktree"]),
@@ -1367,10 +1412,23 @@ class SequentialRunner:
             store.save()
 
         try:
-            payload = json.loads(repair.repaired_path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise ValueError("repaired result is unavailable") from exc
-        if not isinstance(payload, dict):
+            repaired_bytes = read_private_result(
+                run_root=store.root,
+                result_path=repair.repaired_path,
+                expected_digest=repair.repaired_digest,
+            )
+        except ValueError:
+            plan["status"] = "failed"
+            state["status"] = "failed"
+            store.save()
+            store.append_event(
+                "plan.integrity_failed",
+                plan_id=plan["plan_id"],
+                reason="repaired_result_changed",
+            )
+            return "failed", "repaired_result_changed"
+        payload = strict_json_object(repaired_bytes)
+        if payload is None:
             raise ValueError("repaired result is invalid")
         outcome = LaunchResult(
             payload=payload,
@@ -1885,7 +1943,21 @@ class SequentialRunner:
         return None
 
     @staticmethod
-    def _seal_result(path: Path) -> None:
+    def _seal_result(
+        path: Path,
+        *,
+        run_root: Path | None = None,
+        expected_digest: str | None = None,
+    ) -> None:
+        if expected_digest is not None:
+            if run_root is None:
+                raise ValueError("private result root is required")
+            seal_private_result(
+                run_root=run_root,
+                result_path=path,
+                expected_digest=expected_digest,
+            )
+            return
         descriptor = os.open(
             path,
             os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
