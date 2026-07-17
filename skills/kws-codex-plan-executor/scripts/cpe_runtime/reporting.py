@@ -24,6 +24,7 @@ def derive_recovery_metrics(
 ) -> dict[str, object]:
     """Derive bounded recovery counters from the authoritative event stream."""
     launches_avoided = 0
+    envelope_repairs = 0
     productive_timeouts = 0
     no_progress_slices = 0
     budget_stops = 0
@@ -32,6 +33,9 @@ def derive_recovery_metrics(
         action = event.get("action")
         reason = event.get("reason")
         if action == "resume.stopped_unchanged_blocker":
+            launches_avoided += 1
+        if action == "result.envelope_repaired":
+            envelope_repairs += 1
             launches_avoided += 1
         if (
             action == "plan.pre_spawn_stopped"
@@ -58,6 +62,7 @@ def derive_recovery_metrics(
             budget_stops += 1
     return {
         "launches_avoided": launches_avoided,
+        "envelope_repairs": envelope_repairs,
         "productive_timeouts": productive_timeouts,
         "no_progress_slices": no_progress_slices,
         "budget_stops": budget_stops,

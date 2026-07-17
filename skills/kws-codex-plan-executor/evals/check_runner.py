@@ -61,6 +61,7 @@ from cpe_runtime.evidence import (
     read_progress_snapshot,
     validate_execution_ledger,
 )
+import cpe_runtime.evidence as evidence_module
 from cpe_runtime.reporting import build_optimization_report
 import cpe_runtime.reporting as reporting_module
 import cpe_runtime.runner as runner_module
@@ -3482,6 +3483,474 @@ class _RecoveryRunnerFixture(unittest.TestCase):
         return SequentialRunner(codex_home=self.home, launcher=launcher)
 
 
+class EnvelopeRepairTests(_RecoveryRunnerFixture):
+    def _failed_result(
+        self,
+        run_id: str,
+        *,
+        mutate: object | None = None,
+        expected_error: str = "unsafe_workflow_artifact",
+    ) -> tuple[SequentialRunner, Path, Path, Path, bytes]:
+        runner = self.runner(run_id)
+
+        def launch(request: StructuredLaunchRequest, _lock_fd: int) -> LaunchResult:
+            kwargs = structured_launch_kwargs(request)
+            worktree = Path(kwargs["worktree"])
+            result_path = Path(kwargs["result_path"])
+            log_path = Path(kwargs["log_path"])
+            head = str(kwargs["current_commit"])
+            evidence = worktree / ".superpowers" / "sdd"
+            evidence.mkdir(parents=True, exist_ok=True)
+            (evidence / ".gitignore").write_text("*\n", encoding="utf-8")
+            (evidence / "final-review.md").write_text(
+                "Verdict: approved\nFindings: none\n", encoding="utf-8",
+            )
+            receipts = evidence / "receipts"
+            receipts.mkdir()
+            (receipts / "review.txt").write_text(
+                "review: accepted\n", encoding="utf-8",
+            )
+            (receipts / "verification.txt").write_text(
+                "verification: pass\n", encoding="utf-8",
+            )
+            append_execution_event(evidence / "execution-ledger.jsonl", {
+                "event_id": "review-1",
+                "source": "child_attested",
+                "plan_id": str(kwargs["plan_id"]),
+                "category": "review",
+                "action": "approved",
+                "result": "accepted",
+                "evidence_refs": ["receipts/review.txt"],
+                "review_id": "review-01",
+                "artifact_digest": "c" * 64,
+                "duration_ms": 1,
+            })
+            append_execution_event(evidence / "execution-ledger.jsonl", {
+                "event_id": "verification-1",
+                "source": "child_attested",
+                "plan_id": str(kwargs["plan_id"]),
+                "category": "verification",
+                "action": "verified",
+                "result": "pass",
+                "evidence_refs": ["receipts/verification.txt"],
+                "command_id": "focused",
+                "argv_digest": "a" * 64,
+                "evidence_key": "b" * 64,
+                "duration_ms": 1,
+            })
+            payload: dict[str, object] = {
+                "plan_id": kwargs["plan_id"],
+                "status": "completed",
+                "head_commit": head,
+                "summary": "mechanically repairable result envelope",
+                "verification": [{
+                    "command_id": "focused",
+                    "argv_digest": "a" * 64,
+                    "phase": "branch_final",
+                    "evidence_key": "b" * 64,
+                    "exit_code": 0,
+                    "receipt_path": None,
+                }],
+                "checkpoint": None,
+                "blocker": None,
+                "workflow_receipt": {
+                    "ledger_path": ".superpowers/sdd/execution-ledger.jsonl",
+                    "final_review_path": str(
+                        (evidence / "final-review.md").resolve()
+                    ),
+                    "final_review_head": head,
+                    "open_finding_ids": [],
+                    "open_obligation_ids": [],
+                },
+            }
+            if mutate is not None:
+                mutate(payload, worktree, self.root)  # type: ignore[operator]
+            original = json.dumps(
+                payload, sort_keys=True, separators=(",", ":"),
+            ).encode("utf-8")
+            result_path.write_bytes(original)
+            log_path.write_text("unsafe envelope fixture\n", encoding="utf-8")
+            return LaunchResult(
+                payload=payload,
+                returncode=0,
+                timed_out=False,
+                forced_cleanup=False,
+                discarded_log_bytes=0,
+                result_path=result_path,
+                log_path=log_path,
+                duration_ms=0,
+                input_tokens=None,
+                cached_input_tokens=None,
+                output_tokens=None,
+                reasoning_output_tokens=None,
+                launcher_prompt_bytes=0,
+            )
+
+        runner.launcher._launch_structured = mock.Mock(
+            side_effect=controller_side_effect(runner.launcher, launch),
+        )
+        result = runner.run(
+            workspace=self.repo,
+            specs=[],
+            plans=[self.plan("completed")],
+            run_id=run_id,
+        )
+        self.assertEqual("failed", result["status"])
+        self.assertEqual(expected_error, result["error"])
+        run_root = self.home / "orchestrator" / run_id
+        store = StateStore.open(run_root)
+        worktree = Path(store.state["worktree"])
+        original_path = Path(store.state["plans"][0]["result_path"])
+        return runner, run_root, worktree, original_path, original_path.read_bytes()
+
+    def _repair(self, run_root: Path, worktree: Path, result_path: Path):
+        return evidence_module.repair_result_envelope(
+            run_root=run_root,
+            worktree=worktree,
+            original_result_path=result_path,
+        )
+
+    def test_absolute_final_review_path_repairs_to_relative_and_preserves_original(self) -> None:
+        _, run_root, worktree, original_path, original_bytes = self._failed_result(
+            "repair-absolute",
+        )
+
+        repair = self._repair(run_root, worktree, original_path)
+
+        self.assertIsNotNone(repair)
+        assert repair is not None
+        repaired = json.loads(repair.repaired_path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            ".superpowers/sdd/final-review.md",
+            repaired["workflow_receipt"]["final_review_path"],
+        )
+        self.assertEqual(
+            ("/workflow_receipt/final_review_path",), repair.changed_fields,
+        )
+        self.assertEqual(original_bytes, original_path.read_bytes())
+        self.assertEqual(0o400, original_path.stat().st_mode & 0o777)
+        self.assertEqual(0o400, repair.repaired_path.stat().st_mode & 0o777)
+        self.assertEqual(
+            (run_root / "results" / "repaired").resolve(),
+            repair.repaired_path.parent.resolve(),
+        )
+        self.assertEqual(
+            hashlib.sha256(original_bytes).hexdigest(), repair.original_digest,
+        )
+        self.assertEqual(
+            hashlib.sha256(repair.repaired_path.read_bytes()).hexdigest(),
+            repair.repaired_digest,
+        )
+
+    def test_absolute_path_with_dot_dot_repairs_to_canonical_relative_path(self) -> None:
+        def add_dot_dot(payload: dict[str, object], worktree: Path, _root: Path) -> None:
+            nested = worktree / ".superpowers" / "sdd" / "nested"
+            nested.mkdir()
+            receipt = payload["workflow_receipt"]
+            assert isinstance(receipt, dict)
+            receipt["final_review_path"] = str(
+                nested / ".." / "final-review.md"
+            )
+
+        _, run_root, worktree, original_path, _ = self._failed_result(
+            "repair-dot-dot", mutate=add_dot_dot,
+        )
+
+        repair = self._repair(run_root, worktree, original_path)
+
+        self.assertIsNotNone(repair)
+        assert repair is not None
+        payload = json.loads(repair.repaired_path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            ".superpowers/sdd/final-review.md",
+            payload["workflow_receipt"]["final_review_path"],
+        )
+
+    def test_symlink_escape_and_missing_artifact_fail_closed(self) -> None:
+        def symlink_escape(payload: dict[str, object], worktree: Path, root: Path) -> None:
+            outside = root / "outside-review.md"
+            outside.write_text("not owned\n", encoding="utf-8")
+            link = worktree / ".superpowers" / "sdd" / "review-link.md"
+            link.symlink_to(outside)
+            receipt = payload["workflow_receipt"]
+            assert isinstance(receipt, dict)
+            receipt["final_review_path"] = str(link)
+
+        def missing(payload: dict[str, object], worktree: Path, _root: Path) -> None:
+            receipt = payload["workflow_receipt"]
+            assert isinstance(receipt, dict)
+            receipt["final_review_path"] = str(
+                worktree / ".superpowers" / "sdd" / "missing-review.md"
+            )
+
+        for index, mutate in enumerate((symlink_escape, missing), 1):
+            with self.subTest(case=index):
+                _, run_root, worktree, original_path, _ = self._failed_result(
+                    f"repair-unsafe-artifact-{index}", mutate=mutate,
+                )
+                self.assertIsNone(
+                    self._repair(run_root, worktree, original_path)
+                )
+
+    def test_unknown_key_status_and_summary_errors_are_not_repaired(self) -> None:
+        mutations = (
+            lambda payload, _worktree, _root: payload.__setitem__("unknown", True),
+            lambda payload, _worktree, _root: payload.__setitem__("status", "failed"),
+            lambda payload, _worktree, _root: payload.__setitem__("summary", ""),
+        )
+        for index, mutate in enumerate(mutations, 1):
+            with self.subTest(case=index):
+                _, run_root, worktree, original_path, _ = self._failed_result(
+                    f"repair-semantic-error-{index}",
+                    mutate=mutate,
+                    expected_error="invalid_result",
+                )
+                self.assertIsNone(
+                    self._repair(run_root, worktree, original_path)
+                )
+
+    def test_dirty_head_verification_and_review_finding_drift_fail_closed(self) -> None:
+        _, run_root, worktree, original_path, _ = self._failed_result(
+            "repair-dirty",
+        )
+        (worktree / "dirty.txt").write_text("dirty\n", encoding="utf-8")
+        self.assertIsNone(self._repair(run_root, worktree, original_path))
+
+        def wrong_head(payload: dict[str, object], _worktree: Path, _root: Path) -> None:
+            payload["head_commit"] = "0" * 40
+
+        _, run_root, worktree, original_path, _ = self._failed_result(
+            "repair-wrong-head",
+            mutate=wrong_head,
+            expected_error="wrong_head",
+        )
+        self.assertIsNone(self._repair(run_root, worktree, original_path))
+
+        _, run_root, worktree, original_path, _ = self._failed_result(
+            "repair-verification-drift",
+        )
+        ledger = worktree / ".superpowers" / "sdd" / "execution-ledger.jsonl"
+        ledger_events = [
+            json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines()
+        ]
+        verification_event = next(
+            event for event in ledger_events
+            if event.get("category") == "verification"
+        )
+        verification_event["evidence_key"] = "d" * 64
+        ledger.write_text(
+            "".join(
+                json.dumps(event, sort_keys=True, separators=(",", ":")) + "\n"
+                for event in ledger_events
+            ),
+            encoding="utf-8",
+        )
+        self.assertIsNone(self._repair(run_root, worktree, original_path))
+
+        _, run_root, worktree, original_path, _ = self._failed_result(
+            "repair-finding-drift",
+        )
+        append_execution_event(
+            worktree / ".superpowers" / "sdd" / "execution-ledger.jsonl",
+            {
+                "event_id": "finding-drift-1",
+                "source": "child_attested",
+                "plan_id": "plan-01",
+                "category": "finding_fix",
+                "action": "started",
+                "result": "fail",
+                "evidence_refs": [],
+                "finding_ids": ["F-1"],
+                "fix_digest": "e" * 64,
+                "duration_ms": 1,
+            },
+        )
+        self.assertIsNone(self._repair(run_root, worktree, original_path))
+
+    def test_other_original_integrity_error_is_not_repaired(self) -> None:
+        def relative_missing(
+            payload: dict[str, object], _worktree: Path, _root: Path,
+        ) -> None:
+            receipt = payload["workflow_receipt"]
+            assert isinstance(receipt, dict)
+            receipt["final_review_path"] = "missing-review.md"
+
+        _, run_root, worktree, original_path, _ = self._failed_result(
+            "repair-other-error", mutate=relative_missing,
+        )
+        events = _runner_events(run_root)
+        events[-1]["reason"] = "verification_failed"
+        (run_root / "events.jsonl").write_text(
+            "".join(
+                json.dumps(event, sort_keys=True, separators=(",", ":")) + "\n"
+                for event in events
+            ),
+            encoding="utf-8",
+        )
+        self.assertIsNone(self._repair(run_root, worktree, original_path))
+
+    def test_repair_only_resume_accepts_receipt_with_zero_new_launches(self) -> None:
+        runner, run_root, _, original_path, original_bytes = self._failed_result(
+            "repair-resume",
+        )
+        original_attempts = StateStore.open(run_root).state["plans"][0][
+            "controller_launch_count"
+        ]
+        compiler_log = run_root / "compiler-invocations.jsonl"
+        compiler_log.write_text("", encoding="utf-8")
+
+        completed = runner.resume(run_id="repair-resume", retry_failed=True)
+
+        self.assertEqual("completed", completed["status"])
+        self.assertEqual(0, fake_codex_launch_count(run_root))
+        self.assertEqual(0, compiler_launch_count(run_root))
+        state = StateStore.open(run_root).state
+        plan = state["plans"][0]
+        self.assertEqual(original_attempts, plan["controller_launch_count"])
+        self.assertEqual(str(original_path), plan["original_result_path"])
+        self.assertNotEqual(plan["original_result_path"], plan["result_path"])
+        self.assertEqual(original_bytes, original_path.read_bytes())
+        self.assertTrue((run_root / "evidence" / "plan-01").is_dir())
+        repaired_event = next(
+            event for event in _runner_events(run_root)
+            if event.get("action") == "result.envelope_repaired"
+        )
+        self.assertEqual(hashlib.sha256(original_bytes).hexdigest(), repaired_event["original_digest"])
+        self.assertEqual(
+            ["/workflow_receipt/final_review_path"],
+            repaired_event["changed_fields"],
+        )
+
+    def test_repair_event_wal_reconciles_after_event_before_state_crash(self) -> None:
+        runner, run_root, _, _, _ = self._failed_result("repair-event-crash")
+        original_append = StateStore._append_event_bytes
+        injected = False
+
+        def crash(store: StateStore, encoded: bytes) -> None:
+            nonlocal injected
+            original_append(store, encoded)
+            if b'"action":"result.envelope_repaired"' in encoded and not injected:
+                injected = True
+                raise RuntimeError("injected envelope event crash")
+
+        with (
+            mock.patch.object(StateStore, "_append_event_bytes", new=crash),
+            self.assertRaisesRegex(RuntimeError, "injected envelope event crash"),
+        ):
+            runner.resume(run_id="repair-event-crash", retry_failed=True)
+
+        self.assertEqual("failed", StateStore.open(run_root).state["status"])
+        completed = runner.resume(
+            run_id="repair-event-crash", retry_failed=True,
+        )
+        self.assertEqual("completed", completed["status"])
+        self.assertEqual(0, fake_codex_launch_count(run_root))
+        self.assertEqual(1, len([
+            event for event in _runner_events(run_root)
+            if event.get("action") == "result.envelope_repaired"
+        ]))
+
+    def test_repair_state_reconciles_without_launch_after_state_save_crash(self) -> None:
+        runner, run_root, _, _, _ = self._failed_result("repair-state-crash")
+        original_save = StateStore.save
+        injected = False
+
+        def crash(store: StateStore) -> None:
+            nonlocal injected
+            original_save(store)
+            plans = store.state.get("plans", [])
+            plan = plans[0] if plans else {}
+            if (
+                isinstance(plan, dict)
+                and plan.get("original_result_path") is not None
+                and store.state.get("status") == "running"
+                and not injected
+            ):
+                injected = True
+                raise RuntimeError("injected envelope state crash")
+
+        with (
+            mock.patch.object(StateStore, "save", new=crash),
+            self.assertRaisesRegex(RuntimeError, "injected envelope state crash"),
+        ):
+            runner.resume(run_id="repair-state-crash", retry_failed=True)
+
+        self.assertEqual("running", StateStore.open(run_root).state["status"])
+        completed = runner.resume(run_id="repair-state-crash")
+        self.assertEqual("completed", completed["status"])
+        self.assertEqual(0, fake_codex_launch_count(run_root))
+        self.assertEqual(1, len([
+            event for event in _runner_events(run_root)
+            if event.get("action") == "result.envelope_repaired"
+        ]))
+
+    def test_repair_state_crash_rejects_later_evidence_drift_without_launch(self) -> None:
+        runner, run_root, worktree, _, _ = self._failed_result(
+            "repair-state-drift",
+        )
+        original_save = StateStore.save
+        injected = False
+
+        def crash(store: StateStore) -> None:
+            nonlocal injected
+            original_save(store)
+            plan = store.state["plans"][0]
+            if (
+                plan.get("original_result_path") is not None
+                and store.state.get("status") == "running"
+                and not injected
+            ):
+                injected = True
+                raise RuntimeError("injected envelope drift window")
+
+        with (
+            mock.patch.object(StateStore, "save", new=crash),
+            self.assertRaisesRegex(RuntimeError, "injected envelope drift window"),
+        ):
+            runner.resume(run_id="repair-state-drift", retry_failed=True)
+
+        ledger = worktree / ".superpowers" / "sdd" / "execution-ledger.jsonl"
+        events = [
+            json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines()
+        ]
+        next(
+            event for event in events if event.get("category") == "verification"
+        )["evidence_key"] = "f" * 64
+        ledger.write_text(
+            "".join(
+                json.dumps(event, sort_keys=True, separators=(",", ":")) + "\n"
+                for event in events
+            ),
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(
+            ValueError, "recorded result envelope repair no longer validates",
+        ):
+            runner.resume(run_id="repair-state-drift")
+        self.assertEqual(0, fake_codex_launch_count(run_root))
+        self.assertEqual("running", StateStore.open(run_root).state["status"])
+
+    def test_state_and_metrics_derive_repair_without_mutable_counter(self) -> None:
+        _, run_root, _, _, _ = self._failed_result("repair-state-default")
+        state = StateStore.open(run_root).state
+        self.assertIsNone(state["plans"][0]["original_result_path"])
+        self.assertNotIn("envelope_repairs", state)
+        self.assertEqual(
+            {
+                "launches_avoided": 1,
+                "envelope_repairs": 1,
+                "productive_timeouts": 0,
+                "no_progress_slices": 0,
+                "budget_stops": 0,
+                "continuation_reason_counts": {},
+            },
+            reporting_module.derive_recovery_metrics([{
+                "action": "result.envelope_repaired",
+            }]),
+        )
+
+
 class ResumeCapabilityTests(_RecoveryRunnerFixture):
     def observation(self, outcome: str) -> CapabilityObservation:
         return CapabilityObservation(
@@ -3551,6 +4020,7 @@ class ProgressRecoveryIntegrationTests(_RecoveryRunnerFixture):
         self.assertEqual(
             {
                 "launches_avoided": 1,
+                "envelope_repairs": 0,
                 "productive_timeouts": 1,
                 "no_progress_slices": 0,
                 "budget_stops": 0,
