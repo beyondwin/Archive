@@ -40,6 +40,7 @@ DEFAULT_PLAN_BUDGET = {
 }
 _SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 _DIGEST_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+_DECISION_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 _RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 
@@ -195,6 +196,8 @@ class StateStore:
                 "progress_checkpoint_count": 0,
                 "consecutive_no_progress_slices": 0,
                 "progress_fingerprint": None,
+                "execution_ledger_event_ids": [],
+                "pending_checkpoint_decision": None,
                 "environment_fingerprint": None,
                 "capability_probe_ids": [],
                 "plan_started_at": None,
@@ -338,7 +341,8 @@ class StateStore:
                 "plan_id", "status", "starting_commit", "accepted_commit",
                 "attempt_count", "controller_launch_count", "checkpoint_count",
                 "progress_checkpoint_count", "consecutive_no_progress_slices",
-                "progress_fingerprint", "environment_fingerprint",
+                "progress_fingerprint", "execution_ledger_event_ids",
+                "pending_checkpoint_decision", "environment_fingerprint",
                 "capability_probe_ids", "plan_started_at", "plan_elapsed_seconds",
                 "last_known_head", "result_path", "budget",
             }:
@@ -363,6 +367,50 @@ class StateStore:
                 value = record[name]
                 if value is not None and not isinstance(value, str):
                     raise ValueError(f"plan {name} is invalid")
+            event_ids = record["execution_ledger_event_ids"]
+            if (
+                not isinstance(event_ids, list)
+                or len(event_ids) > 4096
+                or not all(
+                    isinstance(value, str) and 1 <= len(value) <= 128
+                    for value in event_ids
+                )
+                or len(event_ids) != len(set(event_ids))
+            ):
+                raise ValueError("plan execution ledger event IDs are invalid")
+            pending = record["pending_checkpoint_decision"]
+            if pending is not None:
+                pending_fields = {
+                    "decision_id", "plan_id", "attempt", "decision", "reason",
+                    "progress_fingerprint", "previous_progress_fingerprint",
+                    "timed_out", "head",
+                }
+                if (
+                    not isinstance(pending, dict)
+                    or set(pending) != pending_fields
+                    or not isinstance(pending["decision_id"], str)
+                    or not _DECISION_ID_PATTERN.fullmatch(pending["decision_id"])
+                    or pending["plan_id"] != record["plan_id"]
+                    or not isinstance(pending["attempt"], int)
+                    or isinstance(pending["attempt"], bool)
+                    or not 1 <= pending["attempt"] <= record["attempt_count"]
+                    or pending["decision"] not in {
+                        "continue", "checkpoint", "block", "fail",
+                        "stop_stalled", "stop_budget", "finish",
+                    }
+                    or not isinstance(pending["reason"], str)
+                    or not pending["reason"]
+                    or not isinstance(pending["progress_fingerprint"], str)
+                    or not _DIGEST_PATTERN.fullmatch(pending["progress_fingerprint"])
+                    or not isinstance(pending["previous_progress_fingerprint"], str)
+                    or not _DIGEST_PATTERN.fullmatch(
+                        pending["previous_progress_fingerprint"]
+                    )
+                    or not isinstance(pending["timed_out"], bool)
+                    or not isinstance(pending["head"], str)
+                    or not _SHA_PATTERN.fullmatch(pending["head"])
+                ):
+                    raise ValueError("pending checkpoint decision is invalid")
             if (
                 not isinstance(record["capability_probe_ids"], list)
                 or not all(isinstance(value, str) for value in record["capability_probe_ids"])
@@ -413,6 +461,8 @@ class StateStore:
             "progress_checkpoint_count": 0,
             "consecutive_no_progress_slices": 0,
             "progress_fingerprint": None,
+            "execution_ledger_event_ids": [],
+            "pending_checkpoint_decision": None,
             "environment_fingerprint": None,
             "capability_probe_ids": [],
             "plan_started_at": None,

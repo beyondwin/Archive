@@ -26,7 +26,10 @@ class CheckpointBudget:
 
 @dataclass(frozen=True)
 class CheckpointDecision:
-    action: Literal["continue", "stop_stalled", "stop_budget", "finish"]
+    action: Literal[
+        "continue", "checkpoint", "block", "fail",
+        "stop_stalled", "stop_budget", "finish",
+    ]
     reason_code: str
     progress_fingerprint: str
 
@@ -121,3 +124,42 @@ def decide_checkpoint(
     if timed_out:
         return CheckpointDecision("continue", "first_no_progress_slice", fingerprint)
     return CheckpointDecision("stop_stalled", "child_stopped_without_completion", fingerprint)
+
+
+def decide_child_outcome(
+    *,
+    previous: ProgressSnapshot | None,
+    current: ProgressSnapshot,
+    timed_out: bool,
+    consecutive_no_progress: int,
+    progress_checkpoints: int,
+    controller_launches: int,
+    plan_elapsed_seconds: int,
+    budget: CheckpointBudget,
+    child_status: Literal["completed", "checkpointed", "blocked", "failed"] | None,
+) -> CheckpointDecision:
+    """Map every trusted child slice to one canonical parent decision."""
+    if child_status not in {None, "completed", "checkpointed", "blocked", "failed"}:
+        raise ValueError("child status is invalid")
+    baseline = decide_checkpoint(
+        previous=previous,
+        current=current,
+        timed_out=timed_out,
+        consecutive_no_progress=consecutive_no_progress,
+        progress_checkpoints=progress_checkpoints,
+        controller_launches=controller_launches,
+        plan_elapsed_seconds=plan_elapsed_seconds,
+        budget=budget,
+        child_completed=child_status == "completed",
+    )
+    if timed_out or child_status in {None, "completed"}:
+        return baseline
+    if child_status == "checkpointed":
+        if baseline.action == "stop_budget":
+            return baseline
+        return CheckpointDecision(
+            "checkpoint", "child_checkpointed", baseline.progress_fingerprint,
+        )
+    if child_status == "failed":
+        return CheckpointDecision("fail", "child_failed", baseline.progress_fingerprint)
+    return CheckpointDecision("block", "child_blocked", baseline.progress_fingerprint)
