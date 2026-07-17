@@ -49,6 +49,7 @@ from cpe_runtime.runner import (
     _write_private_json,
 )
 from cpe_runtime.state import StateStore
+from evals.fake_codex import workflow_receipt
 
 
 class HistoricalEvidenceFixtureTests(unittest.TestCase):
@@ -1552,13 +1553,20 @@ print(json.dumps(result, sort_keys=True), flush=True)
         self.assertIn(b"[cpe log truncated; discarded_bytes=", payload)
 
     def test_spawn_failure_is_recorded_as_a_durable_failed_attempt(self) -> None:
+        compiler_launcher = self.runner().launcher
         launcher = CodexLauncher(
             schema_path=ROOT / "templates" / "plan-result-schema.json",
             codex_bin=str(self.root / "missing-codex"),
             timeout_seconds=1,
             environ={"PATH": os.environ["PATH"]},
         )
-        runner = SequentialRunner(codex_home=self.home, launcher=launcher)
+        runner = SequentialRunner(
+            codex_home=self.home,
+            launcher=launcher,
+            compiler=CompiledIndexService(
+                compile_once=compiler_launcher.compile_index,
+            ),
+        )
         result = runner.run(
             workspace=self.repo,
             specs=[],
@@ -2310,17 +2318,6 @@ print(json.dumps(result, sort_keys=True), flush=True)
             if plan_id != "plan-01":
                 return real_launch(**kwargs)
             worktree = Path(kwargs["worktree"])
-            evidence = worktree / ".superpowers" / "sdd"
-            evidence.mkdir(parents=True, exist_ok=True)
-            (evidence / ".gitignore").write_text("*\n", encoding="utf-8")
-            (evidence / "progress.md").write_text(
-                "Task 1: complete\n",
-                encoding="utf-8",
-            )
-            (evidence / "final-review.md").write_text(
-                "Verdict: approved\nFindings: none\n",
-                encoding="utf-8",
-            )
             result_path = Path(kwargs["result_path"])
             log_path = Path(kwargs["log_path"])
             payload = {
@@ -2338,13 +2335,11 @@ print(json.dumps(result, sort_keys=True), flush=True)
                     }
                 ],
                 "summary": "deterministic first-plan completion",
-                "workflow_receipt": {
-                    "ledger_path": ".superpowers/sdd/progress.md",
-                    "final_review_path": ".superpowers/sdd/final-review.md",
-                    "final_review_head": kwargs["current_commit"],
-                    "open_finding_ids": [],
-                    "open_obligation_ids": [],
-                },
+                "workflow_receipt": workflow_receipt(
+                    worktree,
+                    str(kwargs["current_commit"]),
+                    plan_id,
+                ),
             }
             result_path.write_text(json.dumps(payload), encoding="utf-8")
             log_path.write_text(
