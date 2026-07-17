@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import selectors
@@ -25,6 +26,12 @@ from cpe_runtime.launcher import (
     _drain_registered,
     _terminate_group,
     _UsageFilter,
+)
+from cpe_runtime.compiler import (
+    CompiledIndexService,
+    compiler_cache_key,
+    default_operator_contract,
+    validate_compiled_index,
 )
 from cpe_runtime.runner import (
     SequentialRunner,
@@ -309,6 +316,70 @@ print(json.dumps(result, sort_keys=True), flush=True)
             specs=[],
             plans=[self.plan(1, "completed")],
         )
+
+    def create_compiler_store(self, run_id: str) -> StateStore:
+        plan = self.repo / f"{run_id}.md"
+        plan.write_text("Implement the compiler contract.\n", encoding="utf-8")
+        return StateStore.create(
+            run_root=self.home / "orchestrator" / run_id,
+            run_id=run_id,
+            source_repository=self.repo,
+            source_commit=git(self.repo, "rev-parse", "HEAD"),
+            worktree=self.home / "worktrees" / run_id,
+            branch=f"codex/{run_id}",
+            specs=[],
+            plans=[plan],
+        )
+
+    def compiler_payload(
+        self, store: StateStore, *, unknowns: list[str] | None = None
+    ) -> dict[str, object]:
+        contract = default_operator_contract(store.state)
+        plan = next(item for item in store.state["inputs"] if item["role"] == "plan")
+        source = Path(plan["snapshot_path"]).read_bytes()
+        return {
+            "format_version": 2,
+            "cache_key": compiler_cache_key(store.state, contract),
+            "plans": [{
+                "plan_id": "plan-01",
+                "source_sha256": plan["sha256"],
+                "byte_length": plan["byte_length"],
+                "line_count": 1,
+                "tasks": [{
+                    "task_id": "task-01", "order": 0,
+                    "source_line_start": 1, "source_line_end": 1,
+                    "source_text_sha256": hashlib.sha256(source).hexdigest(),
+                }],
+                "verifications": [], "capabilities": [],
+                "coordination_exceptions": [], "execution_advisories": [],
+                "unknowns": list(unknowns or []),
+            }],
+        }
+
+    def fake_compiler_with_unknown(self, unknown: str):
+        def compile_once(store, _contract, _repair):
+            return self.compiler_payload(store, unknowns=[unknown])
+        return compile_once
+
+    def test_compiled_index_requires_exact_plan_source_spans(self) -> None:
+        store = self.create_compiler_store("compiler-source")
+        contract = default_operator_contract(store.state)
+        payload = self.compiler_payload(store)
+        payload["plans"][0]["tasks"][0]["source_text_sha256"] = "f" * 64
+        with self.assertRaisesRegex(ValueError, "source span digest"):
+            validate_compiled_index(payload, store.state, contract)
+
+    def test_optional_compiler_ambiguity_is_preserved_as_unknown(self) -> None:
+        store = self.create_compiler_store("compiler-unknown")
+        service = CompiledIndexService(
+            compile_once=self.fake_compiler_with_unknown("capability:browser"),
+        )
+        path = service.prepare(store)
+        index = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(index["plans"][0]["unknowns"], ["capability:browser"])
+        self.assertEqual(service.compile_calls, 1)
+        self.assertEqual(service.prepare(store), path)
+        self.assertEqual(service.compile_calls, 1)
 
     def test_format_two_state_has_preparation_and_budget_fields(self) -> None:
         source_commit = git(self.repo, "rev-parse", "HEAD")
