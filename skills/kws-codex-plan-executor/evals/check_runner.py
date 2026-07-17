@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 import os
 import selectors
@@ -802,6 +803,43 @@ print(json.dumps(result, sort_keys=True), flush=True)
         (sdd / "execution-ledger.jsonl").symlink_to(real)
         with self.assertRaisesRegex(ValueError, "redirected"):
             ingest_plan_evidence(run_root=self.root / "run-symlink", worktree=worktree, plan_id="plan-01", accepted_head="1" * 40)
+
+    def test_evidence_publication_fsync_failure_cleans_target_and_allows_retry(self) -> None:
+        worktree = self.root / "evidence-publication-fsync"
+        self.write_execution_ledger(worktree, [self.execution_event("task")])
+        run_root = self.root / "run-publication-fsync"
+        evidence_root = run_root / "evidence"
+        evidence_module = importlib.import_module("cpe_runtime.evidence")
+        original_fsync_directory = evidence_module._fsync_directory
+        injected = False
+
+        def fail_published_parent_once(path: Path) -> None:
+            nonlocal injected
+            if path == evidence_root and not injected:
+                injected = True
+                raise OSError("injected publication fsync failure")
+            original_fsync_directory(path)
+
+        with mock.patch.object(
+            evidence_module, "_fsync_directory", side_effect=fail_published_parent_once
+        ):
+            with self.assertRaisesRegex(OSError, "injected publication fsync failure"):
+                ingest_plan_evidence(
+                    run_root=run_root,
+                    worktree=worktree,
+                    plan_id="plan-01",
+                    accepted_head="1" * 40,
+                )
+
+        self.assertTrue(injected)
+        self.assertFalse((evidence_root / "plan-01").exists())
+        manifest = ingest_plan_evidence(
+            run_root=run_root,
+            worktree=worktree,
+            plan_id="plan-01",
+            accepted_head="1" * 40,
+        )
+        self.assertEqual(manifest["plan_id"], "plan-01")
 
     def test_checkpointed_result_is_durable_and_resumable(self) -> None:
         runner = self.runner()

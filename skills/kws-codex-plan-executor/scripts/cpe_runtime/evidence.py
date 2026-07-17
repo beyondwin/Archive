@@ -230,6 +230,7 @@ def ingest_plan_evidence(*, run_root: Path, worktree: Path, plan_id: str, accept
     if target_root.exists() or target_root.is_symlink():
         raise FileExistsError("sealed evidence target already exists")
     staging = Path(tempfile.mkdtemp(prefix=f".{plan_id}.", dir=evidence_root))
+    published = False
     files: list[dict[str, object]] = []
     total = 0
     try:
@@ -273,8 +274,14 @@ def ingest_plan_evidence(*, run_root: Path, worktree: Path, plan_id: str, accept
             _fsync_directory(directory)
         _fsync_directory(staging)
         staging.rename(target_root)
+        published = True
         _fsync_directory(evidence_root)
         return manifest
     except BaseException:
-        shutil.rmtree(staging, ignore_errors=True)
+        shutil.rmtree(target_root if published else staging, ignore_errors=True)
+        if published:
+            try:
+                _fsync_directory(evidence_root)
+            except OSError:
+                pass
         raise
