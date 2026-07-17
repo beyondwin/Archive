@@ -813,7 +813,7 @@ def _open_private_result(
         metadata = os.fstat(proof.descriptor)
         if (
             metadata.st_uid != os.geteuid()
-            or stat.S_IMODE(metadata.st_mode) & 0o077
+            or stat.S_IMODE(metadata.st_mode) != 0o400
             or proof.digest != expected_digest
         ):
             raise ValueError("private result does not match its recorded digest")
