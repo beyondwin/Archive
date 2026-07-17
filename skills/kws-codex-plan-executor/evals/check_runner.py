@@ -123,6 +123,21 @@ class CapabilityTests(unittest.TestCase):
         self.assertEqual([], typed_blockers([child]))
         self.assertEqual(1, len(typed_blockers([parent])))
 
+    def test_fingerprint_is_stable_for_permuted_distinct_observations(self) -> None:
+        available = CapabilityObservation(
+            capability="loopback_bind",
+            scope="workspace",
+            outcome="available",
+            reason_code="permission_denied",
+            observed_by="parent_observed",
+            stable_details={"host": "127.0.0.1"},
+        )
+        unavailable = dataclasses.replace(available, outcome="unavailable")
+        self.assertEqual(
+            environment_fingerprint([available, unavailable]),
+            environment_fingerprint([unavailable, available]),
+        )
+
     def test_validation_accepts_allowlisted_and_incidental_details(self) -> None:
         observation = CapabilityObservation(
             capability="loopback_bind",
@@ -156,6 +171,24 @@ class CapabilityTests(unittest.TestCase):
                             **values,
                         )
                     )
+
+    def test_validation_rejects_unstable_reason_codes(self) -> None:
+        for reason_code in (
+            "permission denied: /tmp/runtime",
+            "permission_denied_20260717",
+            "api_key_sk_live_secret",
+        ):
+            with self.subTest(reason_code=reason_code):
+                observation = CapabilityObservation(
+                    capability="loopback_bind",
+                    scope="workspace",
+                    outcome="unavailable",
+                    reason_code=reason_code,
+                    observed_by="parent_observed",
+                    stable_details={},
+                )
+                with self.assertRaises(ValueError):
+                    validate_observation(observation)
 
     def test_validation_rejects_unsupported_enum_values(self) -> None:
         observation = CapabilityObservation(

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from hashlib import sha256
 import json
+import re
 from typing import Literal, Mapping, Sequence
 
 TrustLevel = Literal["parent_observed", "child_attested", "derived", "hypothesis"]
@@ -25,6 +26,7 @@ _SECRET_LIKE_DETAIL_PARTS = {
     "token", "cookie", "password", "secret", "credential", "authorization",
     "apikey", "providerkey",
 }
+_REASON_CODE = re.compile(r"^[a-z]+(?:_[a-z]+)*$")
 
 
 @dataclass(frozen=True)
@@ -53,6 +55,9 @@ def validate_observation(observation: CapabilityObservation) -> None:
     for field in ("capability", "scope", "reason_code"):
         if not _non_empty_string(getattr(observation, field)):
             raise ValueError(f"capability observation {field} must be non-empty")
+    if (not _REASON_CODE.fullmatch(observation.reason_code)
+            or _secret_like_detail_key(observation.reason_code)):
+        raise ValueError("capability observation reason code is unstable")
     if observation.outcome not in _OUTCOMES:
         raise ValueError("capability observation outcome is unsupported")
     if observation.observed_by not in _TRUST_LEVELS:
@@ -97,11 +102,7 @@ def environment_fingerprint(observations: Sequence[CapabilityObservation]) -> st
         canonical = canonicalize_observation(item)
         canonical.pop("observed_by")
         payload.append(canonical)
-    payload.sort(
-        key=lambda item: (
-            str(item["capability"]), str(item["scope"]), str(item["reason_code"])
-        ),
-    )
+    payload.sort(key=lambda item: json.dumps(item, sort_keys=True, separators=(",", ":")))
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return sha256(encoded).hexdigest()
 
