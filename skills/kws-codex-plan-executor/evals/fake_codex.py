@@ -22,6 +22,7 @@ SCENARIOS = {
     "resume_completed",
     "blocking_completed",
     "timeout_grandchild",
+    "timeout_after_commit",
     "completed_with_grandchild",
     "large_log",
     "oversized_usage",
@@ -195,6 +196,11 @@ def main() -> int:
             stream.flush()
         while True:
             print("waiting for timeout", flush=True)
+            time.sleep(0.05)
+    elif scenario == "timeout_after_commit":
+        commit_plan(worktree, plan_id)
+        while True:
+            print("waiting for timeout after commit", flush=True)
             time.sleep(0.05)
     elif scenario == "completed_with_grandchild":
         pid_path = Path(os.environ["CPE_FAKE_GRANDCHILD_PID"])

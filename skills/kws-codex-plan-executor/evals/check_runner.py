@@ -309,6 +309,25 @@ print(json.dumps(result, sort_keys=True), flush=True)
         self.assertIsNone(inspected["observed_head"])
         self.assertEqual(inspected["last_known_head"], result["last_known_head"])
 
+    def test_timeout_persists_advanced_head_and_returns_without_relaunch(self) -> None:
+        runner = self.runner(timeout_seconds=1.0)
+        result = runner.run(
+            workspace=self.repo,
+            specs=[],
+            plans=[self.plan(1, "timeout_after_commit")],
+            run_id="timeout-after-commit",
+        )
+        advanced_head = git(Path(result["worktree"]), "rev-parse", "HEAD")
+        self.assertNotEqual(advanced_head, result["source_commit"])
+        Path(result["worktree"]).rename(self.root / "moved-timeout-worktree")
+
+        inspected = runner.inspect(run_id="timeout-after-commit")
+
+        self.assertEqual(result["status"], "checkpointed")
+        self.assertIsNone(inspected["observed_head"])
+        self.assertEqual(inspected["last_known_head"], advanced_head)
+        self.assertEqual(len(self.invocations()), 1)
+
     def test_format_one_state_is_unsupported_without_mutation(self) -> None:
         root = self.home / "orchestrator" / "legacy-format-one"
         root.mkdir(parents=True, mode=0o700)
