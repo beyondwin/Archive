@@ -76,6 +76,11 @@ def _schema_error() -> ValueError:
     return ValueError("compiled index schema is invalid")
 
 
+def _validation_error_code(error: ValueError) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", "_", str(error).lower()).strip("_")
+    return normalized[:96] or "compiled_index_validation_failed"
+
+
 def _identifier(value: object) -> bool:
     return isinstance(value, str) and _IDENTIFIER.fullmatch(value) is not None
 
@@ -302,6 +307,13 @@ class CompiledIndexService:
                 break
             except ValueError as exc:
                 last_error = exc
+                if not repair:
+                    error_path = store.root / "results" / "compiler-attempt-1.error-code"
+                    atomic_private_write(
+                        error_path,
+                        _validation_error_code(exc).encode("ascii"),
+                    )
+                    error_path.chmod(0o400)
         else:
             assert last_error is not None
             raise last_error
