@@ -54,6 +54,14 @@ from cpe_runtime.progress import (
     decide_checkpoint,
     progress_fingerprint,
 )
+from cpe_runtime.verification import (
+    MAX_VERIFICATION_LOG_BYTES,
+    VerificationRequest,
+    execute_verification,
+    find_reusable_receipt,
+    materialize_helper_descriptor,
+    verification_cache_key,
+)
 from cpe_runtime.evidence import (
     MAX_EVIDENCE_FILE_BYTES,
     append_execution_event,
@@ -78,6 +86,228 @@ except ModuleNotFoundError as exc:
     if exc.name != "evals":
         raise
     from fake_codex import workflow_receipt
+
+
+class VerificationReceiptTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.worktree = self.root / "worktree"
+        self.cwd = self.worktree / "project"
+        self.cwd.mkdir(parents=True)
+        self.evidence_root = (
+            self.worktree / ".superpowers" / "sdd" / "verification"
+        )
+
+    def request(self, **changes: object) -> VerificationRequest:
+        values: dict[str, object] = {
+            "run_id": "run-one",
+            "command_id": "unit",
+            "argv": (sys.executable, "-c", "print('ok')"),
+            "cwd": self.cwd,
+            "head": "a" * 40,
+            "environment_fingerprint": "environment-one",
+            "phase": "task",
+            "input_digest": "1" * 64,
+            "deterministic": True,
+            "mutable_input_policy": "immutable",
+            "required_artifact_paths": (),
+            "timeout_seconds": 10,
+        }
+        values.update(changes)
+        return VerificationRequest(**values)  # type: ignore[arg-type]
+
+    def test_cache_key_uses_exact_eight_part_contract(self) -> None:
+        base = self.request()
+        other_cwd = self.worktree / "other"
+        other_cwd.mkdir()
+        for field, replacement in (
+            ("command_id", "lint-v2"),
+            ("argv", (sys.executable, "-c", "print('other')")),
+            ("cwd", other_cwd),
+            ("head", "b" * 40),
+            ("environment_fingerprint", "changed"),
+            ("phase", "branch_final"),
+            ("input_digest", "2" * 64),
+            ("mutable_input_policy", "always_execute"),
+        ):
+            with self.subTest(field=field):
+                changed = dataclasses.replace(base, **{field: replacement})
+                self.assertNotEqual(
+                    verification_cache_key(base),
+                    verification_cache_key(changed),
+                )
+
+        for field, replacement in (
+            ("run_id", "run-two"),
+            ("timeout_seconds", 11),
+            ("deterministic", False),
+            ("required_artifact_paths", ("result.txt",)),
+        ):
+            with self.subTest(non_key_field=field):
+                changed = dataclasses.replace(base, **{field: replacement})
+                self.assertEqual(
+                    verification_cache_key(base),
+                    verification_cache_key(changed),
+                )
+
+    def test_passing_receipt_is_reusable_only_for_exact_same_run_request(self) -> None:
+        request = self.request()
+        receipt = execute_verification(self.evidence_root, request)
+
+        self.assertEqual("passed", receipt.status)
+        self.assertEqual(receipt, find_reusable_receipt(self.evidence_root, request))
+        self.assertIsNone(
+            find_reusable_receipt(
+                self.evidence_root,
+                dataclasses.replace(request, run_id="run-two"),
+            )
+        )
+        self.assertIsNone(
+            find_reusable_receipt(
+                self.evidence_root,
+                dataclasses.replace(request, timeout_seconds=11),
+            )
+        )
+
+    def test_execution_preserves_argv_boundaries_and_bounds_each_log(self) -> None:
+        marker = self.cwd / "shell-expanded"
+        script = (
+            "import sys; "
+            f"print('x' * {MAX_VERIFICATION_LOG_BYTES + 4096}); "
+            f"print('y' * {MAX_VERIFICATION_LOG_BYTES + 4096}, file=sys.stderr); "
+            "print(sys.argv[1])"
+        )
+        request = self.request(
+            argv=(sys.executable, "-c", script, f"value; touch {marker}"),
+        )
+
+        receipt = execute_verification(self.evidence_root, request)
+
+        self.assertEqual("passed", receipt.status)
+        self.assertFalse(marker.exists())
+        stdout = self.evidence_root / receipt.stdout_path
+        stderr = self.evidence_root / receipt.stderr_path
+        self.assertLessEqual(stdout.stat().st_size, MAX_VERIFICATION_LOG_BYTES)
+        self.assertLessEqual(stderr.stat().st_size, MAX_VERIFICATION_LOG_BYTES)
+        self.assertEqual("logs", stdout.parent.name)
+        self.assertEqual("logs", stderr.parent.name)
+        receipt_files = list((self.evidence_root / "receipts").glob("*.json"))
+        self.assertEqual(1, len(receipt_files))
+        self.assertEqual(0o400, stat.S_IMODE(receipt_files[0].stat().st_mode))
+
+    def test_nonpassing_nondeterministic_and_always_execute_receipts_are_not_reused(self) -> None:
+        failed = self.request(argv=(sys.executable, "-c", "raise SystemExit(7)"))
+        self.assertEqual("failed", execute_verification(self.evidence_root, failed).status)
+        self.assertIsNone(find_reusable_receipt(self.evidence_root, failed))
+
+        timed_out = self.request(
+            command_id="timeout",
+            argv=(sys.executable, "-c", "import time; time.sleep(2)"),
+            timeout_seconds=1,
+        )
+        self.assertEqual(
+            "timed_out", execute_verification(self.evidence_root, timed_out).status
+        )
+        self.assertIsNone(find_reusable_receipt(self.evidence_root, timed_out))
+
+        for request in (
+            self.request(command_id="nondeterministic", deterministic=False),
+            self.request(
+                command_id="mutable",
+                mutable_input_policy="always_execute",
+            ),
+        ):
+            self.assertEqual(
+                "passed", execute_verification(self.evidence_root, request).status
+            )
+            self.assertIsNone(find_reusable_receipt(self.evidence_root, request))
+
+    def test_required_artifact_must_remain_regular_inside_worktree_with_same_digest(self) -> None:
+        artifact = self.cwd / "result.txt"
+        artifact.write_text("first\n", encoding="utf-8")
+        request = self.request(required_artifact_paths=("project/result.txt",))
+        execute_verification(self.evidence_root, request)
+        self.assertIsNotNone(find_reusable_receipt(self.evidence_root, request))
+
+        artifact.write_text("changed\n", encoding="utf-8")
+        self.assertIsNone(find_reusable_receipt(self.evidence_root, request))
+        artifact.unlink()
+        self.assertIsNone(find_reusable_receipt(self.evidence_root, request))
+        self.assertFalse((self.evidence_root / "corruption-events.jsonl").exists())
+        artifact.symlink_to(self.cwd / "elsewhere.txt")
+        self.assertIsNone(find_reusable_receipt(self.evidence_root, request))
+
+        self.assertIsNone(
+            find_reusable_receipt(
+                self.evidence_root,
+                dataclasses.replace(
+                    request, required_artifact_paths=("../outside.txt",)
+                ),
+            )
+        )
+
+    def test_receipt_copied_from_another_evidence_root_is_not_reusable(self) -> None:
+        request = self.request()
+        execute_verification(self.evidence_root, request)
+        other_worktree = self.root / "other-worktree"
+        other_cwd = other_worktree / "project"
+        other_cwd.mkdir(parents=True)
+        other_root = other_worktree / ".superpowers" / "sdd" / "verification"
+        shutil.copytree(self.evidence_root, other_root)
+        copied_request = dataclasses.replace(request, cwd=other_cwd)
+
+        self.assertIsNone(find_reusable_receipt(other_root, copied_request))
+
+    def test_malformed_or_digest_mismatched_receipt_emits_corruption_event(self) -> None:
+        request = self.request()
+        receipt = execute_verification(self.evidence_root, request)
+        receipt_path = self.evidence_root / "receipts" / f"{receipt.receipt_id}.json"
+        receipt_path.chmod(0o600)
+        document = json.loads(receipt_path.read_text(encoding="utf-8"))
+        document["stdout_digest"] = "0" * 64
+        receipt_path.write_text(json.dumps(document), encoding="utf-8")
+        receipt_path.chmod(0o400)
+
+        self.assertIsNone(find_reusable_receipt(self.evidence_root, request))
+        events = [
+            json.loads(line)
+            for line in (self.evidence_root / "corruption-events.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        self.assertEqual("verification.receipt_corrupt", events[-1]["event"])
+        self.assertEqual(verification_cache_key(request), events[-1]["cache_key"])
+        self.assertNotIn("error", events[-1])
+
+    def test_helper_descriptor_is_private_absolute_and_source_bound(self) -> None:
+        run_root = self.root / "run"
+        cpe_script = ROOT / "scripts" / "cpe.py"
+        descriptor_path = materialize_helper_descriptor(run_root, cpe_script)
+        descriptor = json.loads(descriptor_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(0o400, stat.S_IMODE(descriptor_path.stat().st_mode))
+        self.assertEqual(["python3", str(cpe_script.resolve()), "verify"], descriptor["argv_prefix"])
+        self.assertEqual(
+            hashlib.sha256(cpe_script.read_bytes()).hexdigest(),
+            descriptor["source_digests"]["cpe.py"],
+        )
+        verification_source = ROOT / "scripts" / "cpe_runtime" / "verification.py"
+        self.assertEqual(
+            hashlib.sha256(verification_source.read_bytes()).hexdigest(),
+            descriptor["source_digests"]["cpe_runtime/verification.py"],
+        )
+
+        descriptor_path.chmod(0o600)
+        descriptor_path.write_text("{}", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "replaced"):
+            materialize_helper_descriptor(run_root, cpe_script)
+
+        symlink = self.root / "cpe-link.py"
+        symlink.symlink_to(cpe_script)
+        with self.assertRaisesRegex(ValueError, "regular source"):
+            materialize_helper_descriptor(self.root / "other-run", symlink)
 
 
 class CapabilityTests(unittest.TestCase):
