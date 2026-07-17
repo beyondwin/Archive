@@ -475,6 +475,64 @@ class ProgressDecisionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "duplicated"):
             read_progress_snapshot(store.root, plan_index=0, head="2" * 40)
 
+    def test_execution_ledger_schema_matches_runtime_validator_contract(self) -> None:
+        schema = json.loads((
+            ROOT / "templates" / "execution-ledger.schema.json"
+        ).read_text(encoding="utf-8"))
+        evidence_module = importlib.import_module("cpe_runtime.evidence")
+        self.assertEqual(
+            evidence_module._CATEGORIES,
+            set(schema["properties"]["category"]["enum"]),
+        )
+        self.assertEqual(
+            evidence_module._ACTIONS,
+            set(schema["properties"]["action"]["enum"]),
+        )
+        self.assertEqual(
+            evidence_module._RESULTS,
+            set(schema["properties"]["result"]["enum"]),
+        )
+        self.assertEqual(
+            evidence_module._BASE_FIELDS,
+            set(schema["required"]),
+        )
+        self.assertIs(schema["unevaluatedProperties"], False)
+
+        category_branches = {
+            branch["if"]["properties"]["category"]["const"]: branch["then"]
+            for branch in schema["allOf"]
+        }
+        self.assertEqual(evidence_module._CATEGORIES, set(category_branches))
+        for category, fields in evidence_module._VARIANT_FIELDS.items():
+            with self.subTest(category=category):
+                branch = category_branches[category]
+                self.assertEqual({"properties", "required"}, set(branch))
+                self.assertEqual(fields, set(branch["required"]))
+                self.assertEqual(fields, set(branch["properties"]))
+                for field, property_schema in branch["properties"].items():
+                    if field == "duration_ms":
+                        self.assertEqual(
+                            {"type": "integer", "minimum": 0}, property_schema,
+                        )
+                    elif field == "finding_ids":
+                        self.assertEqual("array", property_schema["type"])
+                        self.assertEqual(1, property_schema["minItems"])
+                        self.assertIs(property_schema["uniqueItems"], True)
+                        self.assertEqual(
+                            {"type": "string", "pattern": evidence_module._IDENTIFIER.pattern},
+                            property_schema["items"],
+                        )
+                    elif field.endswith("digest") or field in {"argv_digest", "evidence_key"}:
+                        self.assertEqual(
+                            {"type": "string", "pattern": evidence_module._DIGEST.pattern},
+                            property_schema,
+                        )
+                    else:
+                        self.assertEqual(
+                            {"type": "string", "pattern": evidence_module._IDENTIFIER.pattern},
+                            property_schema,
+                        )
+
 
 class HistoricalEvidenceFixtureTests(unittest.TestCase):
     fixture_root = ROOT / "evals" / "fixtures"
