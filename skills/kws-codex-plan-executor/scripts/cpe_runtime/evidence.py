@@ -417,15 +417,22 @@ def ingest_plan_evidence(
             descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
             try:
                 _write_all(descriptor, payload)
+                os.fchmod(descriptor, 0o400)
                 os.fsync(descriptor)
             finally:
                 os.close(descriptor)
-            target.chmod(0o400)
         manifest_path = staging / "evidence-manifest.json"
-        manifest_path.write_bytes(manifest_payload)
-        with manifest_path.open("rb") as stream:
-            os.fsync(stream.fileno())
-        manifest_path.chmod(0o400)
+        descriptor = os.open(
+            manifest_path,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        try:
+            _write_all(descriptor, manifest_payload)
+            os.fchmod(descriptor, 0o400)
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
         for directory in sorted((path for path in staging.rglob("*") if path.is_dir()), reverse=True):
             _fsync_directory(directory)
         _fsync_directory(staging)
