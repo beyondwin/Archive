@@ -12,6 +12,7 @@ import os
 import selectors
 import signal
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -1535,6 +1536,58 @@ print(json.dumps(result, sort_keys=True), flush=True)
 
         self.assertTrue(target.is_dir())
         self.assertEqual("tampered\n", sealed_ledger.read_text(encoding="utf-8"))
+
+    def test_evidence_mode_is_durable_before_each_final_file_fsync(self) -> None:
+        worktree = self.root / "evidence-mode-order"
+        self.write_execution_ledger(worktree, [
+            self.execution_event("task", evidence_refs=["receipt.txt"]),
+        ])
+        source = worktree / ".superpowers" / "sdd"
+        (source / "receipt.txt").write_text("receipt\n", encoding="utf-8")
+        run_root = self.root / "run-evidence-mode-order"
+        calls: list[tuple[str, int, int]] = []
+        real_fchmod = os.fchmod
+        real_fsync = os.fsync
+
+        def record_fchmod(descriptor: int, mode: int) -> None:
+            real_fchmod(descriptor, mode)
+            metadata = os.fstat(descriptor)
+            calls.append(("fchmod", metadata.st_ino, stat.S_IMODE(metadata.st_mode)))
+
+        def record_fsync(descriptor: int) -> None:
+            metadata = os.fstat(descriptor)
+            if stat.S_ISREG(metadata.st_mode):
+                calls.append(("fsync", metadata.st_ino, stat.S_IMODE(metadata.st_mode)))
+            real_fsync(descriptor)
+
+        with (
+            mock.patch("cpe_runtime.evidence.os.fchmod", side_effect=record_fchmod),
+            mock.patch("cpe_runtime.evidence.os.fsync", side_effect=record_fsync),
+        ):
+            ingest_plan_evidence(
+                run_root=run_root,
+                worktree=worktree,
+                plan_id="plan-01",
+                accepted_head="1" * 40,
+            )
+
+        target = run_root / "evidence" / "plan-01"
+        published = [path for path in target.rglob("*") if path.is_file()]
+        self.assertEqual(3, len(published))
+        for path in published:
+            inode = path.stat().st_ino
+            inode_calls = [call for call in calls if call[1] == inode]
+            chmod_positions = [
+                index for index, call in enumerate(inode_calls)
+                if call == ("fchmod", inode, 0o400)
+            ]
+            fsync_positions = [
+                index for index, call in enumerate(inode_calls)
+                if call == ("fsync", inode, 0o400)
+            ]
+            self.assertTrue(chmod_positions, path)
+            self.assertTrue(fsync_positions, path)
+            self.assertLess(chmod_positions[-1], fsync_positions[-1], path)
 
     def test_checkpointed_result_is_durable_and_resumable(self) -> None:
         runner = self.runner()
@@ -3389,10 +3442,14 @@ class _RecoveryRunnerFixture(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
-    def plan(self, scenario: str, *, loopback: bool = False) -> Path:
-        path = self.repo / "input-plan-1.md"
+    def plan(
+        self, scenario: str, *, loopback: bool = False, number: int = 1,
+    ) -> Path:
+        path = self.repo / f"input-plan-{number}.md"
         suffix = "requires loopback_bind\n" if loopback else ""
-        path.write_text(f"scenario:{scenario}\n{suffix}plan 1\n", encoding="utf-8")
+        path.write_text(
+            f"scenario:{scenario}\n{suffix}plan {number}\n", encoding="utf-8",
+        )
         return path
 
     def runner(self, run_id: str) -> SequentialRunner:
@@ -3941,6 +3998,24 @@ class Format2RecoveryStateValidationTests(_RecoveryRunnerFixture):
             {"decision": "stop_budget", "reason": "second_no_progress_slice"},
             {"previous_progress_fingerprint": "d" * 64},
             {"head": "e" * 40},
+            {"progress_fingerprint": "a" * 64},
+            {
+                "decision": "stop_stalled",
+                "reason": "second_no_progress_slice",
+                "progress_fingerprint": "a" * 64,
+            },
+            {
+                "decision": "stop_budget",
+                "reason": "checkpoint_budget_exhausted",
+            },
+            {
+                "decision": "stop_budget",
+                "reason": "launch_budget_exhausted",
+            },
+            {
+                "decision": "stop_budget",
+                "reason": "wall_budget_exhausted",
+            },
         )
         for index, changes in enumerate(invalid_cases):
             with self.subTest(index=index):
@@ -3997,7 +4072,26 @@ class FullActionWalReconciliationTests(_RecoveryRunnerFixture):
             if checkpoint_budget is not None
             else contextlib.nullcontext()
         )
-        with budget_patch, self._crash_after_decision_event(decision), self.assertRaisesRegex(
+        original_persist = runner_module._persist_checkpoint_decision
+
+        def persist_with_actual_budget(
+            store: StateStore, checkpoint_decision: object, **kwargs: object,
+        ) -> None:
+            plan = store.state["plans"][store.state["current_plan_index"]]
+            if getattr(checkpoint_decision, "reason_code", None) == "launch_budget_exhausted":
+                plan["controller_launch_count"] = plan["budget"]["max_controller_launches"]
+            original_persist(store, checkpoint_decision, **kwargs)  # type: ignore[arg-type]
+
+        persist_patch = (
+            mock.patch.object(
+                runner_module,
+                "_persist_checkpoint_decision",
+                new=persist_with_actual_budget,
+            )
+            if checkpoint_budget is not None
+            else contextlib.nullcontext()
+        )
+        with budget_patch, persist_patch, self._crash_after_decision_event(decision), self.assertRaisesRegex(
             RuntimeError, "injected action WAL crash",
         ):
             runner.run(
@@ -4010,12 +4104,26 @@ class FullActionWalReconciliationTests(_RecoveryRunnerFixture):
         self.assertIsNotNone(
             StateStore.open(run_root).state["plans"][0]["pending_checkpoint_decision"]
         )
+        attempts_before = len([
+            event for event in _runner_events(run_root)
+            if event.get("action") == "plan.attempt_started"
+        ])
 
-        reconciled = runner.resume(run_id=run_id)
+        expected_error = (
+            "failed run requires --retry-failed"
+            if decision == "fail"
+            else "retry-failed requires a failed run"
+        )
+        with self.assertRaisesRegex(ValueError, expected_error):
+            runner.resume(run_id=run_id, retry_failed=decision != "fail")
 
-        self.assertEqual(expected_status, reconciled["status"])
-        self.assertEqual(0, fake_codex_launch_count(run_root))
-        plan = StateStore.open(run_root).state["plans"][0]
+        reconciled_store = StateStore.open(run_root)
+        self.assertEqual(expected_status, reconciled_store.state["status"])
+        self.assertEqual(attempts_before, len([
+            event for event in _runner_events(run_root)
+            if event.get("action") == "plan.attempt_started"
+        ]))
+        plan = reconciled_store.state["plans"][0]
         self.assertIsNone(plan["pending_checkpoint_decision"])
         self.assertEqual(1, plan["checkpoint_count"])
         decisions = [
@@ -4037,7 +4145,7 @@ class FullActionWalReconciliationTests(_RecoveryRunnerFixture):
         self.assertEqual(1, len(secondary))
         self.assertEqual(decisions[0]["decision_id"], secondary[0]["decision_id"])
 
-    def test_checkpoint_fail_block_and_budget_stop_apply_without_relaunch(self) -> None:
+    def test_checkpoint_fail_block_and_budget_stop_apply_before_retry_validation(self) -> None:
         cases = (
             ("interrupted", "checkpoint", "checkpointed", "wal-checkpoint", None),
             ("failed", "fail", "failed", "wal-fail", None),
@@ -4093,7 +4201,7 @@ class FullActionWalReconciliationTests(_RecoveryRunnerFixture):
         self.assertEqual(1, len(continuations))
         self.assertEqual(decisions[0]["decision_id"], continuations[0]["decision_id"])
 
-    def test_stalled_stop_applies_without_third_launch(self) -> None:
+    def test_stalled_stop_applies_before_retry_validation_without_third_launch(self) -> None:
         run_id = "wal-stop-stalled"
         runner = self.runner(run_id)
         with self._crash_after_decision_event("stop_stalled"), self.assertRaisesRegex(
@@ -4107,11 +4215,20 @@ class FullActionWalReconciliationTests(_RecoveryRunnerFixture):
             )
         run_root = self.home / "orchestrator" / run_id
 
-        reconciled = runner.resume(run_id=run_id)
+        attempts_before = len([
+            event for event in _runner_events(run_root)
+            if event.get("action") == "plan.attempt_started"
+        ])
+        with self.assertRaisesRegex(ValueError, "retry-failed requires a failed run"):
+            runner.resume(run_id=run_id, retry_failed=True)
 
-        self.assertEqual("blocked", reconciled["status"])
-        self.assertEqual(0, fake_codex_launch_count(run_root))
-        plan = StateStore.open(run_root).state["plans"][0]
+        stalled_store = StateStore.open(run_root)
+        self.assertEqual("blocked", stalled_store.state["status"])
+        self.assertEqual(attempts_before, len([
+            event for event in _runner_events(run_root)
+            if event.get("action") == "plan.attempt_started"
+        ]))
+        plan = stalled_store.state["plans"][0]
         self.assertEqual(2, plan["attempt_count"])
         self.assertEqual(2, plan["checkpoint_count"])
         self.assertEqual(1, len([
@@ -4167,10 +4284,16 @@ class FullActionWalReconciliationTests(_RecoveryRunnerFixture):
             "cpe_runtime.runner._observe_capabilities",
             return_value=[available],
         ):
-            reconciled = runner.resume(run_id=run_id)
+            with self.assertRaisesRegex(
+                ValueError, "retry-failed requires a failed run",
+            ):
+                runner.resume(run_id=run_id, retry_failed=True)
 
-        self.assertEqual("blocked", reconciled["status"])
-        self.assertEqual(0, fake_codex_launch_count(run_root))
+        self.assertEqual("blocked", StateStore.open(run_root).state["status"])
+        self.assertEqual(1, len([
+            event for event in _runner_events(run_root)
+            if event.get("action") == "plan.attempt_started"
+        ]))
         plan = StateStore.open(run_root).state["plans"][0]
         self.assertIsNotNone(plan["environment_fingerprint"])
         events = [
@@ -4179,6 +4302,158 @@ class FullActionWalReconciliationTests(_RecoveryRunnerFixture):
         ]
         self.assertEqual(1, len(events))
         self.assertIs(events[0]["parent_confirmed"], True)
+
+
+class ReconciledResumeDispatchTests(_RecoveryRunnerFixture):
+    @staticmethod
+    def _crash_after_decision(expected_decision: str) -> object:
+        original = StateStore._append_event_bytes
+        injected = False
+
+        def crash(store: StateStore, encoded: bytes) -> None:
+            nonlocal injected
+            original(store, encoded)
+            if (
+                b'"action":"plan.checkpoint_decided"' in encoded
+                and f'"decision":"{expected_decision}"'.encode() in encoded
+                and not injected
+            ):
+                injected = True
+                raise RuntimeError("injected resume dispatch crash")
+
+        return mock.patch.object(StateStore, "_append_event_bytes", new=crash)
+
+    def test_reconciled_finish_continues_the_next_plan_in_same_resume(self) -> None:
+        run_id = "resume-finish-next-plan"
+        runner = self.runner(run_id)
+        with self._crash_after_decision("finish"), self.assertRaisesRegex(
+            RuntimeError, "injected resume dispatch crash",
+        ):
+            runner.run(
+                workspace=self.repo,
+                specs=[],
+                plans=[
+                    self.plan("completed", number=1),
+                    self.plan("completed", number=2),
+                ],
+                run_id=run_id,
+            )
+
+        completed = runner.resume(run_id=run_id)
+
+        run_root = self.home / "orchestrator" / run_id
+        self.assertEqual("completed", completed["status"])
+        self.assertEqual([1, 1], [
+            plan["attempt_count"] for plan in StateStore.open(run_root).state["plans"]
+        ])
+        self.assertEqual(2, len([
+            event for event in _runner_events(run_root)
+            if event.get("action") == "plan.attempt_started"
+        ]))
+        self.assertEqual(1, len([
+            event for event in _runner_events(run_root)
+            if event.get("action") == "run.completed"
+        ]))
+        self.assertTrue((run_root / "reports" / "optimization-report.json").is_file())
+        self.assertTrue((run_root / "reports" / "optimization-report.md").is_file())
+
+    def test_reconciled_fail_consumes_only_explicit_retry(self) -> None:
+        retry_id = "resume-pending-fail-retry"
+        retry_runner = self.runner(retry_id)
+        with self._crash_after_decision("fail"), self.assertRaisesRegex(
+            RuntimeError, "injected resume dispatch crash",
+        ):
+            retry_runner.run(
+                workspace=self.repo,
+                specs=[],
+                plans=[self.plan("retryable_then_completed")],
+                run_id=retry_id,
+            )
+
+        completed = retry_runner.resume(run_id=retry_id, retry_failed=True)
+
+        retry_root = self.home / "orchestrator" / retry_id
+        self.assertEqual("completed", completed["status"])
+        self.assertEqual(1, fake_codex_launch_count(retry_root))
+        self.assertEqual(2, StateStore.open(retry_root).state["plans"][0]["attempt_count"])
+        self.invocations.unlink()
+
+        no_retry_id = "resume-pending-fail-no-retry"
+        no_retry_runner = self.runner(no_retry_id)
+        with self._crash_after_decision("fail"), self.assertRaisesRegex(
+            RuntimeError, "injected resume dispatch crash",
+        ):
+            no_retry_runner.run(
+                workspace=self.repo,
+                specs=[],
+                plans=[self.plan("retryable_then_completed", number=2)],
+                run_id=no_retry_id,
+            )
+        with self.assertRaisesRegex(ValueError, "requires --retry-failed"):
+            no_retry_runner.resume(run_id=no_retry_id)
+        no_retry_root = self.home / "orchestrator" / no_retry_id
+        self.assertEqual("failed", StateStore.open(no_retry_root).state["status"])
+        self.assertEqual(1, len([
+            event for event in _runner_events(no_retry_root)
+            if event.get("action") == "plan.attempt_started"
+        ]))
+
+    def test_retry_failed_is_rejected_for_reconciled_nonfailed_actions(self) -> None:
+        cases = (
+            ("interrupted", "checkpoint", 1),
+            ("blocked", "block", 1),
+            ("timeout_without_progress", "stop_stalled", 2),
+        )
+        for scenario, decision, attempts in cases:
+            with self.subTest(decision=decision):
+                run_id = f"invalid-retry-{decision}"
+                runner = self.runner(run_id)
+                with self._crash_after_decision(decision), self.assertRaisesRegex(
+                    RuntimeError, "injected resume dispatch crash",
+                ):
+                    runner.run(
+                        workspace=self.repo,
+                        specs=[],
+                        plans=[self.plan(scenario)],
+                        run_id=run_id,
+                    )
+                with self.assertRaisesRegex(
+                    ValueError, "retry-failed requires a failed run",
+                ):
+                    runner.resume(run_id=run_id, retry_failed=True)
+                run_root = self.home / "orchestrator" / run_id
+                self.assertEqual(attempts, len([
+                    event for event in _runner_events(run_root)
+                    if event.get("action") == "plan.attempt_started"
+                ]))
+
+    def test_mismatched_run_completion_event_fails_closed(self) -> None:
+        run_id = "mismatched-run-completion"
+        runner = self.runner(run_id)
+        completed = runner.run(
+            workspace=self.repo,
+            specs=[],
+            plans=[self.plan("completed")],
+            run_id=run_id,
+        )
+        self.assertEqual("completed", completed["status"])
+        run_root = self.home / "orchestrator" / run_id
+        store = StateStore.open(run_root)
+        state_before = store.state_path.read_bytes()
+        events = _runner_events(run_root)
+        completion = next(
+            event for event in events if event.get("action") == "run.completed"
+        )
+        completion["head"] = "0" * 40
+        store.events_path.write_text(
+            "".join(json.dumps(event, sort_keys=True) + "\n" for event in events),
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(ValueError, "run.completed"):
+            runner.resume(run_id=run_id)
+
+        self.assertEqual(state_before, store.state_path.read_bytes())
 
 
 class FinishWalAndEvidenceTests(_RecoveryRunnerFixture):
@@ -4216,6 +4491,17 @@ class FinishWalAndEvidenceTests(_RecoveryRunnerFixture):
         self.assertEqual(1, len(decisions))
         self.assertEqual(1, len(completed_events))
         self.assertEqual(decisions[0]["decision_id"], completed_events[0]["decision_id"])
+        run_completed = [
+            event for event in _runner_events(run_root)
+            if event.get("action") == "run.completed"
+        ]
+        self.assertEqual(1, len(run_completed))
+        self.assertEqual(plan["accepted_commit"], run_completed[0]["head"])
+        report_json = run_root / "reports" / "optimization-report.json"
+        report_markdown = run_root / "reports" / "optimization-report.md"
+        self.assertTrue(report_json.is_file())
+        self.assertTrue(report_markdown.is_file())
+        self.assertEqual(run_id, json.loads(report_json.read_text())["run_id"])
         evidence = run_root / "evidence" / "plan-01"
         self.assertTrue((evidence / "evidence-manifest.json").is_file())
         self.assertEqual(1, len([

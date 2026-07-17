@@ -662,17 +662,17 @@ class SequentialRunner:
                     self._create_or_reconcile_worktree(store)
                 else:
                     self._verify_worktree(store)
-                reconciled_action = self._apply_pending_decision(store)
+                self._apply_pending_decision(store)
                 status = store.state["status"]
-                if reconciled_action not in {None, "continue"}:
-                    store.append_event("run.resumed", retry_failed=retry_failed)
-                    if status == "completed":
-                        return self._summary(store)
-                    return self._report_and_summary(store)
                 if status == "completed":
                     if retry_failed:
                         raise ValueError("retry-failed requires a failed run")
-                    return self._summary(store)
+                    report_error = self._finalize_completed_run(store)
+                    return self._summary(store, error=report_error)
+                if retry_failed != (status == "failed"):
+                    if status == "failed":
+                        raise ValueError("failed run requires --retry-failed")
+                    raise ValueError("retry-failed requires a failed run")
                 if store.state["current_plan_index"] < len(store.state["plans"]):
                     plan = store.state["plans"][store.state["current_plan_index"]]
                     if plan["environment_fingerprint"] is not None:
@@ -713,11 +713,6 @@ class SequentialRunner:
                             reason=preflight,
                             environment_fingerprint=current_environment,
                         )
-                if retry_failed != (status == "failed"):
-                    if status == "failed":
-                        raise ValueError("failed run requires --retry-failed")
-                    if retry_failed:
-                        raise ValueError("retry-failed requires a failed run")
                 store.append_event("run.resumed", retry_failed=retry_failed)
                 try:
                     return self._execute(
@@ -1515,9 +1510,6 @@ class SequentialRunner:
                 applied_action = self._apply_pending_decision(store)
 
                 if applied_action == "finish":
-                    report_error = self._update_reports(store)
-                    if report_error is not None:
-                        return self._summary(store, error=report_error)
                     break
                 if applied_action == "continue":
                     continue
@@ -1527,13 +1519,50 @@ class SequentialRunner:
                     )
                 return self._report_and_summary(store)
 
-        state["status"] = "completed"
-        store.save()
-        store.append_event("run.completed", head=_git(Path(state["worktree"]), "rev-parse", "HEAD"))
-        report_error = self._update_reports(store)
+        if state["status"] != "completed":
+            state["status"] = "completed"
+            store.save()
+        report_error = self._finalize_completed_run(store)
         if report_error is not None:
             return self._summary(store, error=report_error)
         return self._summary(store)
+
+    def _finalize_completed_run(self, store: StateStore) -> str | None:
+        """Materialize one durable completion event and both derived reports."""
+        state = store.state
+        plans = state["plans"]
+        if (
+            state["status"] != "completed"
+            or state["current_plan_index"] != len(plans)
+            or not plans
+        ):
+            raise ValueError("run completion state is invalid")
+        expected_head = plans[-1]["accepted_commit"]
+        if not isinstance(expected_head, str) or not _SHA.fullmatch(expected_head):
+            raise ValueError("run completion head is invalid")
+        observed_head = _current_head(Path(state["worktree"]))
+        if observed_head != expected_head:
+            raise ValueError("run.completed head does not match completed run")
+
+        matches: list[dict[str, object]] = []
+        for line in store.events_path.read_text(encoding="utf-8").splitlines():
+            event = json.loads(line)
+            if isinstance(event, dict) and event.get("action") == "run.completed":
+                matches.append(event)
+        if len(matches) > 1:
+            raise ValueError("run.completed event is duplicated")
+        if matches:
+            event = matches[0]
+            if (
+                event.get("run_id") != state["run_id"]
+                or event.get("source") != "parent_observed"
+                or event.get("category") != "run"
+                or event.get("head") != expected_head
+            ):
+                raise ValueError("run.completed event does not match completed run")
+        else:
+            store.append_event("run.completed", head=expected_head)
+        return self._update_reports(store)
 
     def _report_and_summary(
         self, store: StateStore, *, error: str | None = None

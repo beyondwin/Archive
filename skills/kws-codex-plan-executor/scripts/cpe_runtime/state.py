@@ -471,6 +471,75 @@ class StateStore:
                 or budget != DEFAULT_PLAN_BUDGET
             ):
                 raise ValueError("plan budget is invalid")
+            if pending is not None:
+                changed = (
+                    pending["progress_fingerprint"]
+                    != pending["previous_progress_fingerprint"]
+                )
+                checkpoints_exhausted = (
+                    record["progress_checkpoint_count"]
+                    >= budget["max_progress_checkpoints"]
+                )
+                launches_exhausted = (
+                    record["controller_launch_count"]
+                    >= budget["max_controller_launches"]
+                )
+                wall_exhausted = (
+                    record["plan_elapsed_seconds"]
+                    >= budget["plan_wall_budget_seconds"]
+                )
+                reason = pending["reason"]
+                reason_matches_state = {
+                    "child_completed": not pending["timed_out"],
+                    "child_checkpointed": (
+                        not pending["timed_out"]
+                        and not checkpoints_exhausted
+                        and not launches_exhausted
+                        and not wall_exhausted
+                    ),
+                    "child_blocked": not pending["timed_out"],
+                    "child_failed": not pending["timed_out"],
+                    "productive_timeout": (
+                        pending["timed_out"]
+                        and changed
+                        and not checkpoints_exhausted
+                        and not launches_exhausted
+                        and not wall_exhausted
+                    ),
+                    "first_no_progress_slice": (
+                        pending["timed_out"]
+                        and not changed
+                        and record["consecutive_no_progress_slices"] == 0
+                        and not checkpoints_exhausted
+                        and not launches_exhausted
+                        and not wall_exhausted
+                    ),
+                    "second_no_progress_slice": (
+                        pending["timed_out"]
+                        and not changed
+                        and record["consecutive_no_progress_slices"] >= 1
+                        and not checkpoints_exhausted
+                        and not launches_exhausted
+                        and not wall_exhausted
+                    ),
+                    "child_stopped_without_completion": (
+                        not pending["timed_out"]
+                        and not checkpoints_exhausted
+                        and not launches_exhausted
+                        and not wall_exhausted
+                    ),
+                    "checkpoint_budget_exhausted": checkpoints_exhausted,
+                    "launch_budget_exhausted": (
+                        not checkpoints_exhausted and launches_exhausted
+                    ),
+                    "wall_budget_exhausted": (
+                        not checkpoints_exhausted
+                        and not launches_exhausted
+                        and wall_exhausted
+                    ),
+                }.get(reason, False)
+                if not reason_matches_state:
+                    raise ValueError("pending checkpoint decision is invalid")
             if record["result_path"] is not None:
                 declared_result = Path(record["result_path"])
                 if declared_result.is_symlink():
