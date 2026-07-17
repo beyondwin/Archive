@@ -77,8 +77,6 @@ def _emit(payload: dict[str, object], exit_code: int | None = None) -> int:
 def main(argv: Sequence[str] | None = None) -> int:
     try:
         raw_argv = list(sys.argv[1:] if argv is None else argv)
-        if raw_argv[:1] == ["verify"] and "--" not in raw_argv:
-            raise CliUsageError("verify requires -- before command argv")
         args = build_parser().parse_args(raw_argv)
         runner = SequentialRunner()
         if args.command == "run":
@@ -89,8 +87,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _emit(result)
         if args.command == "verify":
             command_argv = list(args.argv)
-            if command_argv[:1] == ["--"]:
-                command_argv = command_argv[1:]
+            if command_argv[:1] != ["--"]:
+                raise CliUsageError("verify requires -- before command argv")
+            command_argv = command_argv[1:]
             if not command_argv:
                 raise CliUsageError("verify command argv must not be empty")
             result = runner.verify(

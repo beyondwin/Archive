@@ -361,17 +361,22 @@ def execute_verification(
     receipt_path = root / "receipts" / f"{receipt_id}.json"
     atomic_private_write(receipt_path, _canonical_json(receipt_document), mode=0o400)
 
-    index_document = {
-        "schema_version": 1,
-        "cache_key": cache_key,
-        "receipt_path": receipt_path.relative_to(root).as_posix(),
-        "evidence_root_digest": receipt_document["evidence_root_digest"],
-    }
-    atomic_private_write(
-        root / "indexes" / f"{cache_key}.json",
-        _canonical_json(index_document),
-        mode=0o400,
-    )
+    if (
+        status_name == "passed"
+        and request.deterministic
+        and request.mutable_input_policy != "always_execute"
+    ):
+        index_document = {
+            "schema_version": 1,
+            "cache_key": cache_key,
+            "receipt_path": receipt_path.relative_to(root).as_posix(),
+            "evidence_root_digest": receipt_document["evidence_root_digest"],
+        }
+        atomic_private_write(
+            root / "indexes" / f"{cache_key}.json",
+            _canonical_json(index_document),
+            mode=0o400,
+        )
     return _receipt_from_document(receipt_document)
 
 
@@ -408,29 +413,19 @@ def _load_json(path: Path) -> dict[str, object]:
     return document
 
 
-def validate_recorded_receipt(
+def validate_recorded_receipt_path(
     evidence_root: Path,
     request: VerificationRequest,
+    receipt_reference: str,
 ) -> VerificationReceipt | None:
-    """Return a strict successful same-run receipt, even when it is nonreusable."""
+    """Validate the exact immutable receipt named by one ledger event."""
     _validate_request(request)
     root, worktree, _cwd = _prepare_layout(evidence_root, request.cwd)
     cache_key = verification_cache_key(request)
-    index_path = root / "indexes" / f"{cache_key}.json"
-    if not index_path.exists():
-        return None
     try:
-        index = _load_json(index_path)
         root_digest = _sha256_bytes(str(root).encode("utf-8"))
-        if (
-            index.get("schema_version") != 1
-            or index.get("cache_key") != cache_key
-            or index.get("evidence_root_digest") != root_digest
-            or not isinstance(index.get("receipt_path"), str)
-        ):
-            raise ValueError("invalid_index")
         receipt_path = _safe_relative_file(
-            root, str(index["receipt_path"]), "receipts"
+            root, receipt_reference, "receipts"
         )
         document = _load_json(receipt_path)
         receipt_id = document.get("receipt_id")
@@ -471,6 +466,35 @@ def validate_recorded_receipt(
         return _receipt_from_document(document)
     except (KeyError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
         _corruption_event(root, cache_key, "invalid_receipt_evidence")
+        return None
+
+
+def validate_recorded_receipt(
+    evidence_root: Path,
+    request: VerificationRequest,
+) -> VerificationReceipt | None:
+    """Validate the current indexed receipt without changing its reuse policy."""
+    _validate_request(request)
+    root, _worktree, _cwd = _prepare_layout(evidence_root, request.cwd)
+    cache_key = verification_cache_key(request)
+    index_path = root / "indexes" / f"{cache_key}.json"
+    if not index_path.exists():
+        return None
+    try:
+        index = _load_json(index_path)
+        root_digest = _sha256_bytes(str(root).encode("utf-8"))
+        if (
+            index.get("schema_version") != 1
+            or index.get("cache_key") != cache_key
+            or index.get("evidence_root_digest") != root_digest
+            or not isinstance(index.get("receipt_path"), str)
+        ):
+            raise ValueError("invalid_index")
+        return validate_recorded_receipt_path(
+            evidence_root, request, str(index["receipt_path"])
+        )
+    except (KeyError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        _corruption_event(root, cache_key, "invalid_receipt_index")
         return None
 
 
