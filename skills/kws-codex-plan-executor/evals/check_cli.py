@@ -201,6 +201,26 @@ class SequentialCliTest(unittest.TestCase):
         self.assertEqual(inspected.returncode, 0, inspected.stderr)
         self.assertEqual(before, (state_path.read_bytes(), state_path.stat().st_mtime_ns))
 
+        for scenario, expected_status in (
+            ("blocked", "blocked"),
+            ("failed", "failed"),
+            ("interrupted", "checkpointed"),
+        ):
+            with self.subTest(inspect_status=expected_status):
+                self.plans[0].write_text(f"scenario:{scenario}\n", encoding="utf-8")
+                created = self.command(
+                    "run", "--plan", str(self.plans[0]), "--workspace", str(self.repo),
+                )
+                created_payload = json.loads(created.stdout)
+                self.assertEqual(created_payload["status"], expected_status)
+                inspected_terminal = self.command(
+                    "inspect", "--run-id", created_payload["run_id"],
+                )
+                self.assertEqual(inspected_terminal.returncode, 0, inspected_terminal.stderr)
+                self.assertEqual(
+                    json.loads(inspected_terminal.stdout)["status"], expected_status,
+                )
+
         legacy = self.home / "orchestrator" / "legacy"
         legacy.mkdir(mode=0o700)
         (legacy / "state.json").write_text('{"format_version":4}', encoding="utf-8")
@@ -303,6 +323,23 @@ class SequentialCliTest(unittest.TestCase):
                 self.assertRegex(normalized_recovery, r"checkpointed.*not (?:a |a synonym for )?failure")
                 self.assertRegex(normalized_recovery, r"zero model (?:turns|calls)")
                 self.assertRegex(normalized, r"(?:justif.*slice|slice.*justif)")
+                for phrase in (
+                    "across `run`, `inspect`, and plain `resume`, the durable status is `blocked`",
+                    "repeated failure consumes zero plan attempts, controller launches, or recompilation",
+                    "after the environment recovers, plain `resume`",
+                    "after plan execution has begun remains a fail-closed integrity error",
+                    "never persists `failed` and never requires `--retry-failed`",
+                    "exit mappings apply only to `run` and `resume`",
+                    "successful read-only `inspect` exits 0 even when the stored status is `blocked`, `failed`, or `checkpointed`",
+                ):
+                    self.assertIn(phrase, normalized_recovery.lower())
+                for contradiction in (
+                    r"worktree.{0,240}(?<!never )persists? (?:durable )?(?:internal )?`failed`",
+                    r"worktree.{0,240}(?<!never )requires `--retry-failed`",
+                ):
+                    self.assertIsNone(
+                        re.search(contradiction, normalized_recovery, re.IGNORECASE),
+                    )
                 for stale in stale_patterns:
                     self.assertIsNone(re.search(stale, normalized, re.IGNORECASE))
 

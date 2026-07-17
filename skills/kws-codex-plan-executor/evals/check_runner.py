@@ -951,8 +951,10 @@ print(json.dumps(result, sort_keys=True), flush=True)
         )
 
     def assert_state_rejected(self, store: StateStore, message: str) -> None:
+        before = store.state_path.read_bytes()
         with self.assertRaisesRegex(ValueError, message):
             store.save()
+        self.assertEqual(before, store.state_path.read_bytes())
 
     def create_format_two_store(self, run_id: str) -> StateStore:
         return StateStore.create(
@@ -1898,6 +1900,99 @@ print(json.dumps(result, sort_keys=True), flush=True)
         self.assertEqual(recovered["plans"][0]["controller_launch_count"], 1)
         self.assertEqual(runner.compiler.compile_calls, 1)
         self.assertTrue(worktree.is_dir())
+
+    def test_pre_execution_worktree_blocker_rejects_impossible_state_without_persisting(self) -> None:
+        blocker = {
+            "code": "worktree_creation_failed",
+            "kind": "verification_environment",
+            "operation": "create_or_reconcile_worktree",
+            "owner": "operator",
+        }
+
+        def change_blocker(field: str, value: str):
+            def mutate(store: StateStore) -> None:
+                store.state["pre_execution_blocker"] = {**blocker, field: value}
+            return mutate
+
+        def change_run_status(store: StateStore) -> None:
+            store.state["status"] = "failed"
+
+        def change_current_status(store: StateStore) -> None:
+            store.state["plans"][0]["status"] = "failed"
+
+        def set_current_counter(field: str):
+            def mutate(store: StateStore) -> None:
+                store.state["plans"][0][field] = 1
+            return mutate
+
+        def remove_compiled_artifact(field: str):
+            digest = field.replace("_path", "_sha256")
+
+            def mutate(store: StateStore) -> None:
+                store.state[field] = None
+                store.state[digest] = None
+
+            return mutate
+
+        def advance_current_index(store: StateStore) -> None:
+            store.state["current_plan_index"] = 1
+
+        def complete_while_retaining_blocker(store: StateStore) -> None:
+            result_path = store.root / "results" / "completed-with-blocker.json"
+            result_path.write_text("{}", encoding="utf-8")
+            result_path.chmod(0o600)
+            plan = store.state["plans"][0]
+            plan.update(
+                status="completed",
+                starting_commit=store.state["source_commit"],
+                accepted_commit=store.state["source_commit"],
+                attempt_count=1,
+                result_path=str(result_path.resolve()),
+            )
+            store.state["current_plan_index"] = 1
+            store.state["status"] = "completed"
+
+        def block_future_plan(store: StateStore) -> None:
+            store.state["plans"][1]["status"] = "blocked"
+
+        cases = (
+            ("wrong-kind", 1, change_blocker("kind", "runtime_integrity"), "pre-execution blocker is invalid"),
+            ("wrong-operation", 1, change_blocker("operation", "verify_worktree"), "pre-execution blocker is invalid"),
+            ("wrong-owner", 1, change_blocker("owner", "controller"), "pre-execution blocker is invalid"),
+            ("wrong-reason", 1, change_blocker("code", "worktree_missing"), "pre-execution blocker is invalid"),
+            ("run-not-blocked", 1, change_run_status, "pre-execution blocker state is invalid"),
+            ("current-not-blocked", 1, change_current_status, "pre-execution blocker state is invalid"),
+            ("attempt-present", 1, set_current_counter("attempt_count"), "pre-execution blocker state is invalid"),
+            ("launch-present", 1, set_current_counter("controller_launch_count"), "pre-execution blocker state is invalid"),
+            ("contract-missing", 1, remove_compiled_artifact("operator_contract_path"), "pre-execution blocker state is invalid"),
+            ("index-missing", 1, remove_compiled_artifact("compiled_run_index_path"), "pre-execution blocker state is invalid"),
+            ("index-advanced", 1, advance_current_index, "completed prefix"),
+            ("completed-retains-blocker", 1, complete_while_retaining_blocker, "completed run cannot retain"),
+            ("future-plan-blocked", 2, block_future_plan, "future plan is not pristine"),
+        )
+
+        for name, plan_count, mutate, message in cases:
+            with self.subTest(case=name):
+                runner = FailingCreateRunner(
+                    codex_home=self.home,
+                    launcher=self.runner().launcher,
+                )
+                run_id = f"invalid-worktree-blocker-{name}"
+                result = runner.run(
+                    workspace=self.repo,
+                    specs=[],
+                    plans=[self.plan(index, "completed") for index in range(1, plan_count + 1)],
+                    run_id=run_id,
+                )
+                self.assertEqual(result["status"], "blocked")
+                store = StateStore.open(self.home / "orchestrator" / run_id)
+                persisted = store.state_path.read_bytes()
+
+                mutate(store)
+
+                with self.assertRaisesRegex(ValueError, message):
+                    store.save()
+                self.assertEqual(persisted, store.state_path.read_bytes())
 
     def test_worktree_creation_blocker_preserves_unowned_path_collision(self) -> None:
         runner = FailingCreateRunner(
