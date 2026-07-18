@@ -63,11 +63,15 @@
     "duration_unknown_attempt_count": {"$ref": "#/$defs/counter"},
     "verification": {
       "type": "object",
-      "required": ["executions", "reuses", "uncached_executions"],
+      "required": ["requests", "executions", "reuses", "uncached_executions", "avoided_executions", "requested_phase_counts", "executed_phase_counts"],
       "properties": {
+        "requests": {"$ref": "#/$defs/counter"},
         "executions": {"$ref": "#/$defs/counter"},
         "reuses": {"$ref": "#/$defs/counter"},
-        "uncached_executions": {"$ref": "#/$defs/counter"}
+        "uncached_executions": {"$ref": "#/$defs/counter"},
+        "avoided_executions": {"$ref": "#/$defs/counter"},
+        "requested_phase_counts": {"$ref": "#/$defs/phaseCounts"},
+        "executed_phase_counts": {"$ref": "#/$defs/phaseCounts"}
       },
       "additionalProperties": false
     },
@@ -215,6 +219,16 @@
     }
   },
   "$defs": {
+    "phaseCounts": {
+      "type": "object",
+      "required": ["task", "affected", "branch_final"],
+      "properties": {
+        "task": {"$ref": "#/$defs/counter"},
+        "affected": {"$ref": "#/$defs/counter"},
+        "branch_final": {"$ref": "#/$defs/counter"}
+      },
+      "additionalProperties": false
+    },
     "counter": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807},
     "nullableCounter": {
       "oneOf": [

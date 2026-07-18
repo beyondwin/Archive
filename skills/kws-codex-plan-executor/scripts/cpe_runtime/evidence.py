@@ -49,7 +49,10 @@ _VARIANT_FIELDS = {
     "task": {"task_id", "duration_ms"},
     "review": {"review_id", "artifact_digest", "duration_ms"},
     "finding_fix": {"finding_ids", "fix_digest", "duration_ms"},
-    "verification": {"command_id", "argv_digest", "evidence_key", "duration_ms"},
+    "verification": {
+        "command_id", "argv_digest", "evidence_key", "duration_ms",
+        "requested_phase", "executed_phase", "avoided_executions",
+    },
     "capability": {"capability_id", "capability_digest"},
     "checkpoint": {"checkpoint_id", "checkpoint_digest"},
     "blocker": {"blocker_id", "blocker_digest"},
@@ -60,7 +63,7 @@ _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _UNCACHED_REASONS = {"uncached_command_required", "verification_helper_fallback"}
 _UNCACHED_PHASES = {"task", "affected", "branch_final"}
-_UNCACHED_FIELDS = {"exit_code", "receipt_path", "reason_code", "phase"}
+_UNCACHED_FIELDS = {"exit_code", "receipt_path", "reason_code"}
 
 
 @dataclass(frozen=True)
@@ -150,12 +153,24 @@ def validate_execution_event_schema(event: object, *, allow_private_sources: boo
         refs != []
         or event.get("receipt_path") is not None
         or event.get("reason_code") not in _UNCACHED_REASONS
-        or event.get("phase") not in _UNCACHED_PHASES
+        or event.get("requested_phase") not in _UNCACHED_PHASES
+        or event.get("executed_phase") != event.get("requested_phase")
+        or event.get("avoided_executions") != 0
         or not isinstance(event.get("exit_code"), int)
         or isinstance(event.get("exit_code"), bool)
         or ((event["exit_code"] == 0) != (event["result"] == "pass"))
     ):
         raise ValueError("uncached verification evidence is invalid")
+    if category == "verification" and (
+        event.get("requested_phase") not in _UNCACHED_PHASES
+        or event.get("executed_phase") not in _UNCACHED_PHASES
+        or event.get("avoided_executions") not in {0, 1}
+    ):
+        raise ValueError("verification phase observations are invalid")
+    if category == "verification" and event.get("action") == "verified":
+        reused_event = str(event.get("event_id", "")).startswith("verification.reused:")
+        if event.get("avoided_executions") != (1 if reused_event else 0):
+            raise ValueError("verification avoided execution observation is invalid")
     for field in set(event) - _BASE_FIELDS:
         value = event[field]
         if field == "receipt_path":
@@ -164,9 +179,11 @@ def validate_execution_event_schema(event: object, *, allow_private_sources: boo
         elif field == "exit_code":
             if not isinstance(value, int) or isinstance(value, bool):
                 raise ValueError("verification exit code is invalid")
-        elif field == "duration_ms":
+        elif field in {"duration_ms", "avoided_executions"}:
             if not isinstance(value, int) or isinstance(value, bool) or value < 0:
                 raise ValueError("execution event duration is invalid")
+            if field == "avoided_executions" and value > 1:
+                raise ValueError("verification avoided execution count is invalid")
         elif field == "finding_ids":
             if (
                 not isinstance(value, list)

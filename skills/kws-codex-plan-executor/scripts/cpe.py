@@ -62,8 +62,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     verify = commands.add_parser("verify")
     verify.add_argument("--run-id", required=True)
-    verify.add_argument("--command-id", required=True)
-    verify.add_argument("--phase", choices=("task", "affected", "branch_final"), required=True)
+    verify.add_argument(
+        "--command-id", required=True,
+        help="observational command label; not part of execution identity",
+    )
+    verify.add_argument(
+        "--phase", choices=("task", "affected", "branch_final"), required=True,
+        help="requested phase observation; not part of execution identity",
+    )
     verify.add_argument("--input-digest", required=True)
     verify.add_argument(
         "--mutable-input-policy",

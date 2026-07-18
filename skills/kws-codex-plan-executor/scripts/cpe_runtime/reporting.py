@@ -454,14 +454,36 @@ def validate_optimization_report(report: object) -> dict[str, object]:
         raise ValueError("optimization report usage attribution is invalid")
     verification = report["verification"]
     if not isinstance(verification, dict) or set(verification) != {
-        "executions", "reuses", "uncached_executions",
+        "requests", "executions", "reuses", "uncached_executions",
+        "avoided_executions", "requested_phase_counts", "executed_phase_counts",
     }:
         raise ValueError("optimization report verification metrics are invalid")
-    for value in verification.values():
+    for name in (
+        "requests", "executions", "reuses", "uncached_executions",
+        "avoided_executions",
+    ):
         _validate_bounded_counter(
-            value, "optimization report verification metrics are invalid"
+            verification[name], "optimization report verification metrics are invalid"
         )
+    for field in ("requested_phase_counts", "executed_phase_counts"):
+        counts = verification[field]
+        if not isinstance(counts, dict) or set(counts) != {
+            "task", "affected", "branch_final",
+        }:
+            raise ValueError("optimization report verification metrics are invalid")
+        for value in counts.values():
+            _validate_bounded_counter(
+                value, "optimization report verification metrics are invalid"
+            )
     if verification["uncached_executions"] > verification["executions"]:
+        raise ValueError("optimization report verification metrics are invalid")
+    if verification["reuses"] + verification["executions"] != verification["requests"]:
+        raise ValueError("optimization report verification metrics are invalid")
+    if verification["avoided_executions"] != verification["reuses"]:
+        raise ValueError("optimization report verification metrics are invalid")
+    if sum(verification["requested_phase_counts"].values()) != verification["requests"]:
+        raise ValueError("optimization report verification metrics are invalid")
+    if sum(verification["executed_phase_counts"].values()) != verification["executions"]:
         raise ValueError("optimization report verification metrics are invalid")
     _validate_artifact_inventory(report["artifact_inventory"])
     warnings = report["data_quality_warnings"]
@@ -607,9 +629,17 @@ def build_optimization_report(
 
     uncached_unknown = attempts_finished - uncached_known
     prompt_unknown = attempts_finished - prompt_known
+    verification_requests = 0
     verification_executions = 0
     verification_reuses = 0
     uncached_executions = 0
+    avoided_executions = 0
+    requested_phase_counts = {
+        phase: 0 for phase in ("task", "affected", "branch_final")
+    }
+    executed_phase_counts = {
+        phase: 0 for phase in ("task", "affected", "branch_final")
+    }
     seen_verification_events: set[str] = set()
     for event in events:
         if (
@@ -622,10 +652,25 @@ def build_optimization_report(
             continue
         seen_verification_events.add(child_event_id)
         decision = event.get("decision")
+        requested_phase = event.get("requested_phase")
+        executed_phase = event.get("executed_phase")
+        avoided = _observed_counter(event.get("avoided_executions"))
+        if (
+            decision not in {"executed", "reused", "executed_uncached"}
+            or requested_phase not in requested_phase_counts
+            or executed_phase not in executed_phase_counts
+            or avoided is None
+            or avoided != (1 if decision == "reused" else 0)
+        ):
+            continue
+        verification_requests += 1
+        requested_phase_counts[str(requested_phase)] += 1
+        avoided_executions += avoided
         if decision == "reused":
             verification_reuses += 1
         elif decision in {"executed", "executed_uncached"}:
             verification_executions += 1
+            executed_phase_counts[str(executed_phase)] += 1
             if decision == "executed_uncached":
                 uncached_executions += 1
 
@@ -673,9 +718,13 @@ def build_optimization_report(
         "duration_ms": duration,
         "duration_unknown_attempt_count": duration_unknown,
         "verification": {
+            "requests": verification_requests,
             "executions": verification_executions,
             "reuses": verification_reuses,
             "uncached_executions": uncached_executions,
+            "avoided_executions": avoided_executions,
+            "requested_phase_counts": requested_phase_counts,
+            "executed_phase_counts": executed_phase_counts,
         },
         "artifact_inventory": inventory_produced_artifacts(sdd_root),
         "data_quality_warnings": unique_warnings,
@@ -753,9 +802,17 @@ def render_optimization_markdown(report: dict[str, object]) -> str:
         "",
         "## Verification",
         "",
+        f"- Requests: {verification['requests']}",
         f"- Executions: {verification['executions']}",
         f"- Reuses: {verification['reuses']}",
         f"- Uncached executions: {verification['uncached_executions']}",
+        f"- Avoided executions: {verification['avoided_executions']}",
+        "- Requested phases: "
+        + json.dumps(verification["requested_phase_counts"], sort_keys=True)
+        + ".",
+        "- Executed phases: "
+        + json.dumps(verification["executed_phase_counts"], sort_keys=True)
+        + ".",
         "",
         "## Produced Artifact Inventory",
         "",
