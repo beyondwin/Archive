@@ -19,7 +19,13 @@ const rustFormat = command("rust-format", ["cargo", "fmt", "--check"], "native/k
 const rustTest = command("rust-test", ["cargo", "test", "--workspace"], "native/kernel");
 const waygentSkillEval = command("waygent-skill-eval", ["./evals/run.sh"], "skills/waygent");
 const codexExecutorEval = command("codex-executor-eval", ["./evals/run.sh"], "skills/kws-codex-plan-executor");
-const claudeExecutorEval = command("claude-executor-eval", ["./evals/run.sh"], "skills/kws-claude-multi-agent-executor");
+const claudeExecutorOffline = command("claude-executor-offline", ["bun", "run", "agent:claude-offline"]);
+const claudeExecutorEval = command(
+  "claude-executor-eval",
+  ["./evals/run.sh"],
+  "skills/kws-claude-multi-agent-executor",
+  true,
+);
 const liveProvider = command(
   "waygent-live-provider-smoke",
   ["bun", "run", "waygent:live-provider-smoke"],
@@ -31,7 +37,7 @@ const closureCommands = [contract, diffCheck, check, platformDemo, scenarios, fi
 const offlineCommands = [
   contract, diffCheck, typecheck, check, platformDemo, scenarios, fixtureLab, dogfood,
   consoleTest, consoleBuild, rustFormat, rustTest, waygentSkillEval, codexExecutorEval,
-  claudeExecutorEval, liveProvider,
+  claudeExecutorOffline, claudeExecutorEval, liveProvider,
 ];
 
 test.each([
@@ -44,7 +50,7 @@ test.each([
   ["native", ["native/kernel/crates/kernel-cli/src/main.rs"], ["native"], [contract, diffCheck, rustFormat, rustTest]],
   ["Waygent skill", ["skills/waygent/SKILL.md"], ["waygent-skill"], [contract, diffCheck, waygentSkillEval, check, platformDemo, scenarios]],
   ["Codex executor", ["skills/kws-codex-plan-executor/scripts/cpe.py"], ["codex-executor"], [contract, diffCheck, codexExecutorEval, check]],
-  ["Claude executor", ["skills/kws-claude-multi-agent-executor/scripts/kernel/kernel.py"], ["claude-executor"], [contract, diffCheck, claudeExecutorEval, check]],
+  ["Claude executor", ["skills/kws-claude-multi-agent-executor/scripts/kernel/kernel.py"], ["claude-executor"], [contract, diffCheck, claudeExecutorOffline, claudeExecutorEval, check]],
   ["unknown", ["unexpected/new-surface.txt"], ["full-offline"], offlineCommands],
 ] satisfies readonly [string, string[], ScopeId[], ReturnType<typeof command>[]][])(
   "selects the complete $0 command set",
