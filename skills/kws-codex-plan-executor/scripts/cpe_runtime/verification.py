@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import stat
 import subprocess
 import tempfile
@@ -67,6 +68,49 @@ class VerificationReceipt:
     stdout_digest: str
     stderr_digest: str
     artifacts: tuple[Mapping[str, object], ...]
+
+
+class _VerificationTerminationSignal(BaseException):
+    """Internal unwind after an external controller signal was relayed."""
+
+
+class _VerificationSignalRelay:
+    """Relay controller termination to the isolated verification group."""
+
+    def __init__(self) -> None:
+        self.process: subprocess.Popen[bytes] | None = None
+        self._previous: dict[int, object] = {}
+        self._relaying = False
+
+    def install(self) -> None:
+        if os.name != "posix":
+            return
+        try:
+            for signum in (signal.SIGTERM, signal.SIGINT):
+                previous = signal.getsignal(signum)
+                signal.signal(signum, self._handle)
+                self._previous[signum] = previous
+        except (OSError, ValueError):
+            self.restore()
+
+    def restore(self) -> None:
+        for signum, handler in self._previous.items():
+            try:
+                signal.signal(signum, handler)  # type: ignore[arg-type]
+            except (OSError, ValueError):
+                pass
+        self._previous.clear()
+
+    def _handle(self, _signum: int, _frame: object) -> None:
+        if self._relaying:
+            return
+        self._relaying = True
+        try:
+            if self.process is not None:
+                _terminate_group(self.process, 0.1)
+        finally:
+            self._relaying = False
+        raise _VerificationTerminationSignal
 
 
 def _canonical_json(value: object) -> bytes:
@@ -451,26 +495,33 @@ def execute_verification(
     status_name: Literal["passed", "failed", "timed_out", "interrupted"]
     exit_code: int | None = None
     with tempfile.TemporaryFile() as stdout_stream, tempfile.TemporaryFile() as stderr_stream:
-        process = subprocess.Popen(
-            list(request.argv),
-            executable=str(executable_path),
-            cwd=cwd,
-            stdin=subprocess.DEVNULL,
-            stdout=stdout_stream,
-            stderr=stderr_stream,
-            shell=False,
-            start_new_session=True,
-            env=execution_environment,
-        )
+        relay = _VerificationSignalRelay()
+        relay.install()
         try:
-            exit_code = process.wait(timeout=request.timeout_seconds)
-            status_name = "passed" if exit_code == 0 else "failed"
-        except subprocess.TimeoutExpired:
-            _terminate_group(process, 0.1)
-            status_name = "timed_out"
-        except KeyboardInterrupt:
-            _terminate_group(process, 0.1)
-            status_name = "interrupted"
+            process = subprocess.Popen(
+                list(request.argv),
+                executable=str(executable_path),
+                cwd=cwd,
+                stdin=subprocess.DEVNULL,
+                stdout=stdout_stream,
+                stderr=stderr_stream,
+                shell=False,
+                start_new_session=True,
+                env=execution_environment,
+            )
+            relay.process = process
+            try:
+                exit_code = process.wait(timeout=request.timeout_seconds)
+                status_name = "passed" if exit_code == 0 else "failed"
+            except subprocess.TimeoutExpired:
+                _terminate_group(process, 0.1)
+                status_name = "timed_out"
+            except (_VerificationTerminationSignal, KeyboardInterrupt):
+                if process.poll() is None:
+                    _terminate_group(process, 0.1)
+                status_name = "interrupted"
+        finally:
+            relay.restore()
         stdout_payload = _bounded_output(stdout_stream)
         stderr_payload = _bounded_output(stderr_stream)
 
