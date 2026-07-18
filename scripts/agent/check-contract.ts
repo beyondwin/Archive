@@ -275,11 +275,15 @@ function guidanceClaims(contents: string): string[] {
   };
   const flushProse = (): void => {
     if (prose.length > 0) {
-      claims.push(...pathClaims(prose.splice(0).join("\n")));
+      for (const paragraph of prose.splice(0).join("\n").split(/\n[ \t]*\n+/)) {
+        claims.push(...pathClaims(paragraph));
+      }
     }
   };
 
-  for (const line of contents.replace(/\r\n?/g, "\n").split("\n")) {
+  const lines = contents.replace(/\r\n?/g, "\n").split("\n");
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]!;
     const listMatch = /^([ \t]*)(?:[-+*]|\d+[.)])[ \t]+(.*)$/.exec(line);
     if (listMatch) {
       flushProse();
@@ -294,6 +298,12 @@ function guidanceClaims(contents: string): string[] {
     }
 
     const currentItem = listStack.at(-1);
+    if (
+      currentItem !== undefined && line.trim().length === 0 &&
+      nextListIndent(lines, index) > currentItem.indent
+    ) {
+      continue;
+    }
     if (currentItem !== undefined && line.trim().length > 0 && leadingIndent(line) > currentItem.indent) {
       currentItem.body = `${currentItem.body}\n${line.trim()}`;
       continue;
@@ -328,6 +338,16 @@ function markdownIndent(whitespace: string): number {
 
 function leadingIndent(line: string): number {
   return markdownIndent(/^[ \t]*/.exec(line)?.[0] ?? "");
+}
+
+function nextListIndent(lines: readonly string[], index: number): number {
+  for (let next = index + 1; next < lines.length; next += 1) {
+    const line = lines[next]!;
+    if (line.trim().length === 0) continue;
+    const match = /^([ \t]*)(?:[-+*]|\d+[.)])[ \t]+/.exec(line);
+    return match ? markdownIndent(match[1]!) : Number.NEGATIVE_INFINITY;
+  }
+  return Number.NEGATIVE_INFINITY;
 }
 
 function sentenceStart(contents: string, index: number): number {
