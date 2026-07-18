@@ -1337,9 +1337,24 @@ class SequentialRunner:
             state["status"] = "failed"
         elif decision.action == "block":
             assert block_details is not None
-            _, fingerprint, probe_ids = block_details
+            parent_confirmed, fingerprint, probe_ids = block_details
             plan["environment_fingerprint"] = fingerprint
             plan["capability_probe_ids"] = probe_ids
+            prior = plan.get("blocker")
+            plan["blocker"] = {
+                "kind": "operator_owned",
+                "code": decision.reason_code,
+                "resource": plan["plan_id"],
+                "parent_fingerprint": fingerprint,
+                "fingerprint_available": fingerprint is not None,
+                "parent_observed": parent_confirmed,
+                "explicit_retry_count": (
+                    int(prior["explicit_retry_count"])
+                    if isinstance(prior, dict)
+                    and isinstance(prior.get("explicit_retry_count"), int)
+                    else 0
+                ),
+            }
             _ensure_decision_scoped_event(
                 store,
                 "plan.recovery_stopped",
@@ -1354,6 +1369,21 @@ class SequentialRunner:
             plan["result_path"] = str(self._controller_stop_result(
                 store, plan, decision, pending["head"],
             ))
+            prior = plan.get("blocker")
+            plan["blocker"] = {
+                "kind": "operator_owned",
+                "code": decision.reason_code,
+                "resource": plan["plan_id"],
+                "parent_fingerprint": None,
+                "fingerprint_available": False,
+                "parent_observed": False,
+                "explicit_retry_count": (
+                    int(prior["explicit_retry_count"])
+                    if isinstance(prior, dict)
+                    and isinstance(prior.get("explicit_retry_count"), int)
+                    else 0
+                ),
+            }
             _ensure_decision_scoped_event(
                 store,
                 "plan.recovery_stopped",
