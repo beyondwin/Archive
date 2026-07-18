@@ -484,16 +484,16 @@ def validate_optimization_report(report: object) -> dict[str, object]:
     if not isinstance(metrics, dict) or set(metrics) != metric_fields:
         raise ValueError("optimization report recovery metrics are invalid")
     for name in metric_fields - {"continuation_reason_counts"}:
-        value = metrics[name]
-        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-            raise ValueError("optimization report recovery metrics are invalid")
+        _validate_bounded_counter(
+            metrics[name], "optimization report recovery metrics are invalid"
+        )
     reasons = metrics["continuation_reason_counts"]
     if (
         not isinstance(reasons, dict)
         or len(reasons) > 128
         or any(
             not isinstance(name, str) or not _SIGNAL.fullmatch(name)
-            or not isinstance(value, int) or isinstance(value, bool) or value < 0
+            or _observed_counter(value) is None
             for name, value in reasons.items()
         )
     ):
@@ -518,6 +518,7 @@ def build_optimization_report(
     attempts = [
         event for event in events
         if event.get("action") == "plan.attempt_finished"
+        and event.get("source") == "parent_observed"
     ]
     totals = {name: 0 for name in _USAGE_EVENT_FIELDS}
     known = {name: 0 for name in _USAGE_EVENT_FIELDS}
@@ -697,30 +698,49 @@ def render_optimization_markdown(report: dict[str, object]) -> str:
     assert isinstance(verification, dict)
     inventory = report["artifact_inventory"]
     assert isinstance(inventory, dict)
+    warnings = report["data_quality_warnings"]
+    assert isinstance(warnings, list)
+
+    def metric_line(label: str, metric: object, observed_field: str, unit: str) -> str:
+        assert isinstance(metric, dict)
+        return (
+            f"{label} ({metric['total_kind']}): {metric[observed_field]} observed "
+            f"{unit}; {metric['known_attempts']} known; "
+            f"{metric['unknown_attempts']} unknown."
+        )
+
+    cache_ratio = usage["paired_observation_cache_ratio"]
+    ratio_text = "unavailable" if cache_ratio is None else str(cache_ratio)
+    unknown_reasons = usage["unknown_attempts_by_reason"]
+    assert isinstance(unknown_reasons, dict)
+    classes = inventory["classes"]
+    assert isinstance(classes, dict)
+    review_pressure = inventory["review_diff_pressure"]
+    assert isinstance(review_pressure, dict)
+    declared_context = inventory["declared_context"]
+    assert isinstance(declared_context, dict)
+    largest = inventory["largest"]
     lines = [
         "# Optimization Report",
         "",
         f"Run: `{report['run_id']}`",
         "Usage scope: controller and nested agents aggregate; role attribution unavailable.",
-        (
-            f"Input ({usage['input']['total_kind']}): "
-            f"{usage['input']['observed_tokens']} observed tokens; "
-            f"{usage['input']['unknown_attempts']} attempts unknown."
+        metric_line("Input", usage["input"], "observed_tokens", "tokens"),
+        metric_line("Cached input", usage["cached_input"], "observed_tokens", "tokens"),
+        metric_line(
+            "Paired uncached input", usage["uncached_input"],
+            "observed_tokens", "tokens",
         ),
-        (
-            f"Cached input ({usage['cached_input']['total_kind']}): "
-            f"{usage['cached_input']['observed_tokens']} observed tokens; "
-            f"{usage['cached_input']['unknown_attempts']} attempts unknown."
+        metric_line("Output", usage["output"], "observed_tokens", "tokens"),
+        metric_line(
+            "Reasoning output", usage["reasoning_output"],
+            "observed_tokens", "tokens",
         ),
-        (
-            f"Paired uncached input ({usage['uncached_input']['total_kind']}): "
-            f"{usage['uncached_input']['observed_tokens']} observed tokens; "
-            f"{usage['uncached_input']['unknown_attempts']} attempts unknown."
+        metric_line(
+            "Launcher prompt", usage["launcher_prompt"],
+            "observed_bytes", "bytes",
         ),
-        (
-            f"Output/reasoning: {usage['output']['observed_tokens']} / "
-            f"{usage['reasoning_output']['observed_tokens']} observed tokens."
-        ),
+        f"Paired cache ratio: {ratio_text}.",
         (
             f"Observed attempt duration: {report['duration_ms']} ms; "
             f"{report['duration_unknown_attempt_count']} attempts unknown."
@@ -729,6 +749,9 @@ def render_optimization_markdown(report: dict[str, object]) -> str:
             f"Unknown-usage duration: {usage['unknown_attempt_duration_ms']} ms; "
             f"{usage['unknown_attempt_missing_duration_count']} missing durations."
         ),
+        "Unknown-usage reasons: "
+        + json.dumps(unknown_reasons, sort_keys=True, separators=(",", ":"))
+        + ".",
         "",
         "## Verification",
         "",
@@ -741,7 +764,38 @@ def render_optimization_markdown(report: dict[str, object]) -> str:
         f"- Availability: {inventory['availability']}",
         f"- Produced files: {inventory['produced_files']}",
         f"- Produced bytes: {inventory['produced_bytes']}",
+        "- Artifact classes: "
+        + json.dumps(classes, sort_keys=True, separators=(",", ":"))
+        + ".",
+        (
+            f"- Review-diff pressure: {review_pressure['files']} files, "
+            f"{review_pressure['bytes']} bytes, largest "
+            f"{review_pressure['largest_bytes']} bytes."
+        ),
+        (
+            "- Largest artifact: unavailable."
+            if largest is None
+            else (
+                f"- Largest artifact: {largest['relative_path']} "
+                f"({largest['bytes']} bytes, {largest['class']})."
+            )
+        ),
+        f"- Inventory truncated: {str(inventory['truncated']).lower()}.",
+        (
+            f"- Declared context: {declared_context['status']} "
+            f"({declared_context['reason']}); refs="
+            f"{json.dumps(declared_context['refs'])}, bytes="
+            f"{json.dumps(declared_context['bytes'])}."
+        ),
         "- Measurement: filesystem metadata only; advisory, not model-consumed context.",
+        "",
+        "## Data Quality Warnings",
+        "",
+        "Data quality warnings:",
+        *(
+            [f"- {warning}" for warning in warnings]
+            if warnings else ["- None"]
+        ),
         "",
         "## Recovery Metrics",
         "",
