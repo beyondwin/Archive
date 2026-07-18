@@ -1,7 +1,7 @@
 # Code Review Guide
 
-Use this checklist when reviewing local changes, PRs, commits, or agent output.
-Lead with concrete findings and file references.
+Read `AGENTS.md` and the nearest subtree `AGENTS.md` first. This checklist is a
+thin review adapter; lead with concrete findings and file references.
 
 ## Review Priorities
 
@@ -22,7 +22,8 @@ Lead with concrete findings and file references.
 - AgentLens internal failures must not change the wrapped command exit code.
 - Schema changes are additive unless a versioned migration is explicitly
   designed.
-- Dashboard/API type drift is checked with `npm run gen-types` when relevant.
+- Dashboard/API type drift is checked with `bun run typecheck` plus targeted
+  contract, projector, and consumer tests when relevant.
 
 ## Waygent Runtime Checks
 

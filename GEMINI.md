@@ -1,7 +1,8 @@
 # GEMINI.md - Archive
 
 Gemini-based agents should read `AGENTS.md` first. It is the canonical
-repository instruction file for this checkout.
+repository instruction file for this checkout. This file only adds
+Gemini-specific reminders.
 
 Key reminders:
 

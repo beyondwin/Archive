@@ -1,12 +1,12 @@
 # CLAUDE.md - Archive
 
 Claude Code should treat `AGENTS.md` as the primary repository instruction
-file. This file adds Claude-specific routing and reminders.
+file. This file only adds Claude-specific notes after that canonical guidance.
 
 ## Start Here
 
 1. Read `AGENTS.md`.
-2. Read the nearest subtree `AGENTS.md` when working under `skills/`.
+2. Read the nearest subtree `AGENTS.md` before changing a subtree.
 3. Read the target `SKILL.md` before changing any executor skill behavior.
 
 ## Claude-Specific Notes
