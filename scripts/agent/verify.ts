@@ -17,6 +17,17 @@ export interface VerificationResult {
   exitCode: number;
 }
 
+class InvalidGitRangeError extends Error {
+  readonly code = "invalid_git_range";
+
+  constructor(
+    readonly base: string,
+    readonly head: string,
+  ) {
+    super(`invalid Git range: ${base}...${head}`);
+  }
+}
+
 export async function collectChangedPaths(
   options: ChangedPathOptions,
 ): Promise<string[]> {
@@ -25,6 +36,11 @@ export async function collectChangedPaths(
   }
 
   const git = options.git ?? ((args: readonly string[]) => runGit(options.root, args));
+  const range = options.base === undefined
+    ? undefined
+    : /^0{40}$/.test(options.base)
+    ? await normalizeAllZeroGitRange(options.base, options.head!, git)
+    : `${options.base}...${options.head}`;
   const outputs = options.base === undefined
     ? await Promise.all([
         git(["diff", "--name-only", "--diff-filter=ACMR", "-z", "HEAD"]),
@@ -32,10 +48,27 @@ export async function collectChangedPaths(
       ])
     : [await git([
         "diff", "--name-only", "--diff-filter=ACMR", "-z",
-        `${options.base}...${options.head}`,
+        range!,
       ])];
 
   return stablePaths(outputs.flatMap(splitPathOutput));
+}
+
+async function normalizeAllZeroGitRange(
+  base: string,
+  head: string,
+  git: NonNullable<ChangedPathOptions["git"]>,
+): Promise<string> {
+  const normalizedBase = `${head}^`;
+  try {
+    await Promise.all([
+      git(["rev-parse", "--verify", normalizedBase]),
+      git(["rev-parse", "--verify", head]),
+    ]);
+  } catch {
+    throw new InvalidGitRangeError(base, head);
+  }
+  return `${normalizedBase}...${head}`;
 }
 
 export async function runVerification(options: {
@@ -119,7 +152,7 @@ async function runCommand(root: string, command: CommandSpec): Promise<number> {
 }
 
 function splitPathOutput(output: string): string[] {
-  return output.split("\0").filter(Boolean);
+  return (output.includes("\0") ? output.split("\0") : output.split("\n")).filter(Boolean);
 }
 
 function stablePaths(paths: readonly string[]): string[] {

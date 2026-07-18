@@ -1,0 +1,32 @@
+name: agent-contract
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: bun install --frozen-lockfile
+      - run: npm install --global @openai/codex@0.144.6
+      - run: bun run agent:test
+      - run: bun run agent:contract
+      - if: github.event_name == 'pull_request'
+        run: bun run agent:verify -- --base "${{ github.event.pull_request.base.sha }}" --head "${{ github.event.pull_request.head.sha }}"
+      - if: github.event_name == 'push'
+        run: bun run agent:verify -- --base "${{ github.event.before }}" --head "${{ github.sha }}"
