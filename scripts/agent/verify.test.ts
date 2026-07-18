@@ -148,6 +148,26 @@ test("live provider evidence is selected but never executed by default", async (
   });
 });
 
+test("Claude offline checks execute while the live full eval stays opt-in", async () => {
+  const calls: string[] = [];
+  const result = await runVerification({
+    root: process.cwd(),
+    paths: ["skills/kws-claude-multi-agent-executor/SKILL.md"],
+    run: async (command) => {
+      calls.push(command.id);
+      return 0;
+    },
+  });
+
+  expect(calls).toContain("claude-executor-offline");
+  expect(calls).not.toContain("claude-executor-eval");
+  expect(result.commandResults).toContainEqual({
+    id: "claude-executor-eval",
+    exitCode: 0,
+    skipped: true,
+  });
+});
+
 test("CLI rejects mixing explicit paths and a commit range", async () => {
   const script = join(process.cwd(), "scripts/agent/verify.ts");
   const child = Bun.spawn([
@@ -200,6 +220,22 @@ test("CLI reports live provider evidence as opt-in and not run", async () => {
   );
   expect(stdout).toContain(
     "NOT RUN (opt-in) \"waygent-live-provider-smoke\": argv=[\"bun\",\"run\",\"waygent:live-provider-smoke\"]",
+  );
+});
+
+test("CLI reports the Claude full eval as opt-in and not run", async () => {
+  const script = join(process.cwd(), "scripts/agent/verify.ts");
+  const child = Bun.spawn([
+    "bun", script, "--dry-run", "--path", "skills/kws-claude-multi-agent-executor/SKILL.md",
+  ], { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" });
+
+  expect(await child.exited).toBe(0);
+  const stdout = await new Response(child.stdout).text();
+  expect(stdout).toContain(
+    "[NOT RUN (opt-in)] \"claude-executor-eval\": argv=[\"./evals/run.sh\"] cwd=\"skills/kws-claude-multi-agent-executor\"",
+  );
+  expect(stdout).toContain(
+    "NOT RUN (opt-in) \"claude-executor-eval\": argv=[\"./evals/run.sh\"] cwd=\"skills/kws-claude-multi-agent-executor\"",
   );
 });
 

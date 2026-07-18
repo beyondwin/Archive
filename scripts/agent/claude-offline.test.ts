@@ -1,0 +1,114 @@
+import { expect, test } from "bun:test";
+import { readdir, readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { runClaudeOffline, type ClaudeOfflineCheck } from "./claude-offline";
+
+const EXECUTOR = "skills/kws-claude-multi-agent-executor";
+
+type ObservedCheck = ClaudeOfflineCheck;
+
+test("package gate runs every deterministic Claude check in stable order without a baseline artifact", async () => {
+  const root = process.cwd();
+  const packageJson = JSON.parse(await readFile(join(root, "package.json"), "utf8")) as {
+    scripts: Record<string, string>;
+  };
+  const kernelTests = (await readdir(join(root, EXECUTOR, "scripts/kernel")))
+    .filter((name) => /^test_.*\.py$/.test(name))
+    .sort();
+
+  expect(packageJson.scripts["agent:claude-offline"]).toBe(
+    "bun run scripts/agent/claude-offline.ts",
+  );
+
+  const child = Bun.spawn(["bun", "run", "agent:claude-offline"], {
+    cwd: root,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [exitCode, stdout, stderr] = await Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ]);
+
+  expect(exitCode, stderr).toBe(0);
+  expect(stdout.split("\n").filter((line) => /^\[agent:claude-offline] /.test(line))).toEqual([
+    "[agent:claude-offline] PASS compare-agentlens-events-self-test",
+    ...kernelTests.map((name) => `[agent:claude-offline] PASS scripts/kernel/${name}`),
+    "[agent:claude-offline] PASS doc-freshness-strict",
+  ]);
+  expect(await Bun.file(join(root, EXECUTOR, "evals/baselines/v3.0.0.json")).exists()).toBeFalse();
+});
+
+test("injected discovery is sorted and the runner fails fast", async () => {
+  expect(runClaudeOffline).toBeFunction();
+
+  const calls: ObservedCheck[] = [];
+  const stdout: string[] = [];
+  const stderr: string[] = [];
+  const exitCode = await runClaudeOffline({
+    root: "/fixture",
+    discoverKernelTests: async () => ["test_z.py", "notes.txt", "test_a.py"],
+    run: async (check) => {
+      calls.push(check);
+      return check.id === "scripts/kernel/test_z.py" ? 9 : 0;
+    },
+    stdout: (line) => stdout.push(line),
+    stderr: (line) => stderr.push(line),
+  });
+
+  expect(exitCode).toBe(9);
+  expect(calls.map(({ id }) => id)).toEqual([
+    "compare-agentlens-events-self-test",
+    "scripts/kernel/test_a.py",
+    "scripts/kernel/test_z.py",
+  ]);
+  expect(calls[0]?.cwd).toBe("/fixture/skills/kws-claude-multi-agent-executor");
+  expect(stdout).toEqual([
+    "[agent:claude-offline] PASS compare-agentlens-events-self-test",
+    "[agent:claude-offline] PASS scripts/kernel/test_a.py",
+  ]);
+  expect(stderr).toEqual([
+    "[agent:claude-offline] FAIL scripts/kernel/test_z.py exit-code=9",
+  ]);
+});
+
+test("injected runner receives the self-test, sorted Python tests, and strict doc check", async () => {
+  expect(runClaudeOffline).toBeFunction();
+
+  const calls: ObservedCheck[] = [];
+  const exitCode = await runClaudeOffline({
+    root: "/fixture",
+    discoverKernelTests: async () => ["test_b.py", "ignored.py", "test_a.py"],
+    run: async (check) => {
+      calls.push(check);
+      return 0;
+    },
+    stdout: () => {},
+    stderr: () => {},
+  });
+
+  expect(exitCode).toBe(0);
+  expect(calls.map(({ id, argv, env }) => ({ id, argv, env }))).toEqual([
+    {
+      id: "compare-agentlens-events-self-test",
+      argv: ["python3", "scripts/compare_agentlens_events.py", "--self-test"],
+      env: undefined,
+    },
+    {
+      id: "scripts/kernel/test_a.py",
+      argv: ["python3", "scripts/kernel/test_a.py"],
+      env: undefined,
+    },
+    {
+      id: "scripts/kernel/test_b.py",
+      argv: ["python3", "scripts/kernel/test_b.py"],
+      env: undefined,
+    },
+    {
+      id: "doc-freshness-strict",
+      argv: ["python3", "evals/check_doc_freshness.py"],
+      env: { DOC_FRESHNESS_STRICT: "1" },
+    },
+  ]);
+});

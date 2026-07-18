@@ -247,7 +247,10 @@ async function isReadableRegularFile(path: string): Promise<boolean> {
 }
 
 function hasStaleActiveClaim(contents: string): boolean {
-  const normalized = contents.replace(/\s+/g, " ");
+  const normalized = contents
+    .replace(/\r\n?/g, "\n")
+    .replace(/\n(?=[ \t]*(?:[-+*]|\d+[.)])[ \t]+)/g, ". ")
+    .replace(/\s+/g, " ");
   for (const match of normalized.matchAll(/components\/agentlens/gi)) {
     const pathIndex = match.index ?? 0;
     const claim = normalized.slice(

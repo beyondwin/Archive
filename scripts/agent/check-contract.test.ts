@@ -226,6 +226,21 @@ describe("checkContract", () => {
     }));
   });
 
+  test("does not let a retired Markdown bullet mask a later active bullet", async () => {
+    const root = await createContractFixture();
+    await writeFile(
+      join(root, "GEMINI.md"),
+      "- Historical: components/agentlens was removed\n- Primary: components/agentlens\n",
+    );
+
+    const issues = await checkContract({ root, requiredPaths: [], requiredAgentFiles: [], trackedFiles: [] });
+
+    expect(issues).toContainEqual(expect.objectContaining({
+      code: "stale_active_claim",
+      path: "GEMINI.md",
+    }));
+  });
+
   test("surfaces a failed git tracked-file scan", async () => {
     const root = await createContractFixture();
 
