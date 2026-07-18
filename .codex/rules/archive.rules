@@ -75,6 +75,12 @@ prefix_rule(
 )
 
 prefix_rule(
+    pattern = ["git"],
+    decision = "prompt",
+    justification = "Prompt all Git commands because execpolicy only matches literal leading tokens; global Git options can otherwise bypass destructive-command rules. This intentionally prompts read-only Git commands for complete coverage.",
+)
+
+prefix_rule(
     pattern = ["rm", "-rf"],
     decision = "prompt",
     justification = "Recursive deletion needs an explicit scope check.",
