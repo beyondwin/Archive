@@ -2361,7 +2361,13 @@ class SequentialRunner:
                 if event.get("action") in {"plan.integrity_failed", "plan.evidence_failed", "plan.failed", "plan.blocked"}
             ]
             report = build_optimization_report(
-                run_id=store.state["run_id"], events=events, findings=findings
+                run_id=store.state["run_id"],
+                events=events,
+                findings=findings,
+                sdd_root=(
+                    Path(store.state["worktree"])
+                    / ".superpowers" / "sdd"
+                ),
             )
             write_optimization_reports(reports_root=store.root / "reports", report=report)
         except OptimizationMarkdownError as exc:

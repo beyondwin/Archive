@@ -1144,6 +1144,7 @@ class HistoricalEvidenceFixtureTests(unittest.TestCase):
     fixture_root = ROOT / "evals" / "fixtures"
     approved_provenance = {
         "direct_cpe",
+        "direct_cpe_format1_forensic",
         "direct_codex_goal_comparative",
         "non_cpe_comparative",
     }
@@ -1189,6 +1190,7 @@ class HistoricalEvidenceFixtureTests(unittest.TestCase):
         )
         for name in (
             "canvas-direct-run-format2.json",
+            "canvas-format1-token-forensic.json",
             "readmates-comparative.json",
             "gasstation-comparative.json",
         ):
@@ -1200,6 +1202,187 @@ class HistoricalEvidenceFixtureTests(unittest.TestCase):
                 self.assertTrue(payload["sanitized"])
                 for marker in forbidden:
                     self.assertNotIn(marker, text)
+
+    def test_format1_forensic_fixture_is_observability_only(self) -> None:
+        payload = self.load_fixture("canvas-format1-token-forensic.json")
+
+        self.assertEqual("running", payload["snapshot_state"])
+        self.assertFalse(payload["count_as_format2_runtime_metrics"])
+        self.assertNotIn("format2_status", payload)
+        self.assertNotIn("accepted", payload)
+        self.assertNotIn("promotable", payload)
+
+
+class OptimizationReportObservabilityTests(unittest.TestCase):
+    def test_usage_fields_are_independently_complete_and_missing_is_not_zero(self) -> None:
+        report = build_optimization_report(
+            run_id="field-complete-usage",
+            events=[
+                {
+                    "action": "plan.attempt_finished",
+                    "duration_ms": 100,
+                    "timed_out": False,
+                    "returncode": 0,
+                    "input_tokens": 100,
+                    "cached_input_tokens": 75,
+                    "output_tokens": 9,
+                    "reasoning_output_tokens": None,
+                    "launcher_prompt_bytes": 80,
+                },
+                {
+                    "action": "plan.attempt_finished",
+                    "duration_ms": 200,
+                    "timed_out": True,
+                    "returncode": -15,
+                    "input_tokens": None,
+                    "cached_input_tokens": None,
+                    "output_tokens": 4,
+                    "reasoning_output_tokens": 2,
+                    "launcher_prompt_bytes": 90,
+                },
+                {
+                    "action": "plan.attempt_finished",
+                    "duration_ms": None,
+                    "timed_out": False,
+                    "returncode": 1,
+                    "input_tokens": 50,
+                    "cached_input_tokens": None,
+                    "output_tokens": None,
+                    "reasoning_output_tokens": 1,
+                    "launcher_prompt_bytes": None,
+                },
+            ],
+            findings=[],
+        )
+        usage = report["usage"]
+
+        self.assertEqual(3, usage["attempts_finished"])
+        self.assertEqual(0, usage["attempts_fully_observed"])
+        self.assertEqual(
+            {"observed_tokens": 150, "known_attempts": 2,
+             "unknown_attempts": 1, "total_kind": "lower_bound"},
+            usage["input"],
+        )
+        self.assertEqual(
+            {"observed_tokens": 75, "known_attempts": 1,
+             "unknown_attempts": 2, "total_kind": "lower_bound"},
+            usage["cached_input"],
+        )
+        self.assertEqual(25, usage["uncached_input"]["observed_tokens"])
+        self.assertEqual(1, usage["uncached_input"]["known_attempts"])
+        self.assertEqual(2, usage["uncached_input"]["unknown_attempts"])
+        self.assertEqual("input_minus_cached_per_attempt", usage["uncached_input"]["derivation"])
+        self.assertEqual(13, usage["output"]["observed_tokens"])
+        self.assertEqual(3, usage["reasoning_output"]["observed_tokens"])
+        self.assertEqual(200, usage["unknown_attempt_duration_ms"])
+        self.assertEqual(0, usage["unknown_attempt_missing_duration_count"])
+        self.assertEqual({"timeout": 1}, usage["unknown_attempts_by_reason"])
+        self.assertEqual("controller_and_nested_agents_aggregate", usage["scope"])
+        self.assertEqual("unavailable", usage["attribution"])
+        self.assertEqual("provider_event_not_agent_scoped", usage["attribution_unavailable_reason"])
+        self.assertEqual(300, report["duration_ms"])
+        self.assertEqual(1, report["duration_unknown_attempt_count"])
+
+    def test_invalid_usage_values_cannot_inflate_totals_or_fabricate_uncached(self) -> None:
+        too_large = 2**63
+        report = build_optimization_report(
+            run_id="invalid-usage",
+            events=[
+                {
+                    "action": "plan.attempt_finished",
+                    "duration_ms": True,
+                    "timed_out": False,
+                    "returncode": 0,
+                    "input_tokens": 10,
+                    "cached_input_tokens": 11,
+                    "output_tokens": -1,
+                    "reasoning_output_tokens": True,
+                    "launcher_prompt_bytes": too_large,
+                },
+                {
+                    "action": "plan.attempt_finished",
+                    "duration_ms": -1,
+                    "timed_out": False,
+                    "returncode": 0,
+                    "input_tokens": too_large,
+                    "cached_input_tokens": 2,
+                    "output_tokens": 3,
+                    "reasoning_output_tokens": 4,
+                    "launcher_prompt_bytes": 5,
+                },
+            ],
+            findings=[],
+        )
+        usage = report["usage"]
+
+        self.assertEqual(10, usage["input"]["observed_tokens"])
+        self.assertEqual(2, usage["cached_input"]["observed_tokens"])
+        self.assertEqual(0, usage["uncached_input"]["observed_tokens"])
+        self.assertEqual(0, usage["uncached_input"]["known_attempts"])
+        self.assertEqual(2, usage["uncached_input"]["unknown_attempts"])
+        self.assertEqual(3, usage["output"]["observed_tokens"])
+        self.assertEqual(4, usage["reasoning_output"]["observed_tokens"])
+        self.assertEqual(5, usage["launcher_prompt"]["observed_bytes"])
+        self.assertEqual(2, report["duration_unknown_attempt_count"])
+        self.assertGreaterEqual(len(report["data_quality_warnings"]), 5)
+
+    def test_verification_counts_come_from_parent_ingested_events(self) -> None:
+        report = build_optimization_report(
+            run_id="verification-counts",
+            events=[
+                {"action": "verification.evidence_ingested", "source": "parent_observed", "decision": "executed", "child_event_id": "a"},
+                {"action": "verification.evidence_ingested", "source": "parent_observed", "decision": "reused", "child_event_id": "b"},
+                {"action": "verification.evidence_ingested", "source": "parent_observed", "decision": "executed_uncached", "child_event_id": "c"},
+                {"action": "verified", "decision": "reused", "source": "child_attested"},
+            ],
+            findings=[],
+        )
+
+        self.assertEqual(
+            {"executions": 2, "reuses": 1, "uncached_executions": 1},
+            report["verification"],
+        )
+
+    def test_artifact_inventory_is_metadata_only_and_advisory(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / ".superpowers" / "sdd"
+            (root / "reviews").mkdir(parents=True)
+            (root / "reviews" / "task.diff").write_bytes(b"diff-body" * 10)
+            (root / "task-review.md").write_text("review body", encoding="utf-8")
+            (root / "progress.md").write_text("progress", encoding="utf-8")
+
+            report = build_optimization_report(
+                run_id="artifact-inventory", events=[], findings=[], sdd_root=root,
+            )
+        inventory = report["artifact_inventory"]
+
+        self.assertEqual("available", inventory["availability"])
+        self.assertEqual("produced_filesystem_metadata_only", inventory["measurement_kind"])
+        self.assertTrue(inventory["advisory_only"])
+        self.assertFalse(inventory["acceptance_effect"])
+        self.assertEqual(3, inventory["produced_files"])
+        self.assertEqual(1, inventory["review_diff_pressure"]["files"])
+        self.assertEqual(90, inventory["review_diff_pressure"]["bytes"])
+        self.assertEqual("reviews/task.diff", inventory["largest"]["relative_path"])
+        self.assertNotIn("body", json.dumps(inventory))
+        self.assertEqual(
+            {"status": "unavailable", "refs": None, "bytes": None,
+             "reason": "not_directly_evidenced"},
+            inventory["declared_context"],
+        )
+
+    def test_missing_artifact_root_stays_unavailable_not_zero(self) -> None:
+        report = build_optimization_report(
+            run_id="artifact-unavailable",
+            events=[],
+            findings=[],
+            sdd_root=Path("/definitely/not/a/cpe/sdd/root"),
+        )
+
+        inventory = report["artifact_inventory"]
+        self.assertEqual("unavailable", inventory["availability"])
+        self.assertIsNone(inventory["produced_files"])
+        self.assertIsNone(inventory["produced_bytes"])
 
 
 def git(repository: Path, *arguments: str) -> str:
@@ -1350,9 +1533,9 @@ class SequentialRunnerTest(unittest.TestCase):
                 "evidence_refs": ["events.jsonl:2"],
             }],
         )
-        self.assertEqual(report["usage"]["observed_input_tokens"], 41)
-        self.assertEqual(report["usage"]["unknown_attempt_count"], 1)
-        self.assertEqual(report["usage"]["total_kind"], "lower_bound")
+        self.assertEqual(report["usage"]["input"]["observed_tokens"], 41)
+        self.assertEqual(report["usage"]["input"]["unknown_attempts"], 1)
+        self.assertEqual(report["usage"]["input"]["total_kind"], "lower_bound")
         self.assertEqual(report["findings"][0]["source"], "derived")
 
     def test_report_rejects_missing_or_invalid_trust_source(self) -> None:
