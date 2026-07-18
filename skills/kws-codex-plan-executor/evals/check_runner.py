@@ -339,6 +339,61 @@ class ReviewEvidenceTests(unittest.TestCase):
         )
         self.assertTrue(decision.valid)
 
+    def test_finding_set_has_one_immutable_opener(self) -> None:
+        first = self.receipt(
+            "opener-one", disposition="changes_requested",
+            finding_set_id="set-1", finding_ids=["finding-1"],
+        )
+        second = self.receipt(
+            "opener-two", disposition="changes_requested",
+            finding_set_id="set-1", finding_ids=["finding-2"],
+        )
+        fix = FindingFixReceipt(
+            "fix-one", "set-1", "opener-one", self.head, "d" * 40,
+            ("finding-1",),
+        )
+        delta = self.receipt(
+            "delta-one", scope="delta", diff_kind="finding_delta",
+            base_head=self.head, head="d" * 40,
+            finding_set_id="set-1", finding_ids=["finding-1"],
+        )
+        whole = self.receipt(
+            "whole-one", scope="whole_branch", diff_kind="whole_branch",
+            head="d" * 40,
+        )
+        decision = validate_review_lifecycle(
+            completed_task_ids=["task-1"], current_head="d" * 40,
+            receipts=[first, second, delta, whole], fixes=[fix],
+        )
+        self.assertFalse(decision.valid)
+        self.assertEqual(decision.reason_code, "duplicate_finding_set_opener")
+
+    def test_review_and_fix_ids_are_globally_unique_before_persistence(self) -> None:
+        opener = self.receipt(
+            "shared-id", disposition="changes_requested",
+            finding_set_id="set-1", finding_ids=["finding-1"],
+        )
+        fix = FindingFixReceipt(
+            "shared-id", "set-1", "shared-id", self.head, "d" * 40,
+            ("finding-1",),
+        )
+        delta = self.receipt(
+            "shared-delta", scope="delta", diff_kind="finding_delta",
+            base_head=self.head, head="d" * 40,
+            finding_set_id="set-1", finding_ids=["finding-1"],
+        )
+        whole = self.receipt(
+            "shared-whole", scope="whole_branch", diff_kind="whole_branch",
+            head="d" * 40,
+        )
+        with self.assertRaisesRegex(ValueError, "review and fix IDs overlap"):
+            persist_review_lifecycle_evidence(
+                run_root=self.run_root,
+                completed_task_ids=["task-1"], current_head="d" * 40,
+                receipts=[opener, delta, whole], fixes=[fix],
+            )
+        self.assertFalse((self.run_root / "evidence").exists())
+
     def test_scope_must_match_diff_kind(self) -> None:
         with self.assertRaisesRegex(ValueError, "scope and diff kind"):
             self.receipt("bad-kind", diff_kind="whole_branch")
@@ -412,6 +467,18 @@ class ReviewEvidenceTests(unittest.TestCase):
         self.assertEqual(metrics["redundant_review_receipts"], 1)
         self.assertEqual(metrics["duplicate_review_diff_digests"], 1)
         self.assertEqual(metrics["review_diff_bytes_by_kind"]["task"], 2 * len(b"diff:same-a"))
+
+    def test_redundant_receipt_identity_canonicalizes_task_id_order(self) -> None:
+        first = self.receipt(
+            "ordered-a", scope="whole_branch", diff_kind="whole_branch",
+            task_ids=["task-1", "task-2"], evidence_digest="d" * 64,
+        )
+        second = self.receipt(
+            "ordered-b", scope="whole_branch", diff_kind="whole_branch",
+            task_ids=["task-2", "task-1"], evidence_digest="d" * 64,
+        )
+        metrics = derive_review_efficiency_metrics([first, second], [])
+        self.assertEqual(metrics["redundant_review_receipts"], 1)
 
     def test_finding_delta_and_whole_branch_payloads_never_collapse(self) -> None:
         delta = self.receipt(
