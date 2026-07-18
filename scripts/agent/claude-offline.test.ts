@@ -89,26 +89,66 @@ test("injected runner receives the self-test, sorted Python tests, and strict do
   });
 
   expect(exitCode).toBe(0);
-  expect(calls.map(({ id, argv, env }) => ({ id, argv, env }))).toEqual([
+  expect(calls.map(({ id, argv, cwd, env }) => ({ id, argv, cwd, env }))).toEqual([
     {
       id: "compare-agentlens-events-self-test",
       argv: ["python3", "scripts/compare_agentlens_events.py", "--self-test"],
+      cwd: "/fixture/skills/kws-claude-multi-agent-executor",
       env: undefined,
     },
     {
       id: "scripts/kernel/test_a.py",
       argv: ["python3", "scripts/kernel/test_a.py"],
+      cwd: "/fixture/skills/kws-claude-multi-agent-executor",
       env: undefined,
     },
     {
       id: "scripts/kernel/test_b.py",
       argv: ["python3", "scripts/kernel/test_b.py"],
+      cwd: "/fixture/skills/kws-claude-multi-agent-executor",
       env: undefined,
     },
     {
       id: "doc-freshness-strict",
       argv: ["python3", "evals/check_doc_freshness.py"],
+      cwd: "/fixture/skills/kws-claude-multi-agent-executor",
       env: { DOC_FRESHNESS_STRICT: "1" },
     },
+  ]);
+});
+
+test("discovery exceptions return a stable failure without leaking absolute paths", async () => {
+  const stderr: string[] = [];
+  const result = runClaudeOffline({
+    root: "/fixture",
+    discoverKernelTests: async () => {
+      throw new Error("cannot read /machine-specific/private/kernel");
+    },
+    run: async () => 0,
+    stdout: () => {},
+    stderr: (line) => stderr.push(line),
+  });
+
+  await expect(result).resolves.toBe(1);
+  expect(stderr).toEqual([
+    "[agent:claude-offline] FAIL discover-kernel-tests error=exception",
+  ]);
+});
+
+test("runner exceptions return a stable failure for the current check", async () => {
+  const stderr: string[] = [];
+  const result = runClaudeOffline({
+    root: "/fixture",
+    discoverKernelTests: async () => [],
+    run: async () => {
+      throw new Error("launch failed at /machine-specific/python3");
+    },
+    stdout: () => {},
+    stderr: (line) => stderr.push(line),
+  });
+
+  await expect(result).resolves.toBe(1);
+  expect(stderr).toEqual([
+    "[agent:claude-offline] FAIL compare-agentlens-events-self-test error=exception",
   ]);
 });

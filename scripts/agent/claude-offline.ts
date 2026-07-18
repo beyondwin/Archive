@@ -27,7 +27,14 @@ export async function runClaudeOffline(
   const run = options.run ?? runCheck;
   const stdout = options.stdout ?? console.log;
   const stderr = options.stderr ?? console.error;
-  const kernelTests = (await discoverKernelTests(join(executorRoot, "scripts/kernel")))
+  let discoveredKernelTests: readonly string[];
+  try {
+    discoveredKernelTests = await discoverKernelTests(join(executorRoot, "scripts/kernel"));
+  } catch {
+    stderr("[agent:claude-offline] FAIL discover-kernel-tests error=exception");
+    return 1;
+  }
+  const kernelTests = discoveredKernelTests
     .filter((name) => /^test_.*\.py$/.test(name))
     .sort(compare);
   const checks: ClaudeOfflineCheck[] = [
@@ -50,7 +57,13 @@ export async function runClaudeOffline(
   ];
 
   for (const check of checks) {
-    const exitCode = await run(check);
+    let exitCode: number;
+    try {
+      exitCode = await run(check);
+    } catch {
+      stderr(`[agent:claude-offline] FAIL ${check.id} error=exception`);
+      return 1;
+    }
     if (exitCode !== 0) {
       stderr(`[agent:claude-offline] FAIL ${check.id} exit-code=${exitCode}`);
       return exitCode;
