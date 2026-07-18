@@ -331,99 +331,49 @@ class SequentialCliTest(unittest.TestCase):
     def test_skill_docs_match_hardened_public_contract(self) -> None:
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        frontmatter_parts = skill.split("---", 2)
-        self.assertEqual(len(frontmatter_parts), 3)
-        metadata_lines = [
-            line.strip() for line in frontmatter_parts[1].splitlines()
-            if line.startswith("  version:")
-        ]
-        self.assertEqual(metadata_lines, ['version: "2.0.1"'])
-        self.assertIn(
-            "description: Use when approved Superpowers implementation plans",
-            frontmatter_parts[1],
+        ownership = (
+            "CPE maintains one execution environment and verifies submitted facts.\n"
+            "Superpowers decides what work and verification are correct."
         )
-        self.assertIn("Version 2.0.1", readme)
-
-        def section(document: str, heading: str) -> str:
-            start = document.index(heading)
-            following = document.find("\n## ", start + len(heading))
-            return document[start:following if following >= 0 else None]
-
-        documents = (
-            ("SKILL.md", skill, section(skill, "## Recovery Contract")),
-            (
-                "README.md",
-                readme,
-                section(readme, "## Completion, Failure, And Recovery"),
-            ),
-        )
-        stale_patterns = (
-            r"\bversion 1\.[0-9]",
-            r"version:\s*[\"']1\.",
-            r"format(?:-| )version(?:-| )1 (?:remains|is) authoritative",
-            r"(?:public )?format-version-1 contract",
-            r"recovery capsule",
-            r"\binitializing\b",
-            r"preserves legacy|legacy support",
-        )
-        for name, document, recovery in documents:
-            normalized = " ".join(document.split())
-            normalized_recovery = " ".join(recovery.split())
+        for name, document in (("SKILL.md", skill), ("README.md", readme)):
             with self.subTest(document=name):
-                self.assertRegex(normalized, r"format(?:-version)?-2")
-                self.assertRegex(
-                    normalized,
-                    r"(?:does not (?:read|support).*format-1|format-1.*neither read nor migrated)",
-                )
+                self.assertIn(ownership, document)
+                normalized = " ".join(document.split()).lower()
                 for phrase in (
-                    "parent-observed", "environment fingerprint", "changed fingerprint",
-                    "bounded", "progress fingerprint", "productive", "no-progress",
-                    "checkpointed", "durable", "ledger_path", "final_review_path",
-                    "original", "~/.codex/orchestrator/<run-id>/", "Superpowers owns",
-                    "CPE owns",
+                    "Version 2.1.0",
+                    "format 3",
+                    "direct Superpowers launch",
+                    "one reused isolated worktree",
+                    "1200 seconds",
+                    "1200 through 3600 seconds",
+                    "danger-full-access",
+                    "writes outside the worktree are not fully observable or reversible",
+                    "zero controller launches",
+                    "caller-selected verification",
+                    "same HEAD",
+                    "fail closed",
+                    "integration=not_observed",
                 ):
-                    self.assertIn(phrase, normalized_recovery if phrase not in {
-                        "~/.codex/orchestrator/<run-id>/", "Superpowers owns", "CPE owns",
-                    } else normalized)
-                self.assertRegex(
-                    normalized_recovery,
-                    r"(?:zero|no) compiler.*model.*verification",
+                    self.assertIn(phrase.lower(), normalized)
+                self.assertIn(
+                    "cpe never selects or runs a full suite by itself.", normalized,
                 )
-                if name == "README.md":
-                    for row in (
-                        "controller slice timeout | 3600 seconds",
-                        "productive progress checkpoints | 6",
-                        "plan wall time | 21600 seconds",
-                        "controller launches | 8",
-                    ):
-                        self.assertIn(row, normalized_recovery)
-                else:
-                    self.assertRegex(normalized_recovery, r"3600-second controller slice")
-                    self.assertRegex(normalized_recovery, r"6 productive progress checkpoints")
-                    self.assertRegex(normalized_recovery, r"21600 seconds of wall time")
-                    self.assertRegex(normalized_recovery, r"8 controller launches")
-                self.assertRegex(normalized_recovery, r"checkpointed.*not (?:a |a synonym for )?failure")
-                self.assertRegex(normalized_recovery, r"zero model (?:turns|calls)")
-                self.assertRegex(normalized, r"(?:justif.*slice|slice.*justif)")
-                for phrase in (
-                    "across `run`, `inspect`, and plain `resume`, the durable status is `blocked`",
-                    "repeated failure consumes zero plan attempts, controller launches, or recompilation",
-                    "after the environment recovers, plain `resume`",
-                    "after plan execution has begun remains a fail-closed integrity error",
-                    "never persists `failed` and never requires `--retry-failed`",
-                    "exit mappings apply only to `run` and `resume`",
-                    "successful read-only `inspect` exits 0 even when the stored status is `blocked`, `failed`, or `checkpointed`",
+                self.assertIn(
+                    "executes the exact submitted argv", normalized,
+                )
+                for stale in (
+                    "compiled index",
+                    "compiled-index",
+                    "compiler call",
+                    "first_no_progress_slice",
+                    "second_no_progress_slice",
+                    "confirmation slice",
+                    "allowlist",
+                    "format-version-2",
+                    "format-version-2",
+                    "Version 2.0.1",
                 ):
-                    self.assertIn(phrase, normalized_recovery.lower())
-                for contradiction in (
-                    r"worktree.{0,240}(?<!never )persists? (?:durable )?(?:internal )?`failed`",
-                    r"worktree.{0,240}(?<!never )requires `--retry-failed`",
-                ):
-                    self.assertIsNone(
-                        re.search(contradiction, normalized_recovery, re.IGNORECASE),
-                    )
-                for stale in stale_patterns:
-                    self.assertIsNone(re.search(stale, normalized, re.IGNORECASE))
+                    self.assertNotIn(stale, document)
 
         root_index = (ROOT.parent / "README.md").read_text(encoding="utf-8")
         self.assertNotIn("내보내기", root_index)
@@ -444,8 +394,8 @@ class SequentialCliTest(unittest.TestCase):
         normalized_skill = " ".join(skill.split())
         normalized_readme = " ".join(readme.split())
         ownership = (
-            "CPE records facts about what Superpowers did; it does not decide "
-            "what Superpowers must do."
+            "CPE maintains one execution environment and verifies submitted facts. "
+            "Superpowers decides what work and verification are correct."
         )
 
         for name, normalized in (
@@ -454,37 +404,23 @@ class SequentialCliTest(unittest.TestCase):
         ):
             with self.subTest(document=name):
                 self.assertIn(ownership, normalized)
+                normalized_lower = normalized.lower()
                 for phrase in (
-                    "same-run",
-                    "exact eight-part content key",
-                    "success only",
+                    "same-HEAD cross-phase reuse",
+                    "exact submitted argv",
                     "dirty worktree",
                     "changed input digest",
-                    "fallback executes once",
                     "final_review_path",
                     "final_review_head",
                     "open_finding_ids",
                     "open_obligation_ids",
-                    "metadata-only produced-artifact inventory",
-                    "not consumed tokens",
                     "integration=not_observed",
-                    "inline continuation verified",
-                    "live canary not run",
+                    "provider_usage_blocked",
+                    "provider_auth_blocked",
+                    "provider_unavailable",
+                    "controller_transport_failed",
                 ):
-                    self.assertIn(phrase, normalized)
-
-        deferred = (
-            "review lifecycle",
-            "finding-fix cycles",
-            "transition-obligation engine",
-            "fork policy",
-            "context-reference policy",
-            "cross-run signal promotion",
-            "doctor/list expansion",
-            "acceptance refactor",
-        )
-        for phrase in deferred:
-            self.assertIn(phrase, normalized_readme)
+                    self.assertIn(phrase.lower(), normalized_lower)
 
         inventory = readme[readme.index("## Tracked Inventory"):]
         inventory_block = inventory.split("```text\n", 1)[1].split("\n```", 1)[0]

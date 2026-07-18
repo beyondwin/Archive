@@ -7,7 +7,7 @@
 | 스킬 | 용도 |
 |------|------|
 | [`kws-claude-multi-agent-executor`](./kws-claude-multi-agent-executor/) | 구현 계획 + 디자인 스펙을 자율 실행. Opus가 오케스트레이션, Sonnet 서브에이전트가 구현/리뷰/검증/문서화. |
-| [`kws-codex-plan-executor`](./kws-codex-plan-executor/) | 승인된 Superpowers 구현 계획을 고정 순서로 실행하고 중단 후 재개하는 소형 Codex 실행기. |
+| [`kws-codex-plan-executor`](./kws-codex-plan-executor/) | 2.1 strict-thin 계약: 승인된 Superpowers 구현 계획을 한 worktree에서 고정 순서로 실행·재개하는 소형 Codex 실행기. |
 | [`waygent`](./waygent/) | 활성 제품 런타임 스킬. 자연어 실행, 상태, 이벤트, 검사, 설명, 재개, 적용 요청을 Waygent CLI로 변환합니다. KWS executor 스킬은 별도 비제품 executor 계약으로 유지됩니다. |
 
 각 스킬 디렉터리의 `SKILL.md`가 정식 진입점입니다. 자세한 사용법은 먼저
