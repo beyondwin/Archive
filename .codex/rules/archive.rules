@@ -39,9 +39,33 @@ prefix_rule(
 )
 
 prefix_rule(
+    pattern = ["git", "push", "-f"],
+    decision = "forbidden",
+    justification = "Short force push can overwrite remote history; use an explicitly approved safer workflow.",
+)
+
+prefix_rule(
+    pattern = ["git", "push"],
+    decision = "prompt",
+    justification = "Prompt for other push spellings because execpolicy prefix rules cannot inspect arbitrary later or equals-form force options.",
+)
+
+prefix_rule(
     pattern = ["git", "branch", "-D"],
     decision = "prompt",
     justification = "Forced branch deletion can discard unmerged work.",
+)
+
+prefix_rule(
+    pattern = ["git", "branch", "--delete"],
+    decision = "prompt",
+    justification = "Branch deletion can discard unmerged work even when force is a later option.",
+)
+
+prefix_rule(
+    pattern = ["git", "branch", "-d"],
+    decision = "prompt",
+    justification = "Branch deletion can discard unmerged work even when force is a later option.",
 )
 
 prefix_rule(
