@@ -4427,6 +4427,41 @@ class ResumeCapabilityTests(_RecoveryRunnerFixture):
         ))
         self.assertEqual(1, StateStore.open(run_root).state["plans"][0]["blocker"]["explicit_retry_count"])
 
+    def test_controller_stop_blocker_persists_facts_and_plain_resume_stays_closed(self) -> None:
+        runner = self.runner("controller-stop-facts")
+        first = runner.run(
+            workspace=self.repo,
+            specs=[],
+            plans=[self.plan("timeout_without_progress")],
+            run_id="controller-stop-facts",
+        )
+        run_root = self.home / "orchestrator" / "controller-stop-facts"
+        before = sum(
+            event.get("action") == "plan.attempt_started"
+            for event in _runner_events(run_root)
+        )
+        blocker = StateStore.open(run_root).state["plans"][0]["blocker"]
+
+        self.assertEqual("blocked", first["status"])
+        self.assertEqual({
+            "kind": "operator_owned",
+            "code": "no_progress_timeout",
+            "resource": "plan-01",
+            "parent_fingerprint": None,
+            "fingerprint_available": False,
+            "parent_observed": False,
+            "explicit_retry_count": 0,
+        }, blocker)
+
+        stopped = runner.resume(run_id="controller-stop-facts")
+
+        self.assertEqual("blocked", stopped["status"])
+        self.assertEqual(before, sum(
+            event.get("action") == "plan.attempt_started"
+            for event in _runner_events(run_root)
+        ))
+        self.assertEqual("resume.stopped_unknown_blocker", _runner_events(run_root)[-1]["action"])
+
     def test_unchanged_loopback_blocker_stops_then_changed_probe_allows_one_launch(self) -> None:
         unavailable = CapabilityObservation(
             "loopback_bind", "workspace", "unavailable", "permission_denied",
