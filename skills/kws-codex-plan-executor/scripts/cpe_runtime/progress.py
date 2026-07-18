@@ -13,8 +13,6 @@ class ProgressSnapshot:
     head: str
     completed_task_ids: tuple[str, ...]
     current_task_id: str | None
-    accepted_review_ids: tuple[str, ...]
-    closed_finding_ids: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -58,12 +56,6 @@ def progress_fingerprint(snapshot: ProgressSnapshot) -> str:
             snapshot.completed_task_ids, name="completed task IDs"
         ),
         "current_task_id": snapshot.current_task_id,
-        "accepted_review_ids": _identifier_set(
-            snapshot.accepted_review_ids, name="accepted review IDs"
-        ),
-        "closed_finding_ids": _identifier_set(
-            snapshot.closed_finding_ids, name="closed finding IDs"
-        ),
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return sha256(encoded).hexdigest()
