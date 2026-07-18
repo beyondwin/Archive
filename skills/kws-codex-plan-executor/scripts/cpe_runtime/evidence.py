@@ -13,6 +13,17 @@ import tempfile
 from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from typing import Mapping, Sequence
+
+from .coordination import (
+    CoordinationObservation,
+    inventory_sdd_artifacts,
+    persist_coordination_observations,
+)
+from .obligations import (
+    TransitionObligation,
+    persist_transition_obligations,
+)
 
 from .progress import ProgressSnapshot
 from .result_validation import (
@@ -28,7 +39,7 @@ from .review_evidence import (
     seal_review_receipt,
     validate_review_lifecycle,
 )
-from .state import StateStore
+from .state import StateStore, atomic_private_write
 
 MAX_EVIDENCE_FILES = 128
 MAX_EVIDENCE_FILE_BYTES = 1024 * 1024
@@ -69,6 +80,52 @@ _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _UNCACHED_REASONS = {"uncached_command_required", "verification_helper_fallback"}
 _UNCACHED_PHASES = {"task", "affected", "branch_final"}
 _UNCACHED_FIELDS = {"exit_code", "receipt_path", "reason_code", "phase"}
+
+
+def persist_transition_coordination_evidence(
+    *,
+    run_root: Path,
+    worktree: Path,
+    plan_id: str,
+    obligations: Sequence[TransitionObligation],
+    coordination: Sequence[CoordinationObservation],
+    known_receipt_digests: Sequence[str] = (),
+) -> dict[str, object]:
+    """Persist resumable transition state plus advisory coordination metadata.
+
+    The returned digests are suitable for parent state/event references.  The
+    production inventory is deliberately separate from declared context refs.
+    """
+    evidence_root = run_root / "evidence" / plan_id
+    obligation_digest = persist_transition_obligations(
+        evidence_root=evidence_root, plan_id=plan_id,
+        obligations=obligations,
+    )
+    coordination_digest = persist_coordination_observations(
+        evidence_root=evidence_root, plan_id=plan_id,
+        observations=coordination,
+    )
+    inventory = inventory_sdd_artifacts(
+        worktree, known_receipt_digests=known_receipt_digests,
+        max_files=MAX_EVIDENCE_FILES,
+        max_total_bytes=MAX_EVIDENCE_TOTAL_BYTES,
+    )
+    inventory_payload = json.dumps(
+        {
+            "schema_version": 1,
+            "plan_id": plan_id,
+            "inventory": inventory,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    atomic_private_write(evidence_root / "sdd-inventory.json", inventory_payload)
+    return {
+        "obligations_sha256": obligation_digest,
+        "coordination_sha256": coordination_digest,
+        "sdd_inventory_sha256": hashlib.sha256(inventory_payload).hexdigest(),
+        "produced_artifacts": inventory,
+    }
 
 
 @dataclass(frozen=True)

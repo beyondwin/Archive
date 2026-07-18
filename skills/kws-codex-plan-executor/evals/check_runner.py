@@ -6977,5 +6977,326 @@ class FinishWalAndEvidenceTests(_RecoveryRunnerFixture):
         )
 
 
+class TransitionObligationTests(unittest.TestCase):
+    def obligation(self, **changes: object):
+        from cpe_runtime.obligations import TransitionObligation
+
+        values: dict[str, object] = {
+            "obligation_id": "O-1",
+            "opened_by_task_id": "T1",
+            "must_close_by_task_id": "T2",
+            "description": "close the finding before leaving T2",
+            "status": "open",
+            "closure_evidence_id": None,
+            "waiver_reason": None,
+            "waiver_event_id": None,
+        }
+        values.update(changes)
+        return TransitionObligation(**values)
+
+    def test_due_boundaries_block_but_future_and_finish_deadlines_do_not(self) -> None:
+        from cpe_runtime.obligations import validate_transition_obligations
+
+        common = {
+            "compiled_task_ids": ["T1", "T2", "T3"],
+            "valid_evidence_ids": set(),
+            "parent_waiver_event_ids": set(),
+        }
+        valid, due = validate_transition_obligations(
+            obligations=[self.obligation()],
+            completed_task_ids=["T1"], next_task_id="T2", finishing=False,
+            **common,
+        )
+        self.assertTrue(valid)
+        self.assertEqual(due, ())
+        valid, due = validate_transition_obligations(
+            obligations=[self.obligation()],
+            completed_task_ids=["T1", "T2"], next_task_id="T3", finishing=False,
+            **common,
+        )
+        self.assertFalse(valid)
+        self.assertEqual(due, ("O-1",))
+        finish = self.obligation(must_close_by_task_id="__finish__")
+        self.assertTrue(validate_transition_obligations(
+            obligations=[finish], completed_task_ids=["T1", "T2"],
+            next_task_id="T3", finishing=False, **common,
+        )[0])
+        self.assertFalse(validate_transition_obligations(
+            obligations=[finish], completed_task_ids=["T1", "T2", "T3"],
+            next_task_id=None, finishing=True, **common,
+        )[0])
+
+    def test_closure_and_parent_waiver_require_authoritative_evidence(self) -> None:
+        from cpe_runtime.obligations import validate_transition_obligations
+
+        common = {
+            "compiled_task_ids": ["T1", "T2"],
+            "completed_task_ids": ["T1", "T2"],
+            "next_task_id": None,
+            "finishing": True,
+        }
+        satisfied = self.obligation(
+            status="satisfied", closure_evidence_id="evidence-1",
+        )
+        self.assertFalse(validate_transition_obligations(
+            obligations=[satisfied], valid_evidence_ids=set(),
+            parent_waiver_event_ids=set(), **common,
+        )[0])
+        self.assertTrue(validate_transition_obligations(
+            obligations=[satisfied], valid_evidence_ids={"evidence-1"},
+            parent_waiver_event_ids=set(), **common,
+        )[0])
+        waived = self.obligation(
+            status="waived", waiver_reason="parent accepted risk",
+            waiver_event_id="waiver-1",
+        )
+        self.assertFalse(validate_transition_obligations(
+            obligations=[waived], valid_evidence_ids=set(),
+            parent_waiver_event_ids=set(), **common,
+        )[0])
+        self.assertTrue(validate_transition_obligations(
+            obligations=[waived], valid_evidence_ids=set(),
+            parent_waiver_event_ids={"waiver-1"}, **common,
+        )[0])
+
+    def test_persisted_obligations_survive_resume_and_cannot_be_dropped(self) -> None:
+        from cpe_runtime.obligations import (
+            load_transition_obligations,
+            persist_transition_obligations,
+        )
+
+        with tempfile.TemporaryDirectory() as temporary:
+            evidence_root = Path(temporary) / "evidence"
+            digest = persist_transition_obligations(
+                evidence_root=evidence_root, plan_id="plan-01",
+                obligations=[self.obligation()],
+            )
+            restored = load_transition_obligations(
+                evidence_root=evidence_root, plan_id="plan-01",
+                expected_digest=digest,
+            )
+            self.assertEqual(restored, (self.obligation(),))
+            with self.assertRaisesRegex(ValueError, "cannot be dropped"):
+                persist_transition_obligations(
+                    evidence_root=evidence_root, plan_id="plan-01",
+                    obligations=[],
+                )
+
+    def test_task_order_and_deadline_are_source_bound(self) -> None:
+        from cpe_runtime.obligations import validate_transition_obligations
+
+        invalid = self.obligation(
+            opened_by_task_id="T2", must_close_by_task_id="T1",
+        )
+        valid, blocking = validate_transition_obligations(
+            obligations=[invalid], compiled_task_ids=["T1", "T2"],
+            completed_task_ids=[], next_task_id="T1", finishing=False,
+            valid_evidence_ids=set(), parent_waiver_event_ids=set(),
+        )
+        self.assertFalse(valid)
+        self.assertEqual(blocking, ("O-1",))
+
+
+class CoordinationTelemetryTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.worktree = Path(self.temporary.name) / "worktree"
+        self.sdd = self.worktree / ".superpowers" / "sdd"
+        self.sdd.mkdir(parents=True)
+        self.context_path = self.sdd / "task-brief.md"
+        self.context_path.write_text("bounded task brief\n", encoding="utf-8")
+        self.context_digest = hashlib.sha256(self.context_path.read_bytes()).hexdigest()
+
+    def child_spawn(self, **changes: object) -> dict[str, object]:
+        event: dict[str, object] = {
+            "schema_version": 1,
+            "event": "coordination.spawn",
+            "plan_index": 0,
+            "task_id": "T1",
+            "role": "implementer",
+            "depth": 1,
+            "source_context_refs": [{
+                "class": "task_brief",
+                "path": ".superpowers/sdd/task-brief.md",
+                "sha256": self.context_digest,
+            }],
+            "source": "child_attested",
+        }
+        event.update(changes)
+        return event
+
+    def test_context_refs_are_bounded_metadata_and_separate_from_inventory(self) -> None:
+        from cpe_runtime.coordination import (
+            inventory_sdd_artifacts,
+            validate_child_coordination_event,
+        )
+
+        observation = validate_child_coordination_event(
+            self.child_spawn(), worktree=self.worktree,
+            coordination_exceptions=[],
+        )
+        self.assertEqual(observation.fork_turns, "none")
+        self.assertEqual(observation.context_ref_count, 1)
+        self.assertEqual(observation.context_ref_bytes, len(self.context_path.read_bytes()))
+        self.assertEqual(observation.context_classes, {"task_brief": 1})
+        self.assertNotIn(str(self.context_path), repr(observation))
+        inventory = inventory_sdd_artifacts(self.worktree)
+        self.assertEqual(inventory["files"], 1)
+        self.assertGreater(inventory["bytes"], 0)
+        self.assertNotIn("declared_context_refs", inventory)
+        escaping = self.child_spawn(source_context_refs=[{
+            "class": "task_brief", "path": "../escape", "sha256": "a" * 64,
+        }])
+        with self.assertRaises(ValueError):
+            validate_child_coordination_event(
+                escaping, worktree=self.worktree, coordination_exceptions=[],
+            )
+
+    def test_full_context_requires_exact_source_validated_exception(self) -> None:
+        from cpe_runtime.coordination import (
+            derive_coordination_efficiency,
+            validate_child_coordination_event,
+        )
+
+        full = self.child_spawn(
+            fork_turns="all", source_span_digest="b" * 64,
+            reason_code="source_requires_shared_context",
+        )
+        unjustified = validate_child_coordination_event(
+            full, worktree=self.worktree, coordination_exceptions=[],
+        )
+        self.assertEqual(
+            derive_coordination_efficiency([unjustified])["unjustified_full_context_forks"],
+            1,
+        )
+        exception = {
+            "task_id": "T1", "role": "implementer", "fork_turns": "all",
+            "reason_code": "source_requires_shared_context",
+            "source_text_sha256": "b" * 64,
+        }
+        justified = validate_child_coordination_event(
+            full, worktree=self.worktree,
+            coordination_exceptions=[exception],
+        )
+        self.assertEqual(
+            derive_coordination_efficiency([justified])["unjustified_full_context_forks"],
+            0,
+        )
+
+    def test_parent_observation_wins_without_promoting_usage_or_success(self) -> None:
+        from cpe_runtime.coordination import (
+            extract_coordination_observation,
+            reconcile_coordination_observations,
+        )
+
+        parent = extract_coordination_observation({
+            "type": "coordination.spawn", "task_id": "T1",
+            "role": "reviewer", "depth": 1, "fork_turns": "none",
+            "duration_ms": 20, "agent_id": "provider-agent-1",
+        }, plan_index=0)
+        self.assertIsNotNone(parent)
+        assert parent is not None
+        self.assertEqual(parent.source, "parent_observed")
+        self.assertEqual(parent.usage_attribution, "unavailable")
+        self.assertEqual(
+            parent.usage_attribution_unavailable_reason,
+            "provider_event_not_agent_scoped",
+        )
+        child = validate_child = __import__(
+            "cpe_runtime.coordination", fromlist=["validate_child_coordination_event"]
+        ).validate_child_coordination_event(
+            self.child_spawn(role="reviewer", duration_ms=99),
+            worktree=self.worktree, coordination_exceptions=[],
+        )
+        reconciled = reconcile_coordination_observations(
+            parent=[parent], child=[validate_child],
+        )
+        self.assertEqual(reconciled[0].duration_ms, 20)
+        self.assertIn("parent_child_mismatch", reconciled[0].data_quality_warnings)
+        self.assertEqual(reconciled[0].usage_scope, "controller_and_nested_agents_aggregate")
+
+    def test_checkpoint_round_trip_preserves_operations_and_usage_honesty(self) -> None:
+        from cpe_runtime.coordination import (
+            load_coordination_observations,
+            persist_coordination_observations,
+            validate_child_coordination_event,
+        )
+
+        spawn = validate_child_coordination_event(
+            self.child_spawn(duration_ms=25, operation_count=2),
+            worktree=self.worktree, coordination_exceptions=[],
+        )
+        wait = validate_child_coordination_event({
+            "schema_version": 1, "event": "coordination.wait",
+            "plan_index": 0, "task_id": "T1", "role": "implementer",
+            "depth": 1, "duration_ms": 50, "operation_count": 1,
+            "source": "child_attested",
+            "usage_scope": "controller_and_nested_agents_aggregate",
+            "usage_attribution": "child_attested",
+            "usage_attribution_unavailable_reason": "provider_event_not_agent_scoped",
+        }, worktree=self.worktree, coordination_exceptions=[])
+        evidence_root = self.worktree / "parent-evidence"
+        digest = persist_coordination_observations(
+            evidence_root=evidence_root, plan_id="plan-01",
+            observations=[spawn, wait],
+        )
+        restored = load_coordination_observations(
+            evidence_root=evidence_root, plan_id="plan-01",
+            expected_digest=digest,
+        )
+        self.assertEqual(restored, (spawn, wait))
+        self.assertTrue(all(item.usage_attribution == "unavailable" for item in restored))
+        with self.assertRaisesRegex(ValueError, "cannot be parent-observed"):
+            validate_child_coordination_event(
+                self.child_spawn(usage_attribution="parent_observed"),
+                worktree=self.worktree, coordination_exceptions=[],
+            )
+
+    def test_launcher_filter_retains_only_parent_coordination_metadata(self) -> None:
+        observations = []
+        capture = _UsageFilter(
+            coordination_callback=observations.append, plan_index=3,
+        )
+        capture.feed((json.dumps({
+            "type": "coordination.spawn", "task_id": "T1",
+            "role": "implementer", "depth": 1,
+            "prompt": "must never be retained",
+        }) + "\n").encode())
+        capture.finish()
+        self.assertEqual(len(observations), 1)
+        self.assertEqual(observations[0].plan_index, 3)
+        self.assertNotIn("must never be retained", repr(observations[0]))
+
+    def test_fake_child_ledger_and_parent_evidence_keep_inventories_separate(self) -> None:
+        from cpe_runtime.coordination import ingest_child_coordination_ledger
+        from cpe_runtime.evidence import persist_transition_coordination_evidence
+        from cpe_runtime.obligations import TransitionObligation
+
+        workflow_receipt(self.worktree, "a" * 40, "plan-01")
+        observations = ingest_child_coordination_ledger(
+            path=self.sdd / "coordination-events.jsonl",
+            worktree=self.worktree, coordination_exceptions=[],
+        )
+        self.assertEqual(len(observations), 1)
+        run_root = Path(self.temporary.name) / "run"
+        result = persist_transition_coordination_evidence(
+            run_root=run_root, worktree=self.worktree, plan_id="plan-01",
+            obligations=[TransitionObligation(
+                obligation_id="O-1", opened_by_task_id="task-01",
+                must_close_by_task_id="__finish__", description="final evidence",
+                status="open", closure_evidence_id=None, waiver_reason=None,
+            )],
+            coordination=observations,
+        )
+        self.assertRegex(result["obligations_sha256"], r"^[0-9a-f]{64}$")
+        self.assertRegex(result["coordination_sha256"], r"^[0-9a-f]{64}$")
+        produced = result["produced_artifacts"]
+        self.assertIsInstance(produced, dict)
+        assert isinstance(produced, dict)
+        self.assertGreater(produced["files"], observations[0].context_ref_count)
+        self.assertNotIn("declared_context_refs", produced)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
