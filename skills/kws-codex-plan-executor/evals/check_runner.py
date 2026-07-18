@@ -3433,12 +3433,20 @@ print(json.dumps(result, sort_keys=True), flush=True)
             prompt,
         )
         self.assertIn("SPECIFICATIONS_REFERENCE_ONLY_IN_ORDER:", prompt)
-        self.assertIn("Do not preload specification snapshots", prompt)
-        self.assertIn("focused RED/GREEN", prompt)
-        self.assertIn("no automatic full-suite run per task", prompt)
-        self.assertIn("review-package", prompt)
-        self.assertIn("one consolidated fix subagent", prompt)
-        self.assertIn("cross-task final review", prompt)
+        self.assertIn("Do not preload specifications", prompt)
+        self.assertIn(
+            "CPE records its evidence but does not prescribe task, review, "
+            "fix, or subagent semantics",
+            prompt,
+        )
+        for semantic_instruction in (
+            "focused RED/GREEN",
+            "no automatic full-suite run per task",
+            "review-package",
+            "one consolidated fix subagent",
+            "cross-task final review",
+        ):
+            self.assertNotIn(semantic_instruction, prompt)
         self.assertIn("same normalized verification command", prompt)
         self.assertIn("workflow_receipt", prompt)
         self.assertLess(len(prompt.encode("utf-8")), 2_400)

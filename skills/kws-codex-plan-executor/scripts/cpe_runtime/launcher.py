@@ -367,9 +367,9 @@ class CodexLauncher:
         lines.extend(
             [
                 "",
-                "Discover and follow repository AGENTS.md instructions from root to the edited subtree.",
+                "Follow repository AGENTS.md from root through the edited subtree.",
                 "Use the repository's Superpowers workflow for this approved plan; CPE records its evidence but does not prescribe task, review, fix, or subagent semantics.",
-                "Do not preload specification snapshots. Read only a referenced section when the plan is ambiguous or conflicts with observed code.",
+                "Do not preload specifications. Read a referenced section only when the plan is ambiguous or conflicts with observed code.",
                 "On recovery, inspect the capsule, progress ledger, Git status, and Git log before continuing the plan.",
                 "For deterministic declared test/lint/build commands, read the descriptor and invoke its argv_prefix with --run-id, stable --command-id, real --phase task|affected|branch_final, --input-digest, --mutable-input-policy, --cwd, then -- and the exact compiled argv.",
                 "Use task or affected for branch work and branch_final only for submitted final branch evidence; merged_main is parent-integration-only.",
