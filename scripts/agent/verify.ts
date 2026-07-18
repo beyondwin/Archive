@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import { selectVerification, type CommandSpec } from "./verification-map";
 import type { ScopeId } from "./contract";
 
@@ -184,12 +184,14 @@ function formatSummary(result: VerificationResult): string {
       const status = command?.optIn && commandResult.skipped
         ? "NOT RUN (opt-in)"
         : commandResult.skipped ? "skipped" : commandResult.exitCode === 0 ? "passed" : "failed";
-      return `  [${status}] ${commandResult.id}: ${formatCommand(command)}`;
+      return `  [${status}] ${JSON.stringify(commandResult.id)}: ${formatCommand(command)}`;
     }),
     "opt-in:",
     ...(optIn.length === 0
       ? ["  none"]
-      : optIn.map((command) => `  NOT RUN (opt-in) ${command.id}: ${formatCommand(command)}`)),
+      : optIn.map((command) =>
+          `  NOT RUN (opt-in) ${JSON.stringify(command.id)}: ${formatCommand(command)}`
+        )),
   ];
   if (result.unknownPaths.length > 0) {
     lines.push("unknown-paths:", ...formatItems(result.unknownPaths));
@@ -200,12 +202,26 @@ function formatSummary(result: VerificationResult): string {
 
 function formatCommand(command: CommandSpec | undefined): string {
   if (command === undefined) return "unknown";
-  const cwd = command.cwd === undefined ? "" : ` (cwd: ${command.cwd})`;
-  return `${command.argv.join(" ")}${cwd}`;
+  const cwd = command.cwd === undefined ? "" : ` cwd=${JSON.stringify(command.cwd)}`;
+  return `argv=${JSON.stringify(command.argv)}${cwd}`;
 }
 
 function formatItems(items: readonly string[]): string[] {
-  return items.length === 0 ? ["  none"] : items.map((item) => `  ${item}`);
+  return items.length === 0 ? ["  none"] : items.map((item) => `  ${JSON.stringify(item)}`);
+}
+
+function normalizeExplicitPaths(root: string, paths: readonly string[]): string[] {
+  return paths.map((path) => {
+    const resolved = resolve(root, path);
+    const relativePath = relative(root, resolved);
+    if (
+      isAbsolute(path) || relativePath === ".." || relativePath.startsWith(`..${sep}`) ||
+      isAbsolute(relativePath)
+    ) {
+      throw new Error(`--path must stay within repository: ${JSON.stringify(path)}`);
+    }
+    return relativePath.split(sep).join("/") || ".";
+  });
 }
 
 async function main(): Promise<number> {
@@ -220,7 +236,7 @@ async function main(): Promise<number> {
   const root = process.cwd();
   try {
     const paths = options.paths.length > 0
-      ? options.paths
+      ? normalizeExplicitPaths(root, options.paths)
       : await collectChangedPaths({ root, base: options.base, head: options.head });
     const result = await runVerification({ root, paths, dryRun: options.dryRun });
     process.stdout.write(formatSummary(result));
