@@ -12,7 +12,7 @@ verification, subagent, and commit workflows.
 
 ## Release And Installation
 
-Version 2.0.0 is the format-version-2 release. Run state, child results, compiled
+Version 2.0.1 is the format-version-2 release. Run state, child results, compiled
 indexes, and optimization reports use only their current format-2 contracts;
 the runner does not support format-1 run state and neither reads nor migrates
 it. Format 2 consumes a strict
@@ -336,14 +336,6 @@ continues work manually in the same isolated worktree, the failed controller
 state is not resumed, rewritten, or relabelled. `.superpowers/sdd/progress.md`
 is then the sole current inline ledger. The operational history and final
 report use `inline continuation verified`, never a false CPE acceptance claim.
-
-## Project Tool Policy
-
-Graphify is not part of the default project toolset. Controllers,
-implementers, and reviewers do not load its skill, build or refresh a graph,
-or add Graphify to verification merely because they are working in a codebase.
-Use it only when the approved plan explicitly names Graphify or requires a
-Graphify artifact.
 
 ## Limitations
 

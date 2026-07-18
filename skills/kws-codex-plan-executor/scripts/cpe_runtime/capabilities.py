@@ -19,7 +19,6 @@ _ALLOWED_DETAIL_KEYS = {
     "loopback_bind": {"host", "host_family", "sandbox_policy"},
     "workspace_write": {"filesystem_type", "sandbox_policy"},
     "git": {"version", "worktree_supported"},
-    "graphify_write": {"configured", "sandbox_policy"},
 }
 _OUTCOMES = {"available", "unavailable", "unknown"}
 _TRUST_LEVELS = {"parent_observed", "child_attested", "derived", "hypothesis"}
@@ -72,9 +71,7 @@ def _safe_detail_value(capability: str, key: str, value: str) -> bool:
         return value in _FILESYSTEM_TYPES
     if capability == "git" and key == "version":
         return _GIT_VERSION.fullmatch(value) is not None
-    if capability in {"git", "graphify_write"} and key in {
-        "worktree_supported", "configured",
-    }:
+    if capability == "git" and key == "worktree_supported":
         return value in _BOOLEAN_STRINGS
     return False
 
