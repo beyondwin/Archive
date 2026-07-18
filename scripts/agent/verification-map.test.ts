@@ -1,22 +1,113 @@
 import { expect, test } from "bun:test";
-import { selectVerification } from "./verification-map";
+import { selectVerification, type CommandSpec, type ScopeId } from "./verification-map";
 
-const ids = (paths: string[]) => selectVerification(paths).scopeIds;
+const command = (id: string, argv: string[], cwd?: string) => ({ id, argv, cwd });
+const commands = (paths: string[]) => selectVerification(paths).commands.map(toCommand);
+const toCommand = ({ id, argv, cwd }: CommandSpec) => ({ id, argv: [...argv], cwd });
 
-test("required scope matrix", () => {
-  expect(ids(["README.md"])).toEqual(["docs"]);
-  expect(ids(["docs/README.md"])).toEqual(["docs"]);
-  expect(ids(["apps/console/src/App.tsx"])).toEqual(["console"]);
-  expect(ids([
+const contract = command("agent-contract", ["bun", "run", "agent:contract"]);
+const diffCheck = command("diff-check", ["git", "diff", "--check"]);
+const typecheck = command("typecheck", ["bun", "run", "typecheck"]);
+const check = command("check", ["bun", "run", "check"]);
+const platformDemo = command("platform-demo", ["bun", "run", "platform:demo"]);
+const scenarios = command("waygent-scenarios", ["bun", "run", "waygent:scenarios"]);
+const fixtureLab = command("waygent-fixture-lab", ["bun", "run", "waygent:fixture-lab"]);
+const dogfood = command("waygent-dogfood", ["bun", "run", "waygent:dogfood"]);
+const consoleTest = command("console-test", ["bun", "test", "src"], "apps/console");
+const consoleBuild = command("console-build", ["bun", "run", "build"], "apps/console");
+const rustFormat = command("rust-format", ["cargo", "fmt", "--check"], "native/kernel");
+const rustTest = command("rust-test", ["cargo", "test", "--workspace"], "native/kernel");
+const waygentSkillEval = command("waygent-skill-eval", ["./evals/run.sh"], "skills/waygent");
+const codexExecutorEval = command("codex-executor-eval", ["./evals/run.sh"], "skills/kws-codex-plan-executor");
+const claudeExecutorEval = command("claude-executor-eval", ["./evals/run.sh"], "skills/kws-claude-multi-agent-executor");
+
+const closureCommands = [contract, diffCheck, check, platformDemo, scenarios, fixtureLab, dogfood];
+const offlineCommands = [
+  contract, diffCheck, typecheck, check, platformDemo, scenarios, fixtureLab, dogfood,
+  consoleTest, consoleBuild, rustFormat, rustTest, waygentSkillEval, codexExecutorEval,
+  claudeExecutorEval,
+];
+
+test.each([
+  ["docs", ["docs/README.md"], ["docs"], [contract, diffCheck]],
+  ["console", ["apps/console/src/App.tsx"], ["console"], [contract, diffCheck, consoleTest, consoleBuild]],
+  ["other app", ["apps/api/src/index.ts"], ["app"], [contract, diffCheck, typecheck]],
+  ["one package", ["packages/orchestrator/src/index.ts"], ["package"], [contract, diffCheck, typecheck]],
+  ["two packages", ["packages/orchestrator/src/index.ts", "packages/runway-control/src/scheduler.ts"], ["waygent-closure"], closureCommands],
+  ["bun lock", ["bun.lock"], ["waygent-closure"], closureCommands],
+  ["native", ["native/kernel/crates/kernel-cli/src/main.rs"], ["native"], [contract, diffCheck, rustFormat, rustTest]],
+  ["Waygent skill", ["skills/waygent/SKILL.md"], ["waygent-skill"], [contract, diffCheck, waygentSkillEval, check, platformDemo, scenarios]],
+  ["Codex executor", ["skills/kws-codex-plan-executor/scripts/cpe.py"], ["codex-executor"], [contract, diffCheck, codexExecutorEval, check]],
+  ["Claude executor", ["skills/kws-claude-multi-agent-executor/scripts/kernel/kernel.py"], ["claude-executor"], [contract, diffCheck, claudeExecutorEval, check]],
+  ["unknown", ["unexpected/new-surface.txt"], ["full-offline"], offlineCommands],
+] satisfies readonly [string, string[], ScopeId[], ReturnType<typeof command>[]][])(
+  "selects the complete $0 command set",
+  (_name, paths, scopeIds, expectedCommands) => {
+    expect(selectVerification(paths).scopeIds).toEqual(scopeIds);
+    expect(commands(paths)).toEqual(expectedCommands);
+  },
+);
+
+test.each([
+  ["bun.lock plus another app", ["bun.lock", "apps/api/src/index.ts"]],
+  ["bun.lock plus console", ["bun.lock", "apps/console/src/App.tsx"]],
+  ["cross-package plus app", [
     "packages/orchestrator/src/index.ts",
     "packages/runway-control/src/scheduler.ts",
-  ])).toEqual(["waygent-closure"]);
-  expect(ids(["native/kernel/crates/kernel-cli/src/main.rs"])).toEqual(["native"]);
-  expect(ids(["skills/kws-codex-plan-executor/scripts/cpe.py"]))
-    .toEqual(["codex-executor"]);
-  expect(ids(["skills/kws-claude-multi-agent-executor/scripts/kernel/kernel.py"]))
-    .toEqual(["claude-executor"]);
-  expect(ids(["unexpected/new-surface.txt"])).toEqual(["full-offline"]);
+    "apps/api/src/index.ts",
+  ]],
+] satisfies readonly [string, string[]][])(
+  "closure replaces narrow TypeScript scopes for $0",
+  (_name, paths) => {
+    const selection = selectVerification(paths);
+
+    expect(selection.scopeIds).toEqual(["waygent-closure"]);
+    expect(commands(paths)).toEqual(closureCommands);
+  },
+);
+
+test("keeps independently relevant docs, native, and skill scopes with closure", () => {
+  const paths = [
+    "bun.lock",
+    "docs/README.md",
+    "native/kernel/crates/kernel-cli/src/main.rs",
+    "skills/waygent/SKILL.md",
+  ];
+
+  expect(selectVerification(paths).scopeIds).toEqual([
+    "docs", "native", "waygent-skill", "waygent-closure",
+  ]);
+});
+
+test("keeps app verification when console and another app change without closure", () => {
+  const paths = ["apps/console/src/App.tsx", "apps/api/src/index.ts"];
+
+  expect(selectVerification(paths).scopeIds).toEqual(["console", "app"]);
+  expect(commands(paths)).toEqual([
+    contract, diffCheck, consoleTest, consoleBuild, typecheck,
+  ]);
+});
+
+test("deduplicates commands by cwd and argv", () => {
+  const actualCommands = commands([
+    "docs/README.md",
+    "native/kernel/crates/kernel-cli/src/main.rs",
+    "skills/kws-codex-plan-executor/scripts/cpe.py",
+  ]);
+
+  expect(actualCommands).toEqual([
+    contract, diffCheck, rustFormat, rustTest, codexExecutorEval, check,
+  ]);
+  expect(new Set(actualCommands.map(({ argv, cwd }) => `${cwd ?? ""}\u0000${argv.join("\u0000")}`)).size)
+    .toBe(actualCommands.length);
+});
+
+test("reports unknown and Markdown paths alongside conservative selection", () => {
+  const selection = selectVerification(["docs/README.md", "unexpected/new-surface.md"]);
+
+  expect(selection.scopeIds).toEqual(["full-offline"]);
+  expect(selection.unknownPaths).toEqual(["unexpected/new-surface.md"]);
+  expect(selection.markdownFiles).toEqual(["docs/README.md", "unexpected/new-surface.md"]);
 });
 
 test("selects a focused command for touched TypeScript tests", () => {
@@ -26,11 +117,4 @@ test("selects a focused command for touched TypeScript tests", () => {
     id: "focused-test:packages/orchestrator/tests/riskInference.test.ts",
     argv: ["bun", "test", "packages/orchestrator/tests/riskInference.test.ts"],
   });
-});
-
-test("keeps the app scope when console and another app change together", () => {
-  expect(ids([
-    "apps/console/src/App.tsx",
-    "apps/api/src/index.ts",
-  ])).toEqual(["console", "app"]);
 });
