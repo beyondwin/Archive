@@ -90,36 +90,70 @@ test("collects a three-dot commit range", async () => {
   });
 
   expect(calls).toEqual([
+    ["rev-parse", "--verify", "origin/main"],
+    ["rev-parse", "--verify", "HEAD"],
     ["diff", "--name-only", "--diff-filter=ACMR", "-z", "origin/main...HEAD"],
   ]);
   expect(paths).toEqual(["docs/README.md"]);
 });
 
-test("all-zero push base falls back to the head parent", async () => {
+test("all-zero push base diffs the empty tree against the final branch head", async () => {
   const calls: string[][] = [];
   const paths = await collectChangedPaths({
     root: process.cwd(),
     base: "0000000000000000000000000000000000000000",
-    head: "HEAD",
+    head: "new-branch-head",
     git: async (args) => {
       calls.push([...args]);
-      return args.includes("--name-only") ? "AGENTS.md\nAGENTS.md\n" : "";
+      if (args[0] === "hash-object") return "empty-tree-oid\n";
+      return args.includes("--name-only") ? "first-commit.md\0second-commit.md\0" : "";
     },
   });
-  expect(paths).toEqual(["AGENTS.md"]);
-  expect(calls.some((args) => args.includes("HEAD^...HEAD"))).toBe(true);
+  expect(paths).toEqual(["first-commit.md", "second-commit.md"]);
+  expect(calls).toEqual([
+    ["rev-parse", "--verify", "new-branch-head"],
+    ["hash-object", "-t", "tree", "/dev/null"],
+    [
+      "diff", "--name-only", "--diff-filter=ACMR", "-z",
+      "empty-tree-oid", "new-branch-head",
+    ],
+  ]);
 });
 
-test("rejects a commit range when neither ref resolves", async () => {
+test("all-zero SHA-256 push base uses the empty tree endpoint", async () => {
+  const calls: string[][] = [];
+  await collectChangedPaths({
+    root: process.cwd(),
+    base: "0".repeat(64),
+    head: "sha256-head",
+    git: async (args) => {
+      calls.push([...args]);
+      return args[0] === "hash-object" ? "sha256-empty-tree\n" : "";
+    },
+  });
+
+  expect(calls).toEqual([
+    ["rev-parse", "--verify", "sha256-head"],
+    ["hash-object", "-t", "tree", "/dev/null"],
+    [
+      "diff", "--name-only", "--diff-filter=ACMR", "-z",
+      "sha256-empty-tree", "sha256-head",
+    ],
+  ]);
+});
+
+test("reports the original range when normal range refs cannot resolve", async () => {
+  const base = "missing-base";
   const head = "missing-head";
-  const base = "0000000000000000000000000000000000000000";
+  const calls: string[][] = [];
 
   await expect(collectChangedPaths({
     root: process.cwd(),
     base,
     head,
     git: async (args) => {
-      if (args.at(-1) === `${head}^` || args.at(-1) === head) {
+      calls.push([...args]);
+      if (args.at(-1) === base || args.at(-1) === head) {
         throw new Error("unknown revision");
       }
       return "";
@@ -129,6 +163,10 @@ test("rejects a commit range when neither ref resolves", async () => {
     base,
     head,
   });
+  expect(calls).toEqual([
+    ["rev-parse", "--verify", base],
+    ["rev-parse", "--verify", head],
+  ]);
 });
 
 test("rejects an incomplete commit range", async () => {

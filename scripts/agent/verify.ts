@@ -36,11 +36,9 @@ export async function collectChangedPaths(
   }
 
   const git = options.git ?? ((args: readonly string[]) => runGit(options.root, args));
-  const range = options.base === undefined
+  const diffEndpoints = options.base === undefined
     ? undefined
-    : /^0{40}$/.test(options.base)
-    ? await normalizeAllZeroGitRange(options.base, options.head!, git)
-    : `${options.base}...${options.head}`;
+    : await resolveGitDiffEndpoints(options.base, options.head!, git);
   const outputs = options.base === undefined
     ? await Promise.all([
         git(["diff", "--name-only", "--diff-filter=ACMR", "-z", "HEAD"]),
@@ -48,27 +46,32 @@ export async function collectChangedPaths(
       ])
     : [await git([
         "diff", "--name-only", "--diff-filter=ACMR", "-z",
-        range!,
+        ...diffEndpoints!,
       ])];
 
   return stablePaths(outputs.flatMap(splitPathOutput));
 }
 
-async function normalizeAllZeroGitRange(
+async function resolveGitDiffEndpoints(
   base: string,
   head: string,
   git: NonNullable<ChangedPathOptions["git"]>,
-): Promise<string> {
-  const normalizedBase = `${head}^`;
+): Promise<string[]> {
   try {
+    if (/^0+$/.test(base)) {
+      await git(["rev-parse", "--verify", head]);
+      const emptyTree = (await git(["hash-object", "-t", "tree", "/dev/null"])).trim();
+      if (emptyTree === "") throw new Error("empty tree hash was not returned");
+      return [emptyTree, head];
+    }
     await Promise.all([
-      git(["rev-parse", "--verify", normalizedBase]),
+      git(["rev-parse", "--verify", base]),
       git(["rev-parse", "--verify", head]),
     ]);
+    return [`${base}...${head}`];
   } catch {
     throw new InvalidGitRangeError(base, head);
   }
-  return `${normalizedBase}...${head}`;
 }
 
 export async function runVerification(options: {
@@ -152,7 +155,7 @@ async function runCommand(root: string, command: CommandSpec): Promise<number> {
 }
 
 function splitPathOutput(output: string): string[] {
-  return (output.includes("\0") ? output.split("\0") : output.split("\n")).filter(Boolean);
+  return output.split("\0").filter(Boolean);
 }
 
 function stablePaths(paths: readonly string[]): string[] {
