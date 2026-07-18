@@ -444,15 +444,17 @@ class SequentialCliTest(unittest.TestCase):
 
     def test_readme_documents_only_the_submitted_thin_completion_gates(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        start = readme.index("Every completed slice\nmust include this workflow receipt:")
-        end = readme.index("The verification helper reuses success", start)
+        start = readme.index("## Completion And Handoff")
+        end = readme.index("## Verify", start)
         completion = " ".join(readme[start:end].split())
 
         for phrase in (
-            "submitted `open_finding_ids` and `open_obligation_ids` arrays must both be empty",
-            "submitted verification array must be nonempty and every record must report success",
-            "final_review_path",
-            "final_review_head",
+            "`ledger_path`",
+            "`final_review_path`",
+            "`final_review_head`",
+            "empty `open_finding_ids` and `open_obligation_ids`",
+            "successful verification outcomes",
+            "valid ancestry",
         ):
             self.assertIn(phrase, completion)
         self.assertNotIn("strict ledger projection", completion)
