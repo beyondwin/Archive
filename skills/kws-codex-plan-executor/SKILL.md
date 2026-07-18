@@ -3,7 +3,7 @@ name: kws-codex-plan-executor
 description: Execute one or more approved Superpowers implementation plans sequentially in one durable isolated worktree.
 metadata:
   version: "2.0.0"
-  updated_at: "2026-07-17"
+  updated_at: "2026-07-18"
 ---
 
 # KWS Codex Plan Executor
@@ -102,11 +102,12 @@ review, fix, or subagent workflow semantics.
   safely creates or reconciles the worktree and executes with the existing
   compiled index. A missing worktree after plan execution has begun remains a
   fail-closed integrity error.
-- The progress fingerprint covers durable `HEAD`, completed task IDs, current
-  task ID, accepted review IDs, and closed finding IDs. A timed-out slice with
-  a changed fingerprint is productive and may continue within budget. The first
-  unchanged timeout receives at most one confirmation slice; the second
-  consecutive no-progress slice stops as stalled.
+- The progress fingerprint covers durable `HEAD`, completed task IDs, and the
+  current task ID. Review, finding-fix, obligation, and coordination events do
+  not drive recovery decisions. A timed-out slice with a changed fingerprint
+  is productive and may continue within budget. The first unchanged timeout
+  receives at most one confirmation slice; the second consecutive no-progress
+  slice stops as stalled.
 - The fixed per-plan defaults are a 3600-second controller slice, 6 productive
   progress checkpoints, 21600 seconds of wall time, and 8 controller launches.
   Every budget is checked before another launch.

@@ -278,15 +278,6 @@ def read_progress_snapshot(run_root: Path, *, plan_index: int, head: str) -> Pro
         head=head,
         completed_task_ids=tuple(sorted(completed)),
         current_task_id=current,
-        accepted_review_ids=tuple(sorted({
-            event["review_id"] for event in events
-            if event["category"] == "review" and event["result"] == "accepted"
-        })),
-        closed_finding_ids=tuple(sorted({
-            finding_id for event in events
-            if event["category"] == "finding_fix" and event["result"] == "closed"
-            for finding_id in event["finding_ids"]
-        })),
     )
 
 
@@ -691,6 +682,7 @@ def _valid_result_envelope(payload: dict[str, object]) -> bool:
     return (
         receipt.get("final_review_head") == payload["head_commit"]
         and receipt.get("open_finding_ids") == []
+        and receipt.get("open_obligation_ids") == []
     )
 
 
@@ -1036,45 +1028,10 @@ def repair_result_envelope(
             and event.get("action") in {"verified", "executed_uncached"}
             and event.get("result") == "pass"
         }
-        accepted_reviews = [
-            event for event in events
-            if event.get("category") == "review"
-            and event.get("action") == "approved"
-            and event.get("result") in {"accepted", "pass"}
-        ]
-        review_or_finding_drift = any(
-            (
-                event.get("category") == "review"
-                and (
-                    event.get("action") != "approved"
-                    or event.get("result") not in {"accepted", "pass"}
-                )
-            )
-            or (
-                event.get("category") == "finding_fix"
-                and event.get("result") != "closed"
-            )
-            for event in events
-        )
-        latest_obligations: dict[str, dict[str, object]] = {}
-        for event in events:
-            if event.get("category") == "obligation":
-                latest_obligations[str(event["obligation_id"])] = event
-        open_obligations = sorted(
-            obligation_id for obligation_id, event in latest_obligations.items()
-            if not (
-                event.get("action") in {"satisfied", "waived", "resolved", "completed"}
-                and event.get("result") in {"pass", "accepted", "closed", "skipped"}
-            )
-        )
-        declared_open = receipt.get("open_obligation_ids")
         if (
-            not isinstance(declared_open, list)
-            or len(declared_open) != len(set(declared_open))
-            or sorted(declared_open) != open_obligations
+            receipt.get("open_finding_ids") != []
+            or receipt.get("open_obligation_ids") != []
             or expected_verification != observed_verification
-            or not accepted_reviews
-            or review_or_finding_drift
         ):
             return None
 

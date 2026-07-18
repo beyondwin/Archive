@@ -329,7 +329,7 @@ def _pre_spawn_budget_decision(
         return None
     fingerprint = plan.get("progress_fingerprint")
     if not isinstance(fingerprint, str):
-        fingerprint = progress_fingerprint(ProgressSnapshot(head, (), None, (), ()))
+        fingerprint = progress_fingerprint(ProgressSnapshot(head, (), None))
     return CheckpointDecision("stop_budget", reason, fingerprint)
 
 
@@ -959,7 +959,7 @@ class SequentialRunner:
         if not ledger.exists():
             if plan["execution_ledger_event_digests"]:
                 raise ProgressLedgerError("execution_ledger_regressed")
-            return ProgressSnapshot(head, (), None, (), ())
+            return ProgressSnapshot(head, (), None)
         try:
             events = validate_execution_ledger(
                 ledger, expected_plan_id=plan["plan_id"],
@@ -2092,7 +2092,7 @@ class SequentialRunner:
             )
             return "evidence_failed", reason
         decision = decide_child_outcome(
-            previous=ProgressSnapshot(observed_head, (), None, (), ()),
+            previous=ProgressSnapshot(observed_head, (), None),
             current=current_snapshot,
             timed_out=False,
             consecutive_no_progress=plan["consecutive_no_progress_slices"],
@@ -2176,7 +2176,7 @@ class SequentialRunner:
                         store, plan_index=index, head=current_head,
                     )
                     if plan["progress_fingerprint"] is not None
-                    else ProgressSnapshot(current_head, (), None, (), ())
+                    else ProgressSnapshot(current_head, (), None)
                 )
                 previous_attempt = plan["attempt_count"]
                 prior_result = (

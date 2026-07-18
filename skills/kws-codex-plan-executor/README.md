@@ -248,8 +248,9 @@ executes with the existing compiled index. An unowned path collision is
 preserved. By contrast, a missing or deleted worktree after plan execution has
 begun remains a fail-closed integrity error.
 
-The durable progress fingerprint covers `HEAD`, completed task IDs, current
-task ID, accepted review IDs, and closed finding IDs. The fixed per-plan
+The durable progress fingerprint covers `HEAD`, completed task IDs, and the
+current task ID. Review, finding-fix, obligation, and coordination events are
+available as facts but do not drive recovery decisions. The fixed per-plan
 defaults are:
 
 | Budget | Default |

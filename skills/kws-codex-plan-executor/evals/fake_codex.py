@@ -275,7 +275,7 @@ def compile_index(arguments: list[str], prompt: str, result_path: Path) -> int:
         "format_version": 2,
         "input_sha256": digests,
         "operator_contract": contract,
-        "compiler_schema_version": 1,
+        "compiler_schema_version": 2,
         "cpe_version": "2.0",
     }
     cache_key = hashlib.sha256(json.dumps(
@@ -308,7 +308,6 @@ def compile_index(arguments: list[str], prompt: str, result_path: Path) -> int:
             }],
             "verifications": [],
             "capabilities": capabilities,
-            "coordination_exceptions": [],
             "execution_advisories": [],
             "unknowns": [],
         })

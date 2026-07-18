@@ -20,12 +20,8 @@ SAFETY_UNKNOWN_PREFIXES = (
 )
 CompilerCallback = Callable[[StateStore, dict[str, object], bool], dict[str, object]]
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
-_BRANCH_PHASES = {"task_red", "task_green", "task_review", "final_verification"}
+_BRANCH_PHASES = {"task_red", "task_green", "final_verification"}
 _MUTABLE_INPUT_POLICIES = {"forbidden", "declared_external_state"}
-_COORDINATION_REASONS = {
-    "source_requires_shared_context", "source_requires_cross_task_coordination",
-    "source_requires_integrated_review",
-}
 
 
 def _sha256(payload: bytes) -> str:
@@ -52,7 +48,7 @@ def compiler_cache_key(state: dict[str, Any], contract: dict[str, object]) -> st
         "format_version": 2,
         "input_sha256": [record["sha256"] for record in state["inputs"]],
         "operator_contract": contract,
-        "compiler_schema_version": 1,
+        "compiler_schema_version": 2,
         "cpe_version": "2.0",
     }))
 
@@ -153,19 +149,6 @@ def _validate_nested_contract(compiled: dict[str, Any]) -> set[str]:
     if len(capability_ids) != len(set(capability_ids)):
         raise _schema_error()
 
-    exception_fields = {
-        "task_id", "role", "fork_turns", "reason_code", "source_line_start",
-        "source_line_end", "source_text_sha256",
-    }
-    for item in compiled["coordination_exceptions"]:
-        if (not isinstance(item, dict) or set(item) != exception_fields
-                or not _identifier(item["task_id"])
-                or item["task_id"] not in known_tasks
-                or not isinstance(item["role"], str) or not 1 <= len(item["role"]) <= 64
-                or item["fork_turns"] != "all"
-                or not isinstance(item["reason_code"], str)
-                or item["reason_code"] not in _COORDINATION_REASONS):
-            raise _schema_error()
     return known_tasks
 
 
@@ -224,14 +207,13 @@ def validate_compiled_index(payload: dict[str, Any], state: dict[str, Any], cont
             raise ValueError("compiled plan order is invalid")
         required_plan_fields = {
             "plan_id", "source_sha256", "byte_length", "line_count", "tasks",
-            "verifications", "capabilities", "coordination_exceptions",
-            "execution_advisories", "unknowns",
+            "verifications", "capabilities", "execution_advisories", "unknowns",
         }
         if set(compiled) != required_plan_fields:
             raise ValueError("compiled plan fields are invalid")
         for field in (
-            "tasks", "verifications", "capabilities", "coordination_exceptions",
-            "execution_advisories", "unknowns",
+            "tasks", "verifications", "capabilities", "execution_advisories",
+            "unknowns",
         ):
             if not isinstance(compiled[field], list):
                 raise _schema_error()
@@ -255,11 +237,6 @@ def validate_compiled_index(payload: dict[str, Any], state: dict[str, Any], cont
             raise ValueError("compiled verification command IDs are invalid")
         for verification in verifications:
             _validate_span(verification, lines, "verification source")
-        exceptions = compiled["coordination_exceptions"]
-        for exception in exceptions:
-            if not isinstance(exception, dict) or exception.get("fork_turns") != "all":
-                raise ValueError("compiled coordination exception is invalid")
-            _validate_span(exception, lines, "coordination exception source")
         unknowns = compiled.get("unknowns", [])
         if (not isinstance(unknowns, list)
                 or not all(isinstance(item, str) and 1 <= len(item) <= 512 for item in unknowns)):

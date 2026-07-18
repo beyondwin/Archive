@@ -397,6 +397,35 @@ class VerificationReuseIntegrationTests(unittest.TestCase):
         self.assertIn("receipt_path=null", prompt)
         self.assertIn("never treat fallback as a skipped verification", prompt)
 
+    def test_prompt_does_not_prescribe_superpowers_workflow_semantics(self) -> None:
+        prompt = CodexLauncher._prompt(
+            worktree=self.repo,
+            plan_id="plan-01",
+            plan_path=self.store.root / "inputs" / "plan-01.md",
+            spec_paths=[],
+            starting_commit=git(self.repo, "rev-parse", "HEAD"),
+            current_commit=git(self.repo, "rev-parse", "HEAD"),
+            recovery_path=None,
+            compiled_run_index=self.store.root / "compiled-run-index.json",
+            execution_ledger=(
+                self.repo / ".superpowers" / "sdd" / "execution-ledger.jsonl"
+            ),
+            verification_helper_descriptor=(
+                self.store.root / "tools" / "run-and-record.json"
+            ),
+        )
+
+        for policy in (
+            "subagent-driven-development",
+            "task-brief",
+            "review-package",
+            "consolidated fix subagent",
+            "finding delta",
+            "cross-task final review",
+        ):
+            with self.subTest(policy=policy):
+                self.assertNotIn(policy, prompt)
+
     def test_replaced_helper_descriptor_becomes_recorded_direct_fallback(self) -> None:
         descriptor = materialize_helper_descriptor(
             self.store.root, ROOT / "scripts" / "cpe.py"
@@ -880,7 +909,7 @@ class ProgressDecisionTests(unittest.TestCase):
     )
 
     def snapshot(self, *, head: str = "abc", completed: tuple[str, ...] = ()) -> ProgressSnapshot:
-        return ProgressSnapshot(head, completed, "T3", ("R1",), ("F1",))
+        return ProgressSnapshot(head, completed, "T3")
 
     def decide(
         self,
@@ -989,8 +1018,8 @@ class ProgressDecisionTests(unittest.TestCase):
         self.assertEqual("wall_budget_exhausted", decision.reason_code)
 
     def test_progress_fingerprint_ignores_set_like_ordering(self) -> None:
-        left = ProgressSnapshot("abc", ("T2", "T1"), "T3", ("R2", "R1"), ("F1",))
-        right = ProgressSnapshot("abc", ("T1", "T2"), "T3", ("R1", "R2"), ("F1",))
+        left = ProgressSnapshot("abc", ("T2", "T1"), "T3")
+        right = ProgressSnapshot("abc", ("T1", "T2"), "T3")
         self.assertEqual(progress_fingerprint(left), progress_fingerprint(right))
 
     def test_progress_fingerprint_rejects_empty_head(self) -> None:
@@ -1051,8 +1080,10 @@ class ProgressDecisionTests(unittest.TestCase):
         self.assertEqual("2" * 40, snapshot.head)
         self.assertEqual(("T1",), snapshot.completed_task_ids)
         self.assertEqual("T2", snapshot.current_task_id)
-        self.assertEqual(("R1",), snapshot.accepted_review_ids)
-        self.assertEqual(("F1", "F2"), snapshot.closed_finding_ids)
+        self.assertEqual(
+            {"head", "completed_task_ids", "current_task_id"},
+            set(dataclasses.asdict(snapshot)),
+        )
 
     def test_read_progress_snapshot_rejects_duplicate_ledger_event(self) -> None:
         temporary, store, worktree = self.create_progress_store()
@@ -1885,7 +1916,7 @@ print(json.dumps(result, sort_keys=True), flush=True)
                     "source_text_sha256": hashlib.sha256(source).hexdigest(),
                 }],
                 "verifications": [], "capabilities": [],
-                "coordination_exceptions": [], "execution_advisories": [],
+                "execution_advisories": [],
                 "unknowns": list(unknowns or []),
             }],
         }
@@ -2056,30 +2087,12 @@ print(json.dumps(result, sort_keys=True), flush=True)
             "capability_id": "browser", "task_ids": ["task-01"], "grant": True,
         }]
         cases.append(capability_extra)
-        invalid_exception = json.loads(json.dumps(valid))
-        invalid_exception["plans"][0]["coordination_exceptions"] = [{
-            "task_id": "missing-task", "role": "implementer", "fork_turns": "all",
-            "reason_code": "unbounded-reason",
-            "source_line_start": task["source_line_start"],
-            "source_line_end": task["source_line_end"],
-            "source_text_sha256": task["source_text_sha256"],
-        }]
-        cases.append(invalid_exception)
-        exception_extra = json.loads(json.dumps(valid))
-        exception_extra["plans"][0]["coordination_exceptions"] = [{
-            "task_id": "task-01", "role": "x" * 65, "fork_turns": "all",
-            "reason_code": "source_requires_shared_context", "authority": "extra",
-            "source_line_start": task["source_line_start"],
-            "source_line_end": task["source_line_end"],
-            "source_text_sha256": task["source_text_sha256"],
-        }]
-        cases.append(exception_extra)
         for payload in cases:
             with self.subTest(payload=payload):
                 with self.assertRaisesRegex(ValueError, "compiled index schema"):
                     validate_compiled_index(payload, store.state, contract)
 
-    def test_compiled_index_accepts_source_backed_authorization_shapes(self) -> None:
+    def test_compiled_index_accepts_source_backed_execution_shapes(self) -> None:
         store = self.create_compiler_store("compiler-valid-shapes")
         contract = default_operator_contract(store.state)
         payload = self.compiler_payload(store)
@@ -2098,54 +2111,60 @@ print(json.dumps(result, sort_keys=True), flush=True)
         payload["plans"][0]["capabilities"] = [{
             "capability_id": "browser", "task_ids": ["task-01"],
         }]
-        payload["plans"][0]["coordination_exceptions"] = [{
-            "task_id": "task-01", "role": "implementer", "fork_turns": "all",
-            "reason_code": "source_requires_shared_context", **span,
-        }]
         self.assertIs(validate_compiled_index(payload, store.state, contract), payload)
 
+    def test_compiled_index_contains_execution_facts_without_subagent_policy(self) -> None:
+        store = self.create_compiler_store("compiler-no-subagent-policy")
+        contract = default_operator_contract(store.state)
+        payload = self.compiler_payload(store)
+        expected_plan_fields = {
+            "plan_id", "source_sha256", "byte_length", "line_count", "tasks",
+            "verifications", "capabilities", "execution_advisories", "unknowns",
+        }
+        self.assertEqual(expected_plan_fields, set(payload["plans"][0]))
+        self.assertIs(validate_compiled_index(payload, store.state, contract), payload)
+
+        schema = json.loads((
+            ROOT / "templates" / "compiled-run-index.schema.json"
+        ).read_text(
+            encoding="utf-8",
+        ))
+        self.assertEqual(
+            expected_plan_fields,
+            set(schema["$defs"]["plan"]["required"]),
+        )
+        self.assertEqual(
+            {"digest", "identifier", "relativePath", "task", "verification",
+             "capability", "plan"},
+            set(schema["$defs"]),
+        )
+
     def test_compiler_repairs_unhashable_nested_schema_drift_once(self) -> None:
-        for name, mutate in (
-            ("list", lambda item: item.update(mutable_input_policy=[])),
-            ("object", lambda item: item.update(reason_code={})),
-        ):
-            with self.subTest(name=name):
-                store = self.create_compiler_store(f"compiler-repair-{name}")
-                valid = self.compiler_payload(store)
-                task = valid["plans"][0]["tasks"][0]
-                span = {
-                    "source_line_start": task["source_line_start"],
-                    "source_line_end": task["source_line_end"],
-                    "source_text_sha256": task["source_text_sha256"],
-                }
-                malformed = json.loads(json.dumps(valid))
-                if name == "list":
-                    item = {
-                        "command_id": "verify-01", "argv": ["make", "test"],
-                        "allowed_branch_phases": ["task_green"],
-                        "deterministic": True, "mutable_input_policy": "forbidden",
-                        "required_artifacts": [], **span,
-                    }
-                    mutate(item)
-                    malformed["plans"][0]["verifications"] = [item]
-                else:
-                    item = {
-                        "task_id": "task-01", "role": "implementer",
-                        "fork_turns": "all",
-                        "reason_code": "source_requires_shared_context", **span,
-                    }
-                    mutate(item)
-                    malformed["plans"][0]["coordination_exceptions"] = [item]
-                repairs = []
+        store = self.create_compiler_store("compiler-repair-list")
+        valid = self.compiler_payload(store)
+        task = valid["plans"][0]["tasks"][0]
+        span = {
+            "source_line_start": task["source_line_start"],
+            "source_line_end": task["source_line_end"],
+            "source_text_sha256": task["source_text_sha256"],
+        }
+        malformed = json.loads(json.dumps(valid))
+        malformed["plans"][0]["verifications"] = [{
+            "command_id": "verify-01", "argv": ["make", "test"],
+            "allowed_branch_phases": ["task_green"],
+            "deterministic": True, "mutable_input_policy": [],
+            "required_artifacts": [], **span,
+        }]
+        repairs = []
 
-                def compile_once(_store, _contract, repair):
-                    repairs.append(repair)
-                    return valid if repair else malformed
+        def compile_once(_store, _contract, repair):
+            repairs.append(repair)
+            return valid if repair else malformed
 
-                service = CompiledIndexService(compile_once=compile_once)
-                self.assertTrue(service.prepare(store).is_file())
-                self.assertEqual(service.compile_calls, 2)
-                self.assertEqual(repairs, [False, True])
+        service = CompiledIndexService(compile_once=compile_once)
+        self.assertTrue(service.prepare(store).is_file())
+        self.assertEqual(service.compile_calls, 2)
+        self.assertEqual(repairs, [False, True])
 
     def test_cached_compiled_index_revalidates_nested_contract(self) -> None:
         store = self.create_compiler_store("compiler-cache-shape")
@@ -4794,7 +4813,7 @@ class EnvelopeRepairTests(_RecoveryRunnerFixture):
                     self._repair(run_root, worktree, original_path)
                 )
 
-    def test_dirty_head_verification_and_review_finding_drift_fail_closed(self) -> None:
+    def test_dirty_head_and_verification_drift_fail_closed(self) -> None:
         _, run_root, worktree, original_path, _ = self._failed_result(
             "repair-dirty",
         )
@@ -4832,25 +4851,67 @@ class EnvelopeRepairTests(_RecoveryRunnerFixture):
         )
         self.assertIsNone(self._repair(run_root, worktree, original_path))
 
+    def test_review_finding_and_obligation_events_are_advisory_for_repair(self) -> None:
         _, run_root, worktree, original_path, _ = self._failed_result(
-            "repair-finding-drift",
+            "repair-advisory-workflow-events",
         )
-        append_execution_event(
-            worktree / ".superpowers" / "sdd" / "execution-ledger.jsonl",
-            {
-                "event_id": "finding-drift-1",
-                "source": "child_attested",
-                "plan_id": "plan-01",
-                "category": "finding_fix",
-                "action": "started",
-                "result": "fail",
-                "evidence_refs": [],
-                "finding_ids": ["F-1"],
-                "fix_digest": "e" * 64,
-                "duration_ms": 1,
-            },
-        )
-        self.assertIsNone(self._repair(run_root, worktree, original_path))
+        ledger = worktree / ".superpowers" / "sdd" / "execution-ledger.jsonl"
+        append_execution_event(ledger, {
+            "event_id": "review-rejected",
+            "source": "child_attested",
+            "plan_id": "plan-01",
+            "category": "review",
+            "action": "rejected",
+            "result": "fail",
+            "evidence_refs": [],
+            "review_id": "review-advisory",
+            "artifact_digest": "d" * 64,
+            "duration_ms": 1,
+        })
+        append_execution_event(ledger, {
+            "event_id": "finding-unclosed",
+            "source": "child_attested",
+            "plan_id": "plan-01",
+            "category": "finding_fix",
+            "action": "started",
+            "result": "fail",
+            "evidence_refs": [],
+            "finding_ids": ["F-advisory"],
+            "fix_digest": "e" * 64,
+            "duration_ms": 1,
+        })
+        append_execution_event(ledger, {
+            "event_id": "obligation-unprojected",
+            "source": "child_attested",
+            "plan_id": "plan-01",
+            "category": "obligation",
+            "action": "started",
+            "result": "fail",
+            "evidence_refs": [],
+            "obligation_id": "O-advisory",
+            "obligation_digest": "f" * 64,
+        })
+
+        self.assertIsNotNone(self._repair(run_root, worktree, original_path))
+
+        valid_receipt = {
+            "ledger_path": ".superpowers/sdd/execution-ledger.jsonl",
+            "final_review_path": ".superpowers/sdd/final-review.md",
+            "final_review_head": git(worktree, "rev-parse", "HEAD"),
+            "open_finding_ids": [],
+            "open_obligation_ids": [],
+        }
+        self.assertIsNone(runner_module._workflow_receipt_error(
+            worktree, valid_receipt,
+        ))
+        for field in ("open_finding_ids", "open_obligation_ids"):
+            invalid = json.loads(json.dumps(valid_receipt))
+            invalid[field] = ["still-open"]
+            with self.subTest(preserved_gate=field):
+                self.assertEqual(
+                    "invalid_workflow_receipt",
+                    runner_module._workflow_receipt_error(worktree, invalid),
+                )
 
     def test_other_original_integrity_error_is_not_repaired(self) -> None:
         def relative_missing(
@@ -4960,60 +5021,6 @@ class EnvelopeRepairTests(_RecoveryRunnerFixture):
             timeout_seconds=3600,
         )
         self.assertIsNone(self._repair(run_root, worktree, original_path))
-
-    def test_open_obligation_rejects_but_satisfied_or_waived_obligation_passes(self) -> None:
-        def obligation(
-            worktree: Path,
-            *,
-            event_id: str,
-            action: str,
-            result: str,
-        ) -> None:
-            append_execution_event(
-                worktree / ".superpowers" / "sdd" / "execution-ledger.jsonl",
-                {
-                    "event_id": event_id,
-                    "source": "child_attested",
-                    "plan_id": "plan-01",
-                    "category": "obligation",
-                    "action": action,
-                    "result": result,
-                    "evidence_refs": [],
-                    "obligation_id": "O-1",
-                    "obligation_digest": "9" * 64,
-                },
-            )
-
-        _, run_root, worktree, original_path, _ = self._failed_result(
-            "repair-open-obligation",
-        )
-        obligation(
-            worktree, event_id="obligation-open", action="started", result="fail",
-        )
-        self.assertIsNone(self._repair(run_root, worktree, original_path))
-
-        for index, (action, result) in enumerate(
-            (("satisfied", "closed"), ("waived", "skipped")), 1,
-        ):
-            with self.subTest(action=action):
-                _, run_root, worktree, original_path, _ = self._failed_result(
-                    f"repair-closed-obligation-{index}",
-                )
-                obligation(
-                    worktree,
-                    event_id=f"obligation-open-{index}",
-                    action="started",
-                    result="fail",
-                )
-                obligation(
-                    worktree,
-                    event_id=f"obligation-closed-{index}",
-                    action=action,
-                    result=result,
-                )
-                self.assertIsNotNone(
-                    self._repair(run_root, worktree, original_path)
-                )
 
     def test_non_null_verification_receipt_is_preserved_on_zero_launch_resume(self) -> None:
         def add_receipt_path(

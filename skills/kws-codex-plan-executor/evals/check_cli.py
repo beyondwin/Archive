@@ -525,7 +525,6 @@ class VerificationCliTests(unittest.TestCase):
                     "source_text_sha256": hashlib.sha256(source).hexdigest(),
                 }],
                 "capabilities": [],
-                "coordination_exceptions": [],
                 "execution_advisories": [],
                 "unknowns": [],
             }],
