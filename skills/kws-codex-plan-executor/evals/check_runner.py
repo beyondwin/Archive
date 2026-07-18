@@ -179,6 +179,29 @@ class VerificationReceiptTests(unittest.TestCase):
         self.assertEqual("unit", reused.request["command_id"])
         self.assertEqual("task", reused.request["executed_phase"])
 
+    def test_sealed_receipt_persists_only_argv_digest_not_raw_argv(self) -> None:
+        inline_marker = "private-inline-argument-marker"
+        request = self.request(
+            argv=(sys.executable, "-c", f"print({inline_marker!r})")
+        )
+
+        receipt = execute_verification(self.evidence_root, request)
+        document = json.loads(
+            (self.evidence_root / "receipts" / f"{receipt.receipt_id}.json")
+            .read_text(encoding="utf-8")
+        )
+        serialized = json.dumps(document, sort_keys=True)
+
+        self.assertNotIn("argv", document["request"])
+        self.assertEqual(
+            hashlib.sha256(
+                json.dumps(list(request.argv), separators=(",", ":")).encode("utf-8")
+            ).hexdigest(),
+            document["request"]["argv_digest"],
+        )
+        self.assertNotIn(sys.executable, serialized)
+        self.assertNotIn(inline_marker, serialized)
+
     def test_environment_fingerprint_binds_exact_mapping_sandbox_and_executable(self) -> None:
         environ = {"PATH": os.environ.get("PATH", ""), "CPE_VISIBLE": "one"}
         executable = resolved_executable_identity(
@@ -578,7 +601,7 @@ class VerificationReuseIntegrationTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, prompt.lower())
 
-    def test_replaced_helper_descriptor_becomes_recorded_direct_fallback(self) -> None:
+    def test_replaced_helper_descriptor_without_exact_request_fails_closed(self) -> None:
         descriptor = materialize_helper_descriptor(
             self.store.root, ROOT / "scripts" / "cpe.py"
         )
@@ -587,7 +610,8 @@ class VerificationReuseIntegrationTests(unittest.TestCase):
         descriptor.chmod(0o400)
         runner = SequentialRunner(codex_home=self.home)
 
-        self.assertIsNone(runner._verification_helper_descriptor_for_launch(self.store))
+        with self.assertRaisesRegex(ValueError, "without exact submitted request"):
+            runner._verification_helper_descriptor_for_launch(self.store)
 
         events = [
             json.loads(line)
@@ -595,10 +619,22 @@ class VerificationReuseIntegrationTests(unittest.TestCase):
         ]
         fallback = [
             event for event in events
-            if event.get("action") == "verification.helper_fallback"
+            if event.get("action") == "verification.helper_unavailable_no_request"
         ]
         self.assertEqual(1, len(fallback))
-        self.assertEqual("verification_helper_fallback", fallback[0]["reason"])
+        self.assertEqual("verification_helper_unavailable", fallback[0]["reason"])
+
+    def test_resume_validates_run_id_then_opens_state_without_command_id(self) -> None:
+        runner = SequentialRunner(codex_home=self.home)
+        with mock.patch.object(
+            StateStore, "open", side_effect=ValueError("resume state opened")
+        ) as opened:
+            with self.assertRaisesRegex(ValueError, "resume state opened"):
+                runner.resume(run_id="missing-valid-run")
+
+        opened.assert_called_once_with(
+            (self.home / "orchestrator" / "missing-valid-run").resolve()
+        )
 
     def test_parent_ingests_nonreusable_receipt_once_without_relabelling_pass(self) -> None:
         evidence_root = self.repo / ".superpowers" / "sdd" / "verification"
@@ -783,6 +819,143 @@ class VerificationReuseIntegrationTests(unittest.TestCase):
         self.assertEqual("branch_final", events[-1]["requested_phase"])
         self.assertEqual("task", events[-1]["executed_phase"])
         self.assertEqual(1, events[-1]["avoided_executions"])
+
+    def test_failed_and_timed_out_executions_remain_counted_facts(self) -> None:
+        evidence_root = self.repo / ".superpowers" / "sdd" / "verification"
+        requests = (
+            VerificationRequest(
+                run_id=self.run_id,
+                command_id="failed-unit",
+                argv=(sys.executable, "-c", "raise SystemExit(7)"),
+                cwd=self.repo,
+                head=git(self.repo, "rev-parse", "HEAD"),
+                environment_fingerprint=self.execution_environment_fingerprint(sys.executable),
+                phase="task",
+                input_digest="immutable",
+                deterministic=True,
+                mutable_input_policy="immutable",
+                required_artifact_paths=(),
+                timeout_seconds=10,
+            ),
+            VerificationRequest(
+                run_id=self.run_id,
+                command_id="timed-unit",
+                argv=(sys.executable, "-c", "import time; time.sleep(2)"),
+                cwd=self.repo,
+                head=git(self.repo, "rev-parse", "HEAD"),
+                environment_fingerprint=self.execution_environment_fingerprint(sys.executable),
+                phase="affected",
+                input_digest="immutable",
+                deterministic=True,
+                mutable_input_policy="immutable",
+                required_artifact_paths=(),
+                timeout_seconds=1,
+            ),
+        )
+        receipts = [execute_verification(evidence_root, request) for request in requests]
+        self.assertEqual(["failed", "timed_out"], [receipt.status for receipt in receipts])
+        for marker, request, receipt in zip(("f", "t"), requests, receipts, strict=True):
+            append_execution_event(
+                self.repo / ".superpowers" / "sdd" / "execution-ledger.jsonl",
+                {
+                    "event_id": "verification.executed:" + marker * 32,
+                    "source": "child_attested",
+                    "plan_id": "plan-01",
+                    "category": "verification",
+                    "action": "verified",
+                    "result": "fail",
+                    "evidence_refs": [
+                        f"verification/receipts/{receipt.receipt_id}.json",
+                        f"verification/{receipt.stdout_path}",
+                        f"verification/{receipt.stderr_path}",
+                    ],
+                    "command_id": request.command_id,
+                    "argv_digest": hashlib.sha256(
+                        json.dumps(list(request.argv), separators=(",", ":")).encode("utf-8")
+                    ).hexdigest(),
+                    "evidence_key": receipt.cache_key,
+                    "duration_ms": 1,
+                    "requested_phase": request.phase,
+                    "executed_phase": request.phase,
+                    "avoided_executions": 0,
+                },
+            )
+
+        runner = SequentialRunner(codex_home=self.home)
+        runner._ingest_verification_observations(self.store)
+        parent_events = [
+            json.loads(line)
+            for line in self.store.events_path.read_text(encoding="utf-8").splitlines()
+        ]
+        ingested = [
+            event for event in parent_events
+            if event.get("action") == "verification.evidence_ingested"
+        ]
+        report = build_optimization_report(
+            run_id=self.run_id,
+            events=parent_events,
+            findings=[],
+        )
+
+        self.assertEqual(2, len(ingested))
+        self.assertEqual(["failed", "timed_out"], [event["verification_status"] for event in ingested])
+        self.assertEqual(2, report["verification"]["requests"])
+        self.assertEqual(2, report["verification"]["executions"])
+        self.assertEqual(
+            {"task": 1, "affected": 1, "branch_final": 0},
+            report["verification"]["executed_phase_counts"],
+        )
+
+    def test_duplicate_executed_lifecycle_for_same_receipt_is_rejected(self) -> None:
+        evidence_root = self.repo / ".superpowers" / "sdd" / "verification"
+        request = VerificationRequest(
+            run_id=self.run_id,
+            command_id="unit",
+            argv=(sys.executable, "-c", "print('ok')"),
+            cwd=self.repo,
+            head=git(self.repo, "rev-parse", "HEAD"),
+            environment_fingerprint=self.execution_environment_fingerprint(sys.executable),
+            phase="task",
+            input_digest="immutable",
+            deterministic=True,
+            mutable_input_policy="immutable",
+            required_artifact_paths=(),
+            timeout_seconds=10,
+        )
+        receipt = execute_verification(evidence_root, request)
+        references = [
+            f"verification/receipts/{receipt.receipt_id}.json",
+            f"verification/{receipt.stdout_path}",
+            f"verification/{receipt.stderr_path}",
+        ]
+        argv_digest = hashlib.sha256(
+            json.dumps(list(request.argv), separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        for marker in ("a", "b"):
+            append_execution_event(
+                self.repo / ".superpowers" / "sdd" / "execution-ledger.jsonl",
+                {
+                    "event_id": "verification.executed:" + marker * 32,
+                    "source": "child_attested",
+                    "plan_id": "plan-01",
+                    "category": "verification",
+                    "action": "verified",
+                    "result": "pass",
+                    "evidence_refs": references,
+                    "command_id": "unit",
+                    "argv_digest": argv_digest,
+                    "evidence_key": receipt.cache_key,
+                    "duration_ms": 1,
+                    "requested_phase": "task",
+                    "executed_phase": "task",
+                    "avoided_executions": 0,
+                },
+            )
+
+        with self.assertRaisesRegex(ValueError, "duplicate executed lifecycle"):
+            SequentialRunner(codex_home=self.home)._ingest_verification_observations(
+                self.store
+            )
 
     def test_uncached_pass_has_strict_null_receipt_and_idempotent_parent_ingest(self) -> None:
         evidence_key = hashlib.sha256(b"uncached-unit").hexdigest()

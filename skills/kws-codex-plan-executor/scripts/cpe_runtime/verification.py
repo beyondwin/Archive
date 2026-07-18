@@ -61,6 +61,7 @@ class VerificationReceipt:
     exit_code: int | None
     started_at: str
     finished_at: str
+    duration_ms: int
     stdout_path: str
     stderr_path: str
     stdout_digest: str
@@ -123,7 +124,6 @@ def _request_document(request: VerificationRequest) -> dict[str, object]:
         **_identity_document(request),
         **_observation_document(request),
         "run_id": request.run_id,
-        "argv": list(request.argv),
         "deterministic": request.deterministic,
         "required_artifact_paths": list(request.required_artifact_paths),
         "timeout_seconds": request.timeout_seconds,
@@ -408,6 +408,7 @@ def _receipt_from_document(document: Mapping[str, object]) -> VerificationReceip
         exit_code=document["exit_code"] if isinstance(document["exit_code"], int) else None,
         started_at=str(document["started_at"]),
         finished_at=str(document["finished_at"]),
+        duration_ms=int(document["duration_ms"]),
         stdout_path=str(document["stdout_path"]),
         stderr_path=str(document["stderr_path"]),
         stdout_digest=str(document["stdout_digest"]),
@@ -423,6 +424,7 @@ def execute_verification(
     environ: Mapping[str, str] | None = None,
     sandbox_mode: str = "danger-full-access",
     publish_index: bool = True,
+    publish_receipt: bool = True,
 ) -> VerificationReceipt:
     """Execute an argv without a shell and atomically publish immutable evidence."""
     _validate_request(request)
@@ -507,10 +509,12 @@ def execute_verification(
     receipt_id = _sha256_bytes(_canonical_json(receipt_document))
     receipt_document["receipt_id"] = receipt_id
     receipt_path = root / "receipts" / f"{receipt_id}.json"
-    atomic_private_write(receipt_path, _canonical_json(receipt_document), mode=0o400)
+    if publish_receipt:
+        atomic_private_write(receipt_path, _canonical_json(receipt_document), mode=0o400)
 
     if (
-        publish_index
+        publish_receipt
+        and publish_index
         and status_name == "passed"
         and request.deterministic
         and request.mutable_input_policy != "always_execute"
@@ -562,48 +566,82 @@ def _load_json(path: Path) -> dict[str, object]:
     return document
 
 
-def validate_recorded_receipt_path(
+_IDENTITY_DOCUMENT_FIELDS = {
+    "schema_version", "argv_digest", "cwd", "head",
+    "execution_environment_fingerprint", "input_digest", "mutable_input_policy",
+}
+
+
+def _recorded_identity(request_document: Mapping[str, object]) -> dict[str, object]:
+    identity = {
+        field: request_document.get(field) for field in _IDENTITY_DOCUMENT_FIELDS
+    }
+    if (
+        identity["schema_version"] != 2
+        or not isinstance(identity["argv_digest"], str)
+        or not _SHA256.fullmatch(identity["argv_digest"])
+        or not isinstance(identity["cwd"], str)
+        or not identity["cwd"]
+        or not isinstance(identity["head"], str)
+        or not isinstance(identity["execution_environment_fingerprint"], str)
+        or not _SHA256.fullmatch(identity["execution_environment_fingerprint"])
+        or not isinstance(identity["input_digest"], str)
+        or identity["mutable_input_policy"] not in _MUTABLE_POLICIES
+    ):
+        raise ValueError("invalid_receipt_identity")
+    return identity
+
+
+def _identity_cache_key(identity: Mapping[str, object]) -> str:
+    return _sha256_bytes(_canonical_json(dict(identity)))
+
+
+def validate_recorded_receipt_facts(
     evidence_root: Path,
-    request: VerificationRequest,
+    *,
+    run_id: str,
+    argv_digest: str,
     receipt_reference: str,
+    allowed_statuses: frozenset[str] = frozenset(
+        {"passed", "failed", "timed_out", "interrupted"}
+    ),
 ) -> VerificationReceipt | None:
-    """Validate the exact immutable receipt named by one ledger event."""
-    _validate_request(request)
-    root, worktree, _cwd = _prepare_layout(evidence_root, request.cwd)
-    cache_key = verification_cache_key(request)
+    """Validate sealed lifecycle facts without reconstructing or persisting raw argv."""
+    lexical_worktree = evidence_root.absolute().parents[2]
+    root, worktree, _cwd = _prepare_layout(evidence_root, lexical_worktree)
+    cache_key = argv_digest
     try:
         root_digest = _sha256_bytes(str(root).encode("utf-8"))
-        receipt_path = _safe_relative_file(
-            root, receipt_reference, "receipts"
-        )
+        receipt_path = _safe_relative_file(root, receipt_reference, "receipts")
         document = _load_json(receipt_path)
+        request_document = document.get("request")
+        if not isinstance(request_document, dict):
+            raise ValueError("invalid_receipt_request")
+        identity = _recorded_identity(request_document)
+        cache_key = _identity_cache_key(identity)
         receipt_id = document.get("receipt_id")
         unsigned = dict(document)
         unsigned.pop("receipt_id", None)
+        status_name = document.get("status")
         if (
             document.get("schema_version") != 2
             or not isinstance(receipt_id, str)
             or _sha256_bytes(_canonical_json(unsigned)) != receipt_id
             or receipt_path.name != f"{receipt_id}.json"
             or document.get("cache_key") != cache_key
-            or document.get("run_id") != request.run_id
+            or document.get("run_id") != run_id
+            or request_document.get("run_id") != run_id
+            or identity["argv_digest"] != argv_digest
             or document.get("evidence_root_digest") != root_digest
             or document.get("source") != "child_attested"
-            or document.get("status") != "passed"
+            or status_name not in allowed_statuses
+            or not isinstance(request_document.get("command_id"), str)
+            or request_document.get("executed_phase") not in _PHASES
+            or not isinstance(request_document.get("deterministic"), bool)
+            or not isinstance(request_document.get("timeout_seconds"), int)
         ):
             raise ValueError("invalid_receipt")
-        recorded_request = document.get("request")
-        if (
-            not isinstance(recorded_request, dict)
-            or recorded_request.get("run_id") != request.run_id
-            or {
-                key: recorded_request.get(key)
-                for key in _identity_document(request)
-            } != _identity_document(request)
-            or not isinstance(recorded_request.get("command_id"), str)
-            or recorded_request.get("executed_phase") not in _PHASES
-        ):
-            raise ValueError("invalid_receipt_request")
+        _prepare_layout(evidence_root, Path(str(identity["cwd"])))
         stdout = _safe_relative_file(root, str(document.get("stdout_path")), "logs")
         stderr = _safe_relative_file(root, str(document.get("stderr_path")), "logs")
         if (
@@ -612,21 +650,59 @@ def validate_recorded_receipt_path(
         ):
             raise ValueError("log_digest_mismatch")
         artifact_documents = document.get("artifacts")
-        if not isinstance(artifact_documents, list):
+        required_paths = request_document.get("required_artifact_paths")
+        if (
+            not isinstance(artifact_documents, list)
+            or not isinstance(required_paths, list)
+            or any(not isinstance(path, str) for path in required_paths)
+        ):
             raise ValueError("invalid_artifacts")
-        try:
-            current_artifacts = [
-                _artifact_record(worktree, path)
-                for path in request.required_artifact_paths
-            ]
-        except (OSError, ValueError):
-            return None
-        if artifact_documents != current_artifacts:
-            return None
+        if status_name == "passed":
+            try:
+                current_artifacts = [
+                    _artifact_record(worktree, path) for path in required_paths
+                ]
+            except (OSError, ValueError):
+                return None
+            if artifact_documents != current_artifacts:
+                return None
+        elif artifact_documents != []:
+            raise ValueError("invalid_nonpassing_artifacts")
         return _receipt_from_document(document)
     except (KeyError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
         _corruption_event(root, cache_key, "invalid_receipt_evidence")
         return None
+
+
+def validate_recorded_receipt_path(
+    evidence_root: Path,
+    request: VerificationRequest,
+    receipt_reference: str,
+) -> VerificationReceipt | None:
+    """Validate the exact successful receipt named by one reuse request."""
+    _validate_request(request)
+    receipt = validate_recorded_receipt_facts(
+        evidence_root,
+        run_id=request.run_id,
+        argv_digest=_argv_digest(request.argv),
+        receipt_reference=receipt_reference,
+        allowed_statuses=frozenset({"passed"}),
+    )
+    if receipt is None:
+        return None
+    if (
+        {
+            key: receipt.request.get(key) for key in _identity_document(request)
+        } != _identity_document(request)
+        or receipt.request.get("required_artifact_paths")
+        != list(request.required_artifact_paths)
+    ):
+        root, _worktree, _cwd = _prepare_layout(evidence_root, request.cwd)
+        _corruption_event(
+            root, verification_cache_key(request), "invalid_receipt_evidence"
+        )
+        return None
+    return receipt
 
 
 def validate_recorded_receipt(

@@ -74,7 +74,7 @@ from .verification import (
     find_reusable_receipt,
     materialize_helper_descriptor,
     resolved_executable_identity,
-    validate_recorded_receipt_path,
+    validate_recorded_receipt_facts,
     verification_cache_key,
 )
 
@@ -727,8 +727,6 @@ class SequentialRunner:
     ) -> dict[str, Any]:
         if not _RUN_ID.fullmatch(run_id):
             raise ValueError("run ID contains unsupported characters")
-        if not _VERIFICATION_COMMAND_ID.fullmatch(command_id):
-            raise ValueError("verification command ID contains unsupported characters")
         store = StateStore.open(self.codex_home / "orchestrator" / run_id)
         try:
             with _RunLock(store.root / "run.lock") as lock_fd:
@@ -1079,7 +1077,6 @@ class SequentialRunner:
                 continue
             if (
                 event.get("action") != "verified"
-                or event.get("result") != "pass"
                 or not event_id.startswith(("verification.reused:", "verification.executed:"))
             ):
                 continue
@@ -1092,58 +1089,15 @@ class SequentialRunner:
             ):
                 raise ValueError("verification helper receipt reference is invalid")
             relative = Path(references[0])
-            receipt_path = worktree / ".superpowers" / "sdd" / relative
-            try:
-                resolved_receipt = receipt_path.resolve(strict=True)
-                resolved_receipt.relative_to(evidence_root.resolve(strict=True))
-                metadata = receipt_path.lstat()
-            except (OSError, ValueError) as exc:
-                raise ValueError("verification helper receipt is unavailable") from exc
-            if (
-                receipt_path.is_symlink()
-                or not stat.S_ISREG(metadata.st_mode)
-                or metadata.st_size > 1024 * 1024
-            ):
-                raise ValueError("verification helper receipt is unsafe")
-            document = json.loads(resolved_receipt.read_text(encoding="utf-8"))
-            request_document = document.get("request")
-            if not isinstance(request_document, dict):
-                raise ValueError("verification helper receipt request is invalid")
-            try:
-                request = VerificationRequest(
-                    run_id=request_document["run_id"],
-                    command_id=request_document["command_id"],
-                    argv=tuple(request_document["argv"]),
-                    cwd=Path(request_document["cwd"]),
-                    head=request_document["head"],
-                    environment_fingerprint=request_document[
-                        "execution_environment_fingerprint"
-                    ],
-                    phase=request_document["executed_phase"],
-                    input_digest=request_document["input_digest"],
-                    deterministic=request_document["deterministic"],
-                    mutable_input_policy=request_document["mutable_input_policy"],
-                    required_artifact_paths=tuple(
-                        request_document["required_artifact_paths"]
-                    ),
-                    timeout_seconds=request_document["timeout_seconds"],
-                )
-            except (KeyError, TypeError, ValueError) as exc:
-                raise ValueError("verification helper receipt request is invalid") from exc
-            receipt = validate_recorded_receipt_path(
+            argv_digest = str(event["argv_digest"])
+            receipt = validate_recorded_receipt_facts(
                 evidence_root,
-                request,
-                Path(*relative.parts[1:]).as_posix(),
+                run_id=str(state["run_id"]),
+                argv_digest=argv_digest,
+                receipt_reference=Path(*relative.parts[1:]).as_posix(),
             )
-            argv_digest = hashlib.sha256(
-                json.dumps(
-                    list(request.argv), separators=(",", ":")
-                ).encode("utf-8")
-            ).hexdigest()
             if (
                 receipt is None
-                or resolved_receipt.name != f"{receipt.receipt_id}.json"
-                or receipt.receipt_id != document.get("receipt_id")
                 or event.get("argv_digest") != argv_digest
                 or event.get("evidence_key") != receipt.cache_key
                 or references[1:] != [
@@ -1153,11 +1107,15 @@ class SequentialRunner:
             ):
                 raise ValueError("verification helper receipt binding is invalid")
             decision = "reused" if event_id.startswith("verification.reused:") else "executed"
+            receipt_command_id = receipt.request.get("command_id")
+            receipt_phase = receipt.request.get("executed_phase")
             if (
                 event.get("requested_phase") not in _VERIFY_PHASES
-                or event.get("executed_phase") != request.phase
+                or event.get("executed_phase") != receipt_phase
                 or event.get("avoided_executions") != (1 if decision == "reused" else 0)
-                or (decision == "executed" and event.get("command_id") != request.command_id)
+                or (decision == "executed" and event.get("command_id") != receipt_command_id)
+                or (receipt.status == "passed") != (event.get("result") == "pass")
+                or (decision == "reused" and receipt.status != "passed")
             ):
                 raise ValueError("verification observation binding is invalid")
             lifecycle = (
@@ -1166,13 +1124,15 @@ class SequentialRunner:
                 argv_digest,
             )
             if decision == "reused" and (
-                not request.deterministic
-                or request.mutable_input_policy == "always_execute"
+                receipt.request.get("deterministic") is not True
+                or receipt.request.get("mutable_input_policy") == "always_execute"
                 or lifecycle not in validated_executions
             ):
                 raise ValueError(
                     "reused verification lacks a prior validated executed lifecycle"
                 )
+            if decision == "executed" and lifecycle in validated_executions:
+                raise ValueError("duplicate executed lifecycle for sealed receipt")
             if decision == "executed":
                 validated_executions.add(lifecycle)
             if event_id not in ingested_child_ids:
@@ -1188,6 +1148,8 @@ class SequentialRunner:
                     receipt_id=receipt.receipt_id,
                     receipt_path=references[0],
                     decision=decision,
+                    verification_status=receipt.status,
+                    exit_code=receipt.exit_code,
                     semantic_source="child_attested",
                 )
                 ingested_child_ids.add(event_id)
@@ -1465,7 +1427,7 @@ class SequentialRunner:
     @staticmethod
     def _verification_helper_descriptor_for_launch(
         store: StateStore,
-    ) -> Path | None:
+    ) -> Path:
         try:
             return materialize_helper_descriptor(
                 store.root,
@@ -1473,11 +1435,13 @@ class SequentialRunner:
             )
         except (OSError, ValueError) as exc:
             store.append_event(
-                "verification.helper_fallback",
-                reason="verification_helper_fallback",
+                "verification.helper_unavailable_no_request",
+                reason="verification_helper_unavailable",
                 detail=(str(exc).strip() or type(exc).__name__)[:2000],
             )
-            return None
+            raise ValueError(
+                "verification helper unavailable without exact submitted request"
+            ) from exc
 
     def verify(
         self,
@@ -1493,6 +1457,8 @@ class SequentialRunner:
         """Execute one exact Superpowers-selected argv or reuse its exact receipt."""
         if not _RUN_ID.fullmatch(run_id):
             raise ValueError("run ID contains unsupported characters")
+        if not _VERIFICATION_COMMAND_ID.fullmatch(command_id):
+            raise ValueError("verification command ID contains unsupported characters")
         if phase not in _VERIFY_PHASES or mutable_input_policy not in {
             "immutable", "digest_complete", "always_execute",
         }:
@@ -1519,11 +1485,15 @@ class SequentialRunner:
             current /= component
             if current.is_symlink():
                 raise ValueError("verification cwd contains a symlink")
+        helper_fallback = False
         descriptor = store.root / "tools" / "run-and-record.json"
-        if not descriptor.exists() or descriptor.is_symlink():
-            raise ValueError("verification helper descriptor is unavailable")
         cpe_script = Path(__file__).resolve().parent.parent / "cpe.py"
-        materialize_helper_descriptor(store.root, cpe_script)
+        try:
+            if not descriptor.exists() or descriptor.is_symlink():
+                raise ValueError("verification helper descriptor is unavailable")
+            materialize_helper_descriptor(store.root, cpe_script)
+        except (OSError, ValueError):
+            helper_fallback = True
 
         plan_index = state["current_plan_index"]
         if not isinstance(plan_index, int) or not 0 <= plan_index < len(state["plans"]):
@@ -1566,18 +1536,20 @@ class SequentialRunner:
         corruption_bytes = corruption_log.stat().st_size if corruption_log.exists() else 0
         receipt = (
             None
-            if dirty_source_inputs
+            if dirty_source_inputs or helper_fallback
             else find_reusable_receipt(evidence_root, request)
         )
-        fallback = (
+        corrupt_evidence_fallback = (
             not dirty_source_inputs
+            and not helper_fallback
             and receipt is None
             and corruption_log.exists()
             and corruption_log.stat().st_size > corruption_bytes
         )
+        fallback = helper_fallback or corrupt_evidence_fallback
         reused = receipt is not None
         if receipt is None:
-            if fallback:
+            if corrupt_evidence_fallback:
                 cache_key = verification_cache_key(request)
                 index = evidence_root / "indexes" / f"{cache_key}.json"
                 if index.exists():
@@ -1593,18 +1565,8 @@ class SequentialRunner:
                 environ=child_environment,
                 sandbox_mode=sandbox_mode,
                 publish_index=not dirty_source_inputs and not fallback,
+                publish_receipt=not fallback,
             )
-
-        receipt_relative = (
-            Path(".superpowers")
-            / "sdd"
-            / "verification"
-            / "receipts"
-            / f"{receipt.receipt_id}.json"
-        )
-        receipt_document = json.loads(
-            (worktree / receipt_relative).read_text(encoding="utf-8")
-        )
         argv_digest = hashlib.sha256(
             json.dumps(list(argv), separators=(",", ":")).encode("utf-8")
         ).hexdigest()
@@ -1628,7 +1590,7 @@ class SequentialRunner:
                     "command_id": command_id,
                     "argv_digest": argv_digest,
                     "evidence_key": receipt.cache_key,
-                    "duration_ms": int(receipt_document.get("duration_ms", 0)),
+                    "duration_ms": receipt.duration_ms,
                     "exit_code": uncached_exit_code,
                     "receipt_path": None,
                     "reason_code": "verification_helper_fallback",
@@ -1652,6 +1614,13 @@ class SequentialRunner:
                 "reason": "verification_helper_fallback",
                 "reason_code": "verification_helper_fallback",
             }
+        receipt_relative = (
+            Path(".superpowers")
+            / "sdd"
+            / "verification"
+            / "receipts"
+            / f"{receipt.receipt_id}.json"
+        )
         decision = "reused" if reused else "executed"
         receipt_reference = receipt_relative.relative_to(
             Path(".superpowers") / "sdd"
@@ -1673,7 +1642,7 @@ class SequentialRunner:
                 "command_id": command_id,
                 "argv_digest": argv_digest,
                 "evidence_key": receipt.cache_key,
-                "duration_ms": int(receipt_document.get("duration_ms", 0)),
+                "duration_ms": receipt.duration_ms,
                 "requested_phase": phase,
                 "executed_phase": executed_phase,
                 "avoided_executions": 1 if reused else 0,
