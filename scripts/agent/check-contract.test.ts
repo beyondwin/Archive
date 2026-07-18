@@ -256,6 +256,51 @@ describe("checkContract", () => {
     }));
   });
 
+  test("preserves retired ancestor context for a loose nested Markdown list", async () => {
+    const root = await createContractFixture();
+    await writeFile(
+      join(root, "GEMINI.md"),
+      "- Historical paths were removed:\n\n  - Primary location: components/agentlens\n",
+    );
+
+    const issues = await checkContract({ root, requiredPaths: [], requiredAgentFiles: [], trackedFiles: [] });
+
+    expect(issues).not.toContainEqual(expect.objectContaining({
+      code: "stale_active_claim",
+      path: "GEMINI.md",
+    }));
+  });
+
+  test("closes retired list context for an active sibling after a blank line", async () => {
+    const root = await createContractFixture();
+    await writeFile(
+      join(root, "GEMINI.md"),
+      "- Historical paths were removed:\n\n- Primary location: components/agentlens\n",
+    );
+
+    const issues = await checkContract({ root, requiredPaths: [], requiredAgentFiles: [], trackedFiles: [] });
+
+    expect(issues).toContainEqual(expect.objectContaining({
+      code: "stale_active_claim",
+      path: "GEMINI.md",
+    }));
+  });
+
+  test("keeps prose paragraphs independent across a blank line", async () => {
+    const root = await createContractFixture();
+    await writeFile(
+      join(root, "GEMINI.md"),
+      "Historical components/agentlens path was removed\n\nPrimary location: components/agentlens\n",
+    );
+
+    const issues = await checkContract({ root, requiredPaths: [], requiredAgentFiles: [], trackedFiles: [] });
+
+    expect(issues).toContainEqual(expect.objectContaining({
+      code: "stale_active_claim",
+      path: "GEMINI.md",
+    }));
+  });
+
   test("surfaces a failed git tracked-file scan", async () => {
     const root = await createContractFixture();
 
