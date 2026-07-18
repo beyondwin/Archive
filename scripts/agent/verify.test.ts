@@ -244,6 +244,60 @@ test("Markdown links run before the selected verification commands", async () =>
   expect(calls).toEqual(["markdown-links", "agent-contract", "diff-check"]);
 });
 
+test("normal ranges execute patch hygiene against the normalized three-dot range", async () => {
+  const calls: string[][] = [];
+  await runVerification({
+    root: process.cwd(),
+    paths: ["docs/README.md"],
+    normalizedRange: {
+      base: "origin/main",
+      head: "HEAD",
+      diffArgs: ["origin/main...HEAD"],
+    },
+    run: async (command) => {
+      if (command.id === "diff-check") calls.push([...command.argv]);
+      return 0;
+    },
+  });
+
+  expect(calls).toEqual([["git", "diff", "--check", "origin/main...HEAD"]]);
+});
+
+test("all-zero ranges execute patch hygiene from the computed empty tree", async () => {
+  const calls: string[][] = [];
+  await runVerification({
+    root: process.cwd(),
+    paths: ["docs/README.md"],
+    normalizedRange: {
+      base: "0".repeat(64),
+      head: "sha256-head",
+      diffArgs: ["sha256-empty-tree", "sha256-head"],
+    },
+    run: async (command) => {
+      if (command.id === "diff-check") calls.push([...command.argv]);
+      return 0;
+    },
+  });
+
+  expect(calls).toEqual([
+    ["git", "diff", "--check", "sha256-empty-tree", "sha256-head"],
+  ]);
+});
+
+test("no-range execution keeps plain working-tree patch hygiene", async () => {
+  const calls: string[][] = [];
+  await runVerification({
+    root: process.cwd(),
+    paths: ["docs/README.md"],
+    run: async (command) => {
+      if (command.id === "diff-check") calls.push([...command.argv]);
+      return 0;
+    },
+  });
+
+  expect(calls).toEqual([["git", "diff", "--check"]]);
+});
+
 test("live provider evidence is selected but never executed by default", async () => {
   const calls: string[] = [];
   const result = await runVerification({

@@ -9,6 +9,17 @@ export interface ChangedPathOptions {
   git?: (args: readonly string[]) => Promise<string>;
 }
 
+export interface NormalizedGitRange {
+  base: string;
+  head: string;
+  diffArgs: readonly string[];
+}
+
+export interface ChangedPathsResult {
+  paths: string[];
+  normalizedRange?: NormalizedGitRange;
+}
+
 export interface VerificationResult {
   selectedScopes: ScopeId[];
   paths: string[];
@@ -31,14 +42,20 @@ class InvalidGitRangeError extends Error {
 export async function collectChangedPaths(
   options: ChangedPathOptions,
 ): Promise<string[]> {
+  return (await collectChangedPathsResult(options)).paths;
+}
+
+export async function collectChangedPathsResult(
+  options: ChangedPathOptions,
+): Promise<ChangedPathsResult> {
   if ((options.base === undefined) !== (options.head === undefined)) {
     throw new Error("base and head must be provided together");
   }
 
   const git = options.git ?? ((args: readonly string[]) => runGit(options.root, args));
-  const diffEndpoints = options.base === undefined
+  const normalizedRange = options.base === undefined
     ? undefined
-    : await resolveGitDiffEndpoints(options.base, options.head!, git);
+    : await normalizeGitRange(options.base, options.head!, git);
   const outputs = options.base === undefined
     ? await Promise.all([
         git(["diff", "--name-only", "--diff-filter=ACMR", "-z", "HEAD"]),
@@ -46,29 +63,32 @@ export async function collectChangedPaths(
       ])
     : [await git([
         "diff", "--name-only", "--diff-filter=ACMR", "-z",
-        ...diffEndpoints!,
+        ...normalizedRange!.diffArgs,
       ])];
 
-  return stablePaths(outputs.flatMap(splitPathOutput));
+  return {
+    paths: stablePaths(outputs.flatMap(splitPathOutput)),
+    normalizedRange,
+  };
 }
 
-async function resolveGitDiffEndpoints(
+export async function normalizeGitRange(
   base: string,
   head: string,
   git: NonNullable<ChangedPathOptions["git"]>,
-): Promise<string[]> {
+): Promise<NormalizedGitRange> {
   try {
     if (/^(?:0{40}|0{64})$/.test(base)) {
       await git(["rev-parse", "--verify", head]);
       const emptyTree = (await git(["hash-object", "-t", "tree", "/dev/null"])).trim();
       if (emptyTree === "") throw new Error("empty tree hash was not returned");
-      return [emptyTree, head];
+      return { base, head, diffArgs: [emptyTree, head] };
     }
     await Promise.all([
       git(["rev-parse", "--verify", base]),
       git(["rev-parse", "--verify", head]),
     ]);
-    return [`${base}...${head}`];
+    return { base, head, diffArgs: [`${base}...${head}`] };
   } catch {
     throw new InvalidGitRangeError(base, head);
   }
@@ -78,11 +98,16 @@ export async function runVerification(options: {
   root: string;
   paths: readonly string[];
   dryRun?: boolean;
+  normalizedRange?: NormalizedGitRange;
   run?: (command: CommandSpec) => Promise<number>;
 }): Promise<VerificationResult> {
   const paths = stablePaths(options.paths);
   const selection = selectVerification(paths);
-  const commands = verificationCommands(selection.markdownFiles, selection.commands);
+  const commands = verificationCommands(
+    selection.markdownFiles,
+    selection.commands,
+    options.normalizedRange,
+  );
   const run = options.run ?? ((command: CommandSpec) => runCommand(options.root, command));
   const commandResults: VerificationResult["commandResults"] = [];
   let exitCode = 0;
@@ -117,6 +142,7 @@ export async function runVerification(options: {
 function verificationCommands(
   markdownFiles: readonly string[],
   selectedCommands: readonly CommandSpec[],
+  normalizedRange?: NormalizedGitRange,
 ): CommandSpec[] {
   const markdownCommand: CommandSpec[] = markdownFiles.length === 0
     ? []
@@ -124,7 +150,12 @@ function verificationCommands(
         id: "markdown-links",
         argv: ["bun", "run", "scripts/agent/check-markdown-links.ts", ...stablePaths(markdownFiles)],
       }];
-  return [...markdownCommand, ...selectedCommands];
+  return [
+    ...markdownCommand,
+    ...selectedCommands.map((command) => command.id === "diff-check" && normalizedRange !== undefined
+      ? { ...command, argv: [...command.argv, ...normalizedRange.diffArgs] }
+      : command),
+  ];
 }
 
 async function runGit(root: string, args: readonly string[]): Promise<string> {
@@ -204,9 +235,16 @@ function parseArguments(args: readonly string[]): CliOptions {
   return options;
 }
 
-function formatSummary(result: VerificationResult): string {
+function formatSummary(
+  result: VerificationResult,
+  normalizedRange?: NormalizedGitRange,
+): string {
   const selection = selectVerification(result.paths);
-  const commands = verificationCommands(selection.markdownFiles, selection.commands);
+  const commands = verificationCommands(
+    selection.markdownFiles,
+    selection.commands,
+    normalizedRange,
+  );
   const commandsById = new Map(commands.map((command) => [command.id, command]));
   const optIn = commands.filter((command) => command.optIn);
   const lines = [
@@ -271,11 +309,16 @@ async function main(): Promise<number> {
 
   const root = process.cwd();
   try {
-    const paths = options.paths.length > 0
-      ? normalizeExplicitPaths(root, options.paths)
-      : await collectChangedPaths({ root, base: options.base, head: options.head });
-    const result = await runVerification({ root, paths, dryRun: options.dryRun });
-    process.stdout.write(formatSummary(result));
+    const changed = options.paths.length > 0
+      ? { paths: normalizeExplicitPaths(root, options.paths) }
+      : await collectChangedPathsResult({ root, base: options.base, head: options.head });
+    const result = await runVerification({
+      root,
+      paths: changed.paths,
+      dryRun: options.dryRun,
+      normalizedRange: changed.normalizedRange,
+    });
+    process.stdout.write(formatSummary(result, changed.normalizedRange));
     return result.exitCode;
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));

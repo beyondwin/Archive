@@ -17,8 +17,11 @@ files, verification-map consistency, tested Codex execpolicy fixtures, and
 tracked-state exclusions. `agent:test` runs the agent-script unit suite.
 `agent:verify` selects deterministic commands from changed tracked and untracked
 paths. It checks touched Markdown links before the selected scope commands and
-includes `git diff --check` for patch hygiene. `--base` and `--head` classify a
-Git range, while repeated `--path` arguments provide an explicit classifier
+includes `git diff --check` for patch hygiene. With `--base` and `--head`, both
+path classification and patch hygiene use the same normalized range: a
+three-dot range for normal refs, or the repository's computed empty tree and
+head for an all-zero push base. No-range and explicit-path modes keep plain
+`git diff --check`. Repeated `--path` arguments provide an explicit classifier
 probe. `--dry-run` prints the stable path, scope, and command manifest without
 executing it.
 
