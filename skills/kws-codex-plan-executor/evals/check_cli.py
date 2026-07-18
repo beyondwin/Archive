@@ -359,6 +359,74 @@ class SequentialCliTest(unittest.TestCase):
             with self.subTest(module=relative):
                 self.assertIn(relative, inventory)
 
+    def test_thin_audit_docs_and_release_inventory_match_runtime(self) -> None:
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        normalized_skill = " ".join(skill.split())
+        normalized_readme = " ".join(readme.split())
+        ownership = (
+            "CPE records facts about what Superpowers did; it does not decide "
+            "what Superpowers must do."
+        )
+
+        for name, normalized in (
+            ("SKILL.md", normalized_skill),
+            ("README.md", normalized_readme),
+        ):
+            with self.subTest(document=name):
+                self.assertIn(ownership, normalized)
+                for phrase in (
+                    "same-run",
+                    "exact eight-part content key",
+                    "success only",
+                    "dirty worktree",
+                    "changed input digest",
+                    "fallback executes once",
+                    "final_review_path",
+                    "final_review_head",
+                    "open_finding_ids",
+                    "open_obligation_ids",
+                    "metadata-only produced-artifact inventory",
+                    "not consumed tokens",
+                    "integration=not_observed",
+                    "inline continuation verified",
+                    "live canary not run",
+                ):
+                    self.assertIn(phrase, normalized)
+
+        deferred = (
+            "review lifecycle",
+            "finding-fix cycles",
+            "transition-obligation engine",
+            "fork policy",
+            "context-reference policy",
+            "cross-run signal promotion",
+            "doctor/list expansion",
+            "acceptance refactor",
+        )
+        for phrase in deferred:
+            self.assertIn(phrase, normalized_readme)
+
+        inventory = readme[readme.index("## Tracked Inventory"):]
+        inventory_block = inventory.split("```text\n", 1)[1].split("\n```", 1)[0]
+        documented = {
+            line.strip() for line in inventory_block.splitlines() if line.strip()
+        }
+        actual = {"README.md", "SKILL.md"}
+        for pattern in (
+            "evals/*.py",
+            "evals/*.sh",
+            "evals/fixtures/*.json",
+            "scripts/*.py",
+            "scripts/cpe_runtime/*.py",
+            "templates/*.json",
+        ):
+            actual.update(
+                path.relative_to(ROOT).as_posix() for path in ROOT.glob(pattern)
+                if path.is_file()
+            )
+        self.assertEqual(actual, documented)
+
 
 class VerificationCliTests(unittest.TestCase):
     def setUp(self) -> None:

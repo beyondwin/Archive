@@ -5,6 +5,11 @@ plans. It snapshots ordered inputs, creates one isolated worktree, launches
 bounded controller slices for one plan at a time, and resumes at the first
 incomplete plan.
 
+CPE records facts about what Superpowers did; it does not decide what
+Superpowers must do. CPE is a thin sequential execution and audit harness;
+Superpowers remains the semantic owner of implementation, task, review, fix,
+verification, subagent, and commit workflows.
+
 ## Release And Installation
 
 Version 2.0.0 is the format-version-2 release. Run state, child results, compiled
@@ -13,10 +18,11 @@ the runner does not support format-1 run state and neither reads nor migrates
 it. Format 2 consumes a strict
 append-only execution-ledger event schema. The release adds typed
 parent-observed capability blockers, progress-aware controller slices, fixed
-checkpoint and launch budgets, strict evidence ingestion, and local result
-envelope repair. It retains process-group cleanup, advisory locking, bounded
-two-pipe draining, strict structured output, and the minimum linked-worktree
-Git write grant.
+checkpoint and launch budgets, strict evidence ingestion, local result envelope
+repair, exact same-run verification reuse, fact-derived optimization reports,
+and a truthful branch handoff. It retains process-group cleanup, advisory
+locking, bounded two-pipe draining, strict structured output, and the minimum
+linked-worktree Git write grant.
 
 The tracked skill directory is the release source of truth. Local Codex and
 Claude Code installations should be linked to this directory rather than
@@ -74,8 +80,26 @@ Attempt diagnostics are stored at
 operator views are
 `~/.codex/orchestrator/<run-id>/reports/optimization-report.json` and
 `~/.codex/orchestrator/<run-id>/reports/optimization-report.md`. Both reports
-materialize recovery counters from authoritative run events, including avoided
-launches, envelope repairs, timeout decisions, and budget stops.
+materialize recovery counters and fact-only observability from authoritative
+run events. Field-complete aggregate usage keeps input, cached input, paired
+uncached input, output, and reasoning-output totals independent, with known and
+unknown attempt counts, missing duration and reason, aggregate
+controller-and-nested scope, and unavailable attribution. Missing values are
+unknown, never zero.
+
+At report time CPE may inspect `.superpowers/sdd` file metadata without reading
+artifact bodies. This metadata-only produced-artifact inventory describes
+produced files, bytes, classes, largest artifacts, and review-diff pressure. It
+is not consumed tokens, is advisory only, and is never an acceptance gate.
+Declared context references and bytes remain null/unavailable unless directly
+evidenced; produced bytes, declared context, and provider tokens never
+substitute for one another.
+
+A completed run also seals `results/branch-handoff.json`. The handoff records
+the branch, saved worktree, observed `HEAD`, last-known `HEAD`, accepted plan
+and evidence references, and `integration=not_observed`. It never implies
+merge, push, deploy, publish, product acceptance, or a parent integration that
+CPE did not observe.
 
 `state.json` format version 2 is authoritative and atomically replaced. Run
 creation records `preparing`, persists immutable input snapshots and the
@@ -124,6 +148,14 @@ ancestry from the plan start and the strict ledger, seals copied evidence, and
 makes the accepted result read-only. Superpowers, not CPE, decides whether the
 implementation, reviews, fixes, and verification are correct.
 
+The verification helper reuses success only for the same-run identity and the
+exact eight-part content key: command ID, argv digest, resolved working
+directory, `HEAD`, environment fingerprint, phase, input digest, and mutable
+input policy. A dirty worktree, changed input digest, changed key field,
+nondeterministic command, or always-execute policy forces execution. An
+untrusted helper or cache never becomes a skip: the fallback executes once,
+records an uncached execution, and is never cached or reused.
+
 State validation also enforces the completed prefix, current index, pristine
 future plans, attempt evidence, run/plan status agreement, and private regular
 result files. Structurally valid but semantically impossible state is rejected
@@ -162,7 +194,9 @@ before Git mutation or child launch.
 - The existing `plan.attempt_finished` event may include `duration_ms`, final
   aggregate `input_tokens`, `cached_input_tokens`, `output_tokens`,
   `reasoning_output_tokens`, and `launcher_prompt_bytes`. Missing or malformed
-  usage is unavailable and does not affect completion.
+  usage remains unavailable rather than becoming zero and does not affect
+  completion. Provider totals cover the controller and nested agents together;
+  per-agent attribution is unavailable.
 
 ## Completion, Failure, And Recovery
 
@@ -265,36 +299,42 @@ A `preparing` resume reuses a worktree only when repository, branch, path, and
 source commit all match. An absent worktree may be recreated from the recorded
 source. Ambiguous or mismatched evidence fails closed without deletion.
 
-## Lean Superpowers Contract
+## Thin Superpowers Ownership Boundary
 
-CPE launches bounded controller slices for each approved plan. Superpowers owns
-task execution, TDD, reviews, consolidated fixes, the cross-task final review,
-final product verification, and commits. CPE owns the durable plan boundary,
-bounded recovery, and mechanical handoff validation; it does not independently
-prove review quality.
+CPE records facts about what Superpowers did; it does not decide what
+Superpowers must do. CPE launches bounded sequential slices, records submitted
+evidence, and mechanically checks the completion envelope. Superpowers alone
+chooses task boundaries, TDD, the review lifecycle, finding-fix cycles, final
+review, verification scope, subagent coordination, and commits.
 
-- The controller uses file-backed task briefs, implementer reports, review
-  packages, task review files, a final-review file, and
-  `.superpowers/sdd/progress.md`. Compact returns keep only status, commits,
-  one-line test evidence, finding IDs, decisions, and the next action in
-  controller context.
-- Implementers run plan-declared focused RED/GREEN verification and tests
-  affected by later fixes. No task gets an automatic full-suite run unless
-  broader verification is itself an approved task deliverable.
-- Reviewers reuse recorded evidence and inspect task briefs, reports, and
-  file-backed diffs. One consolidated fix pass resolves a task finding set;
-  the reviewer then checks only the delta and affected evidence.
-- After all tasks, one whole-branch review checks cross-task interfaces,
-  regressions, global constraints, and unresolved findings. It does not replay
-  each task review.
-- The plan controller runs one final full verification at the final HEAD. The
-  same normalized command is not run twice at one `HEAD` unless the first
-  observation was an explicitly recorded transient infrastructure failure or
-  the approved plan intentionally tests mutable external state.
+CPE therefore does not require or reconstruct task, delta, or whole-branch
+review stages; it does not operate a transition-obligation engine; and it does
+not enforce a fork policy, context-reference policy, or cross-run signal
+promotion. It preserves the existing fail-closed checks for
+`final_review_path`, `final_review_head`, `open_finding_ids`,
+`open_obligation_ids`, successful verification outcomes, exact clean `HEAD`,
+and ancestry because those are submitted handoff facts, not workflow policy.
+Review and coordination events already present in the strict ledger may be
+counted or timed for advisory reporting, but CPE does not infer a lifecycle
+from them.
 
-A weak approved plan that lacks focused task commands or a final verification
-command produces a plan-contract blocker. The controller does not invent broad
-package or repository tests to repair the plan at runtime.
+The removed workflow-policy scope is explicitly deferred as follows:
+
+- review lifecycle and finding-fix cycles belong to Superpowers;
+- a transition-obligation engine and subagent fork policy belong to
+  Superpowers or a future Waygent orchestration surface;
+- context-reference policy and cross-run signal promotion belong to
+  Waygent/Lens or a separate read-only analyzer;
+- doctor/list expansion and a broad acceptance refactor are separate future
+  work, not part of the CPE 2.0 release.
+
+### Failed Controller And Inline Continuation
+
+A terminally failed CPE controller is immutable audit-only. If an operator
+continues work manually in the same isolated worktree, the failed controller
+state is not resumed, rewritten, or relabelled. `.superpowers/sdd/progress.md`
+is then the sole current inline ledger. The operational history and final
+report use `inline continuation verified`, never a false CPE acceptance claim.
 
 ## Limitations
 
@@ -310,6 +350,9 @@ package or repository tests to repair the plan at runtime.
   quality or rerun product verification after acceptance.
 - Attempt usage totals can aggregate the root controller and nested subagents.
   They are not a root-controller measurement or a root-versus-subagent split.
+- Produced artifact bytes are filesystem metadata, not consumed tokens or
+  declared context. Artifact inventory is advisory and cannot accept or reject
+  a run.
 - Missing plan-focused or final verification is a plan-contract blocker, not
   permission for CPE to invent broad tests.
 - Environment filtering is best-effort defense, not a complete secret boundary.
@@ -338,12 +381,18 @@ python3 scripts/cpe.py inspect --help
 ```
 
 `./evals/run.sh` is the only complete behavioral gate. Run it once at the final
-revision after the whole-branch review, then run the static syntax and public
-help checks above. Do not repeat an identical command at the same `HEAD` unless
-its first observation was an explicitly recorded transient infrastructure
-failure. The deterministic gate is sequential, network-free, credential-free,
-and model-free. Its observed duration depends on the host and the number of
-real-process lifecycle fixtures.
+clean release revision after the externally owned final integration review.
+Use focused tests and static syntax checks during implementation; do not repeat
+an identical command at the same `HEAD` unless its first observation was an
+explicitly recorded transient infrastructure failure. The deterministic gate
+is sequential, network-free, credential-free, and model-free. Its observed
+duration depends on the host and the number of real-process lifecycle fixtures.
+
+For this local release, `live canary not run` is the truthful status because
+the current Codex CLI usage limit prevents a provider-backed canary. The
+sanitized deterministic forensic fixture is local release evidence only. It
+does not claim a live canary, external integration, publication, or deployment,
+and the version remains unpublished.
 
 ## Tracked Inventory
 
@@ -353,6 +402,10 @@ SKILL.md
 evals/check_cli.py
 evals/check_runner.py
 evals/fake_codex.py
+evals/fixtures/canvas-direct-run-format2.json
+evals/fixtures/canvas-format1-token-forensic.json
+evals/fixtures/gasstation-comparative.json
+evals/fixtures/readmates-comparative.json
 evals/run.sh
 scripts/cpe.py
 scripts/cpe_runtime/__init__.py
@@ -365,6 +418,7 @@ scripts/cpe_runtime/reporting.py
 scripts/cpe_runtime/result_validation.py
 scripts/cpe_runtime/runner.py
 scripts/cpe_runtime/state.py
+scripts/cpe_runtime/verification.py
 templates/compiled-run-index.schema.json
 templates/execution-ledger.schema.json
 templates/optimization-report.schema.json
