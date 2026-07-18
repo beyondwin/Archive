@@ -109,6 +109,22 @@ describe("checkContract", () => {
     expect(issues).toContainEqual(expect.objectContaining({ code: "missing_package_script" }));
   });
 
+  test("reports an unavailable Codex execpolicy command", async () => {
+    const root = await createContractFixture();
+
+    const issues = await checkContract({
+      root,
+      requiredPaths: [],
+      requiredAgentFiles: [],
+      trackedFiles: [],
+      codexBin: "definitely-missing-codex",
+    });
+
+    expect(issues).toContainEqual(expect.objectContaining({
+      code: "codex_execpolicy_unavailable",
+    }));
+  });
+
   test("reports a non-executable executor gate", async () => {
     const root = await createContractFixture();
     await chmod(join(root, EXECUTOR_GATES[0]), 0o644);
