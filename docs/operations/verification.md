@@ -12,12 +12,15 @@ bun run agent:verify -- --dry-run --path apps/console/src/App.tsx
 bun run agent:verify -- --base origin/main --head HEAD
 ```
 
-`agent:contract` validates instruction discovery, Markdown links, patch hygiene,
-and the tested Codex execpolicy fixtures. `agent:test` runs the agent-script
-unit suite. `agent:verify` selects deterministic commands from changed tracked
-and untracked paths; `--base` and `--head` classify a Git range, while repeated
-`--path` arguments provide an explicit classifier probe. `--dry-run` prints the
-stable path, scope, and command manifest without executing it.
+`agent:contract` validates the repository contract: required guidance and gate
+files, verification-map consistency, tested Codex execpolicy fixtures, and
+tracked-state exclusions. `agent:test` runs the agent-script unit suite.
+`agent:verify` selects deterministic commands from changed tracked and untracked
+paths. It checks touched Markdown links before the selected scope commands and
+includes `git diff --check` for patch hygiene. `--base` and `--head` classify a
+Git range, while repeated `--path` arguments provide an explicit classifier
+probe. `--dry-run` prints the stable path, scope, and command manifest without
+executing it.
 
 Known paths select the narrowest sufficient scopes. Changes crossing two or
 more `packages/*` roots or touching `bun.lock` select `waygent-closure`. Any

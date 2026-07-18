@@ -61,6 +61,22 @@ test.each([
 );
 
 test.each([
+  ["Codex project guidance", ".codex/README.md"],
+  ["skills guidance", "skills/README.md"],
+] satisfies readonly [string, string][])(
+  "classifies exact $0 as docs with Markdown checking",
+  (_name, path) => {
+    const selection = selectVerification([path]);
+
+    expect(selection.scopeIds).toEqual(["docs"]);
+    expect(selection.commands.map(toCommand)).toEqual([contract, diffCheck]);
+    expect(selection.markdownFiles).toEqual([path]);
+    expect(selection.unknownPaths).toEqual([]);
+    expect(selection.scopeIds).not.toContain("full-offline");
+  },
+);
+
+test.each([
   ["bun.lock plus another app", ["bun.lock", "apps/api/src/index.ts"]],
   ["bun.lock plus console", ["bun.lock", "apps/console/src/App.tsx"]],
   ["cross-package plus app", [

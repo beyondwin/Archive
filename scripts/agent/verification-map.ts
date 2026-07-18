@@ -63,7 +63,11 @@ const OFFLINE_COMMANDS = [
 export const VERIFICATION_SCOPES: readonly VerificationScope[] = [
   {
     id: "docs",
-    matchers: ["docs/", "README.md", "AGENTS.md", "CLAUDE.md", "GEMINI.md", ".cursor/rules/", ".github/copilot-instructions.md", "code_review.md"],
+    matchers: [
+      "docs/", "README.md", ".codex/README.md", "skills/README.md",
+      "AGENTS.md", "CLAUDE.md", "GEMINI.md", ".cursor/rules/",
+      ".github/copilot-instructions.md", "code_review.md",
+    ],
     commands: [CONTRACT, DIFF_CHECK],
   },
   { id: "console", matchers: ["apps/console/"], commands: [CONTRACT, DIFF_CHECK, CONSOLE_TEST, CONSOLE_BUILD] },
