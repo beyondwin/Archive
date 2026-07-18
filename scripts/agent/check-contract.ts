@@ -18,7 +18,6 @@ const EXECUTOR_GATES = [
   "skills/kws-claude-multi-agent-executor/evals/run.sh",
 ] as const;
 
-const STALE_ACTIVE_PATH = /components\/agentlens/i;
 const ACTIVE_CLAIM = /\b(?:active|current|primary)\b/i;
 const RETIRED_CLAIM = /\b(?:removed|legacy|historical|retired|not)\b/i;
 
@@ -48,11 +47,11 @@ export async function checkContract(
   }
 
   for (const path of requiredAgentFiles) {
-    if (!await exists(join(root, path))) {
+    if (!await isReadableRegularFile(join(root, path))) {
       issues.push({
         code: "missing_agent_file",
         path,
-        message: "required agent guidance file is missing",
+        message: "required agent guidance file is missing or is not a readable regular file",
       });
     }
   }
@@ -61,7 +60,11 @@ export async function checkContract(
   issues.push(...await checkPackageScripts(root));
   issues.push(...await checkExecutorGates(root));
 
-  const trackedFiles = options.trackedFiles ?? await listTrackedFiles(root);
+  const scan = options.trackedFiles === undefined ? await listTrackedFiles(root) : undefined;
+  if (scan?.issue) {
+    issues.push(scan.issue);
+  }
+  const trackedFiles = options.trackedFiles ?? scan?.files ?? [];
   for (const path of trackedFiles) {
     if (LOCAL_STATE_PATTERN.test(path)) {
       issues.push({
@@ -86,19 +89,28 @@ async function checkGuidance(root: string): Promise<ContractIssue[]> {
 
   for (const path of CURRENT_GUIDANCE_FILES) {
     const file = join(root, path);
-    if (!await exists(file)) {
+    if (!await isReadableRegularFile(file)) {
       issues.push({
-        code: "stale_active_claim",
+        code: "invalid_guidance_file",
         path,
-        message: "current guidance file is missing",
+        message: "current guidance file must be a readable regular file",
       });
       continue;
     }
 
-    const lines = (await readFile(file, "utf8")).split("\n");
-    if (lines.some((line) =>
-      STALE_ACTIVE_PATH.test(line) && ACTIVE_CLAIM.test(line) && !RETIRED_CLAIM.test(line),
-    )) {
+    let contents: string;
+    try {
+      contents = await readFile(file, "utf8");
+    } catch {
+      issues.push({
+        code: "invalid_guidance_file",
+        path,
+        message: "current guidance file could not be read",
+      });
+      continue;
+    }
+
+    if (hasStaleActiveClaim(contents)) {
       issues.push({
         code: "stale_active_claim",
         path,
@@ -138,10 +150,10 @@ async function checkExecutorGates(root: string): Promise<ContractIssue[]> {
   const issues: ContractIssue[] = [];
   for (const path of EXECUTOR_GATES) {
     try {
-      await access(join(root, path), constants.X_OK);
       if (!(await stat(join(root, path))).isFile()) {
         throw new Error("executor gate is not a file");
       }
+      await access(join(root, path), constants.X_OK);
     } catch {
       issues.push({
         code: "non_executable_gate",
@@ -153,16 +165,29 @@ async function checkExecutorGates(root: string): Promise<ContractIssue[]> {
   return issues;
 }
 
-async function listTrackedFiles(root: string): Promise<string[]> {
-  const process = Bun.spawn(["git", "ls-files", "-z"], {
-    cwd: root,
-    stdout: "pipe",
-    stderr: "ignore",
-  });
-  if (await process.exited !== 0) {
-    return [];
+async function listTrackedFiles(root: string): Promise<{
+  files: string[];
+  issue?: ContractIssue;
+}> {
+  try {
+    const process = Bun.spawn(["git", "ls-files", "-z"], {
+      cwd: root,
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    if (await process.exited !== 0) {
+      return {
+        files: [],
+        issue: trackedFileScanIssue(),
+      };
+    }
+    return { files: (await new Response(process.stdout).text()).split("\0").filter(Boolean) };
+  } catch {
+    return {
+      files: [],
+      issue: trackedFileScanIssue(),
+    };
   }
-  return (await new Response(process.stdout).text()).split("\0").filter(Boolean);
 }
 
 async function exists(path: string): Promise<boolean> {
@@ -172,6 +197,58 @@ async function exists(path: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+async function isReadableRegularFile(path: string): Promise<boolean> {
+  try {
+    if (!(await stat(path)).isFile()) {
+      return false;
+    }
+    await access(path, constants.R_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function hasStaleActiveClaim(contents: string): boolean {
+  const normalized = contents.replace(/\s+/g, " ");
+  for (const match of normalized.matchAll(/components\/agentlens/gi)) {
+    const pathIndex = match.index ?? 0;
+    const claim = normalized.slice(
+      sentenceStart(normalized, pathIndex),
+      sentenceEnd(normalized, pathIndex + match[0].length),
+    );
+    if (ACTIVE_CLAIM.test(claim) && !RETIRED_CLAIM.test(claim)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function sentenceStart(contents: string, index: number): number {
+  return Math.max(
+    contents.lastIndexOf(".", index - 1),
+    contents.lastIndexOf("!", index - 1),
+    contents.lastIndexOf("?", index - 1),
+  ) + 1;
+}
+
+function sentenceEnd(contents: string, index: number): number {
+  const endings = [
+    contents.indexOf(".", index),
+    contents.indexOf("!", index),
+    contents.indexOf("?", index),
+  ].filter((ending) => ending !== -1);
+  return endings.length === 0 ? contents.length : Math.min(...endings);
+}
+
+function trackedFileScanIssue(): ContractIssue {
+  return {
+    code: "tracked_file_scan_failed",
+    path: "git ls-files -z",
+    message: "unable to list tracked files",
+  };
 }
 
 if (import.meta.main) {
