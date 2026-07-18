@@ -322,7 +322,7 @@ def _redundant_receipt_count(receipts: Sequence[ReviewReceipt]) -> int:
             receipt.scope,
             receipt.base_head,
             receipt.head,
-            receipt.task_ids,
+            tuple(sorted(receipt.task_ids)),
             receipt.evidence_digest,
         )
         if identity in seen:
@@ -353,6 +353,8 @@ def validate_review_lifecycle(
     fix_ids = [fix.fix_id for fix in fixes]
     if len(fix_ids) != len(set(fix_ids)):
         raise ValueError("fix ID is duplicated")
+    if review_id_set & set(fix_ids):
+        raise ValueError("review and fix IDs overlap")
 
     covered_tasks = {
         task_id
@@ -403,6 +405,18 @@ def validate_review_lifecycle(
         if receipt.disposition == "changes_requested":
             assert receipt.finding_set_id is not None
             requested_by_set.setdefault(receipt.finding_set_id, []).append(receipt)
+    duplicate_openers = sorted(
+        finding_set
+        for finding_set, grouped in requested_by_set.items()
+        if len(grouped) > 1
+    )
+    if duplicate_openers:
+        return ReviewLifecycleDecision(
+            False,
+            "duplicate_finding_set_opener",
+            tuple(f"finding_set:{item}" for item in duplicate_openers),
+            (),
+        )
     fixes_by_set: dict[str, list[FindingFixReceipt]] = {}
     for fix in fixes:
         fixes_by_set.setdefault(fix.finding_set_id, []).append(fix)
