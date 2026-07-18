@@ -1,0 +1,34 @@
+export const REQUIRED_PATHS = [
+  "apps/cli", "apps/api", "apps/console",
+  "packages/orchestrator", "packages/runway-control",
+  "packages/provider-adapters", "packages/lens-store",
+  "packages/lens-projectors", "native/kernel", "skills/waygent",
+  "skills/kws-codex-plan-executor", "skills/kws-claude-multi-agent-executor",
+] as const;
+
+export const REQUIRED_AGENT_FILES = [
+  "AGENTS.md", "apps/AGENTS.md", "packages/AGENTS.md",
+  "native/kernel/AGENTS.md", "skills/AGENTS.md",
+  "skills/kws-codex-plan-executor/AGENTS.md",
+  "skills/kws-claude-multi-agent-executor/AGENTS.md",
+] as const;
+
+export const CURRENT_GUIDANCE_FILES = [
+  "AGENTS.md", "CLAUDE.md", "GEMINI.md", ".cursor/rules/archive.mdc",
+  ".github/copilot-instructions.md", ".gitignore", "code_review.md",
+] as const;
+
+export const LOCAL_STATE_PATTERN =
+  /^(?:\.waygent|\.agentlens|\.claude|\.codex-orchestrator|\.orchestrator|\.superpowers|node_modules|native\/kernel\/target)(?:\/|$)/;
+
+export type ContractIssueCode =
+  | "missing_active_path" | "missing_agent_file" | "stale_active_claim"
+  | "missing_package_script" | "non_executable_gate"
+  | "tracked_local_state" | "invalid_verification_map"
+  | "codex_execpolicy_unavailable";
+
+export interface ContractIssue {
+  code: ContractIssueCode;
+  path: string;
+  message: string;
+}

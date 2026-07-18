@@ -18,7 +18,8 @@
     "waygent:android-intake-trust": "bun test tests/integration/waygent-android-intake-trust.test.ts",
     "waygent:live-smoke": "bun test tests/integration/waygent-live-provider-smoke.test.ts",
     "waygent:live-provider-smoke": "bun run waygent:live-smoke",
-    "waygent:dogfood": "bun test tests/integration/waygent-dogfood-evidence.test.ts"
+    "waygent:dogfood": "bun test tests/integration/waygent-dogfood-evidence.test.ts",
+    "agent:contract": "bun run scripts/agent/check-contract.ts"
   },
   "dependencies": {
     "@waygent/design-contract": "workspace:*",
