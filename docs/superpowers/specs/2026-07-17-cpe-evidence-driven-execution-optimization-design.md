@@ -106,13 +106,13 @@ shape 문제 때문에 별도 controller attempt가 추가됐다.
 
 ```text
 listen EPERM 127.0.0.1:3114
-sandbox-EPERM-localhost-and-graphify
-managed-environment EPERM: listen 127.0.0.1:3115 and graphify rebuild
-managed_environment_eperm_loopback_127.0.0.1:3114_and_graphify_rebuild
+sandbox-EPERM-localhost
+managed-environment EPERM: listen 127.0.0.1:3115
+managed_environment_eperm_loopback_127.0.0.1:3114
 ```
 
-모델 controller를 다시 실행해도 sandbox의 loopback bind 권한이나 Graphify
-write capability는 생기지 않는다. free-form signature와 수동 resume이
+모델 controller를 다시 실행해도 sandbox의 loopback bind 권한은
+생기지 않는다. free-form signature와 수동 resume이
 동일 환경에서 큰 attempt를 반복하게 만들었다.
 
 ### 2.3 live integration drift
@@ -947,10 +947,6 @@ git diff --check
 bun run check
 ```
 
-문서 또는 구조 변경이 repo graph에 영향을 주면 현재 checkout에 존재하는
-Graphify freshness 절차를 확인한 뒤 실행한다. 삭제된 과거 command를 추정해
-복원하지 않는다.
-
 ## 17. 정량 수용 기준
 
 - 동일 environment blocker 10회 resume에서 추가 child launch 0회
@@ -1018,7 +1014,7 @@ Graphify freshness 절차를 확인한 뒤 실행한다. 삭제된 과거 comman
 - Plan 01과 Plan 02에서 timeout 사이 HEAD 전진
 - 동일 `timeout` signature 때문에 operator resume 필요
 - `unsafe_workflow_artifact`와 `invalid_result`로 envelope correction attempt 추가
-- Plan 03에서 loopback bind와 Graphify write EPERM 반복
+- Plan 03에서 loopback bind EPERM 반복
 - accepted Plan 01 result는 required browser/manual verification이 blocked였음을
   summary에 기록했지만 mechanical completion으로 수락
 - worktree cleanup 뒤 receipt target을 재감사하기 어려움
@@ -1045,7 +1041,7 @@ Graphify freshness 절차를 확인한 뒤 실행한다. 삭제된 과거 comman
 
 ### A.2 `cpe-96f171c004ac49b8`
 
-이 run의 Plan 02는 17 attempts까지 진행됐다. Loopback/Graphify 환경 blocker가
+이 run의 Plan 02는 17 attempts까지 진행됐다. Loopback 환경 blocker가
 port와 문구만 바뀐 채 반복됐다. 동일 환경에서 controller resume이 capability를
 바꾸지 못한다는 가장 강한 비용 근거다.
 

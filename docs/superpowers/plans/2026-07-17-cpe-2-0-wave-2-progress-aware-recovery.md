@@ -149,7 +149,6 @@ _ALLOWED_DETAIL_KEYS = {
     "loopback_bind": {"host", "host_family", "sandbox_policy"},
     "workspace_write": {"filesystem_type", "sandbox_policy"},
     "git": {"version", "worktree_supported"},
-    "graphify_write": {"configured", "sandbox_policy"},
 }
 
 
