@@ -64,7 +64,13 @@ from .result_validation import (
     normalize_result_v2,
     strict_json_object,
 )
-from .state import PRE_EXECUTION_WORKTREE_BLOCKER, StateStore, atomic_private_write
+from .state import (
+    DEFAULT_CONTROLLER_SLICE_SECONDS,
+    DEFAULT_SANDBOX_MODE,
+    PRE_EXECUTION_WORKTREE_BLOCKER,
+    StateStore,
+    atomic_private_write,
+)
 from .verification import (
     VerificationRequest,
     execute_verification,
@@ -819,6 +825,8 @@ class SequentialRunner:
         specs: Sequence[Path],
         plans: Sequence[Path],
         run_id: str | None = None,
+        sandbox_mode: str = DEFAULT_SANDBOX_MODE,
+        controller_slice_seconds: int = DEFAULT_CONTROLLER_SLICE_SECONDS,
     ) -> dict[str, Any]:
         identifier = run_id or f"cpe-{uuid.uuid4().hex[:16]}"
         if not _RUN_ID.fullmatch(identifier):
@@ -828,6 +836,8 @@ class SequentialRunner:
             specs=specs,
             plans=plans,
             run_id=identifier,
+            sandbox_mode=sandbox_mode,
+            controller_slice_seconds=controller_slice_seconds,
         )
         if store.state["status"] == "failed":
             return self._summary(store, error="compiled_index_preparation_failed")
@@ -1683,6 +1693,8 @@ class SequentialRunner:
         specs: Sequence[Path],
         plans: Sequence[Path],
         run_id: str,
+        sandbox_mode: str,
+        controller_slice_seconds: int,
     ) -> StateStore:
         repository = workspace.resolve(strict=True)
         self._validate_workspace(repository)
@@ -1717,6 +1729,8 @@ class SequentialRunner:
             branch=branch,
             specs=specs,
             plans=plans,
+            sandbox_mode=sandbox_mode,
+            controller_slice_seconds=controller_slice_seconds,
             initial_status="preparing",
         )
         try:

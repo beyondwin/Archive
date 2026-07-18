@@ -13,7 +13,12 @@ from pathlib import Path
 from typing import Any, Sequence
 
 
-FORMAT_VERSION = 2
+FORMAT_VERSION = 3
+DEFAULT_SANDBOX_MODE = "danger-full-access"
+DEFAULT_CONTROLLER_SLICE_SECONDS = 1200
+MIN_CONTROLLER_SLICE_SECONDS = 1200
+MAX_CONTROLLER_SLICE_SECONDS = 3600
+SANDBOX_MODES = {"danger-full-access", "workspace-write"}
 RUN_STATUSES = {
     "preparing",
     "ready",
@@ -33,10 +38,10 @@ PLAN_STATUSES = {
     "failed",
 }
 DEFAULT_PLAN_BUDGET = {
-    "controller_slice_timeout_seconds": 3600,
+    "controller_slice_timeout_seconds": DEFAULT_CONTROLLER_SLICE_SECONDS,
     "max_progress_checkpoints": 6,
-    "plan_wall_budget_seconds": 21_600,
-    "max_controller_launches": 8,
+    "plan_wall_budget_seconds": 7200,
+    "max_controller_launches": 6,
 }
 PRE_EXECUTION_WORKTREE_BLOCKER = {
     "kind": "verification_environment",
@@ -61,6 +66,34 @@ _DECISION_REASONS = {
     },
     "finish": {"child_completed"},
 }
+
+
+def validate_run_config(
+    *, sandbox_mode: object, controller_slice_seconds: object,
+) -> dict[str, object]:
+    if sandbox_mode not in SANDBOX_MODES:
+        raise ValueError("controller sandbox is invalid")
+    if (
+        not isinstance(controller_slice_seconds, int)
+        or isinstance(controller_slice_seconds, bool)
+        or not MIN_CONTROLLER_SLICE_SECONDS
+        <= controller_slice_seconds
+        <= MAX_CONTROLLER_SLICE_SECONDS
+    ):
+        raise ValueError("controller slice must be between 1200 and 3600 seconds")
+    return {
+        "sandbox_mode": sandbox_mode,
+        "controller_slice_seconds": controller_slice_seconds,
+    }
+
+
+def _plan_budget(run_config: dict[str, object]) -> dict[str, int]:
+    return {
+        **DEFAULT_PLAN_BUDGET,
+        "controller_slice_timeout_seconds": int(
+            run_config["controller_slice_seconds"]
+        ),
+    }
 
 
 def _write_all(descriptor: int, payload: bytes) -> None:
@@ -134,7 +167,7 @@ def _read_document(path: Path) -> tuple[Path, bytes]:
 
 
 class StateStore:
-    """Own one format-version-2 state file beneath a private run root."""
+    """Own one format-version-3 state file beneath a private run root."""
 
     def __init__(self, root: Path, state: dict[str, Any]) -> None:
         self.root = root
@@ -154,6 +187,8 @@ class StateStore:
         branch: str,
         specs: Sequence[Path],
         plans: Sequence[Path],
+        sandbox_mode: str = DEFAULT_SANDBOX_MODE,
+        controller_slice_seconds: int = DEFAULT_CONTROLLER_SLICE_SECONDS,
         initial_status: str = "preparing",
     ) -> "StateStore":
         if not plans:
@@ -166,6 +201,10 @@ class StateStore:
             raise ValueError("run identity is invalid")
         if not _SHA_PATTERN.fullmatch(source_commit):
             raise ValueError("source commit must be a full Git object ID")
+        run_config = validate_run_config(
+            sandbox_mode=sandbox_mode,
+            controller_slice_seconds=controller_slice_seconds,
+        )
         repository = source_repository.resolve(strict=True)
         if not repository.is_dir() or repository.is_symlink():
             raise ValueError("source repository must be a real directory")
@@ -224,7 +263,7 @@ class StateStore:
                 "last_known_head": None,
                 "result_path": None,
                 "original_result_path": None,
-                "budget": dict(DEFAULT_PLAN_BUDGET),
+                "budget": _plan_budget(run_config),
             }
             for record in records
             if record["role"] == "plan"
@@ -237,6 +276,7 @@ class StateStore:
             "source_commit": source_commit,
             "worktree": str(worktree.resolve()),
             "branch": branch,
+            "run_config": run_config,
             "current_plan_index": 0,
             "inputs": records,
             "plans": plan_records,
@@ -264,7 +304,7 @@ class StateStore:
         except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise ValueError("run state is unavailable or invalid") from exc
         version = payload.get("format_version") if isinstance(payload, dict) else None
-        if version == 1:
+        if version in {1, 2}:
             raise ValueError("unsupported_legacy_run")
         if version != FORMAT_VERSION:
             raise ValueError("unsupported_run_format")
@@ -277,12 +317,20 @@ class StateStore:
         required = {
             "format_version", "run_id", "status", "source_repository", "source_commit",
             "worktree", "branch", "current_plan_index", "inputs", "plans",
+            "run_config",
             "operator_contract_path", "operator_contract_sha256",
             "compiled_run_index_path", "compiled_run_index_sha256",
             "pre_execution_blocker",
         }
         if set(state) != required or state.get("format_version") != FORMAT_VERSION:
-            raise ValueError("invalid format-version-2 state")
+            raise ValueError("invalid format-version-3 state")
+        run_config = state["run_config"]
+        if not isinstance(run_config, dict) or set(run_config) != {
+            "sandbox_mode", "controller_slice_seconds",
+        }:
+            raise ValueError("run config is invalid")
+        if validate_run_config(**run_config) != run_config:
+            raise ValueError("run config is invalid")
         if not isinstance(state["run_id"], str) or not _RUN_ID_PATTERN.fullmatch(state["run_id"]) or state["branch"] != f"codex/{state['run_id']}":
             raise ValueError("run identity is invalid")
         if not all(isinstance(state[name], str) and Path(state[name]).is_absolute() for name in ("source_repository", "worktree")):
@@ -487,7 +535,7 @@ class StateStore:
                     isinstance(value, int) and not isinstance(value, bool)
                     for value in budget.values()
                 )
-                or budget != DEFAULT_PLAN_BUDGET
+                or budget != _plan_budget(run_config)
             ):
                 raise ValueError("plan budget is invalid")
             if pending is not None:
@@ -620,7 +668,7 @@ class StateStore:
             "last_known_head": None,
             "result_path": None,
             "original_result_path": None,
-            "budget": dict(DEFAULT_PLAN_BUDGET),
+            "budget": _plan_budget(state["run_config"]),
         }
         for position, plan in enumerate(plans):
             if position < completed_prefix:
