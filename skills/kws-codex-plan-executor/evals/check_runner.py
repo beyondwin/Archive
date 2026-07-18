@@ -4569,12 +4569,14 @@ class _RecoveryRunnerFixture(unittest.TestCase):
         )
         return path
 
-    def runner(self, run_id: str) -> SequentialRunner:
+    def runner(
+        self, run_id: str, *, accelerated_timeout: float = 0.12,
+    ) -> SequentialRunner:
         run_root = self.home / "orchestrator" / run_id
         launcher = CodexLauncher(
             schema_path=ROOT / "templates" / "plan-result-schema.json",
             codex_bin=str(self.fake),
-            timeout_seconds=0.12,
+            timeout_seconds=accelerated_timeout,
             termination_grace_seconds=0.02,
             environ={
                 "PATH": os.environ["PATH"],
@@ -4592,7 +4594,9 @@ class _RecoveryRunnerFixture(unittest.TestCase):
             timeout = float(request.timeout_seconds)  # type: ignore[attr-defined]
             if timeout != 300.0:
                 self.captured_timeouts.append(timeout)
-                request = dataclasses.replace(request, timeout_seconds=0.12)
+                request = dataclasses.replace(
+                    request, timeout_seconds=accelerated_timeout,
+                )
             return real_launch(request, lock_fd)  # type: ignore[arg-type]
 
         launcher._launch_structured = mock.Mock(side_effect=accelerated)
@@ -6564,6 +6568,9 @@ class FullActionWalReconciliationTests(_RecoveryRunnerFixture):
 
 
 class BranchHandoffTests(_RecoveryRunnerFixture):
+    def runner(self, run_id: str) -> SequentialRunner:
+        return super().runner(run_id, accelerated_timeout=1.0)
+
     def test_completion_persists_truthful_immutable_handoff_before_state(self) -> None:
         run_id = "branch-handoff-complete"
         runner = self.runner(run_id)
