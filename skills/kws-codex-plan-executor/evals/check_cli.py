@@ -18,7 +18,6 @@ ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "scripts" / "cpe.py"
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from cpe_runtime.compiler import compiler_cache_key, default_operator_contract
 from cpe_runtime.state import StateStore
 from cpe_runtime.verification import materialize_helper_descriptor
 
@@ -555,61 +554,7 @@ class VerificationCliTests(unittest.TestCase):
             specs=[],
             plans=[plan],
         )
-        contract = default_operator_contract(self.store.state)
-        contract_path = self.store.root / "operator-contract.json"
-        contract_payload = json.dumps(
-            contract, sort_keys=True, separators=(",", ":")
-        ).encode("utf-8")
-        contract_path.write_bytes(contract_payload)
-        contract_path.chmod(0o600)
-        plan_record = next(
-            item for item in self.store.state["inputs"] if item["role"] == "plan"
-        )
-        source = Path(plan_record["snapshot_path"]).read_bytes()
-        compiled = {
-            "format_version": 2,
-            "cache_key": compiler_cache_key(self.store.state, contract),
-            "plans": [{
-                "plan_id": "plan-01",
-                "source_sha256": plan_record["sha256"],
-                "byte_length": plan_record["byte_length"],
-                "line_count": 1,
-                "tasks": [{
-                    "task_id": "task-01",
-                    "order": 0,
-                    "source_line_start": 1,
-                    "source_line_end": 1,
-                    "source_text_sha256": hashlib.sha256(source).hexdigest(),
-                }],
-                "verifications": [{
-                    "command_id": "unit",
-                    "argv": list(self.argv),
-                    "allowed_branch_phases": ["task_green", "final_verification"],
-                    "deterministic": True,
-                    "mutable_input_policy": "forbidden",
-                    "required_artifacts": [],
-                    "source_line_start": 1,
-                    "source_line_end": 1,
-                    "source_text_sha256": hashlib.sha256(source).hexdigest(),
-                }],
-                "capabilities": [],
-                "execution_advisories": [],
-                "unknowns": [],
-            }],
-        }
-        compiled_path = self.store.root / "compiled-run-index.json"
-        compiled_payload = json.dumps(
-            compiled, sort_keys=True, separators=(",", ":")
-        ).encode("utf-8")
-        compiled_path.write_bytes(compiled_payload)
-        compiled_path.chmod(0o600)
-        self.store.state.update(
-            status="ready",
-            operator_contract_path=str(contract_path.resolve()),
-            operator_contract_sha256=hashlib.sha256(contract_payload).hexdigest(),
-            compiled_run_index_path=str(compiled_path.resolve()),
-            compiled_run_index_sha256=hashlib.sha256(compiled_payload).hexdigest(),
-        )
+        self.store.state["status"] = "ready"
         self.store.save()
         materialize_helper_descriptor(self.store.root, CLI)
         self.environment = dict(os.environ, CODEX_HOME=str(self.home))
@@ -682,18 +627,14 @@ class VerificationCliTests(unittest.TestCase):
             self.assertEqual("failed", json.loads(result.stdout)["status"])
         self.assertFalse(self.counter.exists())
 
-    def test_verify_rejects_undeclared_command_without_executing(self) -> None:
+    def test_verify_accepts_superpowers_selected_command(self) -> None:
         result = self.command(*self.verify_arguments(command_id="undeclared"))
-        self.assertEqual(1, result.returncode, result.stdout + result.stderr)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         payload = json.loads(result.stdout)
-        self.assertEqual("uncached_command_required", payload["status"])
-        self.assertEqual("uncached_command_required", payload["reason_code"])
+        self.assertEqual("passed", payload["status"])
         self.assertEqual("undeclared", payload["command_id"])
         self.assertEqual("task", payload["phase"])
-        self.assertEqual(64, len(payload["argv_digest"]))
-        self.assertEqual(64, len(payload["evidence_key"]))
-        self.assertIsNone(payload["receipt_path"])
-        self.assertFalse(self.counter.exists())
+        self.assertEqual("x", self.counter.read_text(encoding="utf-8"))
 
     def test_exact_second_invocation_reuses_first_receipt(self) -> None:
         first = self.command(*self.verify_arguments())

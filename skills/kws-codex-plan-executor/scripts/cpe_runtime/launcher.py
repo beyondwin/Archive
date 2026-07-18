@@ -315,7 +315,9 @@ class CodexLauncher:
             logs_directory / f"{plan_id}-attempt-{attempt}.log",
         )
 
-    def _command(self, worktree: Path, result_path: Path) -> list[str]:
+    def _command(
+        self, worktree: Path, result_path: Path, sandbox_mode: str,
+    ) -> list[str]:
         return [
             self.codex_bin,
             "exec",
@@ -323,7 +325,7 @@ class CodexLauncher:
             "--ephemeral",
             "--json",
             "--sandbox",
-            "workspace-write",
+            sandbox_mode,
             "--add-dir",
             str(_git_common_directory(worktree)),
             "-C",
@@ -345,18 +347,16 @@ class CodexLauncher:
         starting_commit: str,
         current_commit: str,
         recovery_path: Path | None,
-        compiled_run_index: Path | None = None,
         execution_ledger: Path | None = None,
         verification_helper_descriptor: Path | None = None,
     ) -> str:
         lines = [
-            "Execute one approved implementation plan in the isolated worktree.",
+            "Execute one approved implementation plan in the worktree already isolated for this run.",
             f"WORKTREE: {worktree}",
             f"PLAN_ID: {plan_id}",
             f"CURRENT_PLAN: {plan_path}",
             f"STARTING_COMMIT: {starting_commit}",
             f"CURRENT_COMMIT: {current_commit}",
-            f"COMPILED_RUN_INDEX: {compiled_run_index or 'unavailable'}",
             f"EXECUTION_LEDGER: {execution_ledger or 'unavailable'}",
             f"VERIFICATION_HELPER_DESCRIPTOR: {verification_helper_descriptor or 'unavailable'}",
             "SPECIFICATIONS_REFERENCE_ONLY_IN_ORDER:",
@@ -368,10 +368,10 @@ class CodexLauncher:
             [
                 "",
                 "Follow repository AGENTS.md from root through the edited subtree.",
-                "Use Superpowers; CPE records its evidence but does not prescribe task, review, fix, or subagent semantics.",
+                "Use Superpowers. Ordinary agents reuse this worktree; create another only when the approved plan explicitly requires cross-revision comparison.",
                 "Do not preload specifications; read referenced sections only to resolve ambiguity or code conflicts.",
                 "On recovery, inspect the capsule, ledger, Git status, and log first.",
-                "For deterministic declared test/lint/build commands, read the descriptor and invoke its argv_prefix with --run-id, stable --command-id, real --phase task|affected|branch_final, --input-digest, --mutable-input-policy, --cwd, then -- and the exact compiled argv.",
+                "For verification commands, read the descriptor and invoke its argv_prefix with --run-id, stable --command-id, real --phase task|affected|branch_final, --input-digest, --mutable-input-policy, --cwd, then -- and the selected argv.",
                 "Use task or affected for branch work and branch_final only for submitted final branch evidence; merged_main is parent-integration-only.",
                 "Digest every declared non-Git mutable input completely; use always_execute when mutable external state cannot be decision-completely digested.",
                 "Never claim a cache hit without the helper receipt, and never rerun an exact cached same-key pass merely for reassurance.",
@@ -396,20 +396,19 @@ class CodexLauncher:
         log_path: Path,
         lock_fd: int,
         recovery_path: Path | None = None,
-        compiled_run_index: Path | None = None,
+        sandbox_mode: str,
         execution_ledger: Path | None = None,
         verification_helper_descriptor: Path | None = None,
     ) -> LaunchResult:
         """Launch one attempt using caller-owned paths and the held run lock."""
         request = StructuredLaunchRequest(
-            command=self._command(worktree, result_path),
+            command=self._command(worktree, result_path, sandbox_mode),
             cwd=worktree,
             prompt=self._prompt(
                 worktree=worktree, plan_id=plan_id, plan_path=plan_path,
                 spec_paths=spec_paths, starting_commit=starting_commit,
                 current_commit=current_commit,
                 recovery_path=recovery_path,
-                compiled_run_index=compiled_run_index,
                 execution_ledger=execution_ledger,
                 verification_helper_descriptor=verification_helper_descriptor,
             ),
@@ -418,113 +417,6 @@ class CodexLauncher:
             timeout_seconds=self.timeout_seconds,
         )
         return self._launch_structured(request, lock_fd)
-
-    def compiler_request(
-        self,
-        *,
-        run_root: Path,
-        snapshot_paths: Sequence[Path],
-        contract_path: Path,
-        result_path: Path,
-        repair: bool,
-        previous_output_path: Path | None = None,
-        previous_error_code: str | None = None,
-    ) -> StructuredLaunchRequest:
-        schema = self.schema_path.parent / "compiled-run-index.schema.json"
-        attempt = 2 if repair else 1
-        command = [
-            self.codex_bin,
-            "exec",
-            "--ignore-user-config",
-            "--ephemeral",
-            "--json",
-            "--sandbox",
-            "read-only",
-            "--output-schema",
-            str(schema),
-            "--output-last-message",
-            str(result_path),
-            "-C",
-            str(run_root),
-            "-",
-        ]
-        prompt = "\n".join([
-            "Compile immutable CPE input snapshots into the strict run-index schema.",
-            "Do not modify files, execute Git mutations, or access the network.",
-            "Do not spawn subagents.",
-            f"OPERATOR_CONTRACT: {contract_path}",
-            f"REPAIR_PREVIOUS_OUTPUT: {'yes' if repair else 'no'}",
-            f"PREVIOUS_OUTPUT_PATH: {previous_output_path or 'none'}",
-            f"PREVIOUS_ERROR_CODE: {previous_error_code or 'none'}",
-            "SNAPSHOTS:",
-            *(f"- {path}" for path in snapshot_paths),
-            "Return only the strict schema object.",
-            "",
-        ])
-        return StructuredLaunchRequest(
-            command=command,
-            cwd=run_root,
-            prompt=prompt,
-            result_path=result_path,
-            log_path=run_root / "logs" / f"compiler-attempt-{attempt}.log",
-            timeout_seconds=300.0,
-        )
-
-    def compile_index(
-        self,
-        store: object,
-        contract: dict[str, object],
-        repair: bool,
-    ) -> dict[str, object]:
-        root = store.root  # type: ignore[attr-defined]
-        state = store.state  # type: ignore[attr-defined]
-        attempt = 2 if repair else 1
-        result_path = root / "results" / f"compiler-attempt-{attempt}.json"
-        previous_output = (
-            root / "results" / "compiler-attempt-1.json" if repair else None
-        )
-        previous_error_code = None
-        if repair:
-            error_path = root / "results" / "compiler-attempt-1.error-code"
-            metadata = error_path.lstat()
-            if (
-                error_path.is_symlink()
-                or not stat.S_ISREG(metadata.st_mode)
-                or metadata.st_size > 128
-                or stat.S_IMODE(metadata.st_mode) != 0o400
-            ):
-                raise ValueError("compiler validation error evidence is invalid")
-            previous_error_code = error_path.read_text(encoding="ascii")
-            if not previous_error_code:
-                raise ValueError("compiler validation error evidence is invalid")
-        request = self.compiler_request(
-            run_root=root,
-            snapshot_paths=[Path(item["snapshot_path"]) for item in state["inputs"]],
-            contract_path=root / "operator-contract.json",
-            result_path=result_path,
-            repair=repair,
-            previous_output_path=previous_output,
-            previous_error_code=previous_error_code,
-        )
-        if result_path.exists() or result_path.is_symlink():
-            _seal_regular_output(result_path)
-            raise ValueError("compiler attempt output already exists")
-        result: LaunchResult | None = None
-        try:
-            result = self._launch_structured(request, 0)
-        finally:
-            _seal_regular_output(result_path)
-        if result is None:
-            raise ValueError("compiler launch failed")
-        try:
-            result_size = result_path.lstat().st_size
-        except OSError as exc:
-            raise ValueError("compiler output is unavailable") from exc
-        if result_size > 1_048_576:
-            raise ValueError("compiler output exceeds size limit")
-        if result.returncode != 0 or result.payload is None:
-            raise ValueError("compiler launch failed")
-        return result.payload
 
     def _launch_structured(
         self,
