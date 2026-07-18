@@ -6516,6 +6516,130 @@ class FullActionWalReconciliationTests(_RecoveryRunnerFixture):
         self.assertIs(events[0]["parent_confirmed"], True)
 
 
+class BranchHandoffTests(_RecoveryRunnerFixture):
+    def test_completion_persists_truthful_immutable_handoff_before_state(self) -> None:
+        run_id = "branch-handoff-complete"
+        runner = self.runner(run_id)
+        original_save = StateStore.save
+        observed_completed_save = False
+
+        def assert_handoff_precedes_completed_state(store: StateStore) -> None:
+            nonlocal observed_completed_save
+            if store.state.get("status") == "completed":
+                handoff = store.root / "results" / "branch-handoff.json"
+                self.assertTrue(handoff.is_file())
+                self.assertEqual(0o400, stat.S_IMODE(handoff.stat().st_mode))
+                observed_completed_save = True
+            original_save(store)
+
+        with mock.patch.object(
+            StateStore, "save", new=assert_handoff_precedes_completed_state,
+        ):
+            completed = runner.run(
+                workspace=self.repo,
+                specs=[],
+                plans=[self.plan("completed")],
+                run_id=run_id,
+            )
+
+        self.assertEqual("completed", completed["status"])
+        self.assertTrue(observed_completed_save)
+        run_root = self.home / "orchestrator" / run_id
+        state = StateStore.open(run_root).state
+        handoff_path = run_root / "results" / "branch-handoff.json"
+        handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+        plan = state["plans"][0]
+
+        self.assertEqual({
+            "format_version", "run_id", "branch", "saved_worktree",
+            "observed_head", "last_known_head", "base_commit", "plan_results",
+            "open_finding_ids", "open_obligation_ids", "integration",
+        }, set(handoff))
+        self.assertEqual(2, handoff["format_version"])
+        self.assertEqual(run_id, handoff["run_id"])
+        self.assertEqual(state["branch"], handoff["branch"])
+        self.assertEqual(state["worktree"], handoff["saved_worktree"])
+        self.assertEqual(plan["accepted_commit"], handoff["observed_head"])
+        self.assertEqual(plan["last_known_head"], handoff["last_known_head"])
+        self.assertEqual(state["source_commit"], handoff["base_commit"])
+        self.assertEqual([], handoff["open_finding_ids"])
+        self.assertEqual([], handoff["open_obligation_ids"])
+        self.assertEqual(
+            {"status": "not_observed", "receipt": None},
+            handoff["integration"],
+        )
+        self.assertEqual(1, len(handoff["plan_results"]))
+        plan_handoff = handoff["plan_results"][0]
+        self.assertEqual({
+            "plan_id", "result_ref", "accepted_commit", "final_review_ref",
+            "final_review_head", "acceptance_evidence_ref",
+            "verification_receipt_refs", "open_finding_ids",
+            "open_obligation_ids",
+        }, set(plan_handoff))
+        self.assertEqual("plan-01", plan_handoff["plan_id"])
+        self.assertEqual(
+            Path(plan["result_path"]).resolve().relative_to(
+                run_root.resolve()
+            ).as_posix(),
+            plan_handoff["result_ref"],
+        )
+        self.assertEqual(plan["accepted_commit"], plan_handoff["accepted_commit"])
+        self.assertEqual(
+            ".superpowers/sdd/final-review.md",
+            plan_handoff["final_review_ref"],
+        )
+        self.assertEqual(plan["accepted_commit"], plan_handoff["final_review_head"])
+        self.assertEqual(
+            "evidence/plan-01/evidence-manifest.json",
+            plan_handoff["acceptance_evidence_ref"],
+        )
+        self.assertEqual([], plan_handoff["verification_receipt_refs"])
+        self.assertEqual([], plan_handoff["open_finding_ids"])
+        self.assertEqual([], plan_handoff["open_obligation_ids"])
+        self.assertNotIn("summary", handoff_path.read_text(encoding="utf-8"))
+
+    def test_missing_worktree_never_substitutes_base_or_last_known_head(self) -> None:
+        run_id = "branch-handoff-missing-worktree"
+        runner = self.runner(run_id)
+        completed = runner.run(
+            workspace=self.repo,
+            specs=[],
+            plans=[self.plan("completed")],
+            run_id=run_id,
+        )
+        self.assertEqual("completed", completed["status"])
+        store = StateStore.open(self.home / "orchestrator" / run_id)
+        worktree = Path(store.state["worktree"])
+        shutil.rmtree(worktree)
+
+        handoff = runner._branch_handoff_payload(store)
+
+        self.assertIsNone(handoff["observed_head"])
+        self.assertEqual(
+            store.state["plans"][-1]["last_known_head"],
+            handoff["last_known_head"],
+        )
+        self.assertEqual(store.state["source_commit"], handoff["base_commit"])
+
+    def test_existing_handoff_is_reused_only_when_exact_and_immutable(self) -> None:
+        run_id = "branch-handoff-reuse"
+        runner = self.runner(run_id)
+        completed = runner.run(
+            workspace=self.repo,
+            specs=[],
+            plans=[self.plan("completed")],
+            run_id=run_id,
+        )
+        self.assertEqual("completed", completed["status"])
+        store = StateStore.open(self.home / "orchestrator" / run_id)
+        handoff_path = store.root / "results" / "branch-handoff.json"
+
+        self.assertEqual(handoff_path.resolve(), runner._materialize_branch_handoff(store))
+        handoff_path.chmod(0o600)
+        with self.assertRaisesRegex(ValueError, "branch handoff"):
+            runner._materialize_branch_handoff(store)
+
+
 class ReconciledResumeDispatchTests(_RecoveryRunnerFixture):
     @staticmethod
     def _crash_after_decision(expected_decision: str) -> object:
