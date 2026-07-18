@@ -1479,6 +1479,17 @@ class SequentialRunner:
                 Path(__file__).resolve().parent.parent / "cpe.py",
             )
         except (OSError, ValueError) as exc:
+            state = store.state
+            plan_index = state["current_plan_index"]
+            if isinstance(plan_index, int) and 0 <= plan_index < len(state["plans"]):
+                plan = state["plans"][plan_index]
+                if (
+                    plan["status"] == "pending"
+                    and plan["attempt_count"] == 0
+                    and plan["controller_launch_count"] == 0
+                ):
+                    state["status"] = "ready"
+                    store.save()
             store.append_event(
                 "verification.helper_unavailable_no_request",
                 reason="verification_helper_unavailable",
@@ -2243,6 +2254,9 @@ class SequentialRunner:
                         failure_signature=pre_spawn_stop.progress_fingerprint,
                     )
                     return self._report_and_summary(store)
+                verification_helper_descriptor = (
+                    self._verification_helper_descriptor_for_launch(store)
+                )
                 if plan["starting_commit"] is None:
                     plan["starting_commit"] = current_head
                 previous_snapshot = self._progress_snapshot(
@@ -2317,9 +2331,6 @@ class SequentialRunner:
                 )
                 plan_input = next(record for record in state["inputs"] if record["document_id"] == plan["plan_id"])
                 spec_paths = [Path(record["snapshot_path"]) for record in state["inputs"] if record["role"] == "spec"]
-                verification_helper_descriptor = (
-                    self._verification_helper_descriptor_for_launch(store)
-                )
                 request = StructuredLaunchRequest(
                     command=self.launcher._command(
                         worktree,

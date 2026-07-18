@@ -325,6 +325,89 @@ class VerificationReceiptTests(unittest.TestCase):
         self.assertEqual(1, len(receipt_files))
         self.assertEqual(0o400, stat.S_IMODE(receipt_files[0].stat().st_mode))
 
+    def test_controller_group_termination_reaps_verification_descendant(self) -> None:
+        pid_path = self.root / "verification-descendant.pid"
+        child_program = (
+            "import os, sys, time; "
+            "from pathlib import Path; "
+            "Path(sys.argv[1]).write_text(str(os.getpid()), encoding='utf-8'); "
+            "time.sleep(60)"
+        )
+        helper_program = f"""
+import os
+import sys
+from pathlib import Path
+from cpe_runtime.verification import (
+    VerificationRequest,
+    execute_verification,
+    execution_environment_fingerprint,
+    resolved_executable_identity,
+)
+
+cwd = Path({str(self.cwd)!r})
+evidence_root = Path({str(self.evidence_root)!r})
+execution_environment = {{
+    key: value
+    for key, value in os.environ.items()
+    if key not in {{"PWD", "OLDPWD", "SHLVL", "_", "TERM_SESSION_ID"}}
+}}
+request = VerificationRequest(
+    run_id="signal-relay",
+    command_id="real-process",
+    argv=(sys.executable, "-c", {child_program!r}, {str(pid_path)!r}),
+    cwd=cwd,
+    head="a" * 40,
+    environment_fingerprint=execution_environment_fingerprint(
+        environ=execution_environment,
+        sandbox_mode="danger-full-access",
+        executable_identity=resolved_executable_identity(
+            sys.executable, cwd=cwd, environ=execution_environment,
+        ),
+    ),
+    phase="task",
+    input_digest="immutable",
+    deterministic=True,
+    mutable_input_policy="immutable",
+    required_artifact_paths=(),
+    timeout_seconds=60,
+)
+execute_verification(evidence_root, request)
+"""
+        environment = dict(os.environ)
+        environment["PYTHONPATH"] = os.pathsep.join(
+            filter(None, (str(ROOT / "scripts"), environment.get("PYTHONPATH", "")))
+        )
+        helper = subprocess.Popen(
+            [sys.executable, "-c", helper_program],
+            env=environment,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+        )
+        descendant_pid: int | None = None
+        try:
+            deadline = time.monotonic() + 3
+            while not pid_path.exists() and time.monotonic() < deadline:
+                time.sleep(0.02)
+            self.assertTrue(pid_path.exists(), "verification descendant did not start")
+            descendant_pid = int(pid_path.read_text(encoding="utf-8"))
+
+            os.killpg(os.getpgid(helper.pid), signal.SIGTERM)
+            helper.communicate(timeout=3)
+
+            with self.assertRaises(ProcessLookupError):
+                os.kill(descendant_pid, 0)
+        finally:
+            if helper.poll() is None:
+                os.killpg(os.getpgid(helper.pid), signal.SIGKILL)
+                helper.communicate(timeout=2)
+            if descendant_pid is not None:
+                try:
+                    os.kill(descendant_pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
     def test_nonpassing_nondeterministic_and_always_execute_receipts_are_not_reused(self) -> None:
         failed = self.request(argv=(sys.executable, "-c", "raise SystemExit(7)"))
         self.assertEqual("failed", execute_verification(self.evidence_root, failed).status)
@@ -1046,6 +1129,49 @@ class VerificationReuseIntegrationTests(unittest.TestCase):
             (self.repo / ".superpowers" / "sdd" / "verification" / "indexes").exists()
         )
 
+    def test_staged_dirty_tree_does_not_reuse_clean_verification(self) -> None:
+        materialize_helper_descriptor(self.store.root, ROOT / "scripts" / "cpe.py")
+        self.store.state["status"] = "ready"
+        self.store.save()
+        exclude = self.repo / ".git" / "info" / "exclude"
+        exclude.write_text(
+            exclude.read_text(encoding="utf-8") + "\n.superpowers/\n",
+            encoding="utf-8",
+        )
+        counter = self.root / "staged-dirty-counter.txt"
+        argv = (
+            sys.executable,
+            "-c",
+            f"from pathlib import Path; p=Path({str(counter)!r}); p.write_text((p.read_text() if p.exists() else '') + 'x')",
+        )
+        runner = SequentialRunner(codex_home=self.home)
+
+        first = runner.verify(
+            run_id=self.run_id,
+            command_id="unit",
+            phase="task",
+            input_digest="immutable",
+            mutable_input_policy="immutable",
+            cwd=self.repo,
+            argv=argv,
+        )
+        (self.repo / "plan.md").write_text("staged verification input\n", encoding="utf-8")
+        git(self.repo, "add", "plan.md")
+        second = runner.verify(
+            run_id=self.run_id,
+            command_id="unit-final",
+            phase="branch_final",
+            input_digest="immutable",
+            mutable_input_policy="immutable",
+            cwd=self.repo,
+            argv=argv,
+        )
+
+        self.assertFalse(first["reused"])
+        self.assertFalse(second["reused"])
+        self.assertEqual("dirty_worktree_requires_execution", second["reason"])
+        self.assertEqual("xx", counter.read_text(encoding="utf-8"))
+
 
 class CapabilityTests(unittest.TestCase):
     def test_fingerprint_ignores_incidental_probe_details(self) -> None:
@@ -1334,6 +1460,46 @@ class WorktreeProgressTests(unittest.TestCase):
     def test_deletion_is_a_changed_digest_without_a_file_body(self) -> None:
         (self.repo / "seed.txt").unlink()
         observed = observe_worktree_changes(self.repo)
+        self.assertTrue(observed.changed)
+        self.assertRegex(observed.digest or "", r"^[0-9a-f]{64}$")
+        self.assertEqual(0, observed.regular_file_count)
+        self.assertEqual(0, observed.total_bytes)
+
+    def test_staged_add_is_observed_as_changed(self) -> None:
+        added = self.repo / "staged-add.txt"
+        added.write_text("staged add", encoding="utf-8")
+        subprocess.run(
+            ["git", "-C", str(self.repo), "add", "staged-add.txt"], check=True,
+        )
+
+        observed = observe_worktree_changes(self.repo)
+
+        self.assertTrue(observed.changed)
+        self.assertRegex(observed.digest or "", r"^[0-9a-f]{64}$")
+        self.assertEqual(1, observed.regular_file_count)
+        self.assertEqual(len(b"staged add"), observed.total_bytes)
+
+    def test_staged_modify_is_observed_as_changed(self) -> None:
+        seed = self.repo / "seed.txt"
+        seed.write_text("staged modify", encoding="utf-8")
+        subprocess.run(
+            ["git", "-C", str(self.repo), "add", "seed.txt"], check=True,
+        )
+
+        observed = observe_worktree_changes(self.repo)
+
+        self.assertTrue(observed.changed)
+        self.assertRegex(observed.digest or "", r"^[0-9a-f]{64}$")
+        self.assertEqual(1, observed.regular_file_count)
+        self.assertEqual(len(b"staged modify"), observed.total_bytes)
+
+    def test_staged_delete_is_observed_as_changed_without_a_file_body(self) -> None:
+        subprocess.run(
+            ["git", "-C", str(self.repo), "rm", "seed.txt"], check=True,
+        )
+
+        observed = observe_worktree_changes(self.repo)
+
         self.assertTrue(observed.changed)
         self.assertRegex(observed.digest or "", r"^[0-9a-f]{64}$")
         self.assertEqual(0, observed.regular_file_count)
@@ -2262,6 +2428,52 @@ class SequentialRunnerTest(unittest.TestCase):
         self.assertEqual(1, fake_codex_launch_count(root))
         self.assertFalse((root / ("compiled" + "-run-index.json")).exists())
         self.assertFalse((root / "operator-contract.json").exists())
+
+    def test_corrupt_helper_descriptor_fails_before_attempt_reservation(self) -> None:
+        runner = self.runner()
+        reconcile = runner._create_or_reconcile_worktree
+
+        def reconcile_then_corrupt(store: StateStore) -> None:
+            reconcile(store)
+            descriptor = store.root / "tools" / "run-and-record.json"
+            descriptor.parent.mkdir(mode=0o700, exist_ok=True)
+            descriptor.write_text("{}", encoding="utf-8")
+            descriptor.chmod(0o400)
+
+        runner._create_or_reconcile_worktree = mock.Mock(
+            side_effect=reconcile_then_corrupt,
+        )
+
+        with self.assertRaisesRegex(
+            ValueError, "verification helper unavailable without exact submitted request",
+        ):
+            runner.run(
+                workspace=self.repo,
+                specs=[],
+                plans=[self.plan(1, "completed")],
+                run_id="corrupt-helper-preflight",
+            )
+
+        run_root = self.home / "orchestrator" / "corrupt-helper-preflight"
+        state = StateStore.open(run_root).state
+        plan = state["plans"][0]
+        self.assertEqual("ready", state["status"])
+        self.assertEqual("pending", plan["status"])
+        self.assertEqual(0, plan["attempt_count"])
+        self.assertEqual(0, plan["controller_launch_count"])
+        self.assertIsNone(plan["starting_commit"])
+        self.assertIsNone(plan["result_path"])
+        self.assertFalse(self.log.exists())
+        events = _runner_events(run_root)
+        self.assertFalse(any(
+            event.get("action") == "plan.attempt_started" for event in events
+        ))
+        unavailable = [
+            event for event in events
+            if event.get("action") == "verification.helper_unavailable_no_request"
+        ]
+        self.assertEqual(1, len(unavailable))
+        self.assertEqual("verification_helper_unavailable", unavailable[0]["reason"])
 
     def test_report_marks_missing_usage_as_lower_bound(self) -> None:
         report = build_optimization_report(

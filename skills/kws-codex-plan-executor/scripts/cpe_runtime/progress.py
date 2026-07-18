@@ -182,7 +182,16 @@ def observe_worktree_changes(worktree: Path) -> WorktreeChangeObservation:
         root_mode = os.lstat(worktree).st_mode
         if stat.S_ISLNK(root_mode) or not stat.S_ISDIR(root_mode):
             raise ValueError("worktree is unsafe")
-        completed = subprocess.run(
+        staged = subprocess.run(
+            [
+                "git", "-C", str(worktree), "diff", "--cached", "--raw",
+                "--no-abbrev", "-z", "--no-renames", "HEAD", "--",
+            ],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+        worktree_only = subprocess.run(
             [
                 "git", "-C", str(worktree), "ls-files", "--modified", "--deleted",
                 "--others", "--exclude-standard", "-z",
@@ -191,7 +200,11 @@ def observe_worktree_changes(worktree: Path) -> WorktreeChangeObservation:
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
         )
-        entries = [entry for entry in completed.stdout.split(b"\0") if entry]
+        index_entries = _staged_index_entries(worktree, staged.stdout)
+        worktree_entries = {
+            entry for entry in worktree_only.stdout.split(b"\0") if entry
+        }
+        entries = set(index_entries) | worktree_entries
         if not entries:
             return WorktreeChangeObservation(
                 False, _CLEAN_WORKTREE_DIGEST, 0, 0, None,
@@ -203,19 +216,32 @@ def observe_worktree_changes(worktree: Path) -> WorktreeChangeObservation:
         total_bytes = 0
         for entry in sorted(entries):
             relative = _safe_relative_path(entry)
-            path = worktree / relative
-            status, content = _read_worktree_entry(worktree, relative, path)
-            digest.update(status)
             digest.update(len(entry).to_bytes(8, "big"))
             digest.update(entry)
-            if content is None:
-                continue
-            regular_file_count += 1
-            total_bytes += len(content)
+            regular = False
+            index_entry = index_entries.get(entry)
+            if index_entry is not None:
+                index_record, index_bytes = index_entry
+                digest.update(b"I\0")
+                digest.update(len(index_record).to_bytes(8, "big"))
+                digest.update(index_record)
+                if index_bytes is not None:
+                    regular = True
+                    total_bytes += index_bytes
+            if entry in worktree_entries:
+                path = worktree / relative
+                status, content = _read_worktree_entry(worktree, relative, path)
+                digest.update(b"W\0")
+                digest.update(status)
+                if content is not None:
+                    regular = True
+                    total_bytes += len(content)
+                    digest.update(len(content).to_bytes(8, "big"))
+                    digest.update(sha256(content).digest())
             if total_bytes > MAX_WORKTREE_TOTAL_BYTES:
                 return _unavailable_observation()
-            digest.update(len(content).to_bytes(8, "big"))
-            digest.update(sha256(content).digest())
+            if regular:
+                regular_file_count += 1
         return WorktreeChangeObservation(
             True, digest.hexdigest(), regular_file_count, total_bytes, None,
         )
@@ -236,6 +262,53 @@ def _safe_relative_path(entry: bytes) -> Path:
     if relative.is_absolute() or ".." in relative.parts:
         raise ValueError("dirty inventory path is invalid")
     return relative
+
+
+def _staged_index_entries(
+    worktree: Path,
+    payload: bytes,
+) -> dict[bytes, tuple[bytes, int | None]]:
+    fields = payload.split(b"\0")
+    if fields and fields[-1] == b"":
+        fields.pop()
+    if len(fields) % 2:
+        raise ValueError("staged inventory is invalid")
+    entries: dict[bytes, tuple[bytes, int | None]] = {}
+    for position in range(0, len(fields), 2):
+        header = fields[position]
+        path = fields[position + 1]
+        if not header.startswith(b":") or path in entries:
+            raise ValueError("staged inventory is invalid")
+        metadata = header[1:].split(b" ")
+        if len(metadata) != 5:
+            raise ValueError("staged inventory is invalid")
+        _old_mode, new_mode, _old_object, new_object, status_name = metadata
+        if status_name not in {b"A", b"M", b"D", b"T"}:
+            raise ValueError("staged inventory is unsafe")
+        size: int | None = None
+        if status_name != b"D":
+            if new_mode not in {b"100644", b"100755"}:
+                raise ValueError("staged inventory entry is not regular")
+            size = _git_object_size(worktree, new_object)
+            if size > MAX_WORKTREE_FILE_BYTES:
+                raise ValueError("staged inventory file exceeds limit")
+        entries[path] = (header, size)
+    return entries
+
+
+def _git_object_size(worktree: Path, object_id: bytes) -> int:
+    if not object_id or any(character not in b"0123456789abcdef" for character in object_id):
+        raise ValueError("staged inventory object is invalid")
+    completed = subprocess.run(
+        ["git", "-C", str(worktree), "cat-file", "-s", os.fsdecode(object_id)],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    raw_size = completed.stdout.strip()
+    if not raw_size.isdigit():
+        raise ValueError("staged inventory object size is invalid")
+    return int(raw_size)
 
 
 def _read_worktree_entry(worktree: Path, relative: Path, path: Path) -> tuple[bytes, bytes | None]:
