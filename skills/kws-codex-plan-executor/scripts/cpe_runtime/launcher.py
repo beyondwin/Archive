@@ -14,6 +14,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
+from .coordination import (
+    CoordinationObservation,
+    extract_coordination_observation,
+)
+
 
 _SECRETS = {
     "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "AWS_SECRET_ACCESS_KEY",
@@ -65,9 +70,16 @@ def _git_common_directory(worktree: Path) -> Path:
 
 
 class _UsageFilter:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        coordination_callback: Callable[[CoordinationObservation], None] | None = None,
+        plan_index: int = 0,
+    ) -> None:
         self._buffer = bytearray()
         self._dropping = False
+        self._coordination_callback = coordination_callback
+        self._plan_index = plan_index
         self.usage: dict[str, int | None] = {
             name: None for name in _USAGE_FIELDS
         }
@@ -99,7 +111,15 @@ class _UsageFilter:
             event = json.loads(line.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
             return
-        if not isinstance(event, dict) or event.get("type") != "turn.completed":
+        if not isinstance(event, dict):
+            return
+        if self._coordination_callback is not None:
+            observation = extract_coordination_observation(
+                event, plan_index=self._plan_index,
+            )
+            if observation is not None:
+                self._coordination_callback(observation)
+        if event.get("type") != "turn.completed":
             return
         usage = event.get("usage")
         if not isinstance(usage, dict):
@@ -263,6 +283,7 @@ class LaunchResult:
     output_tokens: int | None
     reasoning_output_tokens: int | None
     launcher_prompt_bytes: int
+    coordination_observations: tuple[CoordinationObservation, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -273,6 +294,7 @@ class StructuredLaunchRequest:
     result_path: Path
     log_path: Path
     timeout_seconds: float
+    plan_index: int = 0
 
 
 class CodexLauncher:
@@ -358,6 +380,7 @@ class CodexLauncher:
             f"CURRENT_COMMIT: {current_commit}",
             f"COMPILED_RUN_INDEX: {compiled_run_index or 'unavailable'}",
             f"EXECUTION_LEDGER: {execution_ledger or 'unavailable'}",
+            f"COORDINATION_LEDGER: {worktree / '.superpowers' / 'sdd' / 'coordination-events.jsonl'}",
             f"VERIFICATION_HELPER_DESCRIPTOR: {verification_helper_descriptor or 'unavailable'}",
             "SPECIFICATIONS_REFERENCE_ONLY_IN_ORDER:",
         ]
@@ -379,6 +402,8 @@ class CodexLauncher:
                 "Never claim a cache hit without the helper receipt, and never rerun an exact cached same-key pass merely for reassurance.",
                 "If the helper returns uncached_command_required or is unavailable, execute the exact command once and append one child-attested verification event with action=executed_uncached, the helper-provided or locally derived never-reusable evidence_key, exact argv digest, exit_code, phase, reason_code, receipt_path=null, and no evidence refs; never treat fallback as a skipped verification.",
                 "Reviewers reuse evidenced tests, write full findings to files, and return only verdicts, finding IDs, severities, and artifact paths.",
+                "When using subagents, append bounded content-free coordination events to COORDINATION_LEDGER; default implementer/reviewer fork_turns to none and declare only safe worktree-relative context refs with class and digest.",
+                "Never place prompts, messages, source bodies, tool arguments/results, secrets, or absolute source paths in coordination telemetry.",
                 "Resolve one task finding set with one consolidated fix subagent, then review only the finding delta and affected evidence.",
                 "After all tasks, perform one cross-task final review and one full verification at the final HEAD.",
                 "Do not run the same normalized verification command twice at the same HEAD unless a transient failure is recorded.",
@@ -560,7 +585,11 @@ class CodexLauncher:
         spawn_error: OSError | None = None
         prompt_bytes = prompt.encode("utf-8")
         started = time.monotonic()
-        usage = _UsageFilter()
+        coordination_observations: list[CoordinationObservation] = []
+        usage = _UsageFilter(
+            coordination_callback=coordination_observations.append,
+            plan_index=request.plan_index,
+        )
         try:
             try:
                 process = subprocess.Popen(
@@ -681,4 +710,5 @@ class CodexLauncher:
                 "reasoning_output_tokens"
             ],
             launcher_prompt_bytes=len(prompt_bytes),
+            coordination_observations=tuple(coordination_observations),
         )
