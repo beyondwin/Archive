@@ -1575,7 +1575,10 @@ class SequentialRunner:
                         index,
                         quarantine / f"{cache_key}-{uuid.uuid4().hex}.json",
                     )
-            receipt = execute_verification(evidence_root, request)
+            receipt = execute_verification(
+                evidence_root,
+                replace(request, deterministic=False) if fallback else request,
+            )
 
         receipt_relative = (
             Path(".superpowers")
@@ -1590,6 +1593,43 @@ class SequentialRunner:
         argv_digest = hashlib.sha256(
             json.dumps(list(argv), separators=(",", ":")).encode("utf-8")
         ).hexdigest()
+        if fallback:
+            uncached_exit_code = receipt.exit_code
+            if uncached_exit_code is None:
+                uncached_exit_code = 124 if receipt.status == "timed_out" else 130
+            append_execution_event(
+                worktree / ".superpowers" / "sdd" / "execution-ledger.jsonl",
+                {
+                    "event_id": f"verification.executed_uncached:{uuid.uuid4().hex}",
+                    "source": "child_attested",
+                    "plan_id": state["plans"][plan_index]["plan_id"],
+                    "category": "verification",
+                    "action": "executed_uncached",
+                    "result": "pass" if receipt.status == "passed" else "fail",
+                    "evidence_refs": [],
+                    "command_id": command_id,
+                    "argv_digest": argv_digest,
+                    "evidence_key": receipt.cache_key,
+                    "duration_ms": int(receipt_document.get("duration_ms", 0)),
+                    "exit_code": uncached_exit_code,
+                    "receipt_path": None,
+                    "reason_code": "verification_helper_fallback",
+                    "phase": phase,
+                },
+            )
+            return {
+                "schema_version": 1,
+                "reused": False,
+                "receipt_path": None,
+                "status": receipt.status,
+                "cache_key": receipt.cache_key,
+                "command_id": command_id,
+                "argv_digest": argv_digest,
+                "evidence_key": receipt.cache_key,
+                "phase": phase,
+                "reason": "verification_helper_fallback",
+                "reason_code": "verification_helper_fallback",
+            }
         decision = "reused" if reused else "executed"
         receipt_reference = receipt_relative.relative_to(
             Path(".superpowers") / "sdd"
@@ -1622,9 +1662,7 @@ class SequentialRunner:
             "status": receipt.status,
             "cache_key": receipt.cache_key,
         }
-        if fallback:
-            response["reason"] = "verification_helper_fallback"
-        elif dirty_source_inputs:
+        if dirty_source_inputs:
             response["reason"] = "dirty_worktree_requires_execution"
         return response
 

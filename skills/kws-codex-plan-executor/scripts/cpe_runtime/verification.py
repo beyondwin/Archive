@@ -525,15 +525,24 @@ def _regular_source(path: Path) -> Path:
 def materialize_helper_descriptor(run_root: Path, cpe_script: Path) -> Path:
     """Publish the read-only helper argv and bind it to exact source digests."""
     cpe_source = _regular_source(cpe_script)
-    verification_source = _regular_source(
-        cpe_source.parent / "cpe_runtime" / "verification.py"
-    )
+    runtime_sources = [
+        _regular_source(path)
+        for path in sorted(
+            (cpe_source.parent / "cpe_runtime").glob("*.py"),
+            key=lambda path: path.name,
+        )
+    ]
+    if not runtime_sources:
+        raise ValueError("verification helper runtime sources are unavailable")
     descriptor = {
         "schema_version": 1,
         "argv_prefix": ["python3", str(cpe_source), "verify"],
         "source_digests": {
             "cpe.py": _sha256_file(cpe_source),
-            "cpe_runtime/verification.py": _sha256_file(verification_source),
+            **{
+                f"cpe_runtime/{source.name}": _sha256_file(source)
+                for source in runtime_sources
+            },
         },
     }
     encoded = _canonical_json(descriptor)

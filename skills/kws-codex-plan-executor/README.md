@@ -136,11 +136,11 @@ The two paths must resolve to existing regular, non-symlink files inside the
 worktree. Normal completion requires safe relative spellings; absolute paths,
 parent traversal, symlink components, and paths outside the worktree are
 rejected. `final_review_head` must equal the exact clean worktree `HEAD`, the
-open-finding list must be empty, and the open-obligation list must equal the
-strict ledger projection (therefore it is empty for acceptance). Each
-verification record carries a stable command ID, argv digest, phase, evidence
-key, exit code, and optional receipt path. Completion requires successful
-branch-final evidence.
+submitted `open_finding_ids` and `open_obligation_ids` arrays must both be
+empty, and the submitted verification array must be nonempty and every record
+must report success. CPE does not derive either open-ID array from ledger
+workflow semantics. Each verification record carries a stable command ID,
+argv digest, phase, evidence key, exit code, and optional receipt path.
 
 The workflow receipt and verification array remain child-attested evidence.
 CPE ingests and binds them mechanically to the exact clean `HEAD`, validates

@@ -330,6 +330,38 @@ class VerificationReceiptTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "regular source"):
             materialize_helper_descriptor(self.root / "other-run", symlink)
 
+    def test_helper_descriptor_binds_every_runtime_python_source_and_detects_drift(self) -> None:
+        scripts = self.root / "scripts"
+        shutil.copytree(ROOT / "scripts", scripts)
+        cpe_script = scripts / "cpe.py"
+        run_root = self.root / "run"
+
+        descriptor_path = materialize_helper_descriptor(run_root, cpe_script)
+        descriptor = json.loads(descriptor_path.read_text(encoding="utf-8"))
+        expected_sources = {
+            "cpe.py": cpe_script,
+            **{
+                f"cpe_runtime/{path.name}": path
+                for path in sorted((scripts / "cpe_runtime").glob("*.py"))
+            },
+        }
+
+        self.assertEqual(set(expected_sources), set(descriptor["source_digests"]))
+        for name, path in expected_sources.items():
+            with self.subTest(source=name):
+                self.assertEqual(
+                    hashlib.sha256(path.read_bytes()).hexdigest(),
+                    descriptor["source_digests"][name],
+                )
+
+        runtime_source = scripts / "cpe_runtime" / "runner.py"
+        runtime_source.write_text(
+            runtime_source.read_text(encoding="utf-8") + "\n# descriptor drift\n",
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(ValueError, "replaced"):
+            materialize_helper_descriptor(run_root, cpe_script)
+
 
 class VerificationReuseIntegrationTests(unittest.TestCase):
     def setUp(self) -> None:

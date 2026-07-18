@@ -427,6 +427,22 @@ class SequentialCliTest(unittest.TestCase):
             )
         self.assertEqual(actual, documented)
 
+    def test_readme_documents_only_the_submitted_thin_completion_gates(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        start = readme.index("Every completed slice\nmust include this workflow receipt:")
+        end = readme.index("The verification helper reuses success", start)
+        completion = " ".join(readme[start:end].split())
+
+        for phrase in (
+            "submitted `open_finding_ids` and `open_obligation_ids` arrays must both be empty",
+            "submitted verification array must be nonempty and every record must report success",
+            "final_review_path",
+            "final_review_head",
+        ):
+            self.assertIn(phrase, completion)
+        self.assertNotIn("strict ledger projection", completion)
+        self.assertNotIn("branch-final evidence", completion)
+
 
 class VerificationCliTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -649,7 +665,7 @@ class VerificationCliTests(unittest.TestCase):
             self.assertTrue(event["evidence_refs"][1].startswith("verification/logs/"))
             self.assertTrue(event["evidence_refs"][2].startswith("verification/logs/"))
 
-    def test_corrupt_cache_index_executes_once_with_fallback_reason(self) -> None:
+    def test_corrupt_cache_fallback_is_uncached_and_never_reused(self) -> None:
         first = self.command(*self.verify_arguments())
         self.assertEqual(0, first.returncode, first.stdout + first.stderr)
         index = next(
@@ -665,7 +681,34 @@ class VerificationCliTests(unittest.TestCase):
         payload = json.loads(fallback.stdout)
         self.assertFalse(payload["reused"])
         self.assertEqual("verification_helper_fallback", payload["reason"])
+        self.assertEqual("verification_helper_fallback", payload["reason_code"])
+        self.assertIsNone(payload["receipt_path"])
         self.assertEqual("xx", self.counter.read_text(encoding="utf-8"))
+        self.assertEqual(
+            [],
+            list(
+                (self.repo / ".superpowers" / "sdd" / "verification" / "indexes")
+                .glob("*.json")
+            ),
+        )
+        ledger = [
+            json.loads(line)
+            for line in (
+                self.repo / ".superpowers" / "sdd" / "execution-ledger.jsonl"
+            ).read_text(encoding="utf-8").splitlines()
+        ]
+        fallback_event = ledger[-1]
+        self.assertEqual("executed_uncached", fallback_event["action"])
+        self.assertEqual("verification_helper_fallback", fallback_event["reason_code"])
+        self.assertEqual([], fallback_event["evidence_refs"])
+        self.assertIsNone(fallback_event["receipt_path"])
+        self.assertEqual(0, fallback_event["exit_code"])
+
+        after_fallback = self.command(*self.verify_arguments())
+
+        self.assertEqual(0, after_fallback.returncode, after_fallback.stdout + after_fallback.stderr)
+        self.assertFalse(json.loads(after_fallback.stdout)["reused"])
+        self.assertEqual("xxx", self.counter.read_text(encoding="utf-8"))
 
     def test_dirty_source_tree_executes_every_time_instead_of_reusing_head(self) -> None:
         clean = self.command(*self.verify_arguments())
