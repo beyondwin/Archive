@@ -377,7 +377,6 @@ class CodexLauncher:
                 "Never claim a cache hit without the helper receipt, and never rerun an exact cached same-key pass merely for reassurance.",
                 "If the helper returns uncached_command_required or is unavailable, execute the exact command once and append one child-attested verification event with action=executed_uncached, the helper-provided or locally derived never-reusable evidence_key, exact argv digest, exit_code, phase, reason_code, receipt_path=null, and no evidence refs; never treat fallback as a skipped verification.",
                 "Do not run the same normalized verification command twice at the same HEAD unless a transient failure is recorded.",
-                "Graphify is opt-in; do not load its skill or generate a graph unless the approved plan requires it.",
                 "For completed, leave a clean worktree, report exact HEAD and successful final verification, and include workflow_receipt.",
                 "Return only the fixed schema object as the final response. Do not merge, push, deploy, or modify files outside the worktree.",
             ]

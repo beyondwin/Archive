@@ -2,7 +2,7 @@
 name: kws-codex-plan-executor
 description: Use when approved Superpowers implementation plans must run in fixed order and survive process interruption.
 metadata:
-  version: "2.0.0"
+  version: "2.0.1"
   updated_at: "2026-07-18"
 ---
 
@@ -126,13 +126,6 @@ live under `~/.codex/orchestrator/<run-id>/`; attempt logs are in
 `reports/optimization-report.json` and
 `reports/optimization-report.md`. The isolated worktree is
 `~/.codex/worktrees/<run-id>/`.
-
-## Project Tool Policy
-
-Graphify is not a project-default tool. Controllers, implementers, and
-reviewers do not load its skill, build or refresh a graph, or add Graphify to
-verification merely because they are working in a codebase. Use it only when
-the approved plan explicitly names Graphify or requires a Graphify artifact.
 
 ## Operational Safety
 

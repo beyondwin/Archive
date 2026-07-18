@@ -790,10 +790,6 @@ class CapabilityTests(unittest.TestCase):
                 {"filesystem_type": "apfs", "sandbox_policy": "read-only"},
             ),
             ("git", {"version": "2.44.0", "worktree_supported": "true"}),
-            (
-                "graphify_write",
-                {"configured": "false", "sandbox_policy": "danger-full-access"},
-            ),
         )
         for capability, details in cases:
             with self.subTest(capability=capability):
@@ -815,7 +811,6 @@ class CapabilityTests(unittest.TestCase):
             ("workspace_write", {"filesystem_type": "PATH=/private/bin"}),
             ("git", {"version": "git version 2.44.0; cookie=secret"}),
             ("git", {"worktree_supported": "yes, use this token"}),
-            ("graphify_write", {"configured": "enabled because it succeeded"}),
         )
         for capability, details in cases:
             with self.subTest(capability=capability, details=details):
@@ -3448,8 +3443,6 @@ print(json.dumps(result, sort_keys=True), flush=True)
         ):
             self.assertNotIn(semantic_instruction, prompt)
         self.assertIn("same normalized verification command", prompt)
-        self.assertIn("Graphify is opt-in", prompt)
-        self.assertIn("do not load its skill or generate a graph", prompt)
         self.assertIn("workflow_receipt", prompt)
         self.assertLess(len(prompt.encode("utf-8")), 2_400)
 

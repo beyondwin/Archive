@@ -261,14 +261,12 @@ class SequentialCliTest(unittest.TestCase):
             line.strip() for line in frontmatter_parts[1].splitlines()
             if line.startswith("  version:")
         ]
-        self.assertEqual(metadata_lines, ['version: "2.0.0"'])
+        self.assertEqual(metadata_lines, ['version: "2.0.1"'])
         self.assertIn(
             "description: Use when approved Superpowers implementation plans",
             frontmatter_parts[1],
         )
-        self.assertIn("Version 2.0.0", readme)
-        self.assertIn("Graphify is not a project-default tool", skill)
-        self.assertIn("Graphify is not part of the default project toolset", readme)
+        self.assertIn("Version 2.0.1", readme)
 
         def section(document: str, heading: str) -> str:
             start = document.index(heading)
