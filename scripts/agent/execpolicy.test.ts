@@ -27,3 +27,18 @@ test("force-with-lease requires confirmation", async () => {
   expect(await decision(["git", "push", "--force-with-lease", "origin", "main"]))
     .toBe("prompt");
 });
+
+test("destructive option spellings cannot bypass the policy", async () => {
+  expect(await decision(["git", "push", "--force-with-lease=refs/heads/main", "origin", "main"]))
+    .toBe("prompt");
+  expect(await decision(["git", "branch", "--delete", "--force", "feature"]))
+    .toBe("prompt");
+  expect(await decision(["git", "branch", "-d", "--force", "feature"]))
+    .toBe("prompt");
+  expect(await decision(["git", "push", "-f", "origin", "main"]))
+    .toBe("forbidden");
+  expect(await decision(["git", "push", "origin", "main", "--force"]))
+    .toBe("prompt");
+  expect(await decision(["git", "push", "origin", "main", "--force-with-lease=refs/heads/main"]))
+    .toBe("prompt");
+});
