@@ -5,13 +5,14 @@ alwaysApply: true
 
 # Archive Agent Instructions
 
-Read `AGENTS.md` first. It is the canonical instruction file for this
-repository.
+Read `AGENTS.md` first, then the nearest subtree `AGENTS.md`. They are the
+canonical instruction files for this repository. This rule only adds
+Cursor-specific reminders.
 
 Important defaults:
 
-- Active code lives in `AgentLens/` and `skills/`.
-- Follow subtree `AGENTS.md` files before editing skill internals.
+- Active code lives in `apps/`, `packages/`, `native/kernel/`, and `skills/`.
+- Follow subtree `AGENTS.md` files before editing internals.
 - Keep `.waygent/`, `.agentlens/`, `.claude/`, `.codex-orchestrator/`,
   `.orchestrator/`, `.superpowers/`, caches, build outputs, and secrets out of
   git.

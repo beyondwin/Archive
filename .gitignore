@@ -107,7 +107,7 @@ docs/_graph/*
 *.egg-info/
 
 # Superpowers brainstorming scratchpad (top-level dir; persisted
-# spec/plan files live under AgentLens/docs/spec/ and AgentLens/docs/plan/)
+# spec/plan files live under docs/superpowers/specs/ and docs/superpowers/plans/)
 .superpowers/
 .cursor/*
 !.cursor/

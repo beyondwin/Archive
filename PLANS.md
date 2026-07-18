@@ -1,7 +1,8 @@
 # Implementation Plan Template
 
-Use this template for complex, ambiguous, or multi-step implementation work.
-Keep plans specific enough that another agent can execute them without guessing.
+Read `AGENTS.md` and the nearest subtree `AGENTS.md` first. This template is a
+thin planning adapter; keep plans specific enough that another agent can
+execute them without guessing.
 
 ## Goal
 

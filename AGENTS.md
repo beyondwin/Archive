@@ -43,15 +43,23 @@ in older skill docs or git history.
 Keep this file practical. Put durable, repeated guidance here; put deeper
 review and planning workflow details in `code_review.md` and `PLANS.md`.
 
-## Active Components
+## Mandatory Start Preflight
 
-### Lens
+Before editing, finalizing, committing, or reporting branch state, run `pwd`,
+full Git status, current branch, `git rev-parse HEAD`, and
+`git worktree list --porcelain`. Treat the current directory as a checkout,
+not automatically as authoritative `main`. Identify the nearest applicable
+`AGENTS.md` before changing a subtree.
 
-- Lens storage helpers: `packages/lens-store/`
-- Lens projections: `packages/lens-projectors/`
-- Waygent read API: `apps/api/`
-- Waygent console app: `apps/console/`
-- Current docs: root `docs/`
+## Task Routing
+
+- Waygent orchestration: `packages/orchestrator/`, `packages/runway-control/`
+- Provider execution: `packages/provider-adapters/`, `native/kernel/`
+- Lens storage/projection: `packages/lens-store/`, `packages/lens-projectors/`
+- Product surfaces: `apps/cli/`, `apps/api/`, `apps/console/`
+- Waygent workflow contract: `skills/waygent/`
+- Sequential Codex plan execution: `skills/kws-codex-plan-executor/`
+- Claude executor: `skills/kws-claude-multi-agent-executor/`
 
 Filesystem JSON and JSONL artifacts are the source of truth. SQLite indexes are
 rebuildable caches when present. Active Waygent events use `platform.*`,
@@ -62,39 +70,10 @@ legacy Python AgentLens implementation. Historical `agentrunway.*`,
 read-compatibility code, or KWS executor skill docs, but must not be treated as
 the active Waygent integration model.
 
-### Waygent Runtime
-
-- Skill entry point: `skills/waygent/SKILL.md`
-- CLI app: `apps/cli/`
-- Runtime orchestration: `packages/orchestrator/`
-- Scheduling and recovery: `packages/runway-control/`
-- Provider adapters: `packages/provider-adapters/`
-- Kernel boundary: `native/kernel/`
-- Lens storage and projections: `packages/lens-store/`, `packages/lens-projectors/`
-
 Waygent owns scheduling, state, worktrees, runtime adapters, verification,
 recovery, apply, and Lens emission. Do not manually orchestrate workers from
-chat context when a Waygent run is requested.
-
-### KWS Executor Skills
-
-- Claude executor: `skills/kws-claude-multi-agent-executor/`
-- Codex executor: `skills/kws-codex-plan-executor/`
-
-The Codex executor is a small sequential wrapper for approved Superpowers plan
-documents. It snapshots ordered specs and plans, runs one plan at a time in one
-isolated worktree, and resumes at the first incomplete plan. Superpowers owns
-implementation, review, fixes, verification, and commits. The executor is not
-a Waygent product dependency and does not own task mapping or quality policy.
-
-For Claude executor changes,
-`skills/kws-claude-multi-agent-executor/AGENTS.md` has required experiment and
-history rules.
-
-If planning new Lens/Waygent orchestration architecture, do not revive the old
-KWS CPE/CME split as a new direction. The current target is Waygent: a single
-user-facing orchestrator and platform that uses the TypeScript Lens path for
-observability and inspection, unless the user explicitly changes direction.
+chat context when a Waygent run is requested. For Claude executor changes,
+follow `skills/kws-claude-multi-agent-executor/AGENTS.md`.
 
 ## Verification Commands
 
