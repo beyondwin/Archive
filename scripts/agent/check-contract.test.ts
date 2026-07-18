@@ -241,6 +241,21 @@ describe("checkContract", () => {
     }));
   });
 
+  test("preserves retired ancestor context for a nested Markdown list item", async () => {
+    const root = await createContractFixture();
+    await writeFile(
+      join(root, "GEMINI.md"),
+      "- Historical paths were removed:\n  - Primary location: components/agentlens\n",
+    );
+
+    const issues = await checkContract({ root, requiredPaths: [], requiredAgentFiles: [], trackedFiles: [] });
+
+    expect(issues).not.toContainEqual(expect.objectContaining({
+      code: "stale_active_claim",
+      path: "GEMINI.md",
+    }));
+  });
+
   test("surfaces a failed git tracked-file scan", async () => {
     const root = await createContractFixture();
 

@@ -247,21 +247,87 @@ async function isReadableRegularFile(path: string): Promise<boolean> {
 }
 
 function hasStaleActiveClaim(contents: string): boolean {
-  const normalized = contents
-    .replace(/\r\n?/g, "\n")
-    .replace(/\n(?=[ \t]*(?:[-+*]|\d+[.)])[ \t]+)/g, ". ")
-    .replace(/\s+/g, " ");
+  return guidanceClaims(contents).some((claim) =>
+    ACTIVE_CLAIM.test(claim) && !RETIRED_CLAIM.test(claim)
+  );
+}
+
+interface MarkdownListItem {
+  indent: number;
+  body: string;
+  ancestors: readonly string[];
+}
+
+function guidanceClaims(contents: string): string[] {
+  const claims: string[] = [];
+  const listStack: MarkdownListItem[] = [];
+  const prose: string[] = [];
+
+  const appendItemClaims = (item: MarkdownListItem): void => {
+    for (const claim of pathClaims(item.body)) {
+      claims.push([...item.ancestors, claim].join(" "));
+    }
+  };
+  const closeList = (minimumIndent = Number.NEGATIVE_INFINITY): void => {
+    while (listStack.length > 0 && listStack.at(-1)!.indent >= minimumIndent) {
+      appendItemClaims(listStack.pop()!);
+    }
+  };
+  const flushProse = (): void => {
+    if (prose.length > 0) {
+      claims.push(...pathClaims(prose.splice(0).join("\n")));
+    }
+  };
+
+  for (const line of contents.replace(/\r\n?/g, "\n").split("\n")) {
+    const listMatch = /^([ \t]*)(?:[-+*]|\d+[.)])[ \t]+(.*)$/.exec(line);
+    if (listMatch) {
+      flushProse();
+      const indent = markdownIndent(listMatch[1]!);
+      closeList(indent);
+      listStack.push({
+        indent,
+        body: listMatch[2]!,
+        ancestors: listStack.map(({ body }) => body),
+      });
+      continue;
+    }
+
+    const currentItem = listStack.at(-1);
+    if (currentItem !== undefined && line.trim().length > 0 && leadingIndent(line) > currentItem.indent) {
+      currentItem.body = `${currentItem.body}\n${line.trim()}`;
+      continue;
+    }
+    if (currentItem !== undefined) {
+      closeList();
+    }
+    prose.push(line);
+  }
+
+  closeList();
+  flushProse();
+  return claims;
+}
+
+function pathClaims(contents: string): string[] {
+  const normalized = contents.replace(/\s+/g, " ").trim();
+  const claims: string[] = [];
   for (const match of normalized.matchAll(/components\/agentlens/gi)) {
     const pathIndex = match.index ?? 0;
-    const claim = normalized.slice(
+    claims.push(normalized.slice(
       sentenceStart(normalized, pathIndex),
       sentenceEnd(normalized, pathIndex + match[0].length),
-    );
-    if (ACTIVE_CLAIM.test(claim) && !RETIRED_CLAIM.test(claim)) {
-      return true;
-    }
+    ));
   }
-  return false;
+  return claims;
+}
+
+function markdownIndent(whitespace: string): number {
+  return whitespace.replace(/\t/g, "    ").length;
+}
+
+function leadingIndent(line: string): number {
+  return markdownIndent(/^[ \t]*/.exec(line)?.[0] ?? "");
 }
 
 function sentenceStart(contents: string, index: number): number {
