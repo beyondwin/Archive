@@ -10,6 +10,7 @@ import shutil
 import stat
 import subprocess
 import tempfile
+from collections.abc import Collection
 from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -253,9 +254,24 @@ def _read_regular(path: Path, *, missing_message: str) -> bytes:
         os.close(descriptor)
 
 
-def validate_execution_ledger(path: Path, *, expected_plan_id: str) -> list[dict[str, object]]:
+def validate_execution_ledger(
+    path: Path,
+    *,
+    expected_plan_id: str,
+    allowed_prior_plan_ids: Collection[str] = (),
+) -> list[dict[str, object]]:
+    """Validate the whole ledger and project events for one active plan.
+
+    A shared worktree may retain the last completed plan's ledger until the
+    next controller slice replaces it. Callers must explicitly authorize only
+    those completed predecessor identities; evidence sealing stays single-plan.
+    """
     payload = _read_regular(path, missing_message="required evidence is missing or redirected")
-    return _validate_execution_ledger_payload(payload, expected_plan_id=expected_plan_id)
+    return _validate_execution_ledger_payload(
+        payload,
+        expected_plan_id=expected_plan_id,
+        allowed_prior_plan_ids=allowed_prior_plan_ids,
+    )
 
 
 def execution_event_digest(event: dict[str, object]) -> str:
@@ -276,8 +292,17 @@ def read_progress_snapshot(run_root: Path, *, plan_index: int, head: str) -> Pro
     if not 0 <= plan_index < len(plans):
         raise ValueError("plan index is invalid")
     plan_id = plans[plan_index]["plan_id"]
+    prior_plan_ids = tuple(
+        plan["plan_id"]
+        for plan in plans[:plan_index]
+        if plan["status"] == "completed"
+    )
     ledger = Path(state["worktree"]) / ".superpowers" / "sdd" / "execution-ledger.jsonl"
-    events = validate_execution_ledger(ledger, expected_plan_id=plan_id)
+    events = validate_execution_ledger(
+        ledger,
+        expected_plan_id=plan_id,
+        allowed_prior_plan_ids=prior_plan_ids,
+    )
     completed = {
         event["task_id"] for event in events
         if event["category"] == "task"
@@ -299,10 +324,23 @@ def read_progress_snapshot(run_root: Path, *, plan_index: int, head: str) -> Pro
 
 
 def _validate_execution_ledger_payload(
-    payload: bytes, *, expected_plan_id: str
+    payload: bytes,
+    *,
+    expected_plan_id: str,
+    allowed_prior_plan_ids: Collection[str] = (),
 ) -> list[dict[str, object]]:
+    if not isinstance(expected_plan_id, str) or not _IDENTIFIER.fullmatch(
+        expected_plan_id
+    ):
+        raise ValueError("execution ledger plan identity is invalid")
+    allowed_plan_ids = {expected_plan_id}
+    for plan_id in allowed_prior_plan_ids:
+        if not isinstance(plan_id, str) or not _IDENTIFIER.fullmatch(plan_id):
+            raise ValueError("execution ledger plan identity is invalid")
+        allowed_plan_ids.add(plan_id)
     events: list[dict[str, object]] = []
     seen_ids: set[str] = set()
+    saw_event = False
     for line_number, line in enumerate(payload.splitlines(), start=1):
         if not line or len(line) > MAX_EXECUTION_EVENT_BYTES:
             raise ValueError(f"execution event {line_number} is too large or empty")
@@ -310,13 +348,15 @@ def _validate_execution_ledger_payload(
         if event is None:
             raise ValueError(f"execution event {line_number} is invalid JSON")
         validate_execution_event_schema(event)
-        if event["plan_id"] != expected_plan_id:
+        saw_event = True
+        if event["plan_id"] not in allowed_plan_ids:
             raise ValueError("execution event plan identity is invalid")
         if event["event_id"] in seen_ids:
             raise ValueError("execution event id is duplicated")
         seen_ids.add(event["event_id"])
-        events.append(event)
-    if not events:
+        if event["plan_id"] == expected_plan_id:
+            events.append(event)
+    if not saw_event:
         raise ValueError("execution ledger is empty")
     return events
 

@@ -382,35 +382,6 @@ def _write_private_json(path: Path, payload: dict[str, object]) -> Path:
     return path.resolve()
 
 
-def _recovery_decision(
-    *,
-    payload: dict[str, object] | None,
-    timed_out: bool,
-    previous_signature: str | None,
-    automatic_available: bool,
-) -> tuple[bool, str, str, str]:
-    status = payload.get("status") if payload is not None else None
-    if timed_out:
-        signature = "timeout"
-        strategy = (
-            "resume the first incomplete task from durable evidence "
-            "after process timeout"
-        )
-    elif status == "interrupted":
-        signature = "status:interrupted"
-        strategy = (
-            "resume the first incomplete task from durable evidence "
-            "after child interruption"
-        )
-    else:
-        return False, "not_retryable", "status:failed", ""
-    if signature == previous_signature:
-        return False, "repeated_failure_signature", signature, strategy
-    if not automatic_available:
-        return False, "automatic_limit", signature, strategy
-    return True, "eligible", signature, strategy
-
-
 class RunBusyError(RuntimeError):
     pass
 
@@ -1027,6 +998,11 @@ class SequentialRunner:
         head: str,
     ) -> ProgressSnapshot:
         plan = store.state["plans"][plan_index]
+        prior_plan_ids = tuple(
+            prior["plan_id"]
+            for prior in store.state["plans"][:plan_index]
+            if prior["status"] == "completed"
+        )
         ledger = (
             Path(store.state["worktree"])
             / ".superpowers"
@@ -1042,7 +1018,9 @@ class SequentialRunner:
             )
         try:
             events = validate_execution_ledger(
-                ledger, expected_plan_id=plan["plan_id"],
+                ledger,
+                expected_plan_id=plan["plan_id"],
+                allowed_prior_plan_ids=prior_plan_ids,
             )
             current_digests = [execution_event_digest(event) for event in events]
             previous_digests = plan["execution_ledger_event_digests"]
