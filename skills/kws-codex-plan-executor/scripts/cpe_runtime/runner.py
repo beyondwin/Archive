@@ -64,7 +64,7 @@ from .result_validation import (
     normalize_result_v2,
     strict_json_object,
 )
-from .state import PRE_EXECUTION_WORKTREE_BLOCKER, StateStore
+from .state import PRE_EXECUTION_WORKTREE_BLOCKER, StateStore, atomic_private_write
 from .verification import (
     VerificationRequest,
     execute_verification,
@@ -625,6 +625,141 @@ class SequentialRunner:
         self.compiler = compiler or CompiledIndexService(
             compile_once=self.launcher.compile_index
         )
+
+    @staticmethod
+    def _branch_handoff_payload(store: StateStore) -> dict[str, object]:
+        """Project accepted run facts without claiming external integration."""
+        state = store.state
+        worktree = Path(state["worktree"])
+        try:
+            candidate_head = _git(worktree, "rev-parse", "HEAD")
+        except (OSError, subprocess.CalledProcessError):
+            candidate_head = ""
+        observed_head = candidate_head if _SHA.fullmatch(candidate_head) else None
+
+        plan_results: list[dict[str, object]] = []
+        open_finding_ids: set[str] = set()
+        open_obligation_ids: set[str] = set()
+        run_root = store.root.resolve(strict=True)
+        for plan in state["plans"]:
+            result_path = Path(str(plan["result_path"]))
+            digest = result_artifact_digest(store.root, result_path)
+            if digest is None:
+                raise ValueError("accepted plan result is unavailable")
+            payload = strict_json_object(read_private_result(
+                run_root=store.root,
+                result_path=result_path,
+                expected_digest=digest,
+            ))
+            if payload is None:
+                raise ValueError("accepted plan result is invalid")
+            normalized, error = normalize_result_v2(payload)
+            if error is not None or normalized is None:
+                raise ValueError("accepted plan result is invalid")
+            receipt = normalized.get("workflow_receipt")
+            verification = normalized.get("verification")
+            if normalized.get("status") != "completed" or not isinstance(receipt, dict):
+                raise ValueError("accepted plan result is incomplete")
+            if not isinstance(verification, list):
+                raise ValueError("accepted plan verification is invalid")
+
+            findings = receipt.get("open_finding_ids")
+            obligations = receipt.get("open_obligation_ids")
+            if not isinstance(findings, list) or not isinstance(obligations, list):
+                raise ValueError("accepted workflow receipt is invalid")
+            open_finding_ids.update(str(identifier) for identifier in findings)
+            open_obligation_ids.update(str(identifier) for identifier in obligations)
+            receipt_refs = sorted({
+                str(item["receipt_path"])
+                for item in verification
+                if isinstance(item, dict) and isinstance(item.get("receipt_path"), str)
+            })
+            try:
+                result_ref = result_path.resolve(strict=True).relative_to(
+                    run_root
+                ).as_posix()
+            except (OSError, ValueError) as exc:
+                raise ValueError("accepted plan result is outside the run root") from exc
+            plan_id = str(plan["plan_id"])
+            plan_results.append({
+                "plan_id": plan_id,
+                "result_ref": result_ref,
+                "accepted_commit": plan["accepted_commit"],
+                "final_review_ref": receipt["final_review_path"],
+                "final_review_head": receipt["final_review_head"],
+                "acceptance_evidence_ref": (
+                    f"evidence/{plan_id}/evidence-manifest.json"
+                ),
+                "verification_receipt_refs": receipt_refs,
+                "open_finding_ids": list(findings),
+                "open_obligation_ids": list(obligations),
+            })
+
+        return {
+            "format_version": 2,
+            "run_id": state["run_id"],
+            "branch": state["branch"],
+            "saved_worktree": state["worktree"],
+            "observed_head": observed_head,
+            "last_known_head": state["plans"][-1]["last_known_head"],
+            "base_commit": state["source_commit"],
+            "plan_results": plan_results,
+            "open_finding_ids": sorted(open_finding_ids),
+            "open_obligation_ids": sorted(open_obligation_ids),
+            "integration": {"status": "not_observed", "receipt": None},
+        }
+
+    @staticmethod
+    def _materialize_branch_handoff(store: StateStore) -> Path:
+        target = store.root / "results" / "branch-handoff.json"
+        payload = SequentialRunner._branch_handoff_payload(store)
+        encoded = json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        try:
+            visible = os.lstat(target)
+        except FileNotFoundError:
+            atomic_private_write(target, encoded, mode=0o400)
+            return target.resolve(strict=True)
+        except OSError as exc:
+            raise ValueError("existing branch handoff is unsafe") from exc
+
+        descriptor: int | None = None
+        try:
+            descriptor = os.open(
+                target, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            )
+            opened = os.fstat(descriptor)
+            chunks: list[bytes] = []
+            remaining = len(encoded) + 1
+            while remaining:
+                chunk = os.read(descriptor, remaining)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            if (
+                not stat.S_ISREG(visible.st_mode)
+                or not stat.S_ISREG(opened.st_mode)
+                or stat.S_IMODE(visible.st_mode) != 0o400
+                or stat.S_IMODE(opened.st_mode) != 0o400
+                or visible.st_uid != os.geteuid()
+                or opened.st_uid != os.geteuid()
+                or visible.st_dev != opened.st_dev
+                or visible.st_ino != opened.st_ino
+                or opened.st_size != len(encoded)
+                or b"".join(chunks) != encoded
+            ):
+                raise ValueError("existing branch handoff does not match")
+        except OSError as exc:
+            raise ValueError("existing branch handoff is unsafe") from exc
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
+        return target.resolve(strict=True)
 
     @staticmethod
     def _is_pre_execution_worktree_blocked(store: StateStore) -> bool:
@@ -1208,6 +1343,8 @@ class SequentialRunner:
             state["status"] = "blocked"
 
         plan["pending_checkpoint_decision"] = None
+        if decision.action == "finish" and state["status"] == "completed":
+            self._materialize_branch_handoff(store)
         store.save()
         return decision.action
 
@@ -2292,6 +2429,7 @@ class SequentialRunner:
         observed_head = _current_head(Path(state["worktree"]))
         if observed_head != expected_head:
             raise ValueError("run.completed head does not match completed run")
+        self._materialize_branch_handoff(store)
 
         matches: list[dict[str, object]] = []
         for line in store.events_path.read_text(encoding="utf-8").splitlines():
