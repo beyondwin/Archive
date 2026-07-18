@@ -69,15 +69,18 @@ from .state import (
 )
 from .verification import (
     VerificationRequest,
+    execution_environment_fingerprint,
     execute_verification,
     find_reusable_receipt,
     materialize_helper_descriptor,
+    resolved_executable_identity,
     validate_recorded_receipt_path,
     verification_cache_key,
 )
 
 
 _RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_VERIFICATION_COMMAND_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 _EVENT_ID = re.compile(r"^[0-9a-f]{32}$")
 _RUN_COMPLETED_FIELDS = {
@@ -87,10 +90,9 @@ _COMPLETED_TASK = re.compile(
     r"^Task\s+([1-9][0-9]*):\s+complete\b",
     re.IGNORECASE | re.MULTILINE,
 )
-_VERIFY_PHASES = {
-    "task": {"task_red", "task_green"},
-    "affected": {"task_green"},
-    "branch_final": {"final_verification"},
+_VERIFY_PHASES = {"task", "affected", "branch_final"}
+_INCIDENTAL_VERIFICATION_ENVIRONMENT_KEYS = {
+    "PWD", "OLDPWD", "SHLVL", "_", "TERM_SESSION_ID",
 }
 def _current_head(worktree: Path) -> str:
     return _git(worktree, "rev-parse", "HEAD")
@@ -725,6 +727,8 @@ class SequentialRunner:
     ) -> dict[str, Any]:
         if not _RUN_ID.fullmatch(run_id):
             raise ValueError("run ID contains unsupported characters")
+        if not _VERIFICATION_COMMAND_ID.fullmatch(command_id):
+            raise ValueError("verification command ID contains unsupported characters")
         store = StateStore.open(self.codex_home / "orchestrator" / run_id)
         try:
             with _RunLock(store.root / "run.lock") as lock_fd:
@@ -1037,7 +1041,7 @@ class SequentialRunner:
             and event.get("action") == "verification.evidence_ingested"
         }
         evidence_root = worktree / ".superpowers" / "sdd" / "verification"
-        validated_executions: set[tuple[str, str, str, str]] = set()
+        validated_executions: set[tuple[str, str, str]] = set()
         uncached_executions: set[tuple[str, str, str]] = set()
         for event in events:
             event_id = str(event["event_id"])
@@ -1060,7 +1064,9 @@ class SequentialRunner:
                         child_event_id=event_id,
                         plan_id=plan["plan_id"],
                         command_id=event["command_id"],
-                        phase=event["phase"],
+                        requested_phase=event["requested_phase"],
+                        executed_phase=event["executed_phase"],
+                        avoided_executions=event["avoided_executions"],
                         cache_key=event["evidence_key"],
                         receipt_id=None,
                         receipt_path=None,
@@ -1110,8 +1116,10 @@ class SequentialRunner:
                     argv=tuple(request_document["argv"]),
                     cwd=Path(request_document["cwd"]),
                     head=request_document["head"],
-                    environment_fingerprint=request_document["environment_fingerprint"],
-                    phase=request_document["phase"],
+                    environment_fingerprint=request_document[
+                        "execution_environment_fingerprint"
+                    ],
+                    phase=request_document["executed_phase"],
                     input_digest=request_document["input_digest"],
                     deterministic=request_document["deterministic"],
                     mutable_input_policy=request_document["mutable_input_policy"],
@@ -1136,7 +1144,6 @@ class SequentialRunner:
                 receipt is None
                 or resolved_receipt.name != f"{receipt.receipt_id}.json"
                 or receipt.receipt_id != document.get("receipt_id")
-                or event.get("command_id") != request.command_id
                 or event.get("argv_digest") != argv_digest
                 or event.get("evidence_key") != receipt.cache_key
                 or references[1:] != [
@@ -1146,10 +1153,16 @@ class SequentialRunner:
             ):
                 raise ValueError("verification helper receipt binding is invalid")
             decision = "reused" if event_id.startswith("verification.reused:") else "executed"
+            if (
+                event.get("requested_phase") not in _VERIFY_PHASES
+                or event.get("executed_phase") != request.phase
+                or event.get("avoided_executions") != (1 if decision == "reused" else 0)
+                or (decision == "executed" and event.get("command_id") != request.command_id)
+            ):
+                raise ValueError("verification observation binding is invalid")
             lifecycle = (
                 receipt.receipt_id,
                 receipt.cache_key,
-                request.command_id,
                 argv_digest,
             )
             if decision == "reused" and (
@@ -1167,8 +1180,10 @@ class SequentialRunner:
                     "verification.evidence_ingested",
                     child_event_id=event_id,
                     plan_id=plan["plan_id"],
-                    command_id=request.command_id,
-                    phase=request.phase,
+                    command_id=event["command_id"],
+                    requested_phase=event["requested_phase"],
+                    executed_phase=event["executed_phase"],
+                    avoided_executions=event["avoided_executions"],
                     cache_key=receipt.cache_key,
                     receipt_id=receipt.receipt_id,
                     receipt_path=references[0],
@@ -1475,14 +1490,16 @@ class SequentialRunner:
         cwd: Path,
         argv: Sequence[str],
     ) -> dict[str, object]:
-        """Execute one source-declared verification or reuse its exact receipt."""
+        """Execute one exact Superpowers-selected argv or reuse its exact receipt."""
         if not _RUN_ID.fullmatch(run_id):
             raise ValueError("run ID contains unsupported characters")
         if phase not in _VERIFY_PHASES or mutable_input_policy not in {
             "immutable", "digest_complete", "always_execute",
         }:
             raise ValueError("verification request enum is invalid")
-        if not argv or any(not isinstance(item, str) or not item for item in argv):
+        if not argv or any(
+            not isinstance(item, str) or not item or "\0" in item for item in argv
+        ):
             raise ValueError("verification command argv must not be empty")
 
         store = StateStore.open(self.codex_home / "orchestrator" / run_id)
@@ -1512,13 +1529,27 @@ class SequentialRunner:
         if not isinstance(plan_index, int) or not 0 <= plan_index < len(state["plans"]):
             raise ValueError("current plan is unavailable")
         head = _current_head(worktree)
+        child_environment = {
+            key: value
+            for key, value in os.environ.items()
+            if key not in _INCIDENTAL_VERIFICATION_ENVIRONMENT_KEYS
+        }
+        sandbox_mode = str(state["run_config"]["sandbox_mode"])
+        executable_identity = resolved_executable_identity(
+            str(argv[0]), cwd=resolved_cwd, environ=child_environment
+        )
+        environment_identity = execution_environment_fingerprint(
+            environ=child_environment,
+            sandbox_mode=sandbox_mode,
+            executable_identity=executable_identity,
+        )
         request = VerificationRequest(
             run_id=run_id,
             command_id=command_id,
             argv=tuple(argv),
             cwd=resolved_cwd,
             head=head,
-            environment_fingerprint="direct-snapshot",
+            environment_fingerprint=environment_identity,
             phase=phase,  # type: ignore[arg-type]
             input_digest=input_digest,
             deterministic=True,
@@ -1526,18 +1557,8 @@ class SequentialRunner:
             required_artifact_paths=(),
             timeout_seconds=3600,
         )
-        dirty_source_inputs = bool(
-            _git(
-                worktree,
-                "status",
-                "--porcelain=v1",
-                "--untracked-files=all",
-                "--",
-                ".",
-                ":(exclude).superpowers",
-                ":(exclude).superpowers/**",
-            )
-        )
+        worktree_observation = observe_worktree_changes(worktree)
+        dirty_source_inputs = worktree_observation.changed
         if dirty_source_inputs:
             request = replace(request, deterministic=False)
         evidence_root = worktree / ".superpowers" / "sdd" / "verification"
@@ -1569,6 +1590,9 @@ class SequentialRunner:
             receipt = execute_verification(
                 evidence_root,
                 replace(request, deterministic=False) if fallback else request,
+                environ=child_environment,
+                sandbox_mode=sandbox_mode,
+                publish_index=not dirty_source_inputs and not fallback,
             )
 
         receipt_relative = (
@@ -1584,6 +1608,9 @@ class SequentialRunner:
         argv_digest = hashlib.sha256(
             json.dumps(list(argv), separators=(",", ":")).encode("utf-8")
         ).hexdigest()
+        executed_phase = receipt.request.get("executed_phase")
+        if executed_phase not in _VERIFY_PHASES:
+            raise ValueError("verification receipt executed phase is invalid")
         if fallback:
             uncached_exit_code = receipt.exit_code
             if uncached_exit_code is None:
@@ -1605,7 +1632,9 @@ class SequentialRunner:
                     "exit_code": uncached_exit_code,
                     "receipt_path": None,
                     "reason_code": "verification_helper_fallback",
-                    "phase": phase,
+                    "requested_phase": phase,
+                    "executed_phase": executed_phase,
+                    "avoided_executions": 0,
                 },
             )
             return {
@@ -1617,7 +1646,9 @@ class SequentialRunner:
                 "command_id": command_id,
                 "argv_digest": argv_digest,
                 "evidence_key": receipt.cache_key,
-                "phase": phase,
+                "requested_phase": phase,
+                "executed_phase": executed_phase,
+                "avoided_executions": 0,
                 "reason": "verification_helper_fallback",
                 "reason_code": "verification_helper_fallback",
             }
@@ -1643,6 +1674,9 @@ class SequentialRunner:
                 "argv_digest": argv_digest,
                 "evidence_key": receipt.cache_key,
                 "duration_ms": int(receipt_document.get("duration_ms", 0)),
+                "requested_phase": phase,
+                "executed_phase": executed_phase,
+                "avoided_executions": 1 if reused else 0,
             },
         )
         response: dict[str, object] = {
@@ -1653,7 +1687,9 @@ class SequentialRunner:
             "status": receipt.status,
             "cache_key": receipt.cache_key,
             "command_id": command_id,
-            "phase": phase,
+            "requested_phase": phase,
+            "executed_phase": executed_phase,
+            "avoided_executions": 1 if reused else 0,
         }
         if dirty_source_inputs:
             response["reason"] = "dirty_worktree_requires_execution"

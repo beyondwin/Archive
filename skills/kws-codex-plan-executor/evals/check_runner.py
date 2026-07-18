@@ -51,9 +51,11 @@ from cpe_runtime.progress import (
 from cpe_runtime.verification import (
     MAX_VERIFICATION_LOG_BYTES,
     VerificationRequest,
+    execution_environment_fingerprint,
     execute_verification,
     find_reusable_receipt,
     materialize_helper_descriptor,
+    resolved_executable_identity,
     verification_cache_key,
 )
 from cpe_runtime.evidence import (
@@ -99,13 +101,24 @@ class VerificationReceiptTests(unittest.TestCase):
         )
 
     def request(self, **changes: object) -> VerificationRequest:
+        execution_environment = {
+            key: value
+            for key, value in os.environ.items()
+            if key not in {"PWD", "OLDPWD", "SHLVL", "_", "TERM_SESSION_ID"}
+        }
         values: dict[str, object] = {
             "run_id": "run-one",
             "command_id": "unit",
             "argv": (sys.executable, "-c", "print('ok')"),
             "cwd": self.cwd,
             "head": "a" * 40,
-            "environment_fingerprint": "environment-one",
+            "environment_fingerprint": execution_environment_fingerprint(
+                environ=execution_environment,
+                sandbox_mode="danger-full-access",
+                executable_identity=resolved_executable_identity(
+                    sys.executable, cwd=self.cwd, environ=execution_environment
+                ),
+            ),
             "phase": "task",
             "input_digest": "1" * 64,
             "deterministic": True,
@@ -116,17 +129,21 @@ class VerificationReceiptTests(unittest.TestCase):
         values.update(changes)
         return VerificationRequest(**values)  # type: ignore[arg-type]
 
-    def test_cache_key_uses_exact_eight_part_contract(self) -> None:
-        base = self.request()
+    def test_cache_key_uses_six_execution_identity_parts(self) -> None:
+        base = self.request(command_id="unit", phase="task")
+        self.assertEqual(
+            verification_cache_key(base),
+            verification_cache_key(
+                self.request(command_id="renamed", phase="branch_final")
+            ),
+        )
         other_cwd = self.worktree / "other"
         other_cwd.mkdir()
         for field, replacement in (
-            ("command_id", "lint-v2"),
             ("argv", (sys.executable, "-c", "print('other')")),
             ("cwd", other_cwd),
             ("head", "b" * 40),
-            ("environment_fingerprint", "changed"),
-            ("phase", "branch_final"),
+            ("environment_fingerprint", "2" * 64),
             ("input_digest", "2" * 64),
             ("mutable_input_policy", "always_execute"),
         ):
@@ -150,6 +167,78 @@ class VerificationReceiptTests(unittest.TestCase):
                     verification_cache_key(changed),
                 )
 
+    def test_receipt_reuses_across_phase_and_command_id_without_relabelling_execution(self) -> None:
+        executed_request = self.request(command_id="unit", phase="task")
+        receipt = execute_verification(self.evidence_root, executed_request)
+        requested = self.request(command_id="branch-unit", phase="branch_final")
+
+        reused = find_reusable_receipt(self.evidence_root, requested)
+
+        self.assertEqual(receipt, reused)
+        assert reused is not None
+        self.assertEqual("unit", reused.request["command_id"])
+        self.assertEqual("task", reused.request["executed_phase"])
+
+    def test_environment_fingerprint_binds_exact_mapping_sandbox_and_executable(self) -> None:
+        environ = {"PATH": os.environ.get("PATH", ""), "CPE_VISIBLE": "one"}
+        executable = resolved_executable_identity(
+            sys.executable, cwd=self.cwd, environ=environ
+        )
+        base = execution_environment_fingerprint(
+            environ=environ,
+            sandbox_mode="danger-full-access",
+            executable_identity=executable,
+        )
+
+        self.assertNotEqual(
+            base,
+            execution_environment_fingerprint(
+                environ={**environ, "CPE_VISIBLE": "two"},
+                sandbox_mode="danger-full-access",
+                executable_identity=executable,
+            ),
+        )
+        self.assertNotEqual(
+            base,
+            execution_environment_fingerprint(
+                environ=environ,
+                sandbox_mode="workspace-write",
+                executable_identity=executable,
+            ),
+        )
+        self.assertEqual(64, len(base))
+        self.assertNotIn("CPE_VISIBLE", base)
+        self.assertNotIn("one", base)
+
+    def test_executable_identity_resolves_symlink_and_detects_replacement(self) -> None:
+        executable = self.root / "tools" / "verify-tool"
+        executable.parent.mkdir()
+        executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        executable.chmod(0o755)
+        link = executable.parent / "verify-link"
+        link.symlink_to(executable)
+        environ = {"PATH": str(executable.parent)}
+
+        first = resolved_executable_identity(
+            "verify-link", cwd=self.cwd, environ=environ
+        )
+        executable.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+        executable.chmod(0o755)
+        second = resolved_executable_identity(
+            "verify-link", cwd=self.cwd, environ=environ
+        )
+
+        self.assertEqual(
+            {"resolved_path_digest", "device", "inode", "size", "mtime_ns", "sha256"},
+            set(first),
+        )
+        self.assertNotEqual(first, second)
+        self.assertNotIn(str(executable), json.dumps(first))
+
+        executable.chmod(0o644)
+        with self.assertRaisesRegex(ValueError, "regular executable"):
+            resolved_executable_identity(str(link), cwd=self.cwd, environ=environ)
+
     def test_digest_complete_requires_non_placeholder_lowercase_sha256(self) -> None:
         valid = self.request(
             mutable_input_policy="digest_complete",
@@ -167,7 +256,7 @@ class VerificationReceiptTests(unittest.TestCase):
         immutable_sentinel = self.request(input_digest="immutable")
         self.assertEqual(64, len(verification_cache_key(immutable_sentinel)))
 
-    def test_passing_receipt_is_reusable_only_for_exact_same_run_request(self) -> None:
+    def test_passing_receipt_is_reusable_only_for_same_run_execution_identity(self) -> None:
         request = self.request()
         receipt = execute_verification(self.evidence_root, request)
 
@@ -179,7 +268,7 @@ class VerificationReceiptTests(unittest.TestCase):
                 dataclasses.replace(request, run_id="run-two"),
             )
         )
-        self.assertIsNone(
+        self.assertIsNotNone(
             find_reusable_receipt(
                 self.evidence_root,
                 dataclasses.replace(request, timeout_seconds=11),
@@ -398,7 +487,21 @@ class VerificationReuseIntegrationTests(unittest.TestCase):
             plans=[plan],
         )
 
-    def test_prompt_exposes_digest_bound_helper_and_fallback_rules(self) -> None:
+    def execution_environment_fingerprint(self, argv0: str) -> str:
+        environ = {
+            key: value
+            for key, value in os.environ.items()
+            if key not in {"PWD", "OLDPWD", "SHLVL", "_", "TERM_SESSION_ID"}
+        }
+        return execution_environment_fingerprint(
+            environ=environ,
+            sandbox_mode="danger-full-access",
+            executable_identity=resolved_executable_identity(
+                argv0, cwd=self.repo, environ=environ
+            ),
+        )
+
+    def test_prompt_exposes_helper_descriptor_without_verification_policy(self) -> None:
         descriptor = self.store.root / "tools" / "run-and-record.json"
         prompt = CodexLauncher._prompt(
             worktree=self.repo,
@@ -413,14 +516,9 @@ class VerificationReuseIntegrationTests(unittest.TestCase):
         )
 
         self.assertIn(f"VERIFICATION_HELPER_DESCRIPTOR: {descriptor}", prompt)
-        self.assertIn("stable --command-id", prompt)
-        self.assertIn("task|affected|branch_final", prompt)
-        self.assertIn("merged_main is parent-integration-only", prompt)
-        self.assertIn("never rerun an exact cached same-key pass", prompt)
-        self.assertIn("uncached_command_required", prompt)
-        self.assertIn("action=executed_uncached", prompt)
-        self.assertIn("receipt_path=null", prompt)
-        self.assertIn("never treat fallback as a skipped verification", prompt)
+        self.assertNotIn("command-id", prompt)
+        self.assertNotIn("cache", prompt.lower())
+        self.assertNotIn("fallback", prompt.lower())
 
     def test_prompt_does_not_prescribe_superpowers_workflow_semantics(self) -> None:
         prompt = CodexLauncher._prompt(
@@ -510,7 +608,7 @@ class VerificationReuseIntegrationTests(unittest.TestCase):
             argv=(sys.executable, "-c", "print('ok')"),
             cwd=self.repo,
             head=git(self.repo, "rev-parse", "HEAD"),
-            environment_fingerprint="e" * 64,
+            environment_fingerprint=self.execution_environment_fingerprint(sys.executable),
             phase="task",
             input_digest="immutable",
             deterministic=True,
@@ -546,6 +644,9 @@ class VerificationReuseIntegrationTests(unittest.TestCase):
                     "argv_digest": argv_digest,
                     "evidence_key": receipt.cache_key,
                     "duration_ms": 1,
+                    "requested_phase": "task",
+                    "executed_phase": "task",
+                    "avoided_executions": 0,
                 },
             )
         runner = SequentialRunner(codex_home=self.home)
@@ -579,7 +680,7 @@ class VerificationReuseIntegrationTests(unittest.TestCase):
             argv=(sys.executable, "-c", "print('ok')"),
             cwd=self.repo,
             head=git(self.repo, "rev-parse", "HEAD"),
-            environment_fingerprint="e" * 64,
+            environment_fingerprint=self.execution_environment_fingerprint(sys.executable),
             phase="task",
             input_digest="immutable",
             deterministic=True,
@@ -609,6 +710,9 @@ class VerificationReuseIntegrationTests(unittest.TestCase):
                 "argv_digest": argv_digest,
                 "evidence_key": receipt.cache_key,
                 "duration_ms": 0,
+                "requested_phase": "task",
+                "executed_phase": "task",
+                "avoided_executions": 1,
             },
         )
 
@@ -625,7 +729,7 @@ class VerificationReuseIntegrationTests(unittest.TestCase):
             argv=(sys.executable, "-c", "print('ok')"),
             cwd=self.repo,
             head=git(self.repo, "rev-parse", "HEAD"),
-            environment_fingerprint="e" * 64,
+            environment_fingerprint=self.execution_environment_fingerprint(sys.executable),
             phase="task",
             input_digest="immutable",
             deterministic=True,
@@ -642,7 +746,10 @@ class VerificationReuseIntegrationTests(unittest.TestCase):
             f"verification/{receipt.stdout_path}",
             f"verification/{receipt.stderr_path}",
         ]
-        for decision, marker in (("executed", "a"), ("reused", "b")):
+        for decision, marker, command_id, requested_phase in (
+            ("executed", "a", "unit", "task"),
+            ("reused", "b", "branch-unit", "branch_final"),
+        ):
             append_execution_event(
                 self.repo / ".superpowers" / "sdd" / "execution-ledger.jsonl",
                 {
@@ -653,10 +760,13 @@ class VerificationReuseIntegrationTests(unittest.TestCase):
                     "action": "verified",
                     "result": "pass",
                     "evidence_refs": references,
-                    "command_id": "unit",
+                    "command_id": command_id,
                     "argv_digest": argv_digest,
                     "evidence_key": receipt.cache_key,
                     "duration_ms": 0,
+                    "requested_phase": requested_phase,
+                    "executed_phase": "task",
+                    "avoided_executions": 1 if decision == "reused" else 0,
                 },
             )
 
@@ -669,6 +779,10 @@ class VerificationReuseIntegrationTests(unittest.TestCase):
             if json.loads(line).get("action") == "verification.evidence_ingested"
         ]
         self.assertEqual(["executed", "reused"], [event["decision"] for event in events])
+        self.assertEqual("branch-unit", events[-1]["command_id"])
+        self.assertEqual("branch_final", events[-1]["requested_phase"])
+        self.assertEqual("task", events[-1]["executed_phase"])
+        self.assertEqual(1, events[-1]["avoided_executions"])
 
     def test_uncached_pass_has_strict_null_receipt_and_idempotent_parent_ingest(self) -> None:
         evidence_key = hashlib.sha256(b"uncached-unit").hexdigest()
@@ -690,7 +804,9 @@ class VerificationReuseIntegrationTests(unittest.TestCase):
                 "exit_code": 0,
                 "receipt_path": None,
                 "reason_code": "uncached_command_required",
-                "phase": "task",
+                "requested_phase": "task",
+                "executed_phase": "task",
+                "avoided_executions": 0,
             },
         )
         runner = SequentialRunner(codex_home=self.home)
@@ -712,6 +828,49 @@ class VerificationReuseIntegrationTests(unittest.TestCase):
         self.assertEqual(0, ingested[0]["exit_code"])
         self.assertIsNone(ingested[0]["receipt_id"])
         self.assertFalse((self.repo / ".superpowers" / "sdd" / "verification" / "indexes").exists())
+
+    def test_unavailable_dirty_inventory_executes_without_lookup_or_index_publication(self) -> None:
+        materialize_helper_descriptor(self.store.root, ROOT / "scripts" / "cpe.py")
+        self.store.state["status"] = "ready"
+        self.store.save()
+        counter = self.root / "dirty-inventory-counter.txt"
+        argv = (
+            sys.executable,
+            "-c",
+            f"from pathlib import Path; p=Path({str(counter)!r}); p.write_text((p.read_text() if p.exists() else '') + 'x')",
+        )
+        unavailable = mock.Mock(changed=True, reason_code="dirty_inventory_unavailable")
+        runner = SequentialRunner(codex_home=self.home)
+
+        with mock.patch.object(
+            runner_module, "observe_worktree_changes", return_value=unavailable
+        ):
+            first = runner.verify(
+                run_id=self.run_id,
+                command_id="unit",
+                phase="task",
+                input_digest="immutable",
+                mutable_input_policy="immutable",
+                cwd=self.repo,
+                argv=argv,
+            )
+            second = runner.verify(
+                run_id=self.run_id,
+                command_id="unit-final",
+                phase="branch_final",
+                input_digest="immutable",
+                mutable_input_policy="immutable",
+                cwd=self.repo,
+                argv=argv,
+            )
+
+        self.assertFalse(first["reused"])
+        self.assertFalse(second["reused"])
+        self.assertEqual("dirty_worktree_requires_execution", second["reason"])
+        self.assertEqual("xx", counter.read_text(encoding="utf-8"))
+        self.assertFalse(
+            (self.repo / ".superpowers" / "sdd" / "verification" / "indexes").exists()
+        )
 
 
 class CapabilityTests(unittest.TestCase):
@@ -1486,18 +1645,38 @@ class OptimizationReportObservabilityTests(unittest.TestCase):
         report = build_optimization_report(
             run_id="verification-counts",
             events=[
-                {"action": "verification.evidence_ingested", "source": "parent_observed", "decision": "executed", "child_event_id": "a"},
-                {"action": "verification.evidence_ingested", "source": "parent_observed", "decision": "reused", "child_event_id": "b"},
-                {"action": "verification.evidence_ingested", "source": "parent_observed", "decision": "executed_uncached", "child_event_id": "c"},
+                {"action": "verification.evidence_ingested", "source": "parent_observed", "decision": "executed", "child_event_id": "a", "requested_phase": "task", "executed_phase": "task", "avoided_executions": 0},
+                {"action": "verification.evidence_ingested", "source": "parent_observed", "decision": "reused", "child_event_id": "b", "requested_phase": "branch_final", "executed_phase": "task", "avoided_executions": 1},
+                {"action": "verification.evidence_ingested", "source": "parent_observed", "decision": "executed_uncached", "child_event_id": "c", "requested_phase": "affected", "executed_phase": "affected", "avoided_executions": 0},
                 {"action": "verified", "decision": "reused", "source": "child_attested"},
             ],
             findings=[],
         )
 
         self.assertEqual(
-            {"executions": 2, "reuses": 1, "uncached_executions": 1},
+            {
+                "requests": 3,
+                "executions": 2,
+                "reuses": 1,
+                "uncached_executions": 1,
+                "avoided_executions": 1,
+                "requested_phase_counts": {"task": 1, "affected": 1, "branch_final": 1},
+                "executed_phase_counts": {"task": 1, "affected": 1, "branch_final": 0},
+            },
             report["verification"],
         )
+
+    def test_verification_counts_ignore_incomplete_observations(self) -> None:
+        report = build_optimization_report(
+            run_id="verification-missing-counts",
+            events=[
+                {"action": "verification.evidence_ingested", "source": "parent_observed", "decision": "reused", "child_event_id": "missing"},
+            ],
+            findings=[],
+        )
+
+        self.assertEqual(0, report["verification"]["requests"])
+        self.assertEqual(0, report["verification"]["avoided_executions"])
 
     def test_usage_excludes_non_parent_attempt_events(self) -> None:
         report = build_optimization_report(
@@ -2079,7 +2258,7 @@ print(json.dumps(result, sort_keys=True), flush=True)
             "task": {"task_id": "task-01", "duration_ms": 0},
             "review": {"review_id": "review-01", "artifact_digest": "a" * 64, "duration_ms": 0},
             "finding_fix": {"finding_ids": ["finding-01"], "fix_digest": "a" * 64, "duration_ms": 0},
-            "verification": {"command_id": "command-01", "argv_digest": "a" * 64, "evidence_key": "b" * 64, "duration_ms": 0},
+            "verification": {"command_id": "command-01", "argv_digest": "a" * 64, "evidence_key": "b" * 64, "duration_ms": 0, "requested_phase": "task", "executed_phase": "task", "avoided_executions": 0},
             "capability": {"capability_id": "capability-01", "capability_digest": "a" * 64},
             "checkpoint": {"checkpoint_id": "checkpoint-01", "checkpoint_digest": "a" * 64},
             "blocker": {"blocker_id": "blocker-01", "blocker_digest": "a" * 64},
@@ -4555,6 +4734,9 @@ class EnvelopeRepairTests(_RecoveryRunnerFixture):
                 "argv_digest": "a" * 64,
                 "evidence_key": "b" * 64,
                 "duration_ms": 1,
+                "requested_phase": "branch_final",
+                "executed_phase": "branch_final",
+                "avoided_executions": 0,
             })
             payload: dict[str, object] = {
                 "plan_id": kwargs["plan_id"],

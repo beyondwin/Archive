@@ -542,7 +542,11 @@ class VerificationCliTests(unittest.TestCase):
             check=True,
         )
         (self.repo / "seed.txt").write_text("seed\n", encoding="utf-8")
-        subprocess.run(["git", "-C", str(self.repo), "add", "seed.txt"], check=True)
+        (self.repo / ".gitignore").write_text(".superpowers/\n", encoding="utf-8")
+        subprocess.run(
+            ["git", "-C", str(self.repo), "add", "seed.txt", ".gitignore"],
+            check=True,
+        )
         subprocess.run(
             ["git", "-C", str(self.repo), "commit", "-q", "-m", "seed"],
             check=True,
@@ -597,17 +601,24 @@ class VerificationCliTests(unittest.TestCase):
             check=False,
         )
 
-    def verify_arguments(self, *, command_id: str = "unit", cwd: Path | None = None) -> list[str]:
+    def verify_arguments(
+        self,
+        *,
+        command_id: str = "unit",
+        phase: str = "task",
+        cwd: Path | None = None,
+        argv: tuple[str, ...] | None = None,
+    ) -> list[str]:
         return [
             "verify",
             "--run-id", self.run_id,
             "--command-id", command_id,
-            "--phase", "task",
+            "--phase", phase,
             "--input-digest", "immutable",
             "--mutable-input-policy", "immutable",
             "--cwd", str(cwd or self.repo),
             "--",
-            *self.argv,
+            *(argv or self.argv),
         ]
 
     def test_verify_requires_separator_nonempty_argv_and_known_enums(self) -> None:
@@ -661,7 +672,9 @@ class VerificationCliTests(unittest.TestCase):
         payload = json.loads(result.stdout)
         self.assertEqual("passed", payload["status"])
         self.assertEqual("undeclared", payload["command_id"])
-        self.assertEqual("task", payload["phase"])
+        self.assertEqual("task", payload["requested_phase"])
+        self.assertEqual("task", payload["executed_phase"])
+        self.assertFalse(payload["reused"])
         self.assertEqual("x", self.counter.read_text(encoding="utf-8"))
 
     def test_exact_second_invocation_reuses_first_receipt(self) -> None:
@@ -685,6 +698,72 @@ class VerificationCliTests(unittest.TestCase):
             self.assertTrue(event["evidence_refs"][0].startswith("verification/receipts/"))
             self.assertTrue(event["evidence_refs"][1].startswith("verification/logs/"))
             self.assertTrue(event["evidence_refs"][2].startswith("verification/logs/"))
+
+    def test_cross_phase_and_command_id_only_requests_reuse_original_execution(self) -> None:
+        first = self.command(
+            *self.verify_arguments(command_id="task-unit", phase="task")
+        )
+        second = self.command(
+            *self.verify_arguments(command_id="final-unit", phase="branch_final")
+        )
+
+        self.assertEqual(0, first.returncode, first.stdout + first.stderr)
+        self.assertEqual(0, second.returncode, second.stdout + second.stderr)
+        first_payload = json.loads(first.stdout)
+        second_payload = json.loads(second.stdout)
+        self.assertFalse(first_payload["reused"])
+        self.assertTrue(second_payload["reused"])
+        self.assertEqual("branch_final", second_payload["requested_phase"])
+        self.assertEqual("task", second_payload["executed_phase"])
+        self.assertEqual(1, second_payload["avoided_executions"])
+        self.assertEqual(first_payload["receipt_id"], second_payload["receipt_id"])
+        self.assertEqual("x", self.counter.read_text(encoding="utf-8"))
+        ledger = [
+            json.loads(line)
+            for line in (
+                self.repo / ".superpowers" / "sdd" / "execution-ledger.jsonl"
+            ).read_text(encoding="utf-8").splitlines()
+        ]
+        self.assertEqual(1, sum(event["event_id"].startswith("verification.executed:") for event in ledger))
+        self.assertEqual(1, sum(event["event_id"].startswith("verification.reused:") for event in ledger))
+        self.assertEqual("task", ledger[-1]["executed_phase"])
+        self.assertEqual("branch_final", ledger[-1]["requested_phase"])
+
+    def test_changed_environment_executable_and_head_force_execution(self) -> None:
+        first = self.command(*self.verify_arguments())
+        self.assertEqual(0, first.returncode, first.stdout + first.stderr)
+
+        self.environment["CPE_VERIFICATION_TEST_VALUE"] = "changed"
+        changed_environment = self.command(*self.verify_arguments())
+        self.assertFalse(json.loads(changed_environment.stdout)["reused"])
+
+        executable = self.root / "verify-tool"
+        executable.write_text(
+            f"#!{sys.executable}\nfrom pathlib import Path\np=Path({str(self.counter)!r})\np.write_text(p.read_text() + 'e')\n",
+            encoding="utf-8",
+        )
+        executable.chmod(0o755)
+        executable_argv = (str(executable),)
+        tool_first = self.command(*self.verify_arguments(argv=executable_argv))
+        self.assertEqual(0, tool_first.returncode, tool_first.stdout + tool_first.stderr)
+        executable.write_text(
+            f"#!{sys.executable}\nfrom pathlib import Path\np=Path({str(self.counter)!r})\np.write_text(p.read_text() + 'r')\n",
+            encoding="utf-8",
+        )
+        executable.chmod(0o755)
+        replaced = self.command(*self.verify_arguments(argv=executable_argv))
+        self.assertEqual(0, replaced.returncode, replaced.stdout + replaced.stderr)
+        self.assertFalse(json.loads(replaced.stdout)["reused"])
+
+        (self.repo / "head.txt").write_text("new head\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(self.repo), "add", "head.txt"], check=True)
+        subprocess.run(
+            ["git", "-C", str(self.repo), "commit", "-q", "-m", "new head"],
+            check=True,
+        )
+        changed_head = self.command(*self.verify_arguments())
+        self.assertEqual(0, changed_head.returncode, changed_head.stdout + changed_head.stderr)
+        self.assertFalse(json.loads(changed_head.stdout)["reused"])
 
     def test_corrupt_cache_fallback_is_uncached_and_never_reused(self) -> None:
         first = self.command(*self.verify_arguments())

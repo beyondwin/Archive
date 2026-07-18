@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import stat
 import subprocess
 import tempfile
@@ -25,6 +26,10 @@ MAX_REQUIRED_ARTIFACTS = 64
 _PHASES = {"task", "affected", "branch_final", "merged_main"}
 _MUTABLE_POLICIES = {"immutable", "digest_complete", "always_execute"}
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+_INCIDENTAL_ENVIRONMENT_KEYS = {
+    "PWD", "OLDPWD", "SHLVL", "_", "TERM_SESSION_ID",
+}
 
 
 @dataclass(frozen=True)
@@ -88,36 +93,171 @@ def _iso_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _request_document(request: VerificationRequest) -> dict[str, object]:
+def _argv_digest(argv: tuple[str, ...]) -> str:
+    return _sha256_bytes(
+        json.dumps(list(argv), separators=(",", ":")).encode("utf-8")
+    )
+
+
+def _identity_document(request: VerificationRequest) -> dict[str, object]:
     return {
-        "run_id": request.run_id,
-        "command_id": request.command_id,
-        "argv": list(request.argv),
+        "schema_version": 2,
+        "argv_digest": _argv_digest(request.argv),
         "cwd": str(request.cwd.resolve(strict=True)),
         "head": request.head,
-        "environment_fingerprint": request.environment_fingerprint,
-        "phase": request.phase,
+        "execution_environment_fingerprint": request.environment_fingerprint,
         "input_digest": request.input_digest,
-        "deterministic": request.deterministic,
         "mutable_input_policy": request.mutable_input_policy,
+    }
+
+
+def _observation_document(request: VerificationRequest) -> dict[str, object]:
+    return {
+        "command_id": request.command_id,
+        "executed_phase": request.phase,
+    }
+
+
+def _request_document(request: VerificationRequest) -> dict[str, object]:
+    return {
+        **_identity_document(request),
+        **_observation_document(request),
+        "run_id": request.run_id,
+        "argv": list(request.argv),
+        "deterministic": request.deterministic,
         "required_artifact_paths": list(request.required_artifact_paths),
         "timeout_seconds": request.timeout_seconds,
     }
 
 
+def _sanitized_execution_environment(
+    environ: Mapping[str, str],
+) -> dict[str, str]:
+    if any(not isinstance(key, str) or not isinstance(value, str) for key, value in environ.items()):
+        raise ValueError("verification environment must contain string entries")
+    return {
+        key: value
+        for key, value in environ.items()
+        if key not in _INCIDENTAL_ENVIRONMENT_KEYS
+    }
+
+
+def _resolved_executable_path(
+    argv0: str,
+    *,
+    cwd: Path,
+    environ: Mapping[str, str],
+) -> Path:
+    if not argv0 or "\0" in argv0:
+        raise ValueError("verification executable is invalid")
+    declared = Path(argv0)
+    if declared.is_absolute():
+        candidate = declared
+    elif len(declared.parts) > 1:
+        candidate = cwd / declared
+    else:
+        located = shutil.which(argv0, path=environ.get("PATH"))
+        if located is None:
+            raise ValueError("verification executable is unavailable")
+        candidate = Path(located)
+        if not candidate.is_absolute():
+            candidate = cwd / candidate
+    try:
+        resolved = candidate.resolve(strict=True)
+        metadata = resolved.stat()
+    except (OSError, RuntimeError) as exc:
+        raise ValueError("verification executable is unavailable") from exc
+    if not stat.S_ISREG(metadata.st_mode) or not os.access(resolved, os.X_OK):
+        raise ValueError("verification executable must resolve to a regular executable")
+    return resolved
+
+
+def resolved_executable_identity(
+    argv0: str,
+    *,
+    cwd: Path,
+    environ: Mapping[str, str],
+) -> dict[str, object]:
+    """Return a path-private identity for the exact executable selected by argv0."""
+    resolved = _resolved_executable_path(argv0, cwd=cwd, environ=environ)
+    descriptor = os.open(
+        resolved,
+        os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+    )
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode) or before.st_mode & 0o111 == 0:
+            raise ValueError(
+                "verification executable must resolve to a regular executable"
+            )
+        digest = hashlib.sha256()
+        while chunk := os.read(descriptor, 1024 * 1024):
+            digest.update(chunk)
+        after = os.fstat(descriptor)
+        if (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+        ) != (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+        ):
+            raise ValueError("verification executable changed during identity capture")
+        return {
+            "resolved_path_digest": _sha256_bytes(str(resolved).encode("utf-8")),
+            "device": before.st_dev,
+            "inode": before.st_ino,
+            "size": before.st_size,
+            "mtime_ns": before.st_mtime_ns,
+            "sha256": digest.hexdigest(),
+        }
+    finally:
+        os.close(descriptor)
+
+
+def execution_environment_fingerprint(
+    *,
+    environ: Mapping[str, str],
+    sandbox_mode: str,
+    executable_identity: Mapping[str, object],
+) -> str:
+    """Hash the complete child mapping and executable identity without persisting either."""
+    if not sandbox_mode:
+        raise ValueError("verification sandbox mode is invalid")
+    environment = _sanitized_execution_environment(environ)
+    return _sha256_bytes(
+        _canonical_json(
+            {
+                "schema_version": 1,
+                "environment": environment,
+                "sandbox_mode": sandbox_mode,
+                "executable_identity": dict(executable_identity),
+            }
+        )
+    )
+
+
 def _validate_request(request: VerificationRequest) -> None:
-    if not request.run_id or not request.command_id:
+    if not request.run_id or not _IDENTIFIER.fullmatch(request.command_id):
         raise ValueError("verification identifiers must be non-empty")
     if (
         not isinstance(request.argv, tuple)
         or not request.argv
-        or any(not isinstance(item, str) or not item for item in request.argv)
+        or any(
+            not isinstance(item, str) or not item or "\0" in item
+            for item in request.argv
+        )
     ):
         raise ValueError("verification argv must be a non-empty string tuple")
     if request.phase not in _PHASES:
         raise ValueError("verification phase is invalid")
     if request.mutable_input_policy not in _MUTABLE_POLICIES:
         raise ValueError("mutable input policy is invalid")
+    if not _SHA256.fullmatch(request.environment_fingerprint):
+        raise ValueError("verification environment fingerprint is invalid")
     if request.mutable_input_policy == "digest_complete" and (
         not _SHA256.fullmatch(request.input_digest)
         or request.input_digest == "0" * 64
@@ -134,22 +274,9 @@ def _validate_request(request: VerificationRequest) -> None:
 
 
 def verification_cache_key(request: VerificationRequest) -> str:
-    """Return the approved eight-part content key; run identity is separate."""
+    """Return the approved six-part execution identity; observations are separate."""
     _validate_request(request)
-    payload = {
-        "schema_version": 1,
-        "command_id": request.command_id,
-        "argv_digest": _sha256_bytes(
-            json.dumps(list(request.argv), separators=(",", ":")).encode("utf-8")
-        ),
-        "cwd": str(request.cwd.resolve(strict=True)),
-        "head": request.head,
-        "environment_fingerprint": request.environment_fingerprint,
-        "phase": request.phase,
-        "input_digest": request.input_digest,
-        "mutable_input_policy": request.mutable_input_policy,
-    }
-    return _sha256_bytes(_canonical_json(payload))
+    return _sha256_bytes(_canonical_json(_identity_document(request)))
 
 
 def _reject_symlink_components(path: Path, stop: Path) -> None:
@@ -292,10 +419,29 @@ def _receipt_from_document(document: Mapping[str, object]) -> VerificationReceip
 def execute_verification(
     evidence_root: Path,
     request: VerificationRequest,
+    *,
+    environ: Mapping[str, str] | None = None,
+    sandbox_mode: str = "danger-full-access",
+    publish_index: bool = True,
 ) -> VerificationReceipt:
     """Execute an argv without a shell and atomically publish immutable evidence."""
     _validate_request(request)
     root, worktree, cwd = _prepare_layout(evidence_root, request.cwd)
+    execution_environment = _sanitized_execution_environment(
+        os.environ if environ is None else environ
+    )
+    executable_path = _resolved_executable_path(
+        request.argv[0], cwd=cwd, environ=execution_environment
+    )
+    fingerprint = execution_environment_fingerprint(
+        environ=execution_environment,
+        sandbox_mode=sandbox_mode,
+        executable_identity=resolved_executable_identity(
+            request.argv[0], cwd=cwd, environ=execution_environment
+        ),
+    )
+    if fingerprint != request.environment_fingerprint:
+        raise ValueError("verification execution environment identity changed")
     cache_key = verification_cache_key(request)
     execution_id = uuid.uuid4().hex
     started_at = _iso_now()
@@ -305,12 +451,14 @@ def execute_verification(
     with tempfile.TemporaryFile() as stdout_stream, tempfile.TemporaryFile() as stderr_stream:
         process = subprocess.Popen(
             list(request.argv),
+            executable=str(executable_path),
             cwd=cwd,
             stdin=subprocess.DEVNULL,
             stdout=stdout_stream,
             stderr=stderr_stream,
             shell=False,
             start_new_session=True,
+            env=execution_environment,
         )
         try:
             exit_code = process.wait(timeout=request.timeout_seconds)
@@ -339,7 +487,7 @@ def execute_verification(
         ]
     finished_at = _iso_now()
     receipt_document: dict[str, object] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "run_id": request.run_id,
         "cache_key": cache_key,
         "request": _request_document(request),
@@ -362,12 +510,13 @@ def execute_verification(
     atomic_private_write(receipt_path, _canonical_json(receipt_document), mode=0o400)
 
     if (
-        status_name == "passed"
+        publish_index
+        and status_name == "passed"
         and request.deterministic
         and request.mutable_input_policy != "always_execute"
     ):
         index_document = {
-            "schema_version": 1,
+            "schema_version": 2,
             "cache_key": cache_key,
             "receipt_path": receipt_path.relative_to(root).as_posix(),
             "evidence_root_digest": receipt_document["evidence_root_digest"],
@@ -432,7 +581,7 @@ def validate_recorded_receipt_path(
         unsigned = dict(document)
         unsigned.pop("receipt_id", None)
         if (
-            document.get("schema_version") != 1
+            document.get("schema_version") != 2
             or not isinstance(receipt_id, str)
             or _sha256_bytes(_canonical_json(unsigned)) != receipt_id
             or receipt_path.name != f"{receipt_id}.json"
@@ -441,9 +590,20 @@ def validate_recorded_receipt_path(
             or document.get("evidence_root_digest") != root_digest
             or document.get("source") != "child_attested"
             or document.get("status") != "passed"
-            or document.get("request") != _request_document(request)
         ):
             raise ValueError("invalid_receipt")
+        recorded_request = document.get("request")
+        if (
+            not isinstance(recorded_request, dict)
+            or recorded_request.get("run_id") != request.run_id
+            or {
+                key: recorded_request.get(key)
+                for key in _identity_document(request)
+            } != _identity_document(request)
+            or not isinstance(recorded_request.get("command_id"), str)
+            or recorded_request.get("executed_phase") not in _PHASES
+        ):
+            raise ValueError("invalid_receipt_request")
         stdout = _safe_relative_file(root, str(document.get("stdout_path")), "logs")
         stderr = _safe_relative_file(root, str(document.get("stderr_path")), "logs")
         if (
@@ -484,7 +644,7 @@ def validate_recorded_receipt(
         index = _load_json(index_path)
         root_digest = _sha256_bytes(str(root).encode("utf-8"))
         if (
-            index.get("schema_version") != 1
+            index.get("schema_version") != 2
             or index.get("cache_key") != cache_key
             or index.get("evidence_root_digest") != root_digest
             or not isinstance(index.get("receipt_path"), str)
