@@ -53,7 +53,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     resume = commands.add_parser("resume")
     resume.add_argument("--run-id", required=True)
-    resume.add_argument("--retry-failed", action="store_true")
+    retry = resume.add_mutually_exclusive_group()
+    retry.add_argument("--retry-blocked", action="store_true")
+    retry.add_argument("--retry-failed", action="store_true")
 
     inspect = commands.add_parser("inspect")
     inspect.add_argument("--run-id", required=True)
@@ -99,7 +101,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             return _emit(result)
         if args.command == "resume":
-            result = runner.resume(run_id=args.run_id, retry_failed=args.retry_failed)
+            result = runner.resume(
+                run_id=args.run_id,
+                retry_blocked=args.retry_blocked,
+                retry_failed=args.retry_failed,
+            )
             return _emit(result)
         if args.command == "verify":
             command_argv = list(args.argv)

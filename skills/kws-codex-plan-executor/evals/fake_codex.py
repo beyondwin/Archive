@@ -249,7 +249,16 @@ def main() -> int:
     result_path = Path(value(arguments, "--output-last-message"))
     plan_id = marker(prompt, "PLAN_ID")
     plan_path = Path(marker(prompt, "CURRENT_PLAN"))
-    scenario = plan_path.read_text(encoding="utf-8").splitlines()[0].split(":", 1)[1]
+    plan_lines = plan_path.read_text(encoding="utf-8").splitlines()
+    scenario = plan_lines[0].split(":", 1)[1]
+    blocker_resource = next(
+        (
+            line.split(":", 1)[1].strip()
+            for line in plan_lines[1:]
+            if line.startswith("blocker-resource:")
+        ),
+        plan_id,
+    )
     if scenario not in SCENARIOS:
         raise SystemExit(f"unsupported scenario {scenario}")
     recovery_match = re.search(
@@ -469,7 +478,7 @@ def main() -> int:
         payload["blocker"] = {
             "kind": "operator_owned",
             "code": "fake_blocked",
-            "resource": plan_id,
+            "resource": blocker_resource,
             "operation": "execute_plan",
             "errno": None,
             "retry_condition": "operator resolves the fake blocker",

@@ -6,7 +6,12 @@ from dataclasses import dataclass
 from hashlib import sha256
 import ipaddress
 import json
+import os
 import re
+import socket
+import subprocess
+import uuid
+from pathlib import Path
 from typing import Literal, Mapping, Sequence
 
 TrustLevel = Literal["parent_observed", "child_attested", "derived", "hypothesis"]
@@ -16,6 +21,7 @@ _INCIDENTAL_DETAIL_KEYS = {
     "timestamp", "pid", "probe_port", "temporary_path", "raw_error", "duration_ms"
 }
 _ALLOWED_DETAIL_KEYS = {
+    "repository_read": set(),
     "loopback_bind": {"host", "host_family", "sandbox_policy"},
     "workspace_write": {"filesystem_type", "sandbox_policy"},
     "git": {"version", "worktree_supported"},
@@ -153,3 +159,88 @@ def blocker_resume_decision(
     if previous_fingerprint is not None and previous_fingerprint == current_fingerprint:
         return "stop_unchanged"
     return "launch"
+
+
+def observe_parent_prerequisites(
+    worktree: Path, *, sandbox_mode: str,
+) -> Sequence[CapabilityObservation]:
+    """Observe only CPE's own filesystem and Git prerequisites.
+
+    This deliberately never invokes a package manager, project executable, or
+    capability inference.  The write probe is a private regular file that is
+    removed even when the probe fails.
+    """
+    observations: list[CapabilityObservation] = []
+    try:
+        descriptor = os.open(
+            worktree,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+        )
+        os.close(descriptor)
+        repository = ("available", "readable")
+    except OSError:
+        repository = ("unavailable", "not_readable")
+    observations.append(CapabilityObservation(
+        "repository_read", "workspace", repository[0], repository[1],
+        "parent_observed", {},
+    ))
+
+    probe = worktree / f".cpe-parent-write-probe-{uuid.uuid4().hex}"
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(
+            probe,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL
+            | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        os.fsync(descriptor)
+        writable = ("available", "writable")
+    except OSError:
+        writable = ("unavailable", "not_writable")
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        try:
+            probe.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            writable = ("unavailable", "not_writable")
+    observations.append(CapabilityObservation(
+        "workspace_write", "workspace", writable[0], writable[1],
+        "parent_observed", {"sandbox_policy": sandbox_mode},
+    ))
+
+    try:
+        git_available = subprocess.run(
+            ["git", "--version"],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        ).returncode == 0
+    except OSError:
+        git_available = False
+    observations.append(CapabilityObservation(
+        "git", "workspace", "available" if git_available else "unavailable",
+        "available" if git_available else "command_unavailable",
+        "parent_observed", {},
+    ))
+    return observations
+
+
+def observe_loopback_bind(*, sandbox_mode: str) -> CapabilityObservation:
+    """Perform the only child-triggered local capability probe."""
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        listener.bind(("127.0.0.1", 0))
+        outcome, reason = "available", "bound"
+    except OSError:
+        outcome, reason = "unavailable", "permission_denied"
+    finally:
+        listener.close()
+    return CapabilityObservation(
+        "loopback_bind", "workspace", outcome, reason, "parent_observed",
+        {"host": "127.0.0.1", "sandbox_policy": sandbox_mode},
+    )
