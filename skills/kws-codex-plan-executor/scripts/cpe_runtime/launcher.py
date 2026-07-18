@@ -351,7 +351,7 @@ class CodexLauncher:
         verification_helper_descriptor: Path | None = None,
     ) -> str:
         lines = [
-            "Execute one approved implementation plan in the worktree already isolated for this run.",
+            "The worktree is already isolated for this run.",
             f"WORKTREE: {worktree}",
             f"PLAN_ID: {plan_id}",
             f"CURRENT_PLAN: {plan_path}",
@@ -359,7 +359,7 @@ class CodexLauncher:
             f"CURRENT_COMMIT: {current_commit}",
             f"EXECUTION_LEDGER: {execution_ledger or 'unavailable'}",
             f"VERIFICATION_HELPER_DESCRIPTOR: {verification_helper_descriptor or 'unavailable'}",
-            "SPECIFICATIONS_REFERENCE_ONLY_IN_ORDER:",
+            "SPECIFICATIONS:",
         ]
         lines.extend(f"- {path}" for path in spec_paths)
         if recovery_path is not None:
@@ -369,15 +369,6 @@ class CodexLauncher:
                 "",
                 "Follow repository AGENTS.md from root through the edited subtree.",
                 "Use Superpowers. Ordinary agents reuse this worktree; create another only when the approved plan explicitly requires cross-revision comparison.",
-                "Do not preload specifications; read referenced sections only to resolve ambiguity or code conflicts.",
-                "On recovery, inspect the capsule, ledger, Git status, and log first.",
-                "For verification commands, read the descriptor and invoke its argv_prefix with --run-id, stable --command-id, real --phase task|affected|branch_final, --input-digest, --mutable-input-policy, --cwd, then -- and the selected argv.",
-                "Use task or affected for branch work and branch_final only for submitted final branch evidence; merged_main is parent-integration-only.",
-                "Digest every declared non-Git mutable input completely; use always_execute when mutable external state cannot be decision-completely digested.",
-                "Never claim a cache hit without the helper receipt, and never rerun an exact cached same-key pass merely for reassurance.",
-                "If the helper returns uncached_command_required or is unavailable, execute the exact command once and append one child-attested verification event with action=executed_uncached, the helper-provided or locally derived never-reusable evidence_key, exact argv digest, exit_code, phase, reason_code, receipt_path=null, and no evidence refs; never treat fallback as a skipped verification.",
-                "Do not run the same normalized verification command twice at the same HEAD unless a transient failure is recorded.",
-                "For completed, leave a clean worktree, report exact HEAD and successful final verification, and include workflow_receipt.",
                 "Return only the fixed schema object as the final response. Do not merge, push, deploy, or modify files outside the worktree.",
             ]
         )

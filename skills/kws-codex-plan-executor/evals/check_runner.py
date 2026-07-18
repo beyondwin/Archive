@@ -464,7 +464,19 @@ class VerificationReuseIntegrationTests(unittest.TestCase):
 
         self.assertIn("already isolated", prompt)
         self.assertNotIn("COMPILED_RUN_INDEX", prompt)
-        for forbidden in ("task mapping", "delta review", "finding cycle", "subagent count"):
+        for forbidden in (
+            "task mapping",
+            "delta review",
+            "finding cycle",
+            "subagent count",
+            "on recovery",
+            "for verification commands",
+            "branch_final",
+            "cache hit",
+            "uncached_command_required",
+            "do not run the same",
+            "successful final verification",
+        ):
             self.assertNotIn(forbidden, prompt.lower())
 
     def test_replaced_helper_descriptor_becomes_recorded_direct_fallback(self) -> None:
@@ -3150,8 +3162,7 @@ print(json.dumps(result, sort_keys=True), flush=True)
             "Write only the fixed schema result to RESULT_PATH",
             prompt,
         )
-        self.assertIn("SPECIFICATIONS_REFERENCE_ONLY_IN_ORDER:", prompt)
-        self.assertIn("Do not preload specifications", prompt)
+        self.assertIn("SPECIFICATIONS:", prompt)
         self.assertIn("Ordinary agents reuse this worktree", prompt)
         for semantic_instruction in (
             "focused RED/GREEN",
