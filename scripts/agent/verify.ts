@@ -27,11 +27,11 @@ export async function collectChangedPaths(
   const git = options.git ?? ((args: readonly string[]) => runGit(options.root, args));
   const outputs = options.base === undefined
     ? await Promise.all([
-        git(["diff", "--name-only", "--diff-filter=ACMR", "HEAD"]),
-        git(["ls-files", "--others", "--exclude-standard"]),
+        git(["diff", "--name-only", "--diff-filter=ACMR", "-z", "HEAD"]),
+        git(["ls-files", "--others", "--exclude-standard", "-z"]),
       ])
     : [await git([
-        "diff", "--name-only", "--diff-filter=ACMR",
+        "diff", "--name-only", "--diff-filter=ACMR", "-z",
         `${options.base}...${options.head}`,
       ])];
 
@@ -119,7 +119,7 @@ async function runCommand(root: string, command: CommandSpec): Promise<number> {
 }
 
 function splitPathOutput(output: string): string[] {
-  return output.split(/\r?\n/).filter(Boolean);
+  return output.split("\0").filter(Boolean);
 }
 
 function stablePaths(paths: readonly string[]): string[] {
@@ -181,19 +181,27 @@ function formatSummary(result: VerificationResult): string {
     "commands:",
     ...result.commandResults.map((commandResult) => {
       const command = commandsById.get(commandResult.id);
-      const status = commandResult.skipped ? "skipped" : commandResult.exitCode === 0 ? "passed" : "failed";
-      return `  [${status}] ${commandResult.id}: ${command?.argv.join(" ") ?? "unknown"}`;
+      const status = command?.optIn && commandResult.skipped
+        ? "NOT RUN (opt-in)"
+        : commandResult.skipped ? "skipped" : commandResult.exitCode === 0 ? "passed" : "failed";
+      return `  [${status}] ${commandResult.id}: ${formatCommand(command)}`;
     }),
     "opt-in:",
     ...(optIn.length === 0
       ? ["  none"]
-      : optIn.map((command) => `  [skipped] ${command.id}: ${command.argv.join(" ")}`)),
+      : optIn.map((command) => `  NOT RUN (opt-in) ${command.id}: ${formatCommand(command)}`)),
   ];
   if (result.unknownPaths.length > 0) {
     lines.push("unknown-paths:", ...formatItems(result.unknownPaths));
   }
   lines.push(`exit-code: ${result.exitCode}`);
   return `${lines.join("\n")}\n`;
+}
+
+function formatCommand(command: CommandSpec | undefined): string {
+  if (command === undefined) return "unknown";
+  const cwd = command.cwd === undefined ? "" : ` (cwd: ${command.cwd})`;
+  return `${command.argv.join(" ")}${cwd}`;
 }
 
 function formatItems(items: readonly string[]): string[] {

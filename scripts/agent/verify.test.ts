@@ -60,19 +60,20 @@ test("collects working tree and untracked paths without a range", async () => {
     git: async (args) => {
       calls.push([...args]);
       return args[0] === "diff"
-        ? "packages/z.ts\napps/api/src/index.ts\n"
-        : "docs/new.md\npackages/z.ts\n";
+        ? "packages/z.ts\0문서/새 파일.md\0line\nbreak.ts\0"
+        : "docs/new.md\0packages/z.ts\0";
     },
   });
 
   expect(calls).toEqual([
-    ["diff", "--name-only", "--diff-filter=ACMR", "HEAD"],
-    ["ls-files", "--others", "--exclude-standard"],
+    ["diff", "--name-only", "--diff-filter=ACMR", "-z", "HEAD"],
+    ["ls-files", "--others", "--exclude-standard", "-z"],
   ]);
   expect(paths).toEqual([
-    "apps/api/src/index.ts",
     "docs/new.md",
+    "line\nbreak.ts",
     "packages/z.ts",
+    "문서/새 파일.md",
   ]);
 });
 
@@ -84,12 +85,12 @@ test("collects a three-dot commit range", async () => {
     head: "HEAD",
     git: async (args) => {
       calls.push([...args]);
-      return "docs/README.md\n";
+      return "docs/README.md\0";
     },
   });
 
   expect(calls).toEqual([
-    ["diff", "--name-only", "--diff-filter=ACMR", "origin/main...HEAD"],
+    ["diff", "--name-only", "--diff-filter=ACMR", "-z", "origin/main...HEAD"],
   ]);
   expect(paths).toEqual(["docs/README.md"]);
 });
@@ -126,6 +127,25 @@ test("Markdown links run before the selected verification commands", async () =>
   });
 
   expect(calls).toEqual(["markdown-links", "agent-contract", "diff-check"]);
+});
+
+test("live provider evidence is selected but never executed by default", async () => {
+  const calls: string[] = [];
+  const result = await runVerification({
+    root: process.cwd(),
+    paths: ["bun.lock"],
+    run: async (command) => {
+      calls.push(command.id);
+      return 0;
+    },
+  });
+
+  expect(calls).not.toContain("waygent-live-provider-smoke");
+  expect(result.commandResults).toContainEqual({
+    id: "waygent-live-provider-smoke",
+    exitCode: 0,
+    skipped: true,
+  });
 });
 
 test("CLI rejects mixing explicit paths and a commit range", async () => {
@@ -165,4 +185,34 @@ test("CLI prints a stable dry-run summary for repeated paths", async () => {
     "exit-code: 0",
     "",
   ].join("\n"));
+});
+
+test("CLI reports live provider evidence as opt-in and not run", async () => {
+  const script = join(process.cwd(), "scripts/agent/verify.ts");
+  const child = Bun.spawn([
+    "bun", script, "--dry-run", "--path", "bun.lock",
+  ], { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" });
+
+  expect(await child.exited).toBe(0);
+  const stdout = await new Response(child.stdout).text();
+  expect(stdout).toContain(
+    "[NOT RUN (opt-in)] waygent-live-provider-smoke: bun run waygent:live-provider-smoke",
+  );
+  expect(stdout).toContain(
+    "NOT RUN (opt-in) waygent-live-provider-smoke: bun run waygent:live-provider-smoke",
+  );
+});
+
+test.each([
+  ["console", "apps/console/src/App.tsx", "console-test: bun test src (cwd: apps/console)"],
+  ["native", "native/kernel/crates/kernel-cli/src/main.rs", "rust-test: cargo test --workspace (cwd: native/kernel)"],
+  ["executor", "skills/kws-codex-plan-executor/scripts/cpe.py", "codex-executor-eval: ./evals/run.sh (cwd: skills/kws-codex-plan-executor)"],
+])("CLI includes cwd in $0 command summaries", async (_name, path, expected) => {
+  const script = join(process.cwd(), "scripts/agent/verify.ts");
+  const child = Bun.spawn([
+    "bun", script, "--dry-run", "--path", path,
+  ], { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" });
+
+  expect(await child.exited).toBe(0);
+  expect(await new Response(child.stdout).text()).toContain(expected);
 });
