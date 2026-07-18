@@ -79,6 +79,20 @@ test("keeps independently relevant docs, native, and skill scopes with closure",
   ]);
 });
 
+test("explains preserved scopes before the closure escalation", () => {
+  const selection = selectVerification([
+    "docs/README.md",
+    "native/kernel/crates/kernel-cli/src/main.rs",
+    "bun.lock",
+  ]);
+
+  expect(selection.reasons).toEqual([
+    "docs scope: docs/README.md",
+    "native scope: native/kernel/crates/kernel-cli/src/main.rs",
+    "cross-package or lockfile change requires offline closure",
+  ]);
+});
+
 test("keeps app verification when console and another app change without closure", () => {
   const paths = ["apps/console/src/App.tsx", "apps/api/src/index.ts"];
 
@@ -108,6 +122,7 @@ test("reports unknown and Markdown paths alongside conservative selection", () =
   expect(selection.scopeIds).toEqual(["full-offline"]);
   expect(selection.unknownPaths).toEqual(["unexpected/new-surface.md"]);
   expect(selection.markdownFiles).toEqual(["docs/README.md", "unexpected/new-surface.md"]);
+  expect(selection.reasons).toEqual(["unknown path: unexpected/new-surface.md"]);
 });
 
 test("selects a focused command for touched TypeScript tests", () => {
