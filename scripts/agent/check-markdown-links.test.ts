@@ -244,3 +244,19 @@ test.each(["../outside.md", "/outside.md"])(
     expect(read).toBe(false);
   },
 );
+
+test("closes CRLF fenced code before scanning following prose", async () => {
+  const issues = await checkMarkdownLinks({
+    root: "/fixture",
+    files: ["docs/readme.md"],
+    readText: async () => [
+      "```md",
+      "[ignored](ignored.md)",
+      "```",
+      "[real](missing.md)",
+    ].join("\r\n"),
+    exists: async () => false,
+  });
+
+  expect(issues).toEqual([{ file: "docs/readme.md", target: "missing.md" }]);
+});
