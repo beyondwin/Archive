@@ -107,6 +107,16 @@ class SequentialCliTest(unittest.TestCase):
             text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
         )
 
+    def only_run_state(self) -> dict[str, object]:
+        runs = list((self.home / "orchestrator").iterdir())
+        self.assertEqual(1, len(runs))
+        return json.loads((runs[0] / "state.json").read_text(encoding="utf-8"))
+
+    def use_home(self, name: str) -> None:
+        self.home = self.root / name
+        self.home.mkdir(mode=0o700)
+        self.environment["CODEX_HOME"] = str(self.home)
+
     def test_help_exposes_public_commands_and_internal_verify(self) -> None:
         source = CLI.read_text(encoding="utf-8")
         self.assertNotIn("export", source)
@@ -149,6 +159,45 @@ class SequentialCliTest(unittest.TestCase):
         relative = self.command("run", "--workspace", "repo", "--plan", str(self.plans[0]))
         self.assertEqual(relative.returncode, 1)
         self.assertEqual(json.loads(relative.stdout)["status"], "failed")
+
+    def test_run_runtime_configuration_defaults_bounds_and_persistence(self) -> None:
+        def run_and_state(home: str, *options: str) -> dict[str, object]:
+            self.use_home(home)
+            result = self.command(
+                "run", "--workspace", str(self.repo), "--plan", str(self.plans[0]),
+                *options,
+            )
+            self.assertEqual(0, result.returncode, result.stderr + result.stdout)
+            return self.only_run_state()
+
+        default = run_and_state("default")
+        self.assertEqual("danger-full-access", default["run_config"]["sandbox_mode"])
+        self.assertEqual(1200, default["run_config"]["controller_slice_seconds"])
+
+        explicit = run_and_state(
+            "explicit", "--sandbox", "workspace-write", "--controller-slice-seconds", "1800",
+        )
+        self.assertEqual("workspace-write", explicit["run_config"]["sandbox_mode"])
+        self.assertEqual(1800, explicit["run_config"]["controller_slice_seconds"])
+
+        for value in (1200, 3600):
+            state = run_and_state("slice-" + str(value), "--controller-slice-seconds", str(value))
+            self.assertEqual(value, state["run_config"]["controller_slice_seconds"])
+
+        for value in (1199, 3601):
+            self.use_home("invalid-" + str(value))
+            result = self.command(
+                "run", "--workspace", str(self.repo), "--plan", str(self.plans[0]),
+                "--controller-slice-seconds", str(value),
+            )
+            self.assertEqual(1, result.returncode, result.stderr + result.stdout)
+            self.assertEqual("failed", json.loads(result.stdout)["status"])
+            self.assertIn("controller slice", json.loads(result.stdout)["error"])
+
+        resume_help = self.command("resume", "--help")
+        self.assertEqual(0, resume_help.returncode, resume_help.stderr)
+        self.assertNotIn("--sandbox", resume_help.stdout)
+        self.assertNotIn("--controller-slice-seconds", resume_help.stdout)
 
     def test_checkpointed_run_uses_resume_exit_code(self) -> None:
         self.plans[0].write_text("scenario:interrupted\n", encoding="utf-8")

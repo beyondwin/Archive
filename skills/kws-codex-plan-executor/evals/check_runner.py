@@ -1778,6 +1778,30 @@ class SequentialRunnerTest(unittest.TestCase):
         self.assertTrue((root / "evidence" / "plan-01" / "evidence-manifest.json").is_file())
         self.assertTrue((root / "reports" / "optimization-report.json").is_file())
 
+    def test_format_three_persists_immutable_runtime_config(self) -> None:
+        store = StateStore.create(
+            run_root=self.home / "orchestrator" / "format-three",
+            run_id="format-three",
+            source_repository=self.repo,
+            source_commit=git(self.repo, "rev-parse", "HEAD"),
+            worktree=self.home / "worktrees" / "format-three",
+            branch="codex/format-three",
+            specs=[],
+            plans=[self.plan(1, "completed")],
+            sandbox_mode="workspace-write",
+            controller_slice_seconds=1800,
+        )
+        self.assertEqual(3, store.state["format_version"])
+        self.assertEqual(
+            {
+                "sandbox_mode": "workspace-write",
+                "controller_slice_seconds": 1800,
+            },
+            store.state["run_config"],
+        )
+        self.assertEqual(6, store.state["plans"][0]["budget"]["max_controller_launches"])
+        self.assertEqual(7200, store.state["plans"][0]["budget"]["plan_wall_budget_seconds"])
+
     def start_run_process(
         self,
         *,
@@ -6094,6 +6118,31 @@ class CheckpointCrashReconciliationTests(_RecoveryRunnerFixture):
             mock.patch.object(StateStore, "_append_event_bytes", new=crash_after_event),
             "crash-after-decision-event",
         )
+
+
+class Format3StateValidationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory(prefix="cpe-format-three-")
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+
+    def write_legacy_state(self, version: int) -> Path:
+        run_root = self.root / f"format-{version}"
+        run_root.mkdir(mode=0o700)
+        state_path = run_root / "state.json"
+        state_path.write_text(
+            json.dumps({"format_version": version}), encoding="utf-8"
+        )
+        return state_path
+
+    def test_format_one_and_two_are_rejected_without_mutation(self) -> None:
+        for version in (1, 2):
+            with self.subTest(version=version):
+                state_path = self.write_legacy_state(version)
+                before = state_path.read_bytes()
+                with self.assertRaisesRegex(ValueError, "unsupported_legacy_run"):
+                    StateStore.open(state_path.parent)
+                self.assertEqual(before, state_path.read_bytes())
 
 
 class Format2RecoveryStateValidationTests(_RecoveryRunnerFixture):

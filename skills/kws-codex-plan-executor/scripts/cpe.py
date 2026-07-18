@@ -40,6 +40,16 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--spec", action="append", type=absolute_path, default=[])
     run.add_argument("--plan", action="append", type=absolute_path, required=True)
     run.add_argument("--workspace", type=absolute_path, required=True)
+    run.add_argument(
+        "--sandbox",
+        choices=("danger-full-access", "workspace-write"),
+        default="danger-full-access",
+    )
+    run.add_argument(
+        "--controller-slice-seconds",
+        type=int,
+        default=1200,
+    )
 
     resume = commands.add_parser("resume")
     resume.add_argument("--run-id", required=True)
@@ -80,7 +90,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         args = build_parser().parse_args(raw_argv)
         runner = SequentialRunner()
         if args.command == "run":
-            result = runner.run(workspace=args.workspace, specs=args.spec, plans=args.plan)
+            result = runner.run(
+                workspace=args.workspace,
+                specs=args.spec,
+                plans=args.plan,
+                sandbox_mode=args.sandbox,
+                controller_slice_seconds=args.controller_slice_seconds,
+            )
             return _emit(result)
         if args.command == "resume":
             result = runner.resume(run_id=args.run_id, retry_failed=args.retry_failed)
