@@ -23,6 +23,9 @@ export async function checkMarkdownLinks(
 
   for (const file of options.files) {
     const documentPath = resolve(root, file);
+    if (!isWithinRoot(root, documentPath)) {
+      throw new Error(`Markdown file must stay within repository: ${JSON.stringify(file)}`);
+    }
     const contents = await readText(documentPath);
     for (const target of markdownTargets(contents)) {
       const localTarget = normalizeLocalTarget(target);
@@ -97,65 +100,105 @@ function normalizeLocalTarget(target: string): string | undefined {
 
 function maskMarkdownContexts(contents: string): string {
   const masked = contents.split("");
-  maskHtmlComments(masked);
-  maskFencedCode(masked);
-  maskInlineCode(masked);
-  return masked.join("");
-}
-
-function maskHtmlComments(contents: string[]): void {
-  const source = contents.join("");
-  for (let start = source.indexOf("<!--"); start !== -1;) {
-    const close = source.indexOf("-->", start + 4);
-    const end = close === -1 ? source.length : close + 3;
-    maskRange(contents, start, end);
-    start = source.indexOf("<!--", end);
-  }
-}
-
-function maskFencedCode(contents: string[]): void {
-  let fence: { marker: string; length: number } | undefined;
-  for (let lineStart = 0; lineStart < contents.length;) {
-    const newline = contents.indexOf("\n", lineStart);
-    const lineEnd = newline === -1 ? contents.length : newline;
-    const line = contents.slice(lineStart, lineEnd).join("");
-    const opening = /^ {0,3}(`{3,}|~{3,})/.exec(line);
-    const closing = fence === undefined
-      ? false
-      : new RegExp(`^ {0,3}\\${fence.marker}{${fence.length},}[ \\t]*$`).test(line);
-
-    if (fence !== undefined || opening !== null) {
-      maskRange(contents, lineStart, newline === -1 ? lineEnd : newline + 1);
+  for (let index = 0; index < contents.length;) {
+    if (isLineStart(contents, index)) {
+      const fencedEnd = fencedBlockEnd(contents, index);
+      if (fencedEnd !== undefined) {
+        maskRange(masked, index, fencedEnd);
+        index = fencedEnd;
+        continue;
+      }
+      const indentedEnd = indentedBlockEnd(contents, index);
+      if (indentedEnd !== undefined) {
+        maskRange(masked, index, indentedEnd);
+        index = indentedEnd;
+        continue;
+      }
     }
-    if (fence === undefined && opening !== null) {
-      fence = { marker: opening[1]![0]!, length: opening[1]!.length };
-    } else if (fence !== undefined && closing) {
-      fence = undefined;
-    }
-    lineStart = newline === -1 ? contents.length : newline + 1;
-  }
-}
-
-function maskInlineCode(contents: string[]): void {
-  const source = contents.join("");
-  for (let index = 0; index < source.length;) {
-    if (source[index] !== "`" || contents[index] === " ") {
-      index += 1;
+    if (contents.startsWith("<!--", index)) {
+      const close = contents.indexOf("-->", index + 4);
+      const end = close === -1 ? contents.length : close + 3;
+      maskRange(masked, index, end);
+      index = end;
       continue;
     }
-    const length = markerRunLength(source, index, "`");
-    const marker = "`".repeat(length);
-    let close = source.indexOf(marker, index + length);
-    while (close !== -1 && (source[close - 1] === "`" || source[close + length] === "`")) {
-      close = source.indexOf(marker, close + length);
-    }
-    if (close === -1) {
+    if (contents[index] === "`") {
+      const length = markerRunLength(contents, index, "`");
+      const close = exactMarkerClose(contents, index + length, length);
+      if (close !== -1) {
+        const end = close + length;
+        maskRange(masked, index, end);
+        index = end;
+        continue;
+      }
       index += length;
       continue;
     }
-    maskRange(contents, index, close + length);
-    index = close + length;
+    index += 1;
   }
+  return masked.join("");
+}
+
+function fencedBlockEnd(contents: string, start: number): number | undefined {
+  const openingLine = line(contents, start);
+  const opening = /^ {0,3}(`{3,}|~{3,})/.exec(openingLine.text);
+  if (opening === null) return undefined;
+  const marker = opening[1]![0]!;
+  const length = opening[1]!.length;
+  const closing = new RegExp(`^ {0,3}\\${marker}{${length},}[ \\t]*$`);
+  let cursor = openingLine.end;
+  while (cursor < contents.length) {
+    const candidate = line(contents, cursor);
+    if (closing.test(candidate.text)) return candidate.end;
+    cursor = candidate.end;
+  }
+  return contents.length;
+}
+
+function indentedBlockEnd(contents: string, start: number): number | undefined {
+  if (!canStartIndentedBlock(contents, start) || !isIndentedCodeLine(line(contents, start).text)) {
+    return undefined;
+  }
+  let cursor = start;
+  let end = start;
+  while (cursor < contents.length) {
+    const candidate = line(contents, cursor);
+    if (candidate.text.trim() !== "" && !isIndentedCodeLine(candidate.text)) break;
+    end = candidate.end;
+    cursor = candidate.end;
+  }
+  return end;
+}
+
+function canStartIndentedBlock(contents: string, start: number): boolean {
+  if (start === 0) return true;
+  const previousEnd = start - 1;
+  const previousStart = contents.lastIndexOf("\n", previousEnd - 1) + 1;
+  return contents.slice(previousStart, previousEnd).trim() === "";
+}
+
+function isIndentedCodeLine(value: string): boolean {
+  return value.startsWith("    ") || value.startsWith("\t");
+}
+
+function exactMarkerClose(contents: string, start: number, length: number): number {
+  const marker = "`".repeat(length);
+  let close = contents.indexOf(marker, start);
+  while (close !== -1 && (contents[close - 1] === "`" || contents[close + length] === "`")) {
+    close = contents.indexOf(marker, close + length);
+  }
+  return close;
+}
+
+function isLineStart(contents: string, index: number): boolean {
+  return index === 0 || contents[index - 1] === "\n";
+}
+
+function line(contents: string, start: number): { text: string; end: number } {
+  const newline = contents.indexOf("\n", start);
+  return newline === -1
+    ? { text: contents.slice(start), end: contents.length }
+    : { text: contents.slice(start, newline), end: newline + 1 };
 }
 
 function maskRange(contents: string[], start: number, end: number): void {

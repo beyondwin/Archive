@@ -172,14 +172,14 @@ test("CLI prints a stable dry-run summary for repeated paths", async () => {
   expect(await child.exited).toBe(0);
   expect(await new Response(child.stdout).text()).toBe([
     "paths:",
-    "  AGENTS.md",
-    "  docs/README.md",
+    "  \"AGENTS.md\"",
+    "  \"docs/README.md\"",
     "scopes:",
-    "  docs",
+    "  \"docs\"",
     "commands:",
-    "  [skipped] markdown-links: bun run scripts/agent/check-markdown-links.ts AGENTS.md docs/README.md",
-    "  [skipped] agent-contract: bun run agent:contract",
-    "  [skipped] diff-check: git diff --check",
+    "  [skipped] \"markdown-links\": argv=[\"bun\",\"run\",\"scripts/agent/check-markdown-links.ts\",\"AGENTS.md\",\"docs/README.md\"]",
+    "  [skipped] \"agent-contract\": argv=[\"bun\",\"run\",\"agent:contract\"]",
+    "  [skipped] \"diff-check\": argv=[\"git\",\"diff\",\"--check\"]",
     "opt-in:",
     "  none",
     "exit-code: 0",
@@ -196,17 +196,17 @@ test("CLI reports live provider evidence as opt-in and not run", async () => {
   expect(await child.exited).toBe(0);
   const stdout = await new Response(child.stdout).text();
   expect(stdout).toContain(
-    "[NOT RUN (opt-in)] waygent-live-provider-smoke: bun run waygent:live-provider-smoke",
+    "[NOT RUN (opt-in)] \"waygent-live-provider-smoke\": argv=[\"bun\",\"run\",\"waygent:live-provider-smoke\"]",
   );
   expect(stdout).toContain(
-    "NOT RUN (opt-in) waygent-live-provider-smoke: bun run waygent:live-provider-smoke",
+    "NOT RUN (opt-in) \"waygent-live-provider-smoke\": argv=[\"bun\",\"run\",\"waygent:live-provider-smoke\"]",
   );
 });
 
 test.each([
-  ["console", "apps/console/src/App.tsx", "console-test: bun test src (cwd: apps/console)"],
-  ["native", "native/kernel/crates/kernel-cli/src/main.rs", "rust-test: cargo test --workspace (cwd: native/kernel)"],
-  ["executor", "skills/kws-codex-plan-executor/scripts/cpe.py", "codex-executor-eval: ./evals/run.sh (cwd: skills/kws-codex-plan-executor)"],
+  ["console", "apps/console/src/App.tsx", "\"console-test\": argv=[\"bun\",\"test\",\"src\"] cwd=\"apps/console\""],
+  ["native", "native/kernel/crates/kernel-cli/src/main.rs", "\"rust-test\": argv=[\"cargo\",\"test\",\"--workspace\"] cwd=\"native/kernel\""],
+  ["executor", "skills/kws-codex-plan-executor/scripts/cpe.py", "\"codex-executor-eval\": argv=[\"./evals/run.sh\"] cwd=\"skills/kws-codex-plan-executor\""],
 ])("CLI includes cwd in $0 command summaries", async (_name, path, expected) => {
   const script = join(process.cwd(), "scripts/agent/verify.ts");
   const child = Bun.spawn([
@@ -216,3 +216,35 @@ test.each([
   expect(await child.exited).toBe(0);
   expect(await new Response(child.stdout).text()).toContain(expected);
 });
+
+test("CLI JSON-escapes newline paths in paths, command IDs, and argv", async () => {
+  const script = join(process.cwd(), "scripts/agent/verify.ts");
+  const path = "tests/line\ncommands:\nattack.test.ts";
+  const child = Bun.spawn([
+    "bun", script, "--dry-run", "--path", path,
+  ], { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" });
+
+  expect(await child.exited).toBe(0);
+  const stdout = await new Response(child.stdout).text();
+  expect(stdout).toContain("\"tests/line\\ncommands:\\nattack.test.ts\"");
+  expect(stdout).toContain(
+    "argv=[\"bun\",\"test\",\"tests/line\\ncommands:\\nattack.test.ts\"]",
+  );
+  expect(stdout.match(/^commands:$/gm)).toHaveLength(1);
+});
+
+test.each(["../outside.test.ts", "/tmp/outside.test.ts"])(
+  "CLI rejects explicit path outside root before selection: %s",
+  async (path) => {
+    const script = join(process.cwd(), "scripts/agent/verify.ts");
+    const child = Bun.spawn([
+      "bun", script, "--dry-run", "--path", path,
+    ], { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" });
+
+    expect(await child.exited).toBe(2);
+    expect(await new Response(child.stdout).text()).toBe("");
+    expect(await new Response(child.stderr).text()).toBe(
+      `--path must stay within repository: ${JSON.stringify(path)}\n`,
+    );
+  },
+);

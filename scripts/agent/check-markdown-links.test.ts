@@ -149,3 +149,98 @@ test("decodes before ignoring encoded web and mail schemes", async () => {
   expect(issues).toEqual([]);
   expect(checked).toEqual([]);
 });
+
+test.each([
+  ["inline code", "`<!--` [real](missing.md)"],
+  ["fenced code", "```md\n<!--\n```\n[real](missing.md)"],
+])("code context wins over comment markers inside $0", async (_name, contents) => {
+  const issues = await checkMarkdownLinks({
+    root: "/fixture",
+    files: ["docs/readme.md"],
+    readText: async () => contents,
+    exists: async () => false,
+  });
+
+  expect(issues).toEqual([{ file: "docs/readme.md", target: "missing.md" }]);
+});
+
+test("masks indented code and resumes scanning prose after the block", async () => {
+  const issues = await checkMarkdownLinks({
+    root: "/fixture",
+    files: ["docs/readme.md"],
+    readText: async () => [
+      "Before",
+      "",
+      "    [spaces](spaces.md)",
+      "\t[tabs](tabs.md)",
+      "",
+      "After [real](missing.md)",
+    ].join("\n"),
+    exists: async () => false,
+  });
+
+  expect(issues).toEqual([{ file: "docs/readme.md", target: "missing.md" }]);
+});
+
+test("parses valid reference definitions and their titles", async () => {
+  const checked: string[] = [];
+  const issues = await checkMarkdownLinks({
+    root: "/fixture",
+    files: ["docs/readme.md"],
+    readText: async () => [
+      "[basic]: basic.md",
+      "[angle]: <dir/space name.md> \"Angle title\"",
+      String.raw`[escaped]: dir/\(name\).md 'Escaped title'`,
+    ].join("\n"),
+    exists: async (path) => {
+      checked.push(path);
+      return true;
+    },
+  });
+
+  expect(issues).toEqual([]);
+  expect(checked).toEqual([
+    "/fixture/docs/basic.md",
+    "/fixture/docs/dir/space name.md",
+    "/fixture/docs/dir/(name).md",
+  ]);
+});
+
+test("ignores malformed reference definitions", async () => {
+  const checked: string[] = [];
+  const issues = await checkMarkdownLinks({
+    root: "/fixture",
+    files: ["docs/readme.md"],
+    readText: async () => [
+      "[missing-close: target.md",
+      "[no-colon] target.md",
+      "[empty]:",
+      "[angle]: <unterminated.md",
+    ].join("\n"),
+    exists: async (path) => {
+      checked.push(path);
+      return false;
+    },
+  });
+
+  expect(issues).toEqual([]);
+  expect(checked).toEqual([]);
+});
+
+test.each(["../outside.md", "/outside.md"])(
+  "rejects Markdown input outside root before reading: %s",
+  async (file) => {
+    let read = false;
+    const result = checkMarkdownLinks({
+      root: "/fixture/repo",
+      files: [file],
+      readText: async () => {
+        read = true;
+        return "";
+      },
+    });
+
+    expect(result).rejects.toThrow(`Markdown file must stay within repository: ${JSON.stringify(file)}`);
+    expect(read).toBe(false);
+  },
+);
