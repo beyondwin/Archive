@@ -70,7 +70,11 @@ from cpe_runtime.evidence import (
     validate_execution_ledger,
 )
 import cpe_runtime.evidence as evidence_module
-from cpe_runtime.reporting import build_optimization_report
+from cpe_runtime.reporting import (
+    MAX_OBSERVED_COUNTER,
+    build_optimization_report,
+    render_optimization_markdown,
+)
 import cpe_runtime.reporting as reporting_module
 import cpe_runtime.runner as runner_module
 from cpe_runtime.runner import (
@@ -1220,6 +1224,7 @@ class OptimizationReportObservabilityTests(unittest.TestCase):
             events=[
                 {
                     "action": "plan.attempt_finished",
+                    "source": "parent_observed",
                     "duration_ms": 100,
                     "timed_out": False,
                     "returncode": 0,
@@ -1231,6 +1236,7 @@ class OptimizationReportObservabilityTests(unittest.TestCase):
                 },
                 {
                     "action": "plan.attempt_finished",
+                    "source": "parent_observed",
                     "duration_ms": 200,
                     "timed_out": True,
                     "returncode": -15,
@@ -1242,6 +1248,7 @@ class OptimizationReportObservabilityTests(unittest.TestCase):
                 },
                 {
                     "action": "plan.attempt_finished",
+                    "source": "parent_observed",
                     "duration_ms": None,
                     "timed_out": False,
                     "returncode": 1,
@@ -1290,6 +1297,7 @@ class OptimizationReportObservabilityTests(unittest.TestCase):
             events=[
                 {
                     "action": "plan.attempt_finished",
+                    "source": "parent_observed",
                     "duration_ms": True,
                     "timed_out": False,
                     "returncode": 0,
@@ -1301,6 +1309,7 @@ class OptimizationReportObservabilityTests(unittest.TestCase):
                 },
                 {
                     "action": "plan.attempt_finished",
+                    "source": "parent_observed",
                     "duration_ms": -1,
                     "timed_out": False,
                     "returncode": 0,
@@ -1342,6 +1351,134 @@ class OptimizationReportObservabilityTests(unittest.TestCase):
             {"executions": 2, "reuses": 1, "uncached_executions": 1},
             report["verification"],
         )
+
+    def test_usage_excludes_non_parent_attempt_events(self) -> None:
+        report = build_optimization_report(
+            run_id="parent-attempts-only",
+            events=[
+                {
+                    "action": "plan.attempt_finished",
+                    "source": "parent_observed",
+                    "duration_ms": 10,
+                    "input_tokens": 7,
+                    "cached_input_tokens": 5,
+                    "output_tokens": 2,
+                    "reasoning_output_tokens": 1,
+                    "launcher_prompt_bytes": 3,
+                },
+                {
+                    "action": "plan.attempt_finished",
+                    "source": "child_attested",
+                    "duration_ms": 1000,
+                    "input_tokens": 900,
+                    "cached_input_tokens": 800,
+                    "output_tokens": 90,
+                    "reasoning_output_tokens": 80,
+                    "launcher_prompt_bytes": 70,
+                },
+                {
+                    "action": "plan.attempt_finished",
+                    "source": "derived",
+                    "duration_ms": 2000,
+                    "input_tokens": 1900,
+                    "cached_input_tokens": 1800,
+                    "output_tokens": 190,
+                    "reasoning_output_tokens": 180,
+                    "launcher_prompt_bytes": 170,
+                },
+            ],
+            findings=[],
+        )
+
+        self.assertEqual(1, report["usage"]["attempts_finished"])
+        self.assertEqual(7, report["usage"]["input"]["observed_tokens"])
+        self.assertEqual(10, report["duration_ms"])
+
+    def test_markdown_renders_all_bounded_observability_facts(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / ".superpowers" / "sdd"
+            root.mkdir(parents=True)
+            (root / "task.diff").write_bytes(b"x" * 12)
+            report = build_optimization_report(
+                run_id="markdown-facts",
+                events=[
+                    {
+                        "action": "plan.attempt_finished",
+                        "source": "parent_observed",
+                        "duration_ms": 25,
+                        "timed_out": True,
+                        "returncode": -15,
+                        "input_tokens": None,
+                        "cached_input_tokens": None,
+                        "output_tokens": 3,
+                        "reasoning_output_tokens": None,
+                        "launcher_prompt_bytes": 9,
+                    }
+                ],
+                findings=[],
+                sdd_root=root,
+            )
+        markdown = render_optimization_markdown(report)
+
+        for expected in (
+            "Input (lower_bound): 0 observed tokens; 0 known; 1 unknown.",
+            "Cached input (lower_bound): 0 observed tokens; 0 known; 1 unknown.",
+            "Paired uncached input (lower_bound): 0 observed tokens; 0 known; 1 unknown.",
+            "Output (exact): 3 observed tokens; 1 known; 0 unknown.",
+            "Reasoning output (lower_bound): 0 observed tokens; 0 known; 1 unknown.",
+            "Launcher prompt (exact): 9 observed bytes; 1 known; 0 unknown.",
+            "Paired cache ratio: unavailable.",
+            'Unknown-usage reasons: {"timeout":1}.',
+            'Artifact classes: {"review_diff":{"bytes":12,"files":1}}.',
+            "Review-diff pressure: 1 files, 12 bytes, largest 12 bytes.",
+            "Largest artifact: task.diff (12 bytes, review_diff).",
+            "Inventory truncated: false.",
+            "Declared context: unavailable (not_directly_evidenced); refs=null, bytes=null.",
+            "Data quality warnings:",
+            "attempt 1 input_tokens is unavailable",
+        ):
+            self.assertIn(expected, markdown)
+        self.assertNotIn("xxxxxxxxxxxx", markdown)
+
+    def test_schema_and_runtime_report_shapes_stay_in_parity(self) -> None:
+        schema = json.loads(
+            (ROOT / "templates" / "optimization-report.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            available_root = Path(temporary) / ".superpowers" / "sdd"
+            available_root.mkdir(parents=True)
+            available = build_optimization_report(
+                run_id="schema-available",
+                events=[],
+                findings=[],
+                sdd_root=available_root,
+            )
+        unavailable = build_optimization_report(
+            run_id="schema-unavailable", events=[], findings=[]
+        )
+
+        self.assertEqual(set(schema["required"]), set(available))
+        for field in ("usage", "verification", "artifact_inventory", "recovery_metrics"):
+            self.assertEqual(
+                set(schema["properties"][field]["required"]),
+                set(available[field]),
+            )
+        self.assertEqual(
+            MAX_OBSERVED_COUNTER, schema["$defs"]["counter"]["maximum"]
+        )
+        self.assertEqual(
+            {"$ref": "#/$defs/counter"},
+            schema["$defs"]["nullableCounter"]["oneOf"][0],
+        )
+        inventory_schema = schema["properties"]["artifact_inventory"]
+        self.assertEqual(2, len(inventory_schema["allOf"]))
+        self.assertEqual("available", available["artifact_inventory"]["availability"])
+        self.assertIsInstance(available["artifact_inventory"]["produced_files"], int)
+        self.assertEqual("unavailable", unavailable["artifact_inventory"]["availability"])
+        self.assertIsNone(unavailable["artifact_inventory"]["produced_files"])
+        self.assertIsNone(unavailable["artifact_inventory"]["review_diff_pressure"]["bytes"])
 
     def test_artifact_inventory_is_metadata_only_and_advisory(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

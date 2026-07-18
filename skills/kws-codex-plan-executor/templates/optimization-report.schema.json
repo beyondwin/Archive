@@ -124,6 +124,47 @@
         },
         "truncated": {"type": "boolean"}
       },
+      "allOf": [
+        {
+          "if": {"properties": {"availability": {"const": "available"}}, "required": ["availability"]},
+          "then": {
+            "properties": {
+              "produced_files": {"$ref": "#/$defs/counter"},
+              "produced_bytes": {"$ref": "#/$defs/counter"},
+              "review_diff_pressure": {
+                "type": "object",
+                "required": ["files", "bytes", "largest_bytes"],
+                "properties": {
+                  "files": {"$ref": "#/$defs/counter"},
+                  "bytes": {"$ref": "#/$defs/counter"},
+                  "largest_bytes": {"$ref": "#/$defs/counter"}
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"availability": {"const": "unavailable"}}, "required": ["availability"]},
+          "then": {
+            "properties": {
+              "produced_files": {"type": "null"},
+              "produced_bytes": {"type": "null"},
+              "classes": {"type": "object", "maxProperties": 0},
+              "largest": {"type": "null"},
+              "review_diff_pressure": {
+                "type": "object",
+                "required": ["files", "bytes", "largest_bytes"],
+                "properties": {
+                  "files": {"type": "null"},
+                  "bytes": {"type": "null"},
+                  "largest_bytes": {"type": "null"}
+                }
+              },
+              "truncated": {"const": false}
+            }
+          }
+        }
+      ],
       "additionalProperties": false
     },
     "data_quality_warnings": {
@@ -175,7 +216,12 @@
   },
   "$defs": {
     "counter": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807},
-    "nullableCounter": {"type": ["integer", "null"], "minimum": 0, "maximum": 9223372036854775807},
+    "nullableCounter": {
+      "oneOf": [
+        {"$ref": "#/$defs/counter"},
+        {"type": "null"}
+      ]
+    },
     "tokenMetric": {
       "type": "object",
       "required": ["observed_tokens", "known_attempts", "unknown_attempts", "total_kind"],
