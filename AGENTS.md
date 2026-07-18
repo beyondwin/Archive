@@ -75,39 +75,11 @@ recovery, apply, and Lens emission. Do not manually orchestrate workers from
 chat context when a Waygent run is requested. For Claude executor changes,
 follow `skills/kws-claude-multi-agent-executor/AGENTS.md`.
 
-## Verification Commands
+## Definition Of Done
 
-Run the smallest command that proves the change. Useful defaults:
-
-```bash
-# Waygent runtime and Lens projections
-bun run check
-bun run platform:demo
-bun run waygent:scenarios
-
-# Waygent console
-cd apps/console
-bun test src
-bun run build
-
-# Native kernel
-cd native/kernel && cargo test --workspace
-
-# KWS executor skill evals
-cd skills/kws-codex-plan-executor && ./evals/run.sh
-cd skills/kws-claude-multi-agent-executor && ./evals/run.sh
-
-# Generic patch hygiene
-git diff --check
-```
-
-For docs-only changes, at minimum run `git diff --check` and manually inspect
-links/paths touched by the change.
-
-Tasks that edit two or more `packages/*` or touch `bun.lock` automatically
-run verify under `isolated_workspace_resolve`. See
-`docs/operations/verification.md` for strategy, failure surface, and kill
-switches.
+Run `bun run agent:verify` plus explicitly required live evidence. Review
+against `code_review.md`, then report changed files, exact command results,
+skipped opt-in evidence, residual risks, and local-versus-remote state.
 
 ## Prompt Shape
 

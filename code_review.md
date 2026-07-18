@@ -8,7 +8,8 @@ thin review adapter; lead with concrete findings and file references.
 - Correctness: Does the change satisfy the requested behavior?
 - Regression risk: Could existing workflows, schemas, CLI contracts, or runtime
   state be broken?
-- Verification: Are tests, lint, build, or honest substitutes run and reported?
+- Verification: Was `bun run agent:verify` run, with exact command results and
+  skipped opt-in evidence reported?
 - Scope control: Are unrelated refactors, generated files, caches, or local
   runtime artifacts excluded?
 - Security and privacy: Are secrets, transcripts, credentials, screenshots, or
@@ -33,6 +34,12 @@ thin review adapter; lead with concrete findings and file references.
 - Recovery paths stop on missing handlers or human-decision classes instead of
   recording fake progress.
 - Runtime behavior changes include targeted tests or scenario harness coverage.
+
+## Documentation Checks
+
+- Local Markdown targets resolve without network access.
+- Explicitly required live evidence stays opt-in and is reported separately
+  from deterministic offline verification.
 
 ## Output Format
 
