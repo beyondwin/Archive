@@ -38,6 +38,7 @@ from .capabilities import (
     observe_parent_prerequisites,
 )
 from .launcher import (
+    CONTROLLER_OUTCOME_CODES,
     CodexLauncher,
     LaunchResult,
     StructuredLaunchRequest,
@@ -971,6 +972,50 @@ class SequentialRunner:
             code=child["code"], resource=resource,
             parent_confirmed=parent_observed,
             environment_fingerprint=fingerprint,
+        )
+        return self._report_and_summary(store)
+
+    def _record_controller_transport_blocker(
+        self,
+        store: StateStore,
+        plan: dict[str, Any],
+        outcome_code: str,
+    ) -> dict[str, Any]:
+        if outcome_code not in {
+            "provider_usage_blocked",
+            "provider_auth_blocked",
+            "provider_unavailable",
+        }:
+            raise ValueError("controller blocker outcome is invalid")
+        prior = plan.get("blocker")
+        retry_count = (
+            int(prior["explicit_retry_count"])
+            if isinstance(prior, dict)
+            and isinstance(prior.get("explicit_retry_count"), int)
+            else 0
+        )
+        plan["environment_fingerprint"] = None
+        plan["capability_probe_ids"] = []
+        plan["blocker"] = {
+            "kind": "controller_transport",
+            "code": outcome_code,
+            "resource": "codex_provider",
+            "parent_fingerprint": None,
+            "fingerprint_available": False,
+            "parent_observed": False,
+            "explicit_retry_count": retry_count,
+        }
+        plan["status"] = "blocked"
+        store.state["status"] = "blocked"
+        store.save()
+        store.append_event(
+            "plan.blocked",
+            plan_id=plan["plan_id"],
+            kind="controller_transport",
+            code=outcome_code,
+            resource="codex_provider",
+            parent_confirmed=False,
+            environment_fingerprint=None,
         )
         return self._report_and_summary(store)
 
@@ -2309,6 +2354,26 @@ class SequentialRunner:
                 finally:
                     del self._active_lock_fd
                 parent_active_started = time.monotonic()
+                outcome_code = outcome.outcome_code
+                if (
+                    outcome_code is not None
+                    and (
+                        not isinstance(outcome_code, str)
+                        or outcome_code not in CONTROLLER_OUTCOME_CODES
+                    )
+                ):
+                    outcome_code = "controller_transport_failed"
+                if outcome_code is None:
+                    if outcome.timed_out:
+                        outcome_code = "controller_timed_out"
+                    elif outcome.payload is None and outcome.returncode == 0:
+                        outcome_code = "controller_result_missing"
+                    elif outcome.payload is None:
+                        outcome_code = "controller_transport_failed"
+                    else:
+                        _, result_error = normalize_result_v2(outcome.payload)
+                        if result_error is not None:
+                            outcome_code = "controller_result_invalid"
                 store.append_event(
                     "plan.attempt_finished",
                     plan_id=plan["plan_id"],
@@ -2323,11 +2388,17 @@ class SequentialRunner:
                     output_tokens=outcome.output_tokens,
                     reasoning_output_tokens=outcome.reasoning_output_tokens,
                     launcher_prompt_bytes=outcome.launcher_prompt_bytes,
+                    outcome_code=outcome_code,
+                    state_db_warning_count=outcome.state_db_warning_count,
                 )
                 plan["result_path"] = (
                     str(outcome.result_path.resolve())
                     if outcome.payload is not None
-                    else str(self._synthetic_result(store, plan, outcome))
+                    else str(
+                        self._synthetic_result(
+                            store, plan, outcome, outcome_code=outcome_code,
+                        )
+                    )
                 )
                 observed_head = _current_head(worktree)
                 plan["plan_elapsed_seconds"] += math.ceil(
@@ -2337,6 +2408,29 @@ class SequentialRunner:
                     time.monotonic() - parent_active_started
                 )
                 plan["last_known_head"] = observed_head
+
+                if outcome_code in {
+                    "provider_usage_blocked",
+                    "provider_auth_blocked",
+                    "provider_unavailable",
+                }:
+                    return self._record_controller_transport_blocker(
+                        store, plan, outcome_code,
+                    )
+                if outcome_code in CONTROLLER_OUTCOME_CODES - {
+                    "controller_timed_out",
+                }:
+                    plan["status"] = "failed"
+                    state["status"] = "failed"
+                    store.save()
+                    store.append_event(
+                        "plan.integrity_failed",
+                        plan_id=plan["plan_id"],
+                        reason=outcome_code,
+                    )
+                    return self._report_and_summary(
+                        store, error=outcome_code,
+                    )
 
                 integrity_error = None
                 if not (outcome.timed_out and outcome.payload is None):
@@ -2664,11 +2758,28 @@ class SequentialRunner:
                 raise ValueError("current plan history no longer descends from its starting commit")
 
     @staticmethod
-    def _synthetic_result(store: StateStore, plan: dict[str, Any], outcome: LaunchResult) -> Path:
+    def _synthetic_result(
+        store: StateStore,
+        plan: dict[str, Any],
+        outcome: LaunchResult,
+        *,
+        outcome_code: str | None = None,
+    ) -> Path:
         target = store.root / "results" / f"{plan['plan_id']}-attempt-{plan['attempt_count']}-synthetic.json"
         worktree = Path(store.state["worktree"])
         observed = _git(worktree, "rev-parse", "HEAD") if worktree.is_dir() else store.state["source_commit"]
-        status = "checkpointed" if outcome.timed_out else "failed"
+        provider_blocked = outcome_code in {
+            "provider_usage_blocked",
+            "provider_auth_blocked",
+            "provider_unavailable",
+        }
+        status = (
+            "checkpointed"
+            if outcome.timed_out
+            else "blocked"
+            if provider_blocked
+            else "failed"
+        )
         payload = {
             "plan_id": plan["plan_id"], "status": status, "head_commit": observed,
             "verification": [],
@@ -2681,6 +2792,18 @@ class SequentialRunner:
                     "progress_fingerprint": "0" * 64,
                     "completed_task_ids": [],
                     "current_task_id": None,
+                },
+            )
+        elif provider_blocked:
+            payload.update(
+                blocker={
+                    "kind": "operator_owned",
+                    "code": outcome_code,
+                    "resource": "codex_provider",
+                    "operation": "launch_controller",
+                    "errno": None,
+                    "retry_condition": "operator explicitly retries after provider recovery",
+                    "fingerprint": "0" * 64,
                 },
             )
         target.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
@@ -2722,16 +2845,28 @@ class SequentialRunner:
             ]
             last_decision = next(
                 (
-                    event.get("reason")
+                    event.get(
+                        "reason",
+                        event.get("code", event.get("outcome_code")),
+                    )
                     for event in reversed(events)
                     if event.get("action") in {
                         "plan.checkpoint_decided",
                         "plan.recovery_stopped",
+                        "plan.integrity_failed",
+                        "plan.blocked",
+                        "plan.attempt_finished",
                         "resume.environment_changed",
                         "resume.stopped_unchanged_blocker",
                         "run.worktree_creation_blocked",
                     }
-                    and isinstance(event.get("reason"), str)
+                    and isinstance(
+                        event.get(
+                            "reason",
+                            event.get("code", event.get("outcome_code")),
+                        ),
+                        str,
+                    )
                 ),
                 None,
             )

@@ -3,7 +3,7 @@
   "$id": "optimization-report.schema.json",
   "title": "CPE optimization report",
   "type": "object",
-  "required": ["format_version", "run_id", "usage", "duration_ms", "duration_unknown_attempt_count", "verification", "artifact_inventory", "data_quality_warnings", "recovery_metrics", "findings"],
+  "required": ["format_version", "run_id", "usage", "controller", "duration_ms", "duration_unknown_attempt_count", "verification", "artifact_inventory", "data_quality_warnings", "recovery_metrics", "findings"],
   "properties": {
     "format_version": {"const": 2},
     "run_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
@@ -56,6 +56,42 @@
         "scope": {"const": "controller_and_nested_agents_aggregate"},
         "attribution": {"const": "unavailable"},
         "attribution_unavailable_reason": {"const": "provider_event_not_agent_scoped"}
+      },
+      "additionalProperties": false
+    },
+    "controller": {
+      "type": "object",
+      "required": ["attempts", "transport_outcome_counts", "state_db_warning_count", "blocker_kind_counts", "blocker_fingerprint_available", "unchanged_blocker_stops", "explicit_blocked_retries", "explicit_failed_retries", "progress_continuations", "progress_stops"],
+      "properties": {
+        "attempts": {"$ref": "#/$defs/counter"},
+        "transport_outcome_counts": {
+          "type": "object",
+          "required": ["provider_usage_blocked", "provider_auth_blocked", "provider_unavailable", "controller_spawn_failed", "controller_transport_failed", "controller_result_missing", "controller_result_invalid", "controller_timed_out"],
+          "properties": {
+            "provider_usage_blocked": {"$ref": "#/$defs/counter"},
+            "provider_auth_blocked": {"$ref": "#/$defs/counter"},
+            "provider_unavailable": {"$ref": "#/$defs/counter"},
+            "controller_spawn_failed": {"$ref": "#/$defs/counter"},
+            "controller_transport_failed": {"$ref": "#/$defs/counter"},
+            "controller_result_missing": {"$ref": "#/$defs/counter"},
+            "controller_result_invalid": {"$ref": "#/$defs/counter"},
+            "controller_timed_out": {"$ref": "#/$defs/counter"}
+          },
+          "additionalProperties": false
+        },
+        "state_db_warning_count": {"$ref": "#/$defs/counter"},
+        "blocker_kind_counts": {
+          "type": "object",
+          "maxProperties": 128,
+          "propertyNames": {"pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+          "additionalProperties": {"$ref": "#/$defs/counter"}
+        },
+        "blocker_fingerprint_available": {"$ref": "#/$defs/counter"},
+        "unchanged_blocker_stops": {"$ref": "#/$defs/counter"},
+        "explicit_blocked_retries": {"$ref": "#/$defs/counter"},
+        "explicit_failed_retries": {"$ref": "#/$defs/counter"},
+        "progress_continuations": {"$ref": "#/$defs/counter"},
+        "progress_stops": {"$ref": "#/$defs/counter"}
       },
       "additionalProperties": false
     },

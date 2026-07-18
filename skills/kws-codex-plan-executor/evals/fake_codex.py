@@ -36,6 +36,13 @@ SCENARIOS = {
     "oversized_usage",
     "mutate_prior_nonzero_completed",
     "retryable_then_completed",
+    "zero_empty_result",
+    "nonzero_empty_result",
+    "invalid_present_result",
+    "provider_usage_blocked",
+    "provider_auth_blocked",
+    "provider_unavailable",
+    "state_db_warnings",
 }
 
 
@@ -139,6 +146,9 @@ def workflow_receipt(worktree: Path, head: str, plan_id: str) -> dict[str, objec
             "category": "verification", "action": "verified", "result": "pass",
             "evidence_refs": [references["verification"]], "command_id": "fake-final",
             "argv_digest": digest, "evidence_key": "b" * 64, "duration_ms": 1,
+            "requested_phase": "branch_final",
+            "executed_phase": "branch_final",
+            "avoided_executions": 0,
         },
     ]
     ledger = evidence / "execution-ledger.jsonl"
@@ -279,7 +289,39 @@ def main() -> int:
     head = marker(prompt, "CURRENT_COMMIT")
     status = scenario
 
-    if scenario in {"completed", "oversized_usage"}:
+    provider_codes = {
+        "provider_usage_blocked": "rate-limit-exceeded",
+        "provider_auth_blocked": "invalid-api-key",
+        "provider_unavailable": "provider-overloaded",
+    }
+    if scenario in provider_codes:
+        print(
+            json.dumps(
+                {
+                    "type": "error",
+                    "error": {
+                        "code": provider_codes[scenario],
+                        "message": "RAW_PROVIDER_MESSAGE",
+                    },
+                    "message": "RAW_PROVIDER_MESSAGE",
+                }
+            ),
+            flush=True,
+        )
+        return 1
+    if scenario == "zero_empty_result":
+        return 0
+    if scenario == "nonzero_empty_result":
+        return 1
+    if scenario == "invalid_present_result":
+        result_path.parent.mkdir(parents=True, exist_ok=True)
+        result_path.write_text(
+            json.dumps({"unexpected": "present but schema invalid"}),
+            encoding="utf-8",
+        )
+        return 0
+
+    if scenario in {"completed", "oversized_usage", "state_db_warnings"}:
         head = commit_plan(worktree, plan_id)
         status = "completed"
     elif scenario == "resume_completed":
@@ -515,6 +557,13 @@ def main() -> int:
             ),
             flush=True,
         )
+    if scenario == "state_db_warnings":
+        for _ in range(4):
+            print(
+                "Warning: failed to update state db: database is locked",
+                file=sys.stderr,
+                flush=True,
+            )
     result_path.parent.mkdir(parents=True, exist_ok=True)
     result_path.write_text(json.dumps(payload), encoding="utf-8")
     print(json.dumps({"type": "result", "status": status}))

@@ -30,8 +30,9 @@ from cpe_runtime.launcher import (
     StructuredLaunchRequest,
     _drain_registered,
     _terminate_group,
-    _UsageFilter,
+    _JsonEventFilter,
 )
+import cpe_runtime.launcher as launcher_module
 from cpe_runtime.capabilities import (
     CapabilityObservation,
     blocker_resume_decision,
@@ -1630,6 +1631,7 @@ class HistoricalEvidenceFixtureTests(unittest.TestCase):
         "direct_cpe_format1_forensic",
         "direct_codex_goal_comparative",
         "non_cpe_comparative",
+        "sanitized_cpe_observation",
     }
 
     def load_fixture(self, name: str) -> dict[str, object]:
@@ -1695,8 +1697,96 @@ class HistoricalEvidenceFixtureTests(unittest.TestCase):
         self.assertNotIn("accepted", payload)
         self.assertNotIn("promotable", payload)
 
+    def test_retry_forensic_fixture_is_advisory_and_content_free(self) -> None:
+        payload = self.load_fixture("cpe-2-1-retry-forensic.json")
+        observations = {
+            item["signal"]: item["occurrences"]
+            for item in payload["observations"]
+        }
+
+        self.assertEqual(3, observations["unchanged_environment_blocker"])
+        self.assertEqual(2, observations["short_empty_result"])
+        self.assertEqual(0, 0 if observations["unchanged_environment_blocker"] else 1)
+        self.assertEqual(
+            "controller_transport_failed",
+            launcher_module._controller_outcome(
+                spawn_failed=False,
+                timed_out=False,
+                provider_outcome=None,
+                result_present=False,
+                returncode=1,
+            ),
+        )
+        self.assertFalse(payload["contains_raw_prompts"])
+        self.assertFalse(payload["contains_raw_diffs"])
+        self.assertFalse(payload["contains_provider_messages"])
+        self.assertNotIn("acceptance", payload)
+        self.assertNotIn("accepted", payload)
+
 
 class OptimizationReportObservabilityTests(unittest.TestCase):
+    def test_controller_transport_blocker_retry_and_progress_facts_are_exact(self) -> None:
+        report = build_optimization_report(
+            run_id="controller-facts",
+            events=[
+                {
+                    "action": "plan.attempt_finished",
+                    "source": "parent_observed",
+                    "duration_ms": 10,
+                    "outcome_code": "provider_usage_blocked",
+                    "state_db_warning_count": 4,
+                },
+                {
+                    "action": "plan.attempt_finished",
+                    "source": "parent_observed",
+                    "duration_ms": 20,
+                    "outcome_code": "controller_transport_failed",
+                    "state_db_warning_count": 0,
+                },
+                {
+                    "action": "plan.blocked",
+                    "source": "parent_observed",
+                    "kind": "controller_transport",
+                    "environment_fingerprint": None,
+                },
+                {
+                    "action": "resume.stopped_unchanged_blocker",
+                    "source": "parent_observed",
+                },
+                {
+                    "action": "run.resumed",
+                    "source": "parent_observed",
+                    "retry_blocked": True,
+                    "retry_failed": False,
+                },
+                {
+                    "action": "plan.continuation_scheduled",
+                    "source": "parent_observed",
+                    "reason": "productive_timeout",
+                },
+                {
+                    "action": "plan.recovery_stopped",
+                    "source": "parent_observed",
+                    "reason": "no_progress_timeout",
+                },
+            ],
+            findings=[],
+        )
+
+        controller = report["controller"]
+        self.assertEqual(2, controller["attempts"])
+        self.assertEqual(4, controller["state_db_warning_count"])
+        self.assertEqual(1, controller["transport_outcome_counts"]["provider_usage_blocked"])
+        self.assertEqual(1, controller["transport_outcome_counts"]["controller_transport_failed"])
+        self.assertEqual(0, controller["transport_outcome_counts"]["controller_result_invalid"])
+        self.assertEqual({"controller_transport": 1}, controller["blocker_kind_counts"])
+        self.assertEqual(0, controller["blocker_fingerprint_available"])
+        self.assertEqual(1, controller["unchanged_blocker_stops"])
+        self.assertEqual(1, controller["explicit_blocked_retries"])
+        self.assertEqual(0, controller["explicit_failed_retries"])
+        self.assertEqual(1, controller["progress_continuations"])
+        self.assertEqual(1, controller["progress_stops"])
+
     def test_usage_fields_are_independently_complete_and_missing_is_not_zero(self) -> None:
         report = build_optimization_report(
             run_id="field-complete-usage",
@@ -1959,7 +2049,10 @@ class OptimizationReportObservabilityTests(unittest.TestCase):
         )
 
         self.assertEqual(set(schema["required"]), set(available))
-        for field in ("usage", "verification", "artifact_inventory", "recovery_metrics"):
+        for field in (
+            "usage", "controller", "verification", "artifact_inventory",
+            "recovery_metrics",
+        ):
             self.assertEqual(
                 set(schema["properties"][field]["required"]),
                 set(available[field]),
@@ -3594,7 +3687,7 @@ print(json.dumps(result, sort_keys=True), flush=True)
         self.assertLess(len(prompt.encode("utf-8")), 2_400)
 
     def test_usage_filter_keeps_only_bounded_final_totals(self) -> None:
-        capture = _UsageFilter()
+        capture = _JsonEventFilter()
         capture.feed(
             b'{"type":"item.completed","item":{"text":"RAW_EVENT_SENTINEL"}}\n'
             b'{"type":"turn.completed","usage":{"input_tokens":41,'
@@ -3615,7 +3708,7 @@ print(json.dumps(result, sort_keys=True), flush=True)
         )
         self.assertFalse(hasattr(capture, "events"))
 
-        missing = _UsageFilter()
+        missing = _JsonEventFilter()
         missing.feed(b'{"type":"turn.started"}\nnot-json\n')
         missing.finish()
         self.assertEqual(
@@ -3628,7 +3721,7 @@ print(json.dumps(result, sort_keys=True), flush=True)
             },
         )
 
-        oversized = _UsageFilter()
+        oversized = _JsonEventFilter()
         oversized.feed(b"x" * 70_000 + b"\n")
         oversized.feed(
             b'{"type":"turn.completed","usage":{"input_tokens":3}}\n'
@@ -3637,7 +3730,7 @@ print(json.dumps(result, sort_keys=True), flush=True)
         self.assertEqual(oversized.usage["input_tokens"], 3)
 
     def test_usage_filter_rejects_unreasonable_integer_totals(self) -> None:
-        capture = _UsageFilter()
+        capture = _JsonEventFilter()
         capture.feed(
             json.dumps(
                 {
@@ -4736,6 +4829,169 @@ class _RecoveryRunnerFixture(unittest.TestCase):
 
         launcher._launch_structured = mock.Mock(side_effect=accelerated)
         return SequentialRunner(codex_home=self.home, launcher=launcher)
+
+
+class ControllerTransportTests(_RecoveryRunnerFixture):
+    def run_scenario(
+        self, scenario: str, *, timeout_seconds: float = 1.0,
+    ) -> dict[str, object]:
+        run_id = f"transport-{scenario.replace('_', '-')}"
+        return self.runner(
+            run_id, accelerated_timeout=timeout_seconds,
+        ).run(
+            workspace=self.repo,
+            specs=[],
+            plans=[self.plan(scenario)],
+            run_id=run_id,
+        )
+
+    def attempt_event(self, scenario: str) -> dict[str, object]:
+        run_id = f"transport-{scenario.replace('_', '-')}"
+        return next(
+            event
+            for event in _runner_events(self.home / "orchestrator" / run_id)
+            if event.get("action") == "plan.attempt_finished"
+        )
+
+    def test_json_event_filter_keeps_only_usage_and_allowlisted_error_code(self) -> None:
+        filter_class = getattr(launcher_module, "_JsonEventFilter", None)
+        self.assertIsNotNone(filter_class)
+        capture = filter_class()
+        capture.feed(
+            b'{"type":"item.completed","message":"RAW_PROVIDER_MESSAGE",'
+            b'"error":{"code":"rate-limit-exceeded",'
+            b'"message":"RAW_NESTED_MESSAGE"}}\n'
+            b'{"type":"turn.completed","usage":{"input_tokens":41,'
+        )
+        capture.feed(
+            b'"cached_input_tokens":31,"output_tokens":7,'
+            b'"reasoning_output_tokens":5}}\n'
+            b'{malformed-json\n'
+        )
+        capture.feed(
+            b'{"error":{"code":"provider-unavailable",'
+            b'"message":"' + b'x' * 70_000 + b'"}}\n'
+        )
+        capture.finish()
+
+        self.assertEqual(
+            {
+                "input_tokens": 41,
+                "cached_input_tokens": 31,
+                "output_tokens": 7,
+                "reasoning_output_tokens": 5,
+            },
+            capture.usage,
+        )
+        self.assertEqual("provider_usage_blocked", capture.provider_outcome)
+        self.assertNotIn("RAW_PROVIDER_MESSAGE", repr(vars(capture)))
+        self.assertNotIn("RAW_NESTED_MESSAGE", repr(vars(capture)))
+        self.assertFalse(hasattr(capture, "events"))
+
+    def test_json_event_filter_ignores_unknown_and_nested_error_codes(self) -> None:
+        filter_class = getattr(launcher_module, "_JsonEventFilter", None)
+        self.assertIsNotNone(filter_class)
+        capture = filter_class()
+        capture.feed(
+            b'{"error":{"code":"unknown-provider-code",'
+            b'"details":{"code":"invalid-api-key"}},'
+            b'"message":"RAW_UNKNOWN_MESSAGE"}\n'
+        )
+        capture.finish()
+
+        self.assertIsNone(capture.provider_outcome)
+        self.assertNotIn("RAW_UNKNOWN_MESSAGE", repr(vars(capture)))
+
+    def test_spawn_failure_has_stable_controller_outcome(self) -> None:
+        launcher = CodexLauncher(
+            schema_path=ROOT / "templates" / "plan-result-schema.json",
+            codex_bin=str(self.root / "missing-codex"),
+            timeout_seconds=1,
+            environ={"PATH": os.environ["PATH"]},
+        )
+        result = SequentialRunner(
+            codex_home=self.home, launcher=launcher,
+        ).run(
+            workspace=self.repo,
+            specs=[],
+            plans=[self.plan("completed")],
+            run_id="transport-spawn-failure",
+        )
+
+        self.assertEqual("failed", result["status"])
+        self.assertEqual("controller_spawn_failed", result["last_decision_reason"])
+
+    def test_zero_exit_empty_result_is_missing_controller_result(self) -> None:
+        result = self.run_scenario("zero_empty_result")
+
+        self.assertEqual("failed", result["status"])
+        self.assertEqual("controller_result_missing", result["last_decision_reason"])
+
+    def test_nonzero_empty_result_is_transport_failure_not_invalid_product_result(self) -> None:
+        result = self.run_scenario("nonzero_empty_result")
+
+        self.assertEqual("failed", result["status"])
+        self.assertEqual(
+            "controller_transport_failed", result.get("last_decision_reason"),
+        )
+
+    def test_invalid_present_result_remains_runner_owned(self) -> None:
+        result = self.run_scenario("invalid_present_result")
+
+        self.assertEqual("failed", result["status"])
+        self.assertEqual("controller_result_invalid", result["last_decision_reason"])
+
+    def test_timeout_keeps_progress_decision_and_records_transport_fact(self) -> None:
+        result = self.run_scenario(
+            "timeout_without_progress", timeout_seconds=0.12,
+        )
+
+        self.assertEqual("blocked", result["status"])
+        self.assertEqual("no_progress_timeout", result["last_decision_reason"])
+        self.assertEqual(
+            "controller_timed_out",
+            self.attempt_event("timeout_without_progress")["outcome_code"],
+        )
+
+    def test_provider_error_codes_block_without_raw_message_retention(self) -> None:
+        cases = {
+            "provider_usage_blocked": "provider_usage_blocked",
+            "provider_auth_blocked": "provider_auth_blocked",
+            "provider_unavailable": "provider_unavailable",
+        }
+        for scenario, expected in cases.items():
+            with self.subTest(scenario=scenario):
+                result = self.run_scenario(scenario)
+                run_root = (
+                    self.home / "orchestrator"
+                    / f"transport-{scenario.replace('_', '-')}"
+                )
+                self.assertEqual("blocked", result["status"])
+                self.assertEqual(expected, result["last_decision_reason"])
+                self.assertNotIn(
+                    "RAW_PROVIDER_MESSAGE",
+                    (run_root / "events.jsonl").read_text(encoding="utf-8"),
+                )
+                self.assertNotIn(
+                    "RAW_PROVIDER_MESSAGE",
+                    next((run_root / "logs").iterdir()).read_text(encoding="utf-8"),
+                )
+
+    def test_state_db_warning_count_persists_without_matched_line(self) -> None:
+        result = self.run_scenario("state_db_warnings")
+        event = self.attempt_event("state_db_warnings")
+        run_root = self.home / "orchestrator" / "transport-state-db-warnings"
+        report = json.loads(
+            (run_root / "reports" / "optimization-report.json").read_text(
+                encoding="utf-8"
+            )
+        )
+
+        self.assertEqual("completed", result["status"])
+        self.assertEqual(4, event["state_db_warning_count"])
+        self.assertNotIn("state_db_warning_line", event)
+        self.assertEqual(4, report["controller"]["state_db_warning_count"])
+        self.assertNotIn("database is locked", json.dumps(report))
 
 
 class ResumeCapabilityTests(_RecoveryRunnerFixture):
