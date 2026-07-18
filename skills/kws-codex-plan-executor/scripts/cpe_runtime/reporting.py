@@ -220,7 +220,6 @@ def derive_recovery_metrics(
         if (
             action == "plan.pre_spawn_stopped"
             and reason in {
-                "checkpoint_budget_exhausted",
                 "launch_budget_exhausted",
                 "wall_budget_exhausted",
             }
@@ -232,10 +231,9 @@ def derive_recovery_metrics(
             reasons[reason] = reasons.get(reason, 0) + 1
         if reason == "productive_timeout":
             productive_timeouts += 1
-        if reason in {"first_no_progress_slice", "second_no_progress_slice"}:
+        if reason == "no_progress_timeout":
             no_progress_slices += 1
         if reason in {
-            "checkpoint_budget_exhausted",
             "launch_budget_exhausted",
             "wall_budget_exhausted",
         }:
