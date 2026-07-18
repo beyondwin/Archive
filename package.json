@@ -7,7 +7,7 @@
     "packages/*"
   ],
   "scripts": {
-    "typecheck": "tsc -b apps/* packages/*",
+    "typecheck": "tsc -b apps/*/tsconfig.json packages/*/tsconfig.json",
     "test": "bun test ./packages/contracts/tests ./packages/runway-control/tests ./packages/lens-projectors/tests ./packages/lens-store/tests ./packages/provider-adapters/tests ./packages/policy/tests ./packages/kernel-client/tests ./packages/orchestrator/tests ./packages/context-packer/tests ./packages/testkit/tests ./apps/cli/tests ./apps/api/tests ./apps/console/src ./tests/e2e ./tests/integration",
     "check": "bun run typecheck && bun run test",
     "waygent": "bun run apps/cli/src/index.ts",
@@ -19,7 +19,9 @@
     "waygent:live-smoke": "bun test tests/integration/waygent-live-provider-smoke.test.ts",
     "waygent:live-provider-smoke": "bun run waygent:live-smoke",
     "waygent:dogfood": "bun test tests/integration/waygent-dogfood-evidence.test.ts",
-    "agent:contract": "bun run scripts/agent/check-contract.ts"
+    "agent:contract": "bun run scripts/agent/check-contract.ts",
+    "agent:test": "bun test scripts/agent",
+    "agent:verify": "bun run scripts/agent/verify.ts"
   },
   "dependencies": {
     "@waygent/design-contract": "workspace:*",
