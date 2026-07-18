@@ -52,6 +52,24 @@ def _bounded_identifiers(value: object) -> bool:
     )
 
 
+def _valid_blocker(value: object) -> bool:
+    if not isinstance(value, dict) or set(value) != {
+        "kind", "code", "resource", "operation", "errno",
+        "retry_condition", "fingerprint",
+    }:
+        return False
+    for name, limit in (("kind", 128), ("code", 128), ("resource", 128),
+                        ("operation", 128), ("retry_condition", 256)):
+        candidate = value.get(name)
+        if not isinstance(candidate, str) or not candidate.strip() or len(candidate) > limit:
+            return False
+    return (
+        (value["errno"] is None or isinstance(value["errno"], str) and len(value["errno"]) <= 64)
+        and isinstance(value["fingerprint"], str)
+        and _DIGEST.fullmatch(value["fingerprint"]) is not None
+    )
+
+
 def normalize_result_v2(
     payload: object,
 ) -> tuple[dict[str, Any] | None, str | None]:
@@ -76,6 +94,8 @@ def normalize_result_v2(
     if status == "checkpointed" and "checkpoint" not in normalized:
         return None, "invalid_checkpoint"
     if status == "blocked" and "blocker" not in normalized:
+        return None, "invalid_blocker"
+    if status == "blocked" and not _valid_blocker(normalized["blocker"]):
         return None, "invalid_blocker"
     if status != "completed" and "workflow_receipt" in normalized:
         return None, "invalid_result"

@@ -31,6 +31,12 @@ from .evidence import (
     seal_private_result,
     validate_execution_ledger,
 )
+from .capabilities import (
+    CapabilityObservation,
+    environment_fingerprint,
+    observe_loopback_bind,
+    observe_parent_prerequisites,
+)
 from .launcher import (
     CodexLauncher,
     LaunchResult,
@@ -696,6 +702,9 @@ class SequentialRunner:
                 blocked = self._create_worktree_or_block(store)
                 if blocked is not None:
                     return blocked
+                blocked = self._stop_for_parent_prerequisites(store)
+                if blocked is not None:
+                    return blocked
                 try:
                     return self._execute(
                         store,
@@ -707,7 +716,13 @@ class SequentialRunner:
         except RunBusyError:
             return self._busy_summary(store)
 
-    def resume(self, *, run_id: str, retry_failed: bool = False) -> dict[str, Any]:
+    def resume(
+        self,
+        *,
+        run_id: str,
+        retry_blocked: bool = False,
+        retry_failed: bool = False,
+    ) -> dict[str, Any]:
         if not _RUN_ID.fullmatch(run_id):
             raise ValueError("run ID contains unsupported characters")
         store = StateStore.open(self.codex_home / "orchestrator" / run_id)
@@ -715,8 +730,50 @@ class SequentialRunner:
             with _RunLock(store.root / "run.lock") as lock_fd:
                 store = StateStore.open(store.root)
                 resumed_recorded = False
-                if self._is_pre_execution_worktree_blocked(store):
+                if retry_blocked and retry_failed:
+                    raise ValueError("retry flags are mutually exclusive")
+                blocker = self._current_blocker(store)
+                if blocker is not None:
                     if retry_failed:
+                        raise ValueError("retry-failed requires a failed run")
+                    if blocker["parent_observed"]:
+                        if retry_blocked:
+                            raise ValueError("retry-blocked requires an unknown blocked run")
+                        observations = self._reobserve_parent_blocker(store, blocker)
+                        current = environment_fingerprint(observations)
+                        previous = blocker["parent_fingerprint"]
+                        if (
+                            previous == current
+                            and any(item.outcome == "unavailable" for item in observations)
+                        ):
+                            store.append_event(
+                                "resume.stopped_unchanged_blocker",
+                                plan_id=store.state["plans"][store.state["current_plan_index"]]["plan_id"],
+                                reason="unchanged_environment_blocker",
+                                environment_fingerprint=current,
+                            )
+                            return self._report_and_summary(store)
+                        self._prepare_blocker_retry(store, blocker)
+                        store.append_event(
+                            "resume.environment_changed",
+                            plan_id=store.state["plans"][store.state["current_plan_index"]]["plan_id"],
+                            reason="environment_changed",
+                            environment_fingerprint=current,
+                        )
+                        resumed_recorded = True
+                    else:
+                        if not retry_blocked:
+                            store.append_event(
+                                "resume.stopped_unknown_blocker",
+                                plan_id=store.state["plans"][store.state["current_plan_index"]]["plan_id"],
+                                reason="unknown_child_blocker",
+                            )
+                            return self._report_and_summary(store)
+                        self._prepare_blocker_retry(store, blocker, explicit=True)
+                        resumed_recorded = True
+                        retry_blocked = False
+                if self._is_pre_execution_worktree_blocked(store):
+                    if retry_failed or retry_blocked:
                         raise ValueError("retry-failed requires a failed run")
                     store.append_event("run.resumed", retry_failed=False)
                     resumed_recorded = True
@@ -731,16 +788,21 @@ class SequentialRunner:
                 self._apply_pending_decision(store)
                 status = store.state["status"]
                 if status == "completed":
-                    if retry_failed:
+                    if retry_failed or retry_blocked:
                         raise ValueError("retry-failed requires a failed run")
                     report_error = self._finalize_completed_run(store)
                     return self._summary(store, error=report_error)
+                if retry_blocked:
+                    raise ValueError("retry-blocked requires a blocked run")
                 if retry_failed != (status == "failed"):
                     if status == "failed":
                         raise ValueError("failed run requires --retry-failed")
                     raise ValueError("retry-failed requires a failed run")
                 if not resumed_recorded:
                     store.append_event("run.resumed", retry_failed=retry_failed)
+                blocked = self._stop_for_parent_prerequisites(store)
+                if blocked is not None:
+                    return blocked
                 try:
                     return self._execute(
                         store,
@@ -751,6 +813,164 @@ class SequentialRunner:
                     return self._record_interrupted(store)
         except RunBusyError:
             return self._busy_summary(store)
+
+    @staticmethod
+    def _current_blocker(store: StateStore) -> dict[str, Any] | None:
+        state = store.state
+        if state["status"] != "blocked":
+            return None
+        index = state["current_plan_index"]
+        if not isinstance(index, int) or index >= len(state["plans"]):
+            return None
+        blocker = state["plans"][index].get("blocker")
+        return blocker if isinstance(blocker, dict) else None
+
+    @staticmethod
+    def _reobserve_parent_blocker(
+        store: StateStore, blocker: Mapping[str, object],
+    ) -> Sequence[CapabilityObservation]:
+        sandbox_mode = str(store.state["run_config"]["sandbox_mode"])
+        if blocker["resource"] == "loopback_bind":
+            return [observe_loopback_bind(sandbox_mode=sandbox_mode)]
+        return observe_parent_prerequisites(
+            Path(store.state["worktree"]), sandbox_mode=sandbox_mode,
+        )
+
+    @staticmethod
+    def _prepare_blocker_retry(
+        store: StateStore,
+        blocker: dict[str, Any],
+        *,
+        explicit: bool = False,
+    ) -> None:
+        state = store.state
+        plan = state["plans"][state["current_plan_index"]]
+        if explicit:
+            blocker["explicit_retry_count"] += 1
+        plan["status"] = "checkpointed"
+        state["status"] = "checkpointed"
+        store.save()
+        store.append_event(
+            "run.resumed",
+            retry_blocked=explicit,
+            retry_failed=False,
+        )
+
+    def _stop_for_parent_prerequisites(
+        self, store: StateStore,
+    ) -> dict[str, Any] | None:
+        observations = observe_parent_prerequisites(
+            Path(store.state["worktree"]),
+            sandbox_mode=str(store.state["run_config"]["sandbox_mode"]),
+        )
+        unavailable = next(
+            (item for item in observations if item.outcome == "unavailable"), None,
+        )
+        if unavailable is None:
+            return None
+        return self._record_environment_blocker(
+            store,
+            kind="verification_environment",
+            code=unavailable.reason_code,
+            resource=unavailable.capability,
+            observations=observations,
+            parent_observed=True,
+        )
+
+    def _record_environment_blocker(
+        self,
+        store: StateStore,
+        *,
+        kind: str,
+        code: str,
+        resource: str,
+        observations: Sequence[CapabilityObservation],
+        parent_observed: bool,
+    ) -> dict[str, Any]:
+        state = store.state
+        plan = state["plans"][state["current_plan_index"]]
+        prior = plan.get("blocker")
+        retry_count = (
+            int(prior["explicit_retry_count"])
+            if isinstance(prior, dict) and isinstance(prior.get("explicit_retry_count"), int)
+            else 0
+        )
+        fingerprint = environment_fingerprint(observations) if parent_observed else None
+        head = _current_head(Path(state["worktree"]))
+        target = store.root / "results" / f"{plan['plan_id']}-environment-blocked.json"
+        _write_private_json(target, {
+            "plan_id": plan["plan_id"], "status": "blocked", "head_commit": head,
+            "verification": [], "summary": "environment blocker recorded by CPE",
+            "blocker": {
+                "kind": kind, "code": code, "resource": resource,
+                "operation": "observe_parent_prerequisites", "errno": None,
+                "retry_condition": "environment evidence changes",
+                "fingerprint": fingerprint or "0" * 64,
+            },
+        })
+        if plan["starting_commit"] is None:
+            plan["starting_commit"] = head
+        plan["result_path"] = str(target.resolve())
+        plan["environment_fingerprint"] = fingerprint
+        plan["capability_probe_ids"] = sorted({item.capability for item in observations})
+        plan["blocker"] = {
+            "kind": kind, "code": code, "resource": resource,
+            "parent_fingerprint": fingerprint,
+            "fingerprint_available": fingerprint is not None,
+            "parent_observed": parent_observed,
+            "explicit_retry_count": retry_count,
+        }
+        plan["status"] = "blocked"
+        state["status"] = "blocked"
+        store.save()
+        store.append_event(
+            "plan.blocked", plan_id=plan["plan_id"], kind=kind, code=code,
+            resource=resource, parent_confirmed=parent_observed,
+            environment_fingerprint=fingerprint,
+        )
+        return self._report_and_summary(store)
+
+    def _record_child_blocker(
+        self,
+        store: StateStore,
+        plan: dict[str, Any],
+        payload: Mapping[str, object],
+    ) -> dict[str, Any]:
+        child = payload["blocker"]
+        assert isinstance(child, dict)
+        resource = str(child["resource"])
+        observations: Sequence[CapabilityObservation] = ()
+        parent_observed = resource == "loopback_bind"
+        if parent_observed:
+            observations = [observe_loopback_bind(
+                sandbox_mode=str(store.state["run_config"]["sandbox_mode"]),
+            )]
+        prior = plan.get("blocker")
+        retry_count = (
+            int(prior["explicit_retry_count"])
+            if isinstance(prior, dict) and isinstance(prior.get("explicit_retry_count"), int)
+            else 0
+        )
+        fingerprint = environment_fingerprint(observations) if observations else None
+        plan["environment_fingerprint"] = fingerprint
+        plan["capability_probe_ids"] = [resource] if observations else []
+        plan["blocker"] = {
+            "kind": str(child["kind"]), "code": str(child["code"]),
+            "resource": resource, "parent_fingerprint": fingerprint,
+            "fingerprint_available": fingerprint is not None,
+            "parent_observed": parent_observed,
+            "explicit_retry_count": retry_count,
+        }
+        plan["status"] = "blocked"
+        store.state["status"] = "blocked"
+        store.save()
+        store.append_event(
+            "plan.blocked", plan_id=plan["plan_id"], kind=child["kind"],
+            code=child["code"], resource=resource,
+            parent_confirmed=parent_observed,
+            environment_fingerprint=fingerprint,
+        )
+        return self._report_and_summary(store)
 
     @staticmethod
     def _progress_snapshot(
@@ -1076,6 +1296,7 @@ class SequentialRunner:
 
         if decision.action == "finish":
             plan["status"] = "completed"
+            plan["blocker"] = None
             plan["accepted_commit"] = pending["head"]
             state["current_plan_index"] += 1
             state["status"] = (
@@ -2113,6 +2334,9 @@ class SequentialRunner:
                 payload_status = (
                     payload.get("status") if isinstance(payload, dict) else None
                 )
+                if payload_status == "blocked":
+                    assert isinstance(payload, dict)
+                    return self._record_child_blocker(store, plan, payload)
                 try:
                     current_snapshot = self._progress_snapshot(
                         store, plan_index=index, head=observed_head,

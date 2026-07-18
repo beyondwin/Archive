@@ -212,6 +212,34 @@ class SequentialCliTest(unittest.TestCase):
         self.assertEqual(result.returncode, 3, result.stderr + result.stdout)
         self.assertEqual(json.loads(result.stdout)["status"], "checkpointed")
 
+    def test_resume_retry_flags_are_mutually_exclusive_and_state_specific(self) -> None:
+        self.plans[0].write_text("scenario:blocked\n", encoding="utf-8")
+        blocked = self.command(
+            "run", "--plan", str(self.plans[0]), "--workspace", str(self.repo),
+        )
+        blocked_id = str(json.loads(blocked.stdout)["run_id"])
+        mutually_exclusive = self.command(
+            "resume", "--run-id", blocked_id, "--retry-blocked", "--retry-failed",
+        )
+        self.assertEqual(1, mutually_exclusive.returncode)
+        wrong_blocked_flag = self.command(
+            "resume", "--run-id", blocked_id, "--retry-failed",
+        )
+        self.assertEqual(1, wrong_blocked_flag.returncode)
+        self.assertIn("retry-failed requires a failed run", json.loads(wrong_blocked_flag.stdout)["error"])
+
+        self.use_home("failed-retry-state")
+        self.plans[0].write_text("scenario:failed\n", encoding="utf-8")
+        failed = self.command(
+            "run", "--plan", str(self.plans[0]), "--workspace", str(self.repo),
+        )
+        failed_id = str(json.loads(failed.stdout)["run_id"])
+        wrong_failed_flag = self.command(
+            "resume", "--run-id", failed_id, "--retry-blocked",
+        )
+        self.assertEqual(1, wrong_failed_flag.returncode)
+        self.assertIn("retry-blocked requires a blocked run", json.loads(wrong_failed_flag.stdout)["error"])
+
     def test_repeated_spec_and_plan_flags_preserve_order(self) -> None:
         self.plans[0].write_text("scenario:blocked\n", encoding="utf-8")
         result = self.command(

@@ -254,6 +254,7 @@ class StateStore:
                 "pending_checkpoint_decision": None,
                 "environment_fingerprint": None,
                 "capability_probe_ids": [],
+                "blocker": None,
                 "plan_started_at": None,
                 "plan_elapsed_seconds": 0,
                 "last_known_head": None,
@@ -385,7 +386,7 @@ class StateStore:
                 "attempt_count", "controller_launch_count", "checkpoint_count",
                 "progress_fingerprint", "execution_ledger_event_digests",
                 "pending_checkpoint_decision", "environment_fingerprint",
-                "capability_probe_ids", "plan_started_at", "plan_elapsed_seconds",
+                "capability_probe_ids", "blocker", "plan_started_at", "plan_elapsed_seconds",
                 "last_known_head", "result_path", "original_result_path", "budget",
             }:
                 raise ValueError("plan record is invalid")
@@ -495,6 +496,31 @@ class StateStore:
                 or not all(isinstance(value, str) for value in record["capability_probe_ids"])
             ):
                 raise ValueError("plan capability probe IDs are invalid")
+            blocker = record["blocker"]
+            if blocker is not None:
+                expected_blocker = {
+                    "kind", "code", "resource", "parent_fingerprint",
+                    "fingerprint_available", "parent_observed", "explicit_retry_count",
+                }
+                if (
+                    not isinstance(blocker, dict)
+                    or set(blocker) != expected_blocker
+                    or not all(
+                        isinstance(blocker[name], str) and blocker[name]
+                        and len(blocker[name]) <= 128
+                        for name in ("kind", "code", "resource")
+                    )
+                    or blocker["parent_fingerprint"] is not None
+                    and (not isinstance(blocker["parent_fingerprint"], str)
+                         or not _DIGEST_PATTERN.fullmatch(blocker["parent_fingerprint"]))
+                    or not isinstance(blocker["fingerprint_available"], bool)
+                    or blocker["fingerprint_available"] != (blocker["parent_fingerprint"] is not None)
+                    or not isinstance(blocker["parent_observed"], bool)
+                    or not isinstance(blocker["explicit_retry_count"], int)
+                    or isinstance(blocker["explicit_retry_count"], bool)
+                    or blocker["explicit_retry_count"] < 0
+                ):
+                    raise ValueError("plan blocker facts are invalid")
             budget = record["budget"]
             if (
                 not isinstance(budget, dict)
@@ -610,6 +636,7 @@ class StateStore:
             "pending_checkpoint_decision": None,
             "environment_fingerprint": None,
             "capability_probe_ids": [],
+            "blocker": None,
             "plan_started_at": None,
             "plan_elapsed_seconds": 0,
             "last_known_head": None,
@@ -651,6 +678,12 @@ class StateStore:
             expected = {"plan_id": current["plan_id"], **pristine_fields}
             if current != expected:
                 raise ValueError("pending current plan is not pristine")
+        elif (
+            current["status"] == "blocked"
+            and current["blocker"] is not None
+            and current["result_path"] is not None
+        ):
+            pass
         elif (
             current["attempt_count"] < 1
             or current["starting_commit"] is None

@@ -4386,6 +4386,83 @@ class _RecoveryRunnerFixture(unittest.TestCase):
         return SequentialRunner(codex_home=self.home, launcher=launcher)
 
 
+class ResumeCapabilityTests(_RecoveryRunnerFixture):
+    def run_blocked(self, *, resource: str) -> tuple[SequentialRunner, dict[str, object]]:
+        plan = self.plan("blocked")
+        plan.write_text(
+            f"scenario:blocked\nblocker-resource:{resource}\n",
+            encoding="utf-8",
+        )
+        runner = self.runner("resume-capability", accelerated_timeout=1.0)
+        return runner, runner.run(
+            workspace=self.repo,
+            specs=[],
+            plans=[plan],
+            run_id="resume-capability",
+        )
+
+    def test_unknown_child_blocker_requires_explicit_retry_without_launch(self) -> None:
+        runner, first = self.run_blocked(resource="browser_visual_evidence")
+        run_root = self.home / "orchestrator" / str(first["run_id"])
+        before = sum(
+            event.get("action") == "plan.attempt_started"
+            for event in _runner_events(run_root)
+        )
+
+        stopped = runner.resume(run_id=str(first["run_id"]))
+
+        self.assertEqual("blocked", stopped["status"])
+        self.assertEqual(before, sum(
+            event.get("action") == "plan.attempt_started"
+            for event in _runner_events(run_root)
+        ))
+        self.assertEqual("resume.stopped_unknown_blocker", _runner_events(run_root)[-1]["action"])
+
+        retried = runner.resume(run_id=str(first["run_id"]), retry_blocked=True)
+
+        self.assertEqual("blocked", retried["status"])
+        self.assertEqual(before + 1, sum(
+            event.get("action") == "plan.attempt_started"
+            for event in _runner_events(run_root)
+        ))
+        self.assertEqual(1, StateStore.open(run_root).state["plans"][0]["blocker"]["explicit_retry_count"])
+
+    def test_unchanged_loopback_blocker_stops_then_changed_probe_allows_one_launch(self) -> None:
+        unavailable = CapabilityObservation(
+            "loopback_bind", "workspace", "unavailable", "permission_denied",
+            "parent_observed", {"host": "127.0.0.1"},
+        )
+        available = dataclasses.replace(
+            unavailable, outcome="available", reason_code="bound",
+        )
+        with mock.patch("cpe_runtime.runner.observe_loopback_bind", return_value=unavailable):
+            runner, first = self.run_blocked(resource="loopback_bind")
+        run_root = self.home / "orchestrator" / str(first["run_id"])
+        before = sum(
+            event.get("action") == "plan.attempt_started"
+            for event in _runner_events(run_root)
+        )
+
+        with mock.patch("cpe_runtime.runner.observe_loopback_bind", return_value=unavailable):
+            stopped = runner.resume(run_id=str(first["run_id"]))
+
+        self.assertEqual("blocked", stopped["status"])
+        self.assertEqual(before, sum(
+            event.get("action") == "plan.attempt_started"
+            for event in _runner_events(run_root)
+        ))
+        self.assertEqual("resume.stopped_unchanged_blocker", _runner_events(run_root)[-1]["action"])
+
+        with mock.patch("cpe_runtime.runner.observe_loopback_bind", return_value=available):
+            resumed = runner.resume(run_id=str(first["run_id"]))
+
+        self.assertEqual("blocked", resumed["status"])
+        self.assertEqual(before + 1, sum(
+            event.get("action") == "plan.attempt_started"
+            for event in _runner_events(run_root)
+        ))
+
+
 class EnvelopeRepairTests(_RecoveryRunnerFixture):
     def _failed_result(
         self,

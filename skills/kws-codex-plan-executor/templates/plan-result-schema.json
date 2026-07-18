@@ -62,7 +62,12 @@
           "properties": {
             "kind": {"type": "string", "enum": ["verification_environment", "plan_contract", "operator_owned", "integrity"]},
             "code": {"type": "string", "minLength": 1, "maxLength": 128},
-            "resource": {"type": "string", "minLength": 1, "maxLength": 128},
+            "resource": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "description": "Child-attested resource; only loopback_bind has a CPE parent probe."
+            },
             "operation": {"type": "string", "minLength": 1, "maxLength": 128},
             "errno": {"type": ["string", "null"], "maxLength": 64},
             "retry_condition": {"type": "string", "minLength": 1, "maxLength": 256},
