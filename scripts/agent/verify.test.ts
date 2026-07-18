@@ -95,6 +95,42 @@ test("collects a three-dot commit range", async () => {
   expect(paths).toEqual(["docs/README.md"]);
 });
 
+test("all-zero push base falls back to the head parent", async () => {
+  const calls: string[][] = [];
+  const paths = await collectChangedPaths({
+    root: process.cwd(),
+    base: "0000000000000000000000000000000000000000",
+    head: "HEAD",
+    git: async (args) => {
+      calls.push([...args]);
+      return args.includes("--name-only") ? "AGENTS.md\nAGENTS.md\n" : "";
+    },
+  });
+  expect(paths).toEqual(["AGENTS.md"]);
+  expect(calls.some((args) => args.includes("HEAD^...HEAD"))).toBe(true);
+});
+
+test("rejects a commit range when neither ref resolves", async () => {
+  const head = "missing-head";
+  const base = "0000000000000000000000000000000000000000";
+
+  await expect(collectChangedPaths({
+    root: process.cwd(),
+    base,
+    head,
+    git: async (args) => {
+      if (args.at(-1) === `${head}^` || args.at(-1) === head) {
+        throw new Error("unknown revision");
+      }
+      return "";
+    },
+  })).rejects.toMatchObject({
+    code: "invalid_git_range",
+    base,
+    head,
+  });
+});
+
 test("rejects an incomplete commit range", async () => {
   expect(collectChangedPaths({ root: "/fixture", base: "origin/main" }))
     .rejects.toThrow("base and head must be provided together");
