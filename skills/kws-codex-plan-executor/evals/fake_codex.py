@@ -115,28 +115,6 @@ def workflow_receipt(worktree: Path, head: str, plan_id: str) -> dict[str, objec
         "Task 1: complete\n",
         encoding="utf-8",
     )
-    progress_digest = hashlib.sha256(
-        (evidence / "progress.md").read_bytes()
-    ).hexdigest()
-    (evidence / "coordination-events.jsonl").write_text(
-        json.dumps({
-            "schema_version": 1,
-            "event": "coordination.spawn",
-            "plan_index": int(plan_id.rsplit("-", 1)[-1]) - 1,
-            "task_id": "task-01",
-            "role": "implementer",
-            "depth": 1,
-            "fork_turns": "none",
-            "duration_ms": 1,
-            "source_context_refs": [{
-                "class": "progress_ledger",
-                "path": ".superpowers/sdd/progress.md",
-                "sha256": progress_digest,
-            }],
-            "source": "child_attested",
-        }, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
     (evidence / "final-review.md").write_text(
         "Verdict: approved\nFindings: none\n",
         encoding="utf-8",
@@ -584,18 +562,6 @@ def main() -> int:
                 "item": {"text": "RAW_EVENT_SENTINEL"},
             }
         ),
-        flush=True,
-    )
-    print(
-        json.dumps({
-            "type": "coordination.spawn",
-            "task_id": "task-01",
-            "role": "implementer",
-            "depth": 1,
-            "fork_turns": "none",
-            "duration_ms": 1,
-            "agent_id": "fake-implementer",
-        }),
         flush=True,
     )
     if scenario != "blocking_completed":
