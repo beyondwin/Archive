@@ -1,5 +1,14 @@
-import { expect, test } from "bun:test";
-import { checkMarkdownLinks } from "./check-markdown-links";
+import { afterEach, expect, test } from "bun:test";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
+import { checkMarkdownLinks, formatMarkdownLinkIssue } from "./check-markdown-links";
+
+const fixtureRoots: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(fixtureRoots.splice(0).map((root) => rm(root, { force: true, recursive: true })));
+});
 
 test("reports only missing local targets", async () => {
   const issues = await checkMarkdownLinks({
@@ -260,3 +269,92 @@ test("closes CRLF fenced code before scanning following prose", async () => {
 
   expect(issues).toEqual([{ file: "docs/readme.md", target: "missing.md" }]);
 });
+
+test("rejects a Markdown document symlink that resolves outside the repository", async () => {
+  const { root, outside } = await createRealFixture();
+  await writeFile(join(outside, "outside.md"), "outside\n");
+  await symlink(join(outside, "outside.md"), join(root, "docs/outside.md"));
+
+  await expect(checkMarkdownLinks({ root, files: ["docs/outside.md"] }))
+    .rejects.toThrow("Markdown file resolves outside repository");
+});
+
+test("reports a target symlink that resolves outside the repository", async () => {
+  const { root, outside } = await createRealFixture();
+  await writeFile(join(root, "docs/readme.md"), "[outside](outside.md)\n");
+  await writeFile(join(outside, "outside.md"), "outside\n");
+  await symlink(join(outside, "outside.md"), join(root, "docs/outside.md"));
+
+  expect(await checkMarkdownLinks({ root, files: ["docs/readme.md"] })).toEqual([
+    { file: "docs/readme.md", target: "outside.md" },
+  ]);
+});
+
+test("reports a broken target symlink", async () => {
+  const { root } = await createRealFixture();
+  await writeFile(join(root, "docs/readme.md"), "[broken](broken.md)\n");
+  await symlink("missing.md", join(root, "docs/broken.md"));
+
+  expect(await checkMarkdownLinks({ root, files: ["docs/readme.md"] })).toEqual([
+    { file: "docs/readme.md", target: "broken.md" },
+  ]);
+});
+
+test("allows document and target symlinks that resolve inside the repository", async () => {
+  const { root } = await createRealFixture();
+  await writeFile(join(root, "docs/real.md"), "[target](target-link.md)\n");
+  await writeFile(join(root, "docs/target.md"), "target\n");
+  await symlink("real.md", join(root, "docs/alias.md"));
+  await symlink("target.md", join(root, "docs/target-link.md"));
+
+  expect(await checkMarkdownLinks({ root, files: ["docs/alias.md"] })).toEqual([]);
+});
+
+test("uses the real repository root when the configured root is an internal symlink", async () => {
+  const { root } = await createRealFixture();
+  const linkedRoot = join(dirname(root), "repo-link");
+  await writeFile(join(root, "docs/readme.md"), "[target](target.md)\n");
+  await writeFile(join(root, "docs/target.md"), "target\n");
+  await symlink(root, linkedRoot);
+
+  expect(await checkMarkdownLinks({ root: linkedRoot, files: ["docs/readme.md"] })).toEqual([]);
+});
+
+test("JSON-encodes untrusted Markdown file and target fields", () => {
+  const output = formatMarkdownLinkIssue({
+    file: "docs/line\n\u001b[31m.md",
+    target: "target\n\u001b[2J.md",
+  });
+
+  expect(output).toBe(
+    "[markdown-link] file=\"docs/line\\n\\u001b[31m.md\" missing-local-target=\"target\\n\\u001b[2J.md\"",
+  );
+  expect(output.split("\n")).toHaveLength(1);
+});
+
+test("CLI escapes a newline in an input document path", async () => {
+  const { root } = await createRealFixture();
+  const file = "docs/line\nforged.md";
+  await writeFile(join(root, file), "[missing](missing.md)\n");
+  const script = join(process.cwd(), "scripts/agent/check-markdown-links.ts");
+  const child = Bun.spawn(["bun", script, file], {
+    cwd: root,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  expect(await child.exited).toBe(1);
+  expect(await new Response(child.stderr).text()).toBe(
+    "[markdown-link] file=\"docs/line\\nforged.md\" missing-local-target=\"missing.md\"\n",
+  );
+});
+
+async function createRealFixture(): Promise<{ root: string; outside: string }> {
+  const base = await mkdtemp(join(tmpdir(), "markdown-links-"));
+  fixtureRoots.push(base);
+  const root = join(base, "repo");
+  const outside = join(base, "outside");
+  await mkdir(join(root, "docs"), { recursive: true });
+  await mkdir(outside, { recursive: true });
+  return { root, outside };
+}

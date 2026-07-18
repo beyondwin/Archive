@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { collectChangedPaths, runVerification } from "./verify";
+import { collectChangedPaths, collectChangedPathsResult, runVerification } from "./verify";
 
 test("typecheck targets project configs instead of every workspace entry", async () => {
   const packageJson = JSON.parse(await readFile(join(process.cwd(), "package.json"), "utf8")) as {
@@ -63,12 +63,13 @@ test("fail-fast records commands after the failure as skipped", async () => {
   });
 });
 
-test("collects working tree and untracked paths without a range", async () => {
+test("collects working tree deletions and untracked paths without a range", async () => {
   const calls: string[][] = [];
-  const paths = await collectChangedPaths({
+  const changed = await collectChangedPathsResult({
     root: "/fixture",
     git: async (args) => {
       calls.push([...args]);
+      if (args.includes("--diff-filter=D")) return "docs/removed.md\0";
       return args[0] === "diff"
         ? "packages/z.ts\0문서/새 파일.md\0line\nbreak.ts\0"
         : "docs/new.md\0packages/z.ts\0";
@@ -76,15 +77,18 @@ test("collects working tree and untracked paths without a range", async () => {
   });
 
   expect(calls).toEqual([
-    ["diff", "--name-only", "--diff-filter=ACMR", "-z", "HEAD"],
+    ["diff", "--name-only", "--diff-filter=ACMRD", "-z", "HEAD"],
+    ["diff", "--name-only", "--diff-filter=D", "-z", "HEAD"],
     ["ls-files", "--others", "--exclude-standard", "-z"],
   ]);
-  expect(paths).toEqual([
+  expect(changed.paths).toEqual([
     "docs/new.md",
+    "docs/removed.md",
     "line\nbreak.ts",
     "packages/z.ts",
     "문서/새 파일.md",
   ]);
+  expect(changed.deletedPaths).toEqual(["docs/removed.md"]);
 });
 
 test("collects a three-dot commit range", async () => {
@@ -95,16 +99,17 @@ test("collects a three-dot commit range", async () => {
     head: "HEAD",
     git: async (args) => {
       calls.push([...args]);
-      return "docs/README.md\0";
+      return args.includes("--diff-filter=D") ? "docs/removed.md\0" : "docs/README.md\0docs/removed.md\0";
     },
   });
 
   expect(calls).toEqual([
     ["rev-parse", "--verify", "origin/main"],
     ["rev-parse", "--verify", "HEAD"],
-    ["diff", "--name-only", "--diff-filter=ACMR", "-z", "origin/main...HEAD"],
+    ["diff", "--name-only", "--diff-filter=ACMRD", "-z", "origin/main...HEAD"],
+    ["diff", "--name-only", "--diff-filter=D", "-z", "origin/main...HEAD"],
   ]);
-  expect(paths).toEqual(["docs/README.md"]);
+  expect(paths).toEqual(["docs/README.md", "docs/removed.md"]);
 });
 
 test("all-zero push base diffs the empty tree against the final branch head", async () => {
@@ -124,7 +129,11 @@ test("all-zero push base diffs the empty tree against the final branch head", as
     ["rev-parse", "--verify", "new-branch-head"],
     ["hash-object", "-t", "tree", "/dev/null"],
     [
-      "diff", "--name-only", "--diff-filter=ACMR", "-z",
+      "diff", "--name-only", "--diff-filter=ACMRD", "-z",
+      "empty-tree-oid", "new-branch-head",
+    ],
+    [
+      "diff", "--name-only", "--diff-filter=D", "-z",
       "empty-tree-oid", "new-branch-head",
     ],
   ]);
@@ -146,7 +155,11 @@ test("all-zero SHA-256 push base uses the empty tree endpoint", async () => {
     ["rev-parse", "--verify", "sha256-head"],
     ["hash-object", "-t", "tree", "/dev/null"],
     [
-      "diff", "--name-only", "--diff-filter=ACMR", "-z",
+      "diff", "--name-only", "--diff-filter=ACMRD", "-z",
+      "sha256-empty-tree", "sha256-head",
+    ],
+    [
+      "diff", "--name-only", "--diff-filter=D", "-z",
       "sha256-empty-tree", "sha256-head",
     ],
   ]);
@@ -296,6 +309,78 @@ test("no-range execution keeps plain working-tree patch hygiene", async () => {
   });
 
   expect(calls).toEqual([["git", "diff", "--check"]]);
+});
+
+test.each([
+  ["working-tree", undefined],
+  ["range", {
+    base: "origin/main",
+    head: "HEAD",
+    diffArgs: ["origin/main...HEAD"],
+  }],
+] as const)("clean $0 verification still runs contract and patch hygiene", async (_name, normalizedRange) => {
+  const calls: Array<{ id: string; argv: readonly string[] }> = [];
+  const result = await runVerification({
+    root: process.cwd(),
+    paths: [],
+    normalizedRange,
+    run: async (command) => {
+      calls.push({ id: command.id, argv: command.argv });
+      return 0;
+    },
+  });
+
+  expect(calls).toEqual([
+    { id: "agent-contract", argv: ["bun", "run", "agent:contract"] },
+    {
+      id: "diff-check",
+      argv: normalizedRange === undefined
+        ? ["git", "diff", "--check"]
+        : ["git", "diff", "--check", "origin/main...HEAD"],
+    },
+  ]);
+  expect(result.exitCode).toBe(0);
+});
+
+test.each([
+  ["working-tree", undefined],
+  ["range", {
+    base: "origin/main",
+    head: "HEAD",
+    diffArgs: ["origin/main...HEAD"],
+  }],
+] as const)("deletion-only $0 verification does not open removed Markdown", async (_name, normalizedRange) => {
+  const calls: string[] = [];
+  await runVerification({
+    root: process.cwd(),
+    paths: ["docs/removed.md"],
+    deletedPaths: ["docs/removed.md"],
+    normalizedRange,
+    run: async (command) => {
+      calls.push(command.id);
+      return 0;
+    },
+  });
+
+  expect(calls).toEqual(["agent-contract", "diff-check"]);
+});
+
+test("mixed deletion verification checks only existing Markdown", async () => {
+  const commands: Array<{ id: string; argv: readonly string[] }> = [];
+  await runVerification({
+    root: process.cwd(),
+    paths: ["docs/kept.md", "docs/removed.md"],
+    deletedPaths: ["docs/removed.md"],
+    run: async (command) => {
+      commands.push({ id: command.id, argv: command.argv });
+      return 0;
+    },
+  });
+
+  expect(commands[0]).toEqual({
+    id: "markdown-links",
+    argv: ["bun", "run", "scripts/agent/check-markdown-links.ts", "docs/kept.md"],
+  });
 });
 
 test("live provider evidence is selected but never executed by default", async () => {

@@ -7,8 +7,10 @@ const EXECUTOR = "skills/kws-claude-multi-agent-executor";
 
 type ObservedCheck = ClaudeOfflineCheck;
 
-test("package gate runs every deterministic Claude check in stable order without a baseline artifact", async () => {
+test("package gate runs every deterministic Claude check without changing baseline state", async () => {
   const root = process.cwd();
+  const baseline = join(root, EXECUTOR, "evals/baselines/v3.0.0.json");
+  const baselineBefore = await snapshotFile(baseline);
   const packageJson = JSON.parse(await readFile(join(root, "package.json"), "utf8")) as {
     scripts: Record<string, string>;
   };
@@ -30,6 +32,7 @@ test("package gate runs every deterministic Claude check in stable order without
     new Response(child.stdout).text(),
     new Response(child.stderr).text(),
   ]);
+  const baselineAfter = await snapshotFile(baseline);
 
   expect(exitCode, stderr).toBe(0);
   expect(stdout.split("\n").filter((line) => /^\[agent:claude-offline] /.test(line))).toEqual([
@@ -37,7 +40,7 @@ test("package gate runs every deterministic Claude check in stable order without
     ...kernelTests.map((name) => `[agent:claude-offline] PASS scripts/kernel/${name}`),
     "[agent:claude-offline] PASS doc-freshness-strict",
   ]);
-  expect(await Bun.file(join(root, EXECUTOR, "evals/baselines/v3.0.0.json")).exists()).toBeFalse();
+  expect(baselineAfter).toEqual(baselineBefore);
 });
 
 test("injected discovery is sorted and the runner fails fast", async () => {
@@ -152,3 +155,9 @@ test("runner exceptions return a stable failure for the current check", async ()
     "[agent:claude-offline] FAIL compare-agentlens-events-self-test error=exception",
   ]);
 });
+
+async function snapshotFile(path: string): Promise<{ exists: false } | { exists: true; bytes: Uint8Array }> {
+  const file = Bun.file(path);
+  if (!await file.exists()) return { exists: false };
+  return { exists: true, bytes: new Uint8Array(await file.arrayBuffer()) };
+}

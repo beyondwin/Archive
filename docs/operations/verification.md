@@ -12,12 +12,17 @@ bun run agent:verify -- --dry-run --path apps/console/src/App.tsx
 bun run agent:verify -- --base origin/main --head HEAD
 ```
 
-`agent:contract` validates the repository contract: required guidance and gate
-files, verification-map consistency, tested Codex execpolicy fixtures, and
+`agent:contract` validates the repository contract: the complete root,
+subtree, and tool-guidance inventory; the four exact `agent:*` package entry
+points; verification-map reachability, overlaps, command working directories,
+package scripts, and executable gates; tested Codex execpolicy fixtures; and
 tracked-state exclusions. `agent:test` runs the agent-script unit suite.
 `agent:verify` selects deterministic commands from changed tracked and untracked
-paths. It checks touched Markdown links before the selected scope commands and
-includes `git diff --check` for patch hygiene. With `--base` and `--head`, both
+paths, including tracked deletions. It checks links only for Markdown files that
+still exist, resolves documents and local targets through their real paths so
+symlinks cannot escape the repository, and includes `git diff --check` for
+patch hygiene. A clean path set still runs `agent:contract` and patch hygiene.
+With `--base` and `--head`, both
 path classification and patch hygiene use the same normalized range: a
 three-dot range for normal refs, or the repository's computed empty tree and
 head for an all-zero push base. No-range and explicit-path modes keep plain
@@ -30,6 +35,12 @@ more `packages/*` roots or touching `bun.lock` select `waygent-closure`. Any
 unknown path escalates to `full-offline` and is listed under `unknown-paths` in
 the summary. That conservative escalation is a visible manifest-gap warning,
 not permission to silently skip verification.
+
+Source changes under `apps/api/`, `apps/cli/`, or a single `packages/*` root
+with a tracked `tests/` directory select that exact test directory in addition
+to typechecking. Console changes retain their focused `src` tests and
+production build. Deleted test files are classified by their former scope but
+are never passed to a focused test command.
 
 The verifier is fail-fast and reports every command as passed, failed, skipped,
 or `NOT RUN (opt-in)`. It never runs live-provider smoke or the Claude executor

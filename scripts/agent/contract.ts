@@ -6,16 +6,29 @@ export const REQUIRED_PATHS = [
   "skills/kws-codex-plan-executor", "skills/kws-claude-multi-agent-executor",
 ] as const;
 
-export const REQUIRED_AGENT_FILES = [
-  "AGENTS.md", "apps/AGENTS.md", "packages/AGENTS.md",
+export const ROOT_GUIDANCE_FILES = ["AGENTS.md"] as const;
+
+export const SUBTREE_GUIDANCE_FILES = [
+  "apps/AGENTS.md", "packages/AGENTS.md",
   "native/kernel/AGENTS.md", "skills/AGENTS.md",
   "skills/kws-codex-plan-executor/AGENTS.md",
   "skills/kws-claude-multi-agent-executor/AGENTS.md",
 ] as const;
 
+export const REQUIRED_AGENT_FILES = [
+  ...ROOT_GUIDANCE_FILES,
+  ...SUBTREE_GUIDANCE_FILES,
+] as const;
+
+export const TOOL_GUIDANCE_FILES = [
+  "CLAUDE.md", "GEMINI.md", ".cursor/rules/archive.mdc",
+  ".github/copilot-instructions.md", ".codex/README.md",
+] as const;
+
 export const CURRENT_GUIDANCE_FILES = [
-  "AGENTS.md", "CLAUDE.md", "GEMINI.md", ".cursor/rules/archive.mdc",
-  ".github/copilot-instructions.md", ".gitignore", "code_review.md",
+  ...REQUIRED_AGENT_FILES,
+  ...TOOL_GUIDANCE_FILES,
+  ".gitignore", "PLANS.md", "code_review.md",
 ] as const;
 
 export const LOCAL_STATE_PATTERN =
