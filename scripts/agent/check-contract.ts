@@ -28,6 +28,7 @@ const RETIRED_CLAIM = /\b(?:removed|legacy|historical|retired|not)\b/i;
 
 export interface CheckContractOptions {
   root?: string;
+  codexBin?: string;
   requiredPaths?: readonly string[];
   requiredAgentFiles?: readonly string[];
   trackedFiles?: readonly string[];
@@ -67,6 +68,7 @@ export async function checkContract(
   issues.push(...await checkGuidance(root));
   issues.push(...await checkPackageScripts(root));
   issues.push(...await checkExecutorGates(root));
+  issues.push(...await checkCodexExecpolicy(root, options.codexBin));
 
   const scan = options.trackedFiles === undefined ? await listTrackedFiles(root) : undefined;
   if (scan?.issue) {
@@ -171,6 +173,31 @@ async function checkExecutorGates(root: string): Promise<ContractIssue[]> {
     }
   }
   return issues;
+}
+
+async function checkCodexExecpolicy(root: string, codexBin?: string): Promise<ContractIssue[]> {
+  try {
+    const process = Bun.spawn([
+      codexBin ?? "codex", "execpolicy", "check",
+      "--rules", ".codex/rules/archive.rules", "--",
+      "git", "status", "--short",
+    ], {
+      cwd: root,
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    if (await process.exited === 0) {
+      return [];
+    }
+  } catch {
+    // Surface an unusable local Codex installation as a contract issue below.
+  }
+
+  return [{
+    code: "codex_execpolicy_unavailable",
+    path: "codex execpolicy check --rules .codex/rules/archive.rules -- git status --short",
+    message: "Codex execpolicy fixture command could not run",
+  }];
 }
 
 async function listTrackedFiles(root: string): Promise<{
