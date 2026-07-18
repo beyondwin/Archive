@@ -58,7 +58,7 @@ async function resolveGitDiffEndpoints(
   git: NonNullable<ChangedPathOptions["git"]>,
 ): Promise<string[]> {
   try {
-    if (/^0+$/.test(base)) {
+    if (/^(?:0{40}|0{64})$/.test(base)) {
       await git(["rev-parse", "--verify", head]);
       const emptyTree = (await git(["hash-object", "-t", "tree", "/dev/null"])).trim();
       if (emptyTree === "") throw new Error("empty tree hash was not returned");
