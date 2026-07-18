@@ -1119,7 +1119,7 @@ class CapabilityTests(unittest.TestCase):
             environment_fingerprint([unavailable, available]),
         )
 
-    def test_validation_accepts_allowlisted_and_incidental_details(self) -> None:
+    def test_validation_accepts_recognized_and_incidental_details(self) -> None:
         observation = CapabilityObservation(
             capability="loopback_bind",
             scope="workspace",
@@ -4853,7 +4853,7 @@ class ControllerTransportTests(_RecoveryRunnerFixture):
             if event.get("action") == "plan.attempt_finished"
         )
 
-    def test_json_event_filter_keeps_only_usage_and_allowlisted_error_code(self) -> None:
+    def test_json_event_filter_keeps_only_usage_and_recognized_error_code(self) -> None:
         filter_class = getattr(launcher_module, "_JsonEventFilter", None)
         self.assertIsNotNone(filter_class)
         capture = filter_class()
