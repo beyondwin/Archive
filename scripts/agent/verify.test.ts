@@ -13,6 +13,16 @@ test("typecheck targets project configs instead of every workspace entry", async
   );
 });
 
+test("native kernel and CI pin the same Rust toolchain", async () => {
+  const [workflow, manifest] = await Promise.all([
+    readFile(join(process.cwd(), ".github/workflows/agent-contract.yml"), "utf8"),
+    readFile(join(process.cwd(), "native/kernel/rust-toolchain.toml"), "utf8"),
+  ]);
+
+  expect(workflow).toContain("toolchain: 1.95.0");
+  expect(manifest).toContain('channel = "1.95.0"');
+});
+
 test("dry-run does not execute", async () => {
   const calls: string[] = [];
   const result = await runVerification({
@@ -141,6 +151,37 @@ test("all-zero SHA-256 push base uses the empty tree endpoint", async () => {
     ],
   ]);
 });
+
+test.each([1, 39, 41, 63, 65])(
+  "invalid %i-zero base uses normal range validation",
+  async (length) => {
+    const base = "0".repeat(length);
+    const head = "HEAD";
+    const calls: string[][] = [];
+
+    await expect(collectChangedPaths({
+      root: process.cwd(),
+      base,
+      head,
+      git: async (args) => {
+        calls.push([...args]);
+        if (args.at(-1) === base || args.at(-1) === head) {
+          throw new Error("unknown revision");
+        }
+        return "";
+      },
+    })).rejects.toMatchObject({
+      code: "invalid_git_range",
+      base,
+      head,
+    });
+
+    expect(calls).toEqual([
+      ["rev-parse", "--verify", base],
+      ["rev-parse", "--verify", head],
+    ]);
+  },
+);
 
 test("reports the original range when normal range refs cannot resolve", async () => {
   const base = "missing-base";
