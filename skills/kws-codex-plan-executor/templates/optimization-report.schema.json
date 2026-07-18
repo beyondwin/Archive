@@ -3,34 +3,147 @@
   "$id": "optimization-report.schema.json",
   "title": "CPE optimization report",
   "type": "object",
-  "required": ["format_version", "run_id", "usage", "duration_ms", "recovery_metrics", "findings"],
+  "required": ["format_version", "run_id", "usage", "duration_ms", "duration_unknown_attempt_count", "verification", "artifact_inventory", "data_quality_warnings", "recovery_metrics", "findings"],
   "properties": {
     "format_version": {"const": 2},
     "run_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
     "usage": {
       "type": "object",
-      "required": ["observed_input_tokens", "unknown_attempt_count", "total_kind"],
+      "required": ["attempts_finished", "attempts_fully_observed", "input", "cached_input", "uncached_input", "output", "reasoning_output", "launcher_prompt", "paired_observation_cache_ratio", "unknown_attempt_duration_ms", "unknown_attempt_missing_duration_count", "unknown_attempts_by_reason", "scope", "attribution", "attribution_unavailable_reason"],
       "properties": {
-        "observed_input_tokens": {"type": "integer", "minimum": 0},
-        "unknown_attempt_count": {"type": "integer", "minimum": 0},
-        "total_kind": {"enum": ["exact", "lower_bound"]}
+        "attempts_finished": {"$ref": "#/$defs/counter"},
+        "attempts_fully_observed": {"$ref": "#/$defs/counter"},
+        "input": {"$ref": "#/$defs/tokenMetric"},
+        "cached_input": {"$ref": "#/$defs/tokenMetric"},
+        "uncached_input": {
+          "type": "object",
+          "required": ["observed_tokens", "known_attempts", "unknown_attempts", "total_kind", "derivation"],
+          "properties": {
+            "observed_tokens": {"$ref": "#/$defs/counter"},
+            "known_attempts": {"$ref": "#/$defs/counter"},
+            "unknown_attempts": {"$ref": "#/$defs/counter"},
+            "total_kind": {"enum": ["exact", "lower_bound"]},
+            "derivation": {"const": "input_minus_cached_per_attempt"}
+          },
+          "additionalProperties": false
+        },
+        "output": {"$ref": "#/$defs/tokenMetric"},
+        "reasoning_output": {"$ref": "#/$defs/tokenMetric"},
+        "launcher_prompt": {
+          "type": "object",
+          "required": ["observed_bytes", "known_attempts", "unknown_attempts", "total_kind", "unit"],
+          "properties": {
+            "observed_bytes": {"$ref": "#/$defs/counter"},
+            "known_attempts": {"$ref": "#/$defs/counter"},
+            "unknown_attempts": {"$ref": "#/$defs/counter"},
+            "total_kind": {"enum": ["exact", "lower_bound"]},
+            "unit": {"const": "bytes"}
+          },
+          "additionalProperties": false
+        },
+        "paired_observation_cache_ratio": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "unknown_attempt_duration_ms": {"$ref": "#/$defs/counter"},
+        "unknown_attempt_missing_duration_count": {"$ref": "#/$defs/counter"},
+        "unknown_attempts_by_reason": {
+          "type": "object",
+          "properties": {
+            "timeout": {"$ref": "#/$defs/counter"},
+            "nonzero_exit": {"$ref": "#/$defs/counter"},
+            "usage_unavailable": {"$ref": "#/$defs/counter"}
+          },
+          "additionalProperties": false
+        },
+        "scope": {"const": "controller_and_nested_agents_aggregate"},
+        "attribution": {"const": "unavailable"},
+        "attribution_unavailable_reason": {"const": "provider_event_not_agent_scoped"}
       },
       "additionalProperties": false
     },
-    "duration_ms": {"type": "integer", "minimum": 0},
+    "duration_ms": {"$ref": "#/$defs/counter"},
+    "duration_unknown_attempt_count": {"$ref": "#/$defs/counter"},
+    "verification": {
+      "type": "object",
+      "required": ["executions", "reuses", "uncached_executions"],
+      "properties": {
+        "executions": {"$ref": "#/$defs/counter"},
+        "reuses": {"$ref": "#/$defs/counter"},
+        "uncached_executions": {"$ref": "#/$defs/counter"}
+      },
+      "additionalProperties": false
+    },
+    "artifact_inventory": {
+      "type": "object",
+      "required": ["availability", "measurement_kind", "advisory_only", "acceptance_effect", "produced_files", "produced_bytes", "classes", "largest", "review_diff_pressure", "declared_context", "truncated"],
+      "properties": {
+        "availability": {"enum": ["available", "unavailable"]},
+        "measurement_kind": {"const": "produced_filesystem_metadata_only"},
+        "advisory_only": {"const": true},
+        "acceptance_effect": {"const": false},
+        "produced_files": {"$ref": "#/$defs/nullableCounter"},
+        "produced_bytes": {"$ref": "#/$defs/nullableCounter"},
+        "classes": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {"$ref": "#/$defs/fileBucket"}
+        },
+        "largest": {
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "required": ["relative_path", "bytes", "class"],
+              "properties": {
+                "relative_path": {"type": "string", "minLength": 1, "maxLength": 500},
+                "bytes": {"$ref": "#/$defs/counter"},
+                "class": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"}
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "review_diff_pressure": {
+          "type": "object",
+          "required": ["files", "bytes", "largest_bytes"],
+          "properties": {
+            "files": {"$ref": "#/$defs/nullableCounter"},
+            "bytes": {"$ref": "#/$defs/nullableCounter"},
+            "largest_bytes": {"$ref": "#/$defs/nullableCounter"}
+          },
+          "additionalProperties": false
+        },
+        "declared_context": {
+          "type": "object",
+          "required": ["status", "refs", "bytes", "reason"],
+          "properties": {
+            "status": {"const": "unavailable"},
+            "refs": {"type": "null"},
+            "bytes": {"type": "null"},
+            "reason": {"const": "not_directly_evidenced"}
+          },
+          "additionalProperties": false
+        },
+        "truncated": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "data_quality_warnings": {
+      "type": "array",
+      "maxItems": 1024,
+      "items": {"type": "string", "minLength": 1, "maxLength": 200}
+    },
     "recovery_metrics": {
       "type": "object",
       "required": ["launches_avoided", "envelope_repairs", "productive_timeouts", "no_progress_slices", "budget_stops", "continuation_reason_counts"],
       "properties": {
-        "launches_avoided": {"type": "integer", "minimum": 0},
-        "envelope_repairs": {"type": "integer", "minimum": 0},
-        "productive_timeouts": {"type": "integer", "minimum": 0},
-        "no_progress_slices": {"type": "integer", "minimum": 0},
-        "budget_stops": {"type": "integer", "minimum": 0},
+        "launches_avoided": {"$ref": "#/$defs/counter"},
+        "envelope_repairs": {"$ref": "#/$defs/counter"},
+        "productive_timeouts": {"$ref": "#/$defs/counter"},
+        "no_progress_slices": {"$ref": "#/$defs/counter"},
+        "budget_stops": {"$ref": "#/$defs/counter"},
         "continuation_reason_counts": {
           "type": "object",
           "maxProperties": 128,
-          "additionalProperties": {"type": "integer", "minimum": 0}
+          "additionalProperties": {"$ref": "#/$defs/counter"}
         }
       },
       "additionalProperties": false
@@ -53,16 +166,35 @@
             "type": "array",
             "minItems": 1,
             "maxItems": 128,
-            "items": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 500,
-              "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"
-            }
+            "items": {"type": "string", "minLength": 1, "maxLength": 500, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"}
           }
         },
         "additionalProperties": false
       }
+    }
+  },
+  "$defs": {
+    "counter": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807},
+    "nullableCounter": {"type": ["integer", "null"], "minimum": 0, "maximum": 9223372036854775807},
+    "tokenMetric": {
+      "type": "object",
+      "required": ["observed_tokens", "known_attempts", "unknown_attempts", "total_kind"],
+      "properties": {
+        "observed_tokens": {"$ref": "#/$defs/counter"},
+        "known_attempts": {"$ref": "#/$defs/counter"},
+        "unknown_attempts": {"$ref": "#/$defs/counter"},
+        "total_kind": {"enum": ["exact", "lower_bound"]}
+      },
+      "additionalProperties": false
+    },
+    "fileBucket": {
+      "type": "object",
+      "required": ["files", "bytes"],
+      "properties": {
+        "files": {"$ref": "#/$defs/counter"},
+        "bytes": {"$ref": "#/$defs/counter"}
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false
