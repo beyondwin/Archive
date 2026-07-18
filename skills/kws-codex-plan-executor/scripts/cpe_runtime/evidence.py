@@ -20,6 +20,14 @@ from .result_validation import (
     normalize_result_v2,
     strict_json_object,
 )
+from .review_evidence import (
+    FindingFixReceipt,
+    ReviewReceipt,
+    derive_review_efficiency_metrics,
+    seal_finding_fix_receipt,
+    seal_review_receipt,
+    validate_review_lifecycle,
+)
 from .state import StateStore
 
 MAX_EVIDENCE_FILES = 128
@@ -521,6 +529,36 @@ def ingest_plan_evidence(
             except OSError:
                 pass
         raise
+
+
+def persist_review_lifecycle_evidence(
+    *,
+    run_root: Path,
+    completed_task_ids: tuple[str, ...] | list[str],
+    current_head: str,
+    receipts: tuple[ReviewReceipt, ...] | list[ReviewReceipt],
+    fixes: tuple[FindingFixReceipt, ...] | list[FindingFixReceipt],
+) -> dict[str, object]:
+    """Persist validated review metadata without sealing review payload bodies."""
+    decision = validate_review_lifecycle(
+        completed_task_ids=completed_task_ids,
+        current_head=current_head,
+        receipts=receipts,
+        fixes=fixes,
+    )
+    if not decision.valid:
+        raise ValueError(
+            f"review lifecycle evidence is invalid: {decision.reason_code}"
+        )
+    paths = [seal_review_receipt(run_root, receipt) for receipt in receipts]
+    paths.extend(seal_finding_fix_receipt(run_root, fix) for fix in fixes)
+    return {
+        "decision_reason": decision.reason_code,
+        "evidence_refs": [
+            path.relative_to(run_root).as_posix() for path in paths
+        ],
+        "efficiency_metrics": derive_review_efficiency_metrics(receipts, fixes),
+    }
 
 
 def _git_output(worktree: Path, *arguments: str) -> str | None:
