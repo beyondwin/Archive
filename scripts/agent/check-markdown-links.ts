@@ -196,9 +196,12 @@ function isLineStart(contents: string, index: number): boolean {
 
 function line(contents: string, start: number): { text: string; end: number } {
   const newline = contents.indexOf("\n", start);
-  return newline === -1
-    ? { text: contents.slice(start), end: contents.length }
-    : { text: contents.slice(start, newline), end: newline + 1 };
+  const end = newline === -1 ? contents.length : newline;
+  const text = contents.slice(start, end);
+  return {
+    text: text.endsWith("\r") ? text.slice(0, -1) : text,
+    end: newline === -1 ? contents.length : newline + 1,
+  };
 }
 
 function maskRange(contents: string[], start: number, end: number): void {
