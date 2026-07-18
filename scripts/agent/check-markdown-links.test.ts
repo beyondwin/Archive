@@ -53,3 +53,99 @@ test("returns issues sorted by file and target", async () => {
     { file: "z.md", target: "z.md" },
   ]);
 });
+
+test("rejects relative and root-relative targets outside the repository", async () => {
+  const checked: string[] = [];
+  const issues = await checkMarkdownLinks({
+    root: "/fixture/repo",
+    files: ["docs/readme.md"],
+    readText: async () => [
+      "[relative](../../outside.md)",
+      "[root](/../../outside.md)",
+      "[in-root](../README.md)",
+      "[root-in](/README.md)",
+    ].join(" "),
+    exists: async (path) => {
+      checked.push(path);
+      return true;
+    },
+  });
+
+  expect(issues).toEqual([
+    { file: "docs/readme.md", target: "../../outside.md" },
+    { file: "docs/readme.md", target: "/../../outside.md" },
+  ]);
+  expect(checked).toEqual([
+    "/fixture/repo/README.md",
+    "/fixture/repo/README.md",
+  ]);
+});
+
+test("ignores links inside fenced code, inline code, and HTML comments", async () => {
+  const checked: string[] = [];
+  const issues = await checkMarkdownLinks({
+    root: "/fixture",
+    files: ["docs/readme.md"],
+    readText: async () => [
+      "```md",
+      "[fenced](fenced.md)",
+      "```",
+      "~~~",
+      "[tilde](tilde.md)",
+      "~~~",
+      "`[inline](inline.md)`",
+      "<!-- [comment](comment.md) -->",
+      "[real](real.md)",
+    ].join("\n"),
+    exists: async (path) => {
+      checked.push(path);
+      return true;
+    },
+  });
+
+  expect(issues).toEqual([]);
+  expect(checked).toEqual(["/fixture/docs/real.md"]);
+});
+
+test("supports nested labels and balanced or escaped destinations", async () => {
+  const checked: string[] = [];
+  const issues = await checkMarkdownLinks({
+    root: "/fixture",
+    files: ["docs/readme.md"],
+    readText: async () => [
+      "[outer [inner]](dir/(balanced).md)",
+      String.raw`[escaped](dir/\(escaped\).md)`,
+      "[angle](<dir/space name.md> \"title\")",
+    ].join(" "),
+    exists: async (path) => {
+      checked.push(path);
+      return true;
+    },
+  });
+
+  expect(issues).toEqual([]);
+  expect(checked).toEqual([
+    "/fixture/docs/dir/(balanced).md",
+    "/fixture/docs/dir/(escaped).md",
+    "/fixture/docs/dir/space name.md",
+  ]);
+});
+
+test("decodes before ignoring encoded web and mail schemes", async () => {
+  const checked: string[] = [];
+  const issues = await checkMarkdownLinks({
+    root: "/fixture",
+    files: ["docs/readme.md"],
+    readText: async () => [
+      "[web](https%3A%2F%2Fopenai.com)",
+      "[mail](mailto%3Ahello%40example.com)",
+    ].join(" "),
+    exists: async (path) => {
+      checked.push(path);
+      return false;
+    },
+  });
+
+  expect(issues).toEqual([]);
+  expect(checked).toEqual([]);
+});

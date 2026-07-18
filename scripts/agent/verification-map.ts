@@ -39,11 +39,16 @@ const RUST_TEST: CommandSpec = { id: "rust-test", argv: ["cargo", "test", "--wor
 const WAYGENT_SKILL_EVAL: CommandSpec = { id: "waygent-skill-eval", argv: ["./evals/run.sh"], cwd: "skills/waygent" };
 const CODEX_EXECUTOR_EVAL: CommandSpec = { id: "codex-executor-eval", argv: ["./evals/run.sh"], cwd: "skills/kws-codex-plan-executor" };
 const CLAUDE_EXECUTOR_EVAL: CommandSpec = { id: "claude-executor-eval", argv: ["./evals/run.sh"], cwd: "skills/kws-claude-multi-agent-executor" };
+const LIVE_PROVIDER_SMOKE: CommandSpec = {
+  id: "waygent-live-provider-smoke",
+  argv: ["bun", "run", "waygent:live-provider-smoke"],
+  optIn: true,
+};
 
 const OFFLINE_COMMANDS = [
   CONTRACT, DIFF_CHECK, TYPECHECK, CHECK, PLATFORM_DEMO, SCENARIOS, FIXTURE_LAB, DOGFOOD,
   CONSOLE_TEST, CONSOLE_BUILD, RUST_FORMAT, RUST_TEST, WAYGENT_SKILL_EVAL,
-  CODEX_EXECUTOR_EVAL, CLAUDE_EXECUTOR_EVAL,
+  CODEX_EXECUTOR_EVAL, CLAUDE_EXECUTOR_EVAL, LIVE_PROVIDER_SMOKE,
 ] as const;
 
 export const VERIFICATION_SCOPES: readonly VerificationScope[] = [
@@ -55,7 +60,7 @@ export const VERIFICATION_SCOPES: readonly VerificationScope[] = [
   { id: "console", matchers: ["apps/console/"], commands: [CONTRACT, DIFF_CHECK, CONSOLE_TEST, CONSOLE_BUILD] },
   { id: "app", matchers: ["apps/"], commands: [CONTRACT, DIFF_CHECK, TYPECHECK] },
   { id: "package", matchers: ["packages/"], commands: [CONTRACT, DIFF_CHECK, TYPECHECK] },
-  { id: "waygent-closure", matchers: ["packages/", "bun.lock"], commands: [CONTRACT, DIFF_CHECK, CHECK, PLATFORM_DEMO, SCENARIOS, FIXTURE_LAB, DOGFOOD] },
+  { id: "waygent-closure", matchers: ["packages/", "bun.lock"], commands: [CONTRACT, DIFF_CHECK, CHECK, PLATFORM_DEMO, SCENARIOS, FIXTURE_LAB, DOGFOOD, LIVE_PROVIDER_SMOKE] },
   { id: "native", matchers: ["native/kernel/"], commands: [CONTRACT, DIFF_CHECK, RUST_FORMAT, RUST_TEST] },
   { id: "waygent-skill", matchers: ["skills/waygent/"], commands: [CONTRACT, DIFF_CHECK, WAYGENT_SKILL_EVAL, CHECK, PLATFORM_DEMO, SCENARIOS] },
   { id: "codex-executor", matchers: ["skills/kws-codex-plan-executor/"], commands: [CONTRACT, DIFF_CHECK, CODEX_EXECUTOR_EVAL, CHECK] },

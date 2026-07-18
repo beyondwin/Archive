@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
 import { selectVerification, type CommandSpec, type ScopeId } from "./verification-map";
 
-const command = (id: string, argv: string[], cwd?: string) => ({ id, argv, cwd });
+const command = (id: string, argv: string[], cwd?: string, optIn?: boolean) => ({ id, argv, cwd, optIn });
 const commands = (paths: string[]) => selectVerification(paths).commands.map(toCommand);
-const toCommand = ({ id, argv, cwd }: CommandSpec) => ({ id, argv: [...argv], cwd });
+const toCommand = ({ id, argv, cwd, optIn }: CommandSpec) => ({ id, argv: [...argv], cwd, optIn });
 
 const contract = command("agent-contract", ["bun", "run", "agent:contract"]);
 const diffCheck = command("diff-check", ["git", "diff", "--check"]);
@@ -20,12 +20,18 @@ const rustTest = command("rust-test", ["cargo", "test", "--workspace"], "native/
 const waygentSkillEval = command("waygent-skill-eval", ["./evals/run.sh"], "skills/waygent");
 const codexExecutorEval = command("codex-executor-eval", ["./evals/run.sh"], "skills/kws-codex-plan-executor");
 const claudeExecutorEval = command("claude-executor-eval", ["./evals/run.sh"], "skills/kws-claude-multi-agent-executor");
+const liveProvider = command(
+  "waygent-live-provider-smoke",
+  ["bun", "run", "waygent:live-provider-smoke"],
+  undefined,
+  true,
+);
 
-const closureCommands = [contract, diffCheck, check, platformDemo, scenarios, fixtureLab, dogfood];
+const closureCommands = [contract, diffCheck, check, platformDemo, scenarios, fixtureLab, dogfood, liveProvider];
 const offlineCommands = [
   contract, diffCheck, typecheck, check, platformDemo, scenarios, fixtureLab, dogfood,
   consoleTest, consoleBuild, rustFormat, rustTest, waygentSkillEval, codexExecutorEval,
-  claudeExecutorEval,
+  claudeExecutorEval, liveProvider,
 ];
 
 test.each([
