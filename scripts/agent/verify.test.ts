@@ -383,6 +383,27 @@ test("mixed deletion verification checks only existing Markdown", async () => {
   });
 });
 
+test("deleted app tests keep the root suite without focusing the removed file", async () => {
+  const deletedPath = "apps/api/tests/removed.test.ts";
+  const calls: Array<{ id: string; argv: readonly string[]; cwd?: string }> = [];
+  await runVerification({
+    root: process.cwd(),
+    paths: [deletedPath],
+    deletedPaths: [deletedPath],
+    run: async (command) => {
+      calls.push({ id: command.id, argv: command.argv, cwd: command.cwd });
+      return 0;
+    },
+  });
+
+  expect(calls).toContainEqual({
+    id: "app-test:api",
+    argv: ["bun", "test", "tests"],
+    cwd: "apps/api",
+  });
+  expect(calls.some(({ id }) => id === `focused-test:${deletedPath}`)).toBeFalse();
+});
+
 test("live provider evidence is selected but never executed by default", async () => {
   const calls: string[] = [];
   const result = await runVerification({

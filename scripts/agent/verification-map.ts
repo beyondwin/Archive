@@ -125,7 +125,7 @@ export function selectVerification(
       CONTRACT,
       DIFF_CHECK,
       ...selected.flatMap(({ commands }) => commands),
-      ...(hasClosure ? [] : exactRootTestCommands(paths, deleted)),
+      ...(hasClosure ? [] : exactRootTestCommands(paths)),
       ...focusedTestCommands(paths.filter((path) => !deleted.has(path))),
     ]),
     markdownFiles,
@@ -153,9 +153,9 @@ function packageTestRoot(name: string): VerificationTestRoot {
   };
 }
 
-function exactRootTestCommands(paths: readonly string[], deleted: ReadonlySet<string>): CommandSpec[] {
+function exactRootTestCommands(paths: readonly string[]): CommandSpec[] {
   return VERIFICATION_TEST_ROOTS
-    .filter(({ root }) => paths.some((path) => !deleted.has(path) && path.startsWith(`${root}/`)))
+    .filter(({ root }) => paths.some((path) => path.startsWith(`${root}/`)))
     .map(({ command }) => command);
 }
 

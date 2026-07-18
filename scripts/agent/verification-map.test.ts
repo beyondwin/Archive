@@ -183,6 +183,38 @@ test("keeps existing Markdown in mixed changes while excluding the deletion", ()
   expect(selection.deletedPaths).toEqual(["docs/removed.md"]);
 });
 
+test.each([
+  ["API source", "apps/api/src/removed.ts", apiTest],
+  ["API test file", "apps/api/tests/removed.test.ts", apiTest],
+  ["orchestrator source", "packages/orchestrator/src/removed.ts", packageTest("orchestrator")],
+  ["orchestrator test file", "packages/orchestrator/tests/removed.test.ts", packageTest("orchestrator")],
+] satisfies readonly [string, string, ReturnType<typeof command>][]) (
+  "keeps the mapped root suite for a deleted $0",
+  (_name, path, expectedRootSuite) => {
+    const selection = selectVerification([path], { deletedPaths: [path] });
+
+    expect(selection.commands.map(toCommand)).toContainEqual(expectedRootSuite);
+  },
+);
+
+test.each([
+  "apps/api/tests/removed.test.ts",
+  "packages/orchestrator/tests/removed.test.ts",
+])("does not focus a deleted test file: %s", (path) => {
+  const selection = selectVerification([path], { deletedPaths: [path] });
+
+  expect(selection.commands.some(({ id }) => id === `focused-test:${path}`)).toBeFalse();
+});
+
+test.each([
+  ["app", "apps/unmapped/src/removed.ts", "app-test:"],
+  ["package", "packages/unmapped/src/removed.ts", "package-test:"],
+] as const)("does not invent a root suite for an unmapped $0", (_name, path, idPrefix) => {
+  const selection = selectVerification([path], { deletedPaths: [path] });
+
+  expect(selection.commands.some(({ id }) => id.startsWith(idPrefix))).toBeFalse();
+});
+
 test("deduplicates commands by cwd and argv", () => {
   const actualCommands = commands([
     "docs/README.md",
