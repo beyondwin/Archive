@@ -6,6 +6,7 @@ import json
 import os
 import selectors
 import signal
+import stat
 import subprocess
 import threading
 import time
@@ -237,6 +238,16 @@ def _drain_registered(selector: selectors.BaseSelector) -> None:
         selector.unregister(key.fileobj)
 
 
+def _seal_regular_output(path: Path) -> os.stat_result | None:
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return None
+    if stat.S_ISREG(metadata.st_mode) and not path.is_symlink():
+        path.chmod(0o400)
+    return metadata
+
+
 @dataclass(frozen=True)
 class LaunchResult:
     payload: dict[str, object] | None
@@ -252,6 +263,16 @@ class LaunchResult:
     output_tokens: int | None
     reasoning_output_tokens: int | None
     launcher_prompt_bytes: int
+
+
+@dataclass(frozen=True)
+class StructuredLaunchRequest:
+    command: list[str]
+    cwd: Path
+    prompt: str
+    result_path: Path
+    log_path: Path
+    timeout_seconds: float
 
 
 class CodexLauncher:
@@ -324,6 +345,9 @@ class CodexLauncher:
         starting_commit: str,
         current_commit: str,
         recovery_path: Path | None,
+        compiled_run_index: Path | None = None,
+        execution_ledger: Path | None = None,
+        verification_helper_descriptor: Path | None = None,
     ) -> str:
         lines = [
             "Execute one approved implementation plan in the isolated worktree.",
@@ -332,6 +356,9 @@ class CodexLauncher:
             f"CURRENT_PLAN: {plan_path}",
             f"STARTING_COMMIT: {starting_commit}",
             f"CURRENT_COMMIT: {current_commit}",
+            f"COMPILED_RUN_INDEX: {compiled_run_index or 'unavailable'}",
+            f"EXECUTION_LEDGER: {execution_ledger or 'unavailable'}",
+            f"VERIFICATION_HELPER_DESCRIPTOR: {verification_helper_descriptor or 'unavailable'}",
             "SPECIFICATIONS_REFERENCE_ONLY_IN_ORDER:",
         ]
         lines.extend(f"- {path}" for path in spec_paths)
@@ -340,18 +367,17 @@ class CodexLauncher:
         lines.extend(
             [
                 "",
-                "Discover and follow repository AGENTS.md instructions from root to the edited subtree.",
-                "Use superpowers:subagent-driven-development for this approved plan; CPE does not own task mapping or product quality roles.",
-                "Do not preload specification snapshots. Read only a referenced section when the plan is ambiguous or conflicts with observed code.",
-                "Use task-brief, report files, review-package, task review files, and .superpowers/sdd/progress.md as file-backed handoffs.",
-                "On recovery, read the capsule, progress ledger, Git status/log, and current task artifacts in that order; never redispatch a completed ledger task.",
-                "Implementers run plan-declared focused RED/GREEN and tests affected by fixes; there is no automatic full-suite run per task.",
-                "Reviewers reuse evidenced tests, write full findings to files, and return only verdicts, finding IDs, severities, and artifact paths.",
-                "Resolve one task finding set with one consolidated fix subagent, then review only the finding delta and affected evidence.",
-                "After all tasks, perform one cross-task final review and one full verification at the final HEAD.",
+                "Follow repository AGENTS.md from root through the edited subtree.",
+                "Use Superpowers; CPE records its evidence but does not prescribe task, review, fix, or subagent semantics.",
+                "Do not preload specifications; read referenced sections only to resolve ambiguity or code conflicts.",
+                "On recovery, inspect the capsule, ledger, Git status, and log first.",
+                "For deterministic declared test/lint/build commands, read the descriptor and invoke its argv_prefix with --run-id, stable --command-id, real --phase task|affected|branch_final, --input-digest, --mutable-input-policy, --cwd, then -- and the exact compiled argv.",
+                "Use task or affected for branch work and branch_final only for submitted final branch evidence; merged_main is parent-integration-only.",
+                "Digest every declared non-Git mutable input completely; use always_execute when mutable external state cannot be decision-completely digested.",
+                "Never claim a cache hit without the helper receipt, and never rerun an exact cached same-key pass merely for reassurance.",
+                "If the helper returns uncached_command_required or is unavailable, execute the exact command once and append one child-attested verification event with action=executed_uncached, the helper-provided or locally derived never-reusable evidence_key, exact argv digest, exit_code, phase, reason_code, receipt_path=null, and no evidence refs; never treat fallback as a skipped verification.",
                 "Do not run the same normalized verification command twice at the same HEAD unless a transient failure is recorded.",
-                "Graphify is opt-in, not a project-default tool; do not load its skill or generate a graph unless the approved plan explicitly requires it.",
-                "Keep controller context to task status, commits, one-line test evidence, finding IDs, decisions, and the next action.",
+                "Graphify is opt-in; do not load its skill or generate a graph unless the approved plan requires it.",
                 "For completed, leave a clean worktree, report exact HEAD and successful final verification, and include workflow_receipt.",
                 "Return only the fixed schema object as the final response. Do not merge, push, deploy, or modify files outside the worktree.",
             ]
@@ -371,15 +397,145 @@ class CodexLauncher:
         log_path: Path,
         lock_fd: int,
         recovery_path: Path | None = None,
+        compiled_run_index: Path | None = None,
+        execution_ledger: Path | None = None,
+        verification_helper_descriptor: Path | None = None,
     ) -> LaunchResult:
         """Launch one attempt using caller-owned paths and the held run lock."""
-        command = self._command(worktree, result_path)
-        prompt = self._prompt(
-            worktree=worktree, plan_id=plan_id, plan_path=plan_path,
-            spec_paths=spec_paths, starting_commit=starting_commit,
-            current_commit=current_commit,
-            recovery_path=recovery_path,
+        request = StructuredLaunchRequest(
+            command=self._command(worktree, result_path),
+            cwd=worktree,
+            prompt=self._prompt(
+                worktree=worktree, plan_id=plan_id, plan_path=plan_path,
+                spec_paths=spec_paths, starting_commit=starting_commit,
+                current_commit=current_commit,
+                recovery_path=recovery_path,
+                compiled_run_index=compiled_run_index,
+                execution_ledger=execution_ledger,
+                verification_helper_descriptor=verification_helper_descriptor,
+            ),
+            result_path=result_path,
+            log_path=log_path,
+            timeout_seconds=self.timeout_seconds,
         )
+        return self._launch_structured(request, lock_fd)
+
+    def compiler_request(
+        self,
+        *,
+        run_root: Path,
+        snapshot_paths: Sequence[Path],
+        contract_path: Path,
+        result_path: Path,
+        repair: bool,
+        previous_output_path: Path | None = None,
+        previous_error_code: str | None = None,
+    ) -> StructuredLaunchRequest:
+        schema = self.schema_path.parent / "compiled-run-index.schema.json"
+        attempt = 2 if repair else 1
+        command = [
+            self.codex_bin,
+            "exec",
+            "--ignore-user-config",
+            "--ephemeral",
+            "--json",
+            "--sandbox",
+            "read-only",
+            "--output-schema",
+            str(schema),
+            "--output-last-message",
+            str(result_path),
+            "-C",
+            str(run_root),
+            "-",
+        ]
+        prompt = "\n".join([
+            "Compile immutable CPE input snapshots into the strict run-index schema.",
+            "Do not modify files, execute Git mutations, or access the network.",
+            "Do not spawn subagents.",
+            f"OPERATOR_CONTRACT: {contract_path}",
+            f"REPAIR_PREVIOUS_OUTPUT: {'yes' if repair else 'no'}",
+            f"PREVIOUS_OUTPUT_PATH: {previous_output_path or 'none'}",
+            f"PREVIOUS_ERROR_CODE: {previous_error_code or 'none'}",
+            "SNAPSHOTS:",
+            *(f"- {path}" for path in snapshot_paths),
+            "Return only the strict schema object.",
+            "",
+        ])
+        return StructuredLaunchRequest(
+            command=command,
+            cwd=run_root,
+            prompt=prompt,
+            result_path=result_path,
+            log_path=run_root / "logs" / f"compiler-attempt-{attempt}.log",
+            timeout_seconds=300.0,
+        )
+
+    def compile_index(
+        self,
+        store: object,
+        contract: dict[str, object],
+        repair: bool,
+    ) -> dict[str, object]:
+        root = store.root  # type: ignore[attr-defined]
+        state = store.state  # type: ignore[attr-defined]
+        attempt = 2 if repair else 1
+        result_path = root / "results" / f"compiler-attempt-{attempt}.json"
+        previous_output = (
+            root / "results" / "compiler-attempt-1.json" if repair else None
+        )
+        previous_error_code = None
+        if repair:
+            error_path = root / "results" / "compiler-attempt-1.error-code"
+            metadata = error_path.lstat()
+            if (
+                error_path.is_symlink()
+                or not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_size > 128
+                or stat.S_IMODE(metadata.st_mode) != 0o400
+            ):
+                raise ValueError("compiler validation error evidence is invalid")
+            previous_error_code = error_path.read_text(encoding="ascii")
+            if not previous_error_code:
+                raise ValueError("compiler validation error evidence is invalid")
+        request = self.compiler_request(
+            run_root=root,
+            snapshot_paths=[Path(item["snapshot_path"]) for item in state["inputs"]],
+            contract_path=root / "operator-contract.json",
+            result_path=result_path,
+            repair=repair,
+            previous_output_path=previous_output,
+            previous_error_code=previous_error_code,
+        )
+        if result_path.exists() or result_path.is_symlink():
+            _seal_regular_output(result_path)
+            raise ValueError("compiler attempt output already exists")
+        result: LaunchResult | None = None
+        try:
+            result = self._launch_structured(request, 0)
+        finally:
+            _seal_regular_output(result_path)
+        if result is None:
+            raise ValueError("compiler launch failed")
+        try:
+            result_size = result_path.lstat().st_size
+        except OSError as exc:
+            raise ValueError("compiler output is unavailable") from exc
+        if result_size > 1_048_576:
+            raise ValueError("compiler output exceeds size limit")
+        if result.returncode != 0 or result.payload is None:
+            raise ValueError("compiler launch failed")
+        return result.payload
+
+    def _launch_structured(
+        self,
+        request: StructuredLaunchRequest,
+        lock_fd: int,
+    ) -> LaunchResult:
+        command = request.command
+        prompt = request.prompt
+        result_path = request.result_path
+        log_path = request.log_path
         environment = {key: value for key, value in self.environ.items() if key not in _SECRETS}
         returncode: int | None = None
         timed_out = False
@@ -404,6 +560,7 @@ class CodexLauncher:
             try:
                 process = subprocess.Popen(
                     command,
+                    cwd=request.cwd,
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
@@ -439,7 +596,7 @@ class CodexLauncher:
                     selectors.EVENT_READ,
                     log.write,
                 )
-                deadline = time.monotonic() + self.timeout_seconds
+                deadline = time.monotonic() + request.timeout_seconds
                 while True:
                     remaining = deadline - time.monotonic()
                     if process.poll() is None and remaining <= 0:
@@ -488,7 +645,11 @@ class CodexLauncher:
 
         usage.finish()
         payload = None
-        if result_path.is_file() and not result_path.is_symlink():
+        if (
+            result_path.is_file()
+            and not result_path.is_symlink()
+            and result_path.stat().st_size <= 1_048_576
+        ):
             try:
                 candidate = json.loads(result_path.read_text(encoding="utf-8"))
                 if isinstance(candidate, dict):

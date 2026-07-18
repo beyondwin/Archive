@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "provenance": "direct_cpe_format1_forensic",
+  "sanitized": true,
+  "count_as_format2_runtime_metrics": false,
+  "snapshot_state": "running",
+  "attempts_started": 53,
+  "attempts_finished": 51,
+  "attempts_with_usage": 33,
+  "attempts_without_usage": 18,
+  "observed_input_tokens": 108985556,
+  "observed_cached_input_tokens": 104909568,
+  "paired_observation_uncached_input_tokens": 4075988,
+  "observed_output_tokens": 268113,
+  "observed_reasoning_output_tokens": 34584,
+  "observed_finished_attempt_duration_ms": 88486705,
+  "missing_usage_attempt_duration_ms": 55779893,
+  "missing_usage_reason_counts": {"nonzero_exit": 3, "timeout": 15},
+  "artifact_classes": {
+    "implementer_fix_reports": {"bytes": 495467, "files": 58},
+    "other": {"bytes": 11418, "files": 8},
+    "progress_ledger": {"bytes": 51775, "files": 1},
+    "review_diff_snapshots": {"bytes": 31034656, "files": 206},
+    "review_reports": {"bytes": 767249, "files": 187},
+    "task_fix_briefs": {"bytes": 80465, "files": 31}
+  }
+}
