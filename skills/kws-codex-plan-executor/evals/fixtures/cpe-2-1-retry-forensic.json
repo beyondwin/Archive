@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "provenance": "sanitized_cpe_observation",
+  "observations": [
+    {"signal": "unchanged_environment_blocker", "occurrences": 3},
+    {"signal": "short_empty_result", "occurrences": 2},
+    {"signal": "state_db_warning", "occurrences": 4},
+    {"signal": "plain_resume_without_new_evidence", "occurrences": 3}
+  ],
+  "contains_raw_prompts": false,
+  "contains_raw_diffs": false,
+  "contains_provider_messages": false
+}

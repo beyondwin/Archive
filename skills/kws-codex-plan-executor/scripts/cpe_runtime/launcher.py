@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import selectors
 import signal
 import stat
@@ -29,6 +30,39 @@ _USAGE_FIELDS = (
     "reasoning_output_tokens",
 )
 _MAX_USAGE_COUNTER = (1 << 63) - 1
+CONTROLLER_OUTCOME_CODES = {
+    "provider_usage_blocked",
+    "provider_auth_blocked",
+    "provider_unavailable",
+    "controller_spawn_failed",
+    "controller_transport_failed",
+    "controller_result_missing",
+    "controller_result_invalid",
+    "controller_timed_out",
+}
+_PROVIDER_CODE = re.compile(r"^[a-z0-9_]{1,128}$")
+_PROVIDER_USAGE_CODES = {
+    "insufficient_quota",
+    "quota_exceeded",
+    "rate_limit",
+    "rate_limit_exceeded",
+    "usage_limit",
+    "usage_limit_reached",
+}
+_PROVIDER_AUTH_CODES = {
+    "auth_error",
+    "authentication_error",
+    "invalid_api_key",
+    "permission_denied",
+    "unauthorized",
+}
+_PROVIDER_UNAVAILABLE_CODES = {
+    "overloaded",
+    "provider_overloaded",
+    "provider_unavailable",
+    "server_overloaded",
+    "service_unavailable",
+}
 
 
 def _git_common_directory(worktree: Path) -> Path:
@@ -64,13 +98,54 @@ def _git_common_directory(worktree: Path) -> Path:
     return resolved
 
 
-class _UsageFilter:
+def _provider_outcome(code: object) -> str | None:
+    if not isinstance(code, str) or not code or len(code) > 128:
+        return None
+    normalized = re.sub(r"[-.\s]+", "_", code.strip().lower())
+    if not _PROVIDER_CODE.fullmatch(normalized):
+        return None
+    if normalized in _PROVIDER_USAGE_CODES:
+        return "provider_usage_blocked"
+    if normalized in _PROVIDER_AUTH_CODES:
+        return "provider_auth_blocked"
+    if normalized in _PROVIDER_UNAVAILABLE_CODES:
+        return "provider_unavailable"
+    return None
+
+
+def _controller_outcome(
+    *,
+    spawn_failed: bool,
+    timed_out: bool,
+    provider_outcome: str | None,
+    result_present: bool,
+    returncode: int | None,
+) -> str | None:
+    if spawn_failed:
+        return "controller_spawn_failed"
+    if timed_out:
+        return "controller_timed_out"
+    if provider_outcome in {
+        "provider_usage_blocked",
+        "provider_auth_blocked",
+        "provider_unavailable",
+    }:
+        return provider_outcome
+    if not result_present and returncode == 0:
+        return "controller_result_missing"
+    if not result_present:
+        return "controller_transport_failed"
+    return None
+
+
+class _JsonEventFilter:
     def __init__(self) -> None:
         self._buffer = bytearray()
         self._dropping = False
         self.usage: dict[str, int | None] = {
             name: None for name in _USAGE_FIELDS
         }
+        self.provider_outcome: str | None = None
 
     def feed(self, chunk: bytes) -> None:
         for segment in chunk.splitlines(keepends=True):
@@ -99,7 +174,12 @@ class _UsageFilter:
             event = json.loads(line.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
             return
-        if not isinstance(event, dict) or event.get("type") != "turn.completed":
+        if not isinstance(event, dict):
+            return
+        error = event.get("error")
+        if self.provider_outcome is None and isinstance(error, dict):
+            self.provider_outcome = _provider_outcome(error.get("code"))
+        if event.get("type") != "turn.completed":
             return
         usage = event.get("usage")
         if not isinstance(usage, dict):
@@ -114,6 +194,57 @@ class _UsageFilter:
             )
             for name in _USAGE_FIELDS
         }
+
+
+class _StateDbWarningCounter:
+    def __init__(self, sink: Callable[[bytes], None]) -> None:
+        self._sink = sink
+        self._buffer = bytearray()
+        self._dropping = False
+        self.count = 0
+
+    def feed(self, chunk: bytes) -> None:
+        self._sink(chunk)
+        for segment in chunk.splitlines(keepends=True):
+            complete = segment.endswith((b"\n", b"\r"))
+            if self._dropping:
+                if complete:
+                    self._dropping = False
+                continue
+            self._buffer.extend(segment)
+            if len(self._buffer) > _JSON_EVENT_LINE_BYTES:
+                self._buffer.clear()
+                self._dropping = not complete
+                continue
+            if complete:
+                self._consume(bytes(self._buffer).rstrip(b"\r\n"))
+                self._buffer.clear()
+
+    def finish(self) -> None:
+        if self._buffer and not self._dropping:
+            self._consume(bytes(self._buffer))
+        self._buffer.clear()
+        self._dropping = False
+
+    def _consume(self, line: bytes) -> None:
+        lowered = line.lower()
+        known = (
+            b"failed to update state db" in lowered
+            or b"failed to update state database" in lowered
+            or (
+                (b"state db" in lowered or b"state database" in lowered)
+                and (
+                    b"database is locked" in lowered
+                    or b"database is busy" in lowered
+                )
+            )
+            or (
+                b"failed to record rollout" in lowered
+                and b"database" in lowered
+            )
+        )
+        if known and self.count < _MAX_USAGE_COUNTER:
+            self.count += 1
 
 
 class _BoundedLog:
@@ -263,6 +394,8 @@ class LaunchResult:
     output_tokens: int | None
     reasoning_output_tokens: int | None
     launcher_prompt_bytes: int
+    outcome_code: str | None = None
+    state_db_warning_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -437,7 +570,8 @@ class CodexLauncher:
         spawn_error: OSError | None = None
         prompt_bytes = prompt.encode("utf-8")
         started = time.monotonic()
-        usage = _UsageFilter()
+        event_filter = _JsonEventFilter()
+        diagnostics = _StateDbWarningCounter(log.write)
         try:
             try:
                 process = subprocess.Popen(
@@ -471,12 +605,12 @@ class CodexLauncher:
                 selector.register(
                     process.stdout,
                     selectors.EVENT_READ,
-                    usage.feed,
+                    event_filter.feed,
                 )
                 selector.register(
                     process.stderr,
                     selectors.EVENT_READ,
-                    log.write,
+                    diagnostics.feed,
                 )
                 deadline = time.monotonic() + request.timeout_seconds
                 while True:
@@ -521,11 +655,12 @@ class CodexLauncher:
                 process.stdout.close()
             if process is not None and process.stderr is not None:
                 process.stderr.close()
+            diagnostics.finish()
             log.close()
             if manages_sigterm and previous_sigterm is not None:
                 signal.signal(signal.SIGTERM, previous_sigterm)
 
-        usage.finish()
+        event_filter.finish()
         payload = None
         if (
             result_path.is_file()
@@ -541,6 +676,13 @@ class CodexLauncher:
                 payload = None
         if spawn_error is not None:
             returncode = None
+        outcome_code = _controller_outcome(
+            spawn_failed=spawn_error is not None,
+            timed_out=timed_out,
+            provider_outcome=event_filter.provider_outcome,
+            result_present=payload is not None,
+            returncode=returncode,
+        )
         duration_ms = max(0, round((time.monotonic() - started) * 1000))
         return LaunchResult(
             payload=payload,
@@ -551,11 +693,13 @@ class CodexLauncher:
             result_path=result_path,
             log_path=log_path,
             duration_ms=duration_ms,
-            input_tokens=usage.usage["input_tokens"],
-            cached_input_tokens=usage.usage["cached_input_tokens"],
-            output_tokens=usage.usage["output_tokens"],
-            reasoning_output_tokens=usage.usage[
+            input_tokens=event_filter.usage["input_tokens"],
+            cached_input_tokens=event_filter.usage["cached_input_tokens"],
+            output_tokens=event_filter.usage["output_tokens"],
+            reasoning_output_tokens=event_filter.usage[
                 "reasoning_output_tokens"
             ],
             launcher_prompt_bytes=len(prompt_bytes),
+            outcome_code=outcome_code,
+            state_db_warning_count=diagnostics.count,
         )

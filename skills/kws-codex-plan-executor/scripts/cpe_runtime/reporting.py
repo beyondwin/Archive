@@ -10,6 +10,7 @@ import stat
 from pathlib import Path
 from pathlib import PurePosixPath
 
+from .launcher import CONTROLLER_OUTCOME_CODES
 from .state import TRUST_LEVELS, atomic_private_write
 
 
@@ -248,6 +249,63 @@ def derive_recovery_metrics(
     }
 
 
+def derive_controller_facts(
+    events: list[dict[str, object]],
+    *,
+    attempts: list[dict[str, object]],
+    state_db_warning_count: int,
+) -> dict[str, object]:
+    outcome_counts = {code: 0 for code in sorted(CONTROLLER_OUTCOME_CODES)}
+    blocker_kind_counts: dict[str, int] = {}
+    blocker_fingerprint_available = 0
+    unchanged_blocker_stops = 0
+    explicit_blocked_retries = 0
+    explicit_failed_retries = 0
+    progress_continuations = 0
+    progress_stops = 0
+    for event in attempts:
+        outcome_code = event.get("outcome_code")
+        if isinstance(outcome_code, str) and outcome_code in outcome_counts:
+            outcome_counts[outcome_code] += 1
+    for event in events:
+        if event.get("source") != "parent_observed":
+            continue
+        action = event.get("action")
+        if action == "plan.blocked":
+            kind = event.get("kind")
+            if isinstance(kind, str) and _SIGNAL.fullmatch(kind):
+                blocker_kind_counts[kind] = blocker_kind_counts.get(kind, 0) + 1
+            fingerprint = event.get("environment_fingerprint")
+            if isinstance(fingerprint, str) and re.fullmatch(r"[0-9a-f]{64}", fingerprint):
+                blocker_fingerprint_available += 1
+        elif action == "resume.stopped_unchanged_blocker":
+            unchanged_blocker_stops += 1
+        elif action == "run.resumed":
+            if event.get("retry_blocked") is True:
+                explicit_blocked_retries += 1
+            if event.get("retry_failed") is True:
+                explicit_failed_retries += 1
+        elif action == "plan.continuation_scheduled":
+            progress_continuations += 1
+        elif (
+            action == "plan.recovery_stopped"
+            and event.get("reason") == "no_progress_timeout"
+        ):
+            progress_stops += 1
+    return {
+        "attempts": len(attempts),
+        "transport_outcome_counts": outcome_counts,
+        "state_db_warning_count": state_db_warning_count,
+        "blocker_kind_counts": dict(sorted(blocker_kind_counts.items())),
+        "blocker_fingerprint_available": blocker_fingerprint_available,
+        "unchanged_blocker_stops": unchanged_blocker_stops,
+        "explicit_blocked_retries": explicit_blocked_retries,
+        "explicit_failed_retries": explicit_failed_retries,
+        "progress_continuations": progress_continuations,
+        "progress_stops": progress_stops,
+    }
+
+
 class OptimizationMarkdownError(RuntimeError):
     """The authoritative JSON report succeeded but its derivative did not."""
 
@@ -385,7 +443,7 @@ def _validate_artifact_inventory(inventory: object) -> None:
 
 def validate_optimization_report(report: object) -> dict[str, object]:
     if not isinstance(report, dict) or set(report) != {
-        "format_version", "run_id", "usage", "duration_ms", "recovery_metrics",
+        "format_version", "run_id", "usage", "controller", "duration_ms", "recovery_metrics",
         "duration_unknown_attempt_count", "verification", "artifact_inventory",
         "data_quality_warnings", "findings",
     }:
@@ -452,6 +510,44 @@ def validate_optimization_report(report: object) -> dict[str, object]:
         or usage["attribution_unavailable_reason"] != "provider_event_not_agent_scoped"
     ):
         raise ValueError("optimization report usage attribution is invalid")
+    controller = report["controller"]
+    controller_counter_fields = {
+        "attempts", "state_db_warning_count",
+        "blocker_fingerprint_available", "unchanged_blocker_stops",
+        "explicit_blocked_retries", "explicit_failed_retries",
+        "progress_continuations", "progress_stops",
+    }
+    if not isinstance(controller, dict) or set(controller) != (
+        controller_counter_fields
+        | {"transport_outcome_counts", "blocker_kind_counts"}
+    ):
+        raise ValueError("optimization report controller facts are invalid")
+    for name in controller_counter_fields:
+        _validate_bounded_counter(
+            controller[name], "optimization report controller facts are invalid"
+        )
+    outcome_counts = controller["transport_outcome_counts"]
+    if (
+        not isinstance(outcome_counts, dict)
+        or set(outcome_counts) != CONTROLLER_OUTCOME_CODES
+    ):
+        raise ValueError("optimization report controller outcomes are invalid")
+    for value in outcome_counts.values():
+        _validate_bounded_counter(
+            value, "optimization report controller outcomes are invalid"
+        )
+    blocker_counts = controller["blocker_kind_counts"]
+    if (
+        not isinstance(blocker_counts, dict)
+        or len(blocker_counts) > 128
+        or any(
+            not isinstance(name, str)
+            or not _SIGNAL.fullmatch(name)
+            or _observed_counter(value) is None
+            for name, value in blocker_counts.items()
+        )
+    ):
+        raise ValueError("optimization report blocker facts are invalid")
     verification = report["verification"]
     if not isinstance(verification, dict) or set(verification) != {
         "requests", "executions", "reuses", "uncached_executions",
@@ -553,8 +649,19 @@ def build_optimization_report(
     unknown_usage_missing_duration = 0
     unknown_reasons: dict[str, int] = {}
     warnings: list[str] = []
+    state_db_warning_count = 0
 
     for position, event in enumerate(attempts, 1):
+        warning_count = _observed_counter(event.get("state_db_warning_count"))
+        if (
+            warning_count is None
+            or state_db_warning_count > MAX_OBSERVED_COUNTER - warning_count
+        ):
+            warnings.append(
+                f"attempt {position} state_db_warning_count is unavailable"
+            )
+        else:
+            state_db_warning_count += warning_count
         observed_duration = _observed_counter(event.get("duration_ms"))
         if observed_duration is None or duration > MAX_OBSERVED_COUNTER - observed_duration:
             duration_unknown += 1
@@ -715,6 +822,11 @@ def build_optimization_report(
             "attribution": "unavailable",
             "attribution_unavailable_reason": "provider_event_not_agent_scoped",
         },
+        "controller": derive_controller_facts(
+            events,
+            attempts=attempts,
+            state_db_warning_count=state_db_warning_count,
+        ),
         "duration_ms": duration,
         "duration_unknown_attempt_count": duration_unknown,
         "verification": {
@@ -739,6 +851,8 @@ def render_optimization_markdown(report: dict[str, object]) -> str:
     assert isinstance(usage, dict)
     metrics = report["recovery_metrics"]
     assert isinstance(metrics, dict)
+    controller = report["controller"]
+    assert isinstance(controller, dict)
     reasons = metrics["continuation_reason_counts"]
     assert isinstance(reasons, dict)
     verification = report["verification"]
@@ -799,6 +913,34 @@ def render_optimization_markdown(report: dict[str, object]) -> str:
         "Unknown-usage reasons: "
         + json.dumps(unknown_reasons, sort_keys=True, separators=(",", ":"))
         + ".",
+        "",
+        "## Controller Facts",
+        "",
+        f"- Attempts: {controller['attempts']}",
+        "- Transport outcomes: "
+        + json.dumps(
+            controller["transport_outcome_counts"],
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + ".",
+        f"- State DB warning count: {controller['state_db_warning_count']}",
+        "- Blocker kinds: "
+        + json.dumps(
+            controller["blocker_kind_counts"],
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + ".",
+        (
+            "- Blocker fingerprints available: "
+            f"{controller['blocker_fingerprint_available']}"
+        ),
+        f"- Unchanged blocker stops: {controller['unchanged_blocker_stops']}",
+        f"- Explicit blocked retries: {controller['explicit_blocked_retries']}",
+        f"- Explicit failed retries: {controller['explicit_failed_retries']}",
+        f"- Progress continuations: {controller['progress_continuations']}",
+        f"- Progress stops: {controller['progress_stops']}",
         "",
         "## Verification",
         "",
