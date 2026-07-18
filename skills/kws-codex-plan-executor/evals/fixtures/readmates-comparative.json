@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "provenance": "direct_codex_goal_comparative",
+  "sanitized": true,
+  "count_as_cpe_metrics": false,
+  "plan_bytes": 92251,
+  "plan_lines": 1745,
+  "tasks": 15,
+  "duration_minutes": 643,
+  "compactions": 3,
+  "root_spawns": 22,
+  "root_waits": 785,
+  "full_context_spawns": 8
+}
