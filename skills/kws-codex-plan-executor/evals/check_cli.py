@@ -810,6 +810,34 @@ class VerificationCliTests(unittest.TestCase):
         self.assertFalse(json.loads(after_fallback.stdout)["reused"])
         self.assertEqual("xxx", self.counter.read_text(encoding="utf-8"))
 
+    def test_corrupt_helper_with_exact_request_executes_once_uncached_without_receipt(self) -> None:
+        descriptor = self.store.root / "tools" / "run-and-record.json"
+        descriptor.chmod(0o600)
+        descriptor.write_text("{}", encoding="utf-8")
+        descriptor.chmod(0o400)
+
+        result = self.command(*self.verify_arguments())
+
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertFalse(payload["reused"])
+        self.assertEqual("verification_helper_fallback", payload["reason"])
+        self.assertIsNone(payload["receipt_path"])
+        self.assertEqual("x", self.counter.read_text(encoding="utf-8"))
+        verification_root = self.repo / ".superpowers" / "sdd" / "verification"
+        self.assertEqual([], list((verification_root / "receipts").glob("*.json")))
+        self.assertEqual([], list((verification_root / "indexes").glob("*.json")))
+        ledger = [
+            json.loads(line)
+            for line in (
+                self.repo / ".superpowers" / "sdd" / "execution-ledger.jsonl"
+            ).read_text(encoding="utf-8").splitlines()
+        ]
+        self.assertEqual(1, len(ledger))
+        self.assertEqual("executed_uncached", ledger[0]["action"])
+        self.assertEqual([], ledger[0]["evidence_refs"])
+        self.assertIsNone(ledger[0]["receipt_path"])
+
     def test_dirty_source_tree_executes_every_time_instead_of_reusing_head(self) -> None:
         clean = self.command(*self.verify_arguments())
         self.assertEqual(0, clean.returncode, clean.stdout + clean.stderr)
