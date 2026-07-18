@@ -1,8 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { CURRENT_GUIDANCE_FILES } from "./contract";
+import {
+  CURRENT_GUIDANCE_FILES,
+  REQUIRED_AGENT_FILES,
+  TOOL_GUIDANCE_FILES,
+} from "./contract";
 import { checkContract, formatContractIssues } from "./check-contract";
 import { VERIFICATION_SCOPES, type VerificationScope } from "./verification-map";
 
@@ -74,6 +78,108 @@ describe("checkContract", () => {
     }));
   });
 
+  test("rejects an app scope made unreachable by the narrower console scope", async () => {
+    const scopes: VerificationScope[] = [
+      {
+        id: "console",
+        matchers: ["apps/console/"],
+        commands: [{ id: "console", argv: ["bun", "test", "src"], cwd: "apps/console" }],
+        allowOverlapWith: ["app"],
+      },
+      {
+        id: "app",
+        matchers: ["apps/console/"],
+        commands: [{ id: "app", argv: ["bun", "run", "typecheck"] }],
+        allowOverlapWith: ["console"],
+      },
+    ];
+
+    const issues = await checkContract({ root: process.cwd(), verificationScopes: scopes });
+
+    expect(issues).toContainEqual(expect.objectContaining({
+      code: "invalid_verification_map",
+      message: "verification scope is unreachable: app",
+    }));
+  });
+
+  test("rejects undeclared overlapping scope matchers", async () => {
+    const scopes: VerificationScope[] = [
+      { id: "app", matchers: ["apps/"], commands: [{ id: "app", argv: ["bun", "run", "typecheck"] }] },
+      { id: "console", matchers: ["apps/console/"], commands: [{ id: "console", argv: ["bun", "test", "src"], cwd: "apps/console" }] },
+    ];
+
+    const issues = await checkContract({ root: process.cwd(), verificationScopes: scopes });
+
+    expect(issues).toContainEqual(expect.objectContaining({
+      code: "invalid_verification_map",
+      message: "verification scope matchers overlap without an allowance: app \"apps/\" <-> console \"apps/console/\"",
+    }));
+  });
+
+  test("rejects empty command argv", async () => {
+    const scopes: VerificationScope[] = [
+      { id: "docs", matchers: ["docs/"], commands: [{ id: "invalid", argv: [] }] },
+    ];
+
+    const issues = await checkContract({ root: process.cwd(), verificationScopes: scopes });
+
+    expect(issues).toContainEqual(expect.objectContaining({
+      code: "invalid_verification_map",
+      message: "verification command argv must contain only non-empty strings: invalid",
+    }));
+  });
+
+  test.each([
+    ["missing", "missing-command-cwd"],
+    ["not a directory", "package.json"],
+  ])("rejects a command cwd that is $0", async (_name, cwd) => {
+    const scopes: VerificationScope[] = [
+      { id: "docs", matchers: ["docs/"], commands: [{ id: "invalid-cwd", argv: ["bun", "test"], cwd }] },
+    ];
+
+    const issues = await checkContract({ root: process.cwd(), verificationScopes: scopes });
+
+    expect(issues).toContainEqual(expect.objectContaining({
+      code: "invalid_verification_map",
+      message: `verification command cwd must be an existing repository directory: invalid-cwd cwd=${JSON.stringify(cwd)}`,
+    }));
+  });
+
+  test("rejects a referenced package script that does not exist", async () => {
+    const root = await createContractFixture();
+    const scopes: VerificationScope[] = [
+      { id: "docs", matchers: ["docs/"], commands: [{ id: "missing-script", argv: ["bun", "run", "not-present"] }] },
+    ];
+
+    const issues = await checkContract({ root, verificationScopes: scopes, requiredPaths: [], requiredAgentFiles: [], trackedFiles: [] });
+
+    expect(issues).toContainEqual(expect.objectContaining({
+      code: "invalid_verification_map",
+      message: "verification command references a missing package script: missing-script script=\"not-present\" cwd=\".\"",
+    }));
+  });
+
+  test.each([
+    ["missing", "./missing-gate.sh", undefined],
+    ["non-executable", "./gate.sh", 0o644],
+  ])("rejects a $0 relative executable", async (_name, executable, mode) => {
+    const root = await createContractFixture();
+    if (mode !== undefined) {
+      await writeFixtureFile(root, executable.slice(2), "#!/bin/sh\nexit 0\n");
+      await chmod(join(root, executable), mode);
+    }
+    const scopes: VerificationScope[] = [
+      { id: "docs", matchers: ["docs/"], commands: [{ id: "relative-gate", argv: [executable] }] },
+    ];
+
+    const issues = await checkContract({ root, verificationScopes: scopes, requiredPaths: [], requiredAgentFiles: [], trackedFiles: [] });
+
+    expect(issues).toContainEqual(expect.objectContaining({
+      code: "non_executable_gate",
+      path: executable.slice(2),
+    }));
+  });
+
   test("reports a missing active path", async () => {
     const issues = await checkContract({
       root: process.cwd(),
@@ -103,7 +209,22 @@ describe("checkContract", () => {
           message: "required active path is missing",
         },
       ]),
-    ).toBe("[missing_active_path] [apps/missing] required active path is missing");
+    ).toBe("[missing_active_path] path=\"apps/missing\" required active path is missing");
+  });
+
+  test("JSON-encodes untrusted contract paths in CLI output", () => {
+    const path = "bad\n\u001b[31m[forged]";
+
+    const output = formatContractIssues([{
+      code: "missing_active_path",
+      path,
+      message: "required active path is missing",
+    }]);
+
+    expect(output).toBe(
+      "[missing_active_path] path=\"bad\\n\\u001b[31m[forged]\" required active path is missing",
+    );
+    expect(output.split("\n")).toHaveLength(1);
   });
 
   test("reports an invalid required package script", async () => {
@@ -113,6 +234,27 @@ describe("checkContract", () => {
     const issues = await checkContract({ root, requiredPaths: [], requiredAgentFiles: [], trackedFiles: [] });
 
     expect(issues).toContainEqual(expect.objectContaining({ code: "missing_package_script" }));
+  });
+
+  test.each([
+    ["agent:contract", "false"],
+    ["agent:test", "false"],
+    ["agent:verify", "false"],
+    ["agent:claude-offline", "false"],
+  ])("requires the exact %s package entry point", async (name, value) => {
+    const root = await createContractFixture();
+    const packageJson = JSON.parse(await readFile(join(root, "package.json"), "utf8")) as {
+      scripts: Record<string, string>;
+    };
+    packageJson.scripts[name] = value;
+    await writeFile(join(root, "package.json"), JSON.stringify(packageJson));
+
+    const issues = await checkContract({ root, requiredPaths: [], requiredAgentFiles: [], trackedFiles: [], verificationScopes: [] });
+
+    expect(issues).toContainEqual(expect.objectContaining({
+      code: "missing_package_script",
+      message: `missing required package script: ${name}`,
+    }));
   });
 
   test("reports an unavailable Codex execpolicy command", async () => {
@@ -209,6 +351,54 @@ describe("checkContract", () => {
       code: "stale_active_claim",
       path: "GEMINI.md",
     }));
+  });
+
+  test("detects an active root AgentLens path spelling", async () => {
+    const root = await createContractFixture();
+    await writeFile(join(root, "GEMINI.md"), "Primary location: AgentLens/runtime\n");
+
+    const issues = await checkContract({ root, requiredPaths: [], requiredAgentFiles: [], trackedFiles: [] });
+
+    expect(issues).toContainEqual(expect.objectContaining({
+      code: "stale_active_claim",
+      path: "GEMINI.md",
+    }));
+  });
+
+  test("preserves historical root AgentLens path context", async () => {
+    const root = await createContractFixture();
+    await writeFile(join(root, "GEMINI.md"), "Historical AgentLens/runtime was removed.\n");
+
+    const issues = await checkContract({ root, requiredPaths: [], requiredAgentFiles: [], trackedFiles: [] });
+
+    expect(issues).not.toContainEqual(expect.objectContaining({
+      code: "stale_active_claim",
+      path: "GEMINI.md",
+    }));
+  });
+
+  test("does not treat a negated removal as historical context", async () => {
+    const root = await createContractFixture();
+    await writeFile(
+      join(root, "GEMINI.md"),
+      "AgentLens/runtime is not removed and remains the primary location.\n",
+    );
+
+    const issues = await checkContract({ root, requiredPaths: [], requiredAgentFiles: [], trackedFiles: [] });
+
+    expect(issues).toContainEqual(expect.objectContaining({
+      code: "stale_active_claim",
+      path: "GEMINI.md",
+    }));
+  });
+
+  test("central guidance inventory covers root, subtree, and tool files", () => {
+    expect(CURRENT_GUIDANCE_FILES).toEqual(expect.arrayContaining([
+      ...REQUIRED_AGENT_FILES,
+      ...TOOL_GUIDANCE_FILES,
+      "PLANS.md",
+      "code_review.md",
+    ]));
   });
 
   test("does not let a retired mention mask a later primary claim", async () => {
@@ -319,7 +509,7 @@ describe("checkContract", () => {
 
     expect(await child.exited).toBe(1);
     expect(await new Response(child.stdout).text()).toContain(
-      "[tracked_file_scan_failed] [git ls-files -z] unable to list tracked files",
+      "[tracked_file_scan_failed] path=\"git ls-files -z\" unable to list tracked files",
     );
   });
 });
@@ -332,7 +522,12 @@ async function createContractFixture(): Promise<string> {
     await writeFixtureFile(root, path, "guidance\n");
   }
   await writeFixtureFile(root, "package.json", JSON.stringify({
-    scripts: { "agent:contract": "bun run scripts/agent/check-contract.ts" },
+    scripts: {
+      "agent:contract": "bun run scripts/agent/check-contract.ts",
+      "agent:test": "bun test scripts/agent",
+      "agent:verify": "bun run scripts/agent/verify.ts",
+      "agent:claude-offline": "bun run scripts/agent/claude-offline.ts",
+    },
   }));
   for (const path of EXECUTOR_GATES) {
     await writeFixtureFile(root, path, "#!/bin/sh\nexit 0\n");

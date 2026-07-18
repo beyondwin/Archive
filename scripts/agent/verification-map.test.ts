@@ -15,6 +15,10 @@ const fixtureLab = command("waygent-fixture-lab", ["bun", "run", "waygent:fixtur
 const dogfood = command("waygent-dogfood", ["bun", "run", "waygent:dogfood"]);
 const consoleTest = command("console-test", ["bun", "test", "src"], "apps/console");
 const consoleBuild = command("console-build", ["bun", "run", "build"], "apps/console");
+const apiTest = command("app-test:api", ["bun", "test", "tests"], "apps/api");
+const cliTest = command("app-test:cli", ["bun", "test", "tests"], "apps/cli");
+const packageTest = (name: string) =>
+  command(`package-test:${name}`, ["bun", "test", "tests"], `packages/${name}`);
 const rustFormat = command("rust-format", ["cargo", "fmt", "--check"], "native/kernel");
 const rustTest = command("rust-test", ["cargo", "test", "--workspace"], "native/kernel");
 const waygentSkillEval = command("waygent-skill-eval", ["./evals/run.sh"], "skills/waygent");
@@ -43,8 +47,8 @@ const offlineCommands = [
 test.each([
   ["docs", ["docs/README.md"], ["docs"], [contract, diffCheck]],
   ["console", ["apps/console/src/App.tsx"], ["console"], [contract, diffCheck, consoleTest, consoleBuild]],
-  ["other app", ["apps/api/src/index.ts"], ["app"], [contract, diffCheck, typecheck]],
-  ["one package", ["packages/orchestrator/src/index.ts"], ["package"], [contract, diffCheck, typecheck]],
+  ["other app", ["apps/api/src/index.ts"], ["app"], [contract, diffCheck, typecheck, apiTest]],
+  ["one package", ["packages/orchestrator/src/index.ts"], ["package"], [contract, diffCheck, typecheck, packageTest("orchestrator")]],
   ["two packages", ["packages/orchestrator/src/index.ts", "packages/runway-control/src/scheduler.ts"], ["waygent-closure"], closureCommands],
   ["bun lock", ["bun.lock"], ["waygent-closure"], closureCommands],
   ["native", ["native/kernel/crates/kernel-cli/src/main.rs"], ["native"], [contract, diffCheck, rustFormat, rustTest]],
@@ -126,8 +130,57 @@ test("keeps app verification when console and another app change without closure
 
   expect(selectVerification(paths).scopeIds).toEqual(["console", "app"]);
   expect(commands(paths)).toEqual([
-    contract, diffCheck, consoleTest, consoleBuild, typecheck,
+    contract, diffCheck, consoleTest, consoleBuild, typecheck, apiTest,
   ]);
+});
+
+test.each([
+  ["apps/api/src/server.ts", apiTest],
+  ["apps/cli/src/index.ts", cliTest],
+  ["packages/context-packer/src/index.ts", packageTest("context-packer")],
+  ["packages/contracts/src/index.ts", packageTest("contracts")],
+  ["packages/design-contract/src/index.ts", packageTest("design-contract")],
+  ["packages/kernel-client/src/index.ts", packageTest("kernel-client")],
+  ["packages/lens-projectors/src/index.ts", packageTest("lens-projectors")],
+  ["packages/lens-store/src/index.ts", packageTest("lens-store")],
+  ["packages/orchestrator/src/index.ts", packageTest("orchestrator")],
+  ["packages/policy/src/index.ts", packageTest("policy")],
+  ["packages/provider-adapters/src/index.ts", packageTest("provider-adapters")],
+  ["packages/runway-control/src/index.ts", packageTest("runway-control")],
+  ["packages/testkit/src/index.ts", packageTest("testkit")],
+] satisfies readonly [string, ReturnType<typeof command>][]) (
+  "selects the exact test root for $0",
+  (path, expected) => {
+    expect(commands([path])).toContainEqual(expected);
+  },
+);
+
+test("always selects contract and plain patch hygiene for a clean tree", () => {
+  const selection = selectVerification([]);
+
+  expect(selection.scopeIds).toEqual([]);
+  expect(selection.commands.map(toCommand)).toEqual([contract, diffCheck]);
+});
+
+test("classifies deleted Markdown without scheduling a link read", () => {
+  const selection = selectVerification(["docs/removed.md"], {
+    deletedPaths: ["docs/removed.md"],
+  });
+
+  expect(selection.scopeIds).toEqual(["docs"]);
+  expect(selection.markdownFiles).toEqual([]);
+  expect(selection.deletedPaths).toEqual(["docs/removed.md"]);
+  expect(selection.commands.map(toCommand)).toEqual([contract, diffCheck]);
+});
+
+test("keeps existing Markdown in mixed changes while excluding the deletion", () => {
+  const selection = selectVerification(
+    ["docs/kept.md", "docs/removed.md"],
+    { deletedPaths: ["docs/removed.md"] },
+  );
+
+  expect(selection.markdownFiles).toEqual(["docs/kept.md"]);
+  expect(selection.deletedPaths).toEqual(["docs/removed.md"]);
 });
 
 test("deduplicates commands by cwd and argv", () => {

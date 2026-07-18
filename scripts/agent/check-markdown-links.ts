@@ -1,4 +1,4 @@
-import { readFile, stat } from "node:fs/promises";
+import { lstat, readFile, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
 export interface MarkdownLinkIssue {
@@ -11,6 +11,8 @@ export interface MarkdownLinkOptions {
   files: readonly string[];
   readText?: (path: string) => Promise<string>;
   exists?: (path: string) => Promise<boolean>;
+  lstatPath?: typeof lstat;
+  realpathPath?: typeof realpath;
 }
 
 export async function checkMarkdownLinks(
@@ -18,13 +20,25 @@ export async function checkMarkdownLinks(
 ): Promise<MarkdownLinkIssue[]> {
   const root = resolve(options.root);
   const readText = options.readText ?? ((path: string) => readFile(path, "utf8"));
-  const exists = options.exists ?? pathExists;
+  const virtualFilesystem = (options.readText !== undefined || options.exists !== undefined) &&
+    options.lstatPath === undefined && options.realpathPath === undefined;
+  const lstatPath = options.lstatPath ?? lstat;
+  const realpathPath = options.realpathPath ?? realpath;
+  const canonicalRoot = virtualFilesystem
+    ? root
+    : await canonicalRepositoryRoot(root, lstatPath, realpathPath);
   const issues = new Map<string, MarkdownLinkIssue>();
 
   for (const file of options.files) {
     const documentPath = resolve(root, file);
     if (!isWithinRoot(root, documentPath)) {
       throw new Error(`Markdown file must stay within repository: ${JSON.stringify(file)}`);
+    }
+    if (
+      !virtualFilesystem &&
+      !await resolvesWithinRoot(documentPath, canonicalRoot, lstatPath, realpathPath)
+    ) {
+      throw new Error(`Markdown file resolves outside repository or is broken: ${JSON.stringify(file)}`);
     }
     const contents = await readText(documentPath);
     for (const target of markdownTargets(contents)) {
@@ -34,7 +48,12 @@ export async function checkMarkdownLinks(
       const resolvedTarget = localTarget.startsWith("/")
         ? resolve(root, `.${localTarget}`)
         : resolve(dirname(documentPath), localTarget);
-      if (!isWithinRoot(root, resolvedTarget) || !await exists(resolvedTarget)) {
+      const validTarget = isWithinRoot(root, resolvedTarget) && (
+        virtualFilesystem
+          ? await (options.exists ?? pathExists)(resolvedTarget)
+          : await resolvesWithinRoot(resolvedTarget, canonicalRoot, lstatPath, realpathPath)
+      );
+      if (!validTarget) {
         issues.set(`${file}\u0000${target}`, { file, target });
       }
     }
@@ -45,6 +64,38 @@ export async function checkMarkdownLinks(
       ? compare(left.target, right.target)
       : compare(left.file, right.file)
   );
+}
+
+export function formatMarkdownLinkIssue(issue: MarkdownLinkIssue): string {
+  return `[markdown-link] file=${JSON.stringify(issue.file)} missing-local-target=${JSON.stringify(issue.target)}`;
+}
+
+async function canonicalRepositoryRoot(
+  root: string,
+  lstatPath: typeof lstat,
+  realpathPath: typeof realpath,
+): Promise<string> {
+  await lstatPath(root);
+  const canonicalRoot = await realpathPath(root);
+  const rootStat = await lstatPath(canonicalRoot);
+  if (!rootStat.isDirectory()) {
+    throw new Error(`Markdown repository root must be a directory: ${JSON.stringify(root)}`);
+  }
+  return canonicalRoot;
+}
+
+async function resolvesWithinRoot(
+  path: string,
+  canonicalRoot: string,
+  lstatPath: typeof lstat,
+  realpathPath: typeof realpath,
+): Promise<boolean> {
+  try {
+    await lstatPath(path);
+    return isWithinRoot(canonicalRoot, await realpathPath(path));
+  } catch {
+    return false;
+  }
 }
 
 function markdownTargets(contents: string): string[] {
@@ -353,7 +404,7 @@ function isWithinRoot(root: string, target: string): boolean {
 
 async function pathExists(path: string): Promise<boolean> {
   try {
-    await stat(path);
+    await lstat(path);
     return true;
   } catch {
     return false;
@@ -368,7 +419,7 @@ async function main(): Promise<number> {
   const files = process.argv.slice(2).filter((argument) => argument !== "--");
   const issues = await checkMarkdownLinks({ root: process.cwd(), files });
   for (const issue of issues) {
-    console.error(`[markdown-link] [${issue.file}] missing local target: ${issue.target}`);
+    console.error(formatMarkdownLinkIssue(issue));
   }
   return issues.length === 0 ? 0 : 1;
 }

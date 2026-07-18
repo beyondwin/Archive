@@ -17,12 +17,14 @@ export interface NormalizedGitRange {
 
 export interface ChangedPathsResult {
   paths: string[];
+  deletedPaths: string[];
   normalizedRange?: NormalizedGitRange;
 }
 
 export interface VerificationResult {
   selectedScopes: ScopeId[];
   paths: string[];
+  deletedPaths: string[];
   commandResults: Array<{ id: string; exitCode: number; skipped: boolean }>;
   unknownPaths: string[];
   exitCode: number;
@@ -58,16 +60,28 @@ export async function collectChangedPathsResult(
     : await normalizeGitRange(options.base, options.head!, git);
   const outputs = options.base === undefined
     ? await Promise.all([
-        git(["diff", "--name-only", "--diff-filter=ACMR", "-z", "HEAD"]),
+        git(["diff", "--name-only", "--diff-filter=ACMRD", "-z", "HEAD"]),
+        git(["diff", "--name-only", "--diff-filter=D", "-z", "HEAD"]),
         git(["ls-files", "--others", "--exclude-standard", "-z"]),
       ])
-    : [await git([
-        "diff", "--name-only", "--diff-filter=ACMR", "-z",
-        ...normalizedRange!.diffArgs,
-      ])];
+    : await Promise.all([
+        git([
+          "diff", "--name-only", "--diff-filter=ACMRD", "-z",
+          ...normalizedRange!.diffArgs,
+        ]),
+        git([
+          "diff", "--name-only", "--diff-filter=D", "-z",
+          ...normalizedRange!.diffArgs,
+        ]),
+      ]);
 
   return {
-    paths: stablePaths(outputs.flatMap(splitPathOutput)),
+    paths: stablePaths([
+      ...splitPathOutput(outputs[0] ?? ""),
+      ...splitPathOutput(outputs[1] ?? ""),
+      ...(options.base === undefined ? splitPathOutput(outputs[2] ?? "") : []),
+    ]),
+    deletedPaths: stablePaths(splitPathOutput(outputs[1] ?? "")),
     normalizedRange,
   };
 }
@@ -97,12 +111,14 @@ export async function normalizeGitRange(
 export async function runVerification(options: {
   root: string;
   paths: readonly string[];
+  deletedPaths?: readonly string[];
   dryRun?: boolean;
   normalizedRange?: NormalizedGitRange;
   run?: (command: CommandSpec) => Promise<number>;
 }): Promise<VerificationResult> {
   const paths = stablePaths(options.paths);
-  const selection = selectVerification(paths);
+  const deletedPaths = stablePaths(options.deletedPaths ?? []);
+  const selection = selectVerification(paths, { deletedPaths });
   const commands = verificationCommands(
     selection.markdownFiles,
     selection.commands,
@@ -133,6 +149,7 @@ export async function runVerification(options: {
   return {
     selectedScopes: selection.scopeIds,
     paths,
+    deletedPaths,
     commandResults,
     unknownPaths: selection.unknownPaths,
     exitCode,
@@ -239,7 +256,7 @@ function formatSummary(
   result: VerificationResult,
   normalizedRange?: NormalizedGitRange,
 ): string {
-  const selection = selectVerification(result.paths);
+  const selection = selectVerification(result.paths, { deletedPaths: result.deletedPaths });
   const commands = verificationCommands(
     selection.markdownFiles,
     selection.commands,
@@ -310,11 +327,12 @@ async function main(): Promise<number> {
   const root = process.cwd();
   try {
     const changed = options.paths.length > 0
-      ? { paths: normalizeExplicitPaths(root, options.paths) }
+      ? { paths: normalizeExplicitPaths(root, options.paths), deletedPaths: [] }
       : await collectChangedPathsResult({ root, base: options.base, head: options.head });
     const result = await runVerification({
       root,
       paths: changed.paths,
+      deletedPaths: changed.deletedPaths,
       dryRun: options.dryRun,
       normalizedRange: changed.normalizedRange,
     });

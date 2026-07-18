@@ -14,6 +14,7 @@ export interface VerificationSelection {
   scopeIds: ScopeId[];
   commands: CommandSpec[];
   markdownFiles: string[];
+  deletedPaths: string[];
   unknownPaths: string[];
   reasons: string[];
 }
@@ -22,6 +23,13 @@ export interface VerificationScope {
   id: ScopeId;
   matchers: readonly string[];
   commands: readonly CommandSpec[];
+  allowOverlapWith?: readonly ScopeId[];
+}
+
+export interface VerificationTestRoot {
+  id: string;
+  root: string;
+  command: CommandSpec;
 }
 
 const CONTRACT: CommandSpec = { id: "agent-contract", argv: ["bun", "run", "agent:contract"] };
@@ -70,10 +78,10 @@ export const VERIFICATION_SCOPES: readonly VerificationScope[] = [
     ],
     commands: [CONTRACT, DIFF_CHECK],
   },
-  { id: "console", matchers: ["apps/console/"], commands: [CONTRACT, DIFF_CHECK, CONSOLE_TEST, CONSOLE_BUILD] },
-  { id: "app", matchers: ["apps/"], commands: [CONTRACT, DIFF_CHECK, TYPECHECK] },
-  { id: "package", matchers: ["packages/"], commands: [CONTRACT, DIFF_CHECK, TYPECHECK] },
-  { id: "waygent-closure", matchers: ["packages/", "bun.lock"], commands: [CONTRACT, DIFF_CHECK, CHECK, PLATFORM_DEMO, SCENARIOS, FIXTURE_LAB, DOGFOOD, LIVE_PROVIDER_SMOKE] },
+  { id: "console", matchers: ["apps/console/"], commands: [CONTRACT, DIFF_CHECK, CONSOLE_TEST, CONSOLE_BUILD], allowOverlapWith: ["app"] },
+  { id: "app", matchers: ["apps/"], commands: [CONTRACT, DIFF_CHECK, TYPECHECK], allowOverlapWith: ["console"] },
+  { id: "package", matchers: ["packages/"], commands: [CONTRACT, DIFF_CHECK, TYPECHECK], allowOverlapWith: ["waygent-closure"] },
+  { id: "waygent-closure", matchers: ["packages/", "bun.lock"], commands: [CONTRACT, DIFF_CHECK, CHECK, PLATFORM_DEMO, SCENARIOS, FIXTURE_LAB, DOGFOOD, LIVE_PROVIDER_SMOKE], allowOverlapWith: ["package"] },
   { id: "native", matchers: ["native/kernel/"], commands: [CONTRACT, DIFF_CHECK, RUST_FORMAT, RUST_TEST] },
   { id: "waygent-skill", matchers: ["skills/waygent/"], commands: [CONTRACT, DIFF_CHECK, WAYGENT_SKILL_EVAL, CHECK, PLATFORM_DEMO, SCENARIOS] },
   { id: "codex-executor", matchers: ["skills/kws-codex-plan-executor/"], commands: [CONTRACT, DIFF_CHECK, CODEX_EXECUTOR_EVAL, CHECK] },
@@ -81,8 +89,29 @@ export const VERIFICATION_SCOPES: readonly VerificationScope[] = [
   { id: "full-offline", matchers: ["*"], commands: OFFLINE_COMMANDS },
 ];
 
-export function selectVerification(paths: readonly string[]): VerificationSelection {
-  const markdownFiles = paths.filter((path) => path.endsWith(".md"));
+export const VERIFICATION_TEST_ROOTS: readonly VerificationTestRoot[] = [
+  appTestRoot("api"),
+  appTestRoot("cli"),
+  packageTestRoot("context-packer"),
+  packageTestRoot("contracts"),
+  packageTestRoot("design-contract"),
+  packageTestRoot("kernel-client"),
+  packageTestRoot("lens-projectors"),
+  packageTestRoot("lens-store"),
+  packageTestRoot("orchestrator"),
+  packageTestRoot("policy"),
+  packageTestRoot("provider-adapters"),
+  packageTestRoot("runway-control"),
+  packageTestRoot("testkit"),
+] as const;
+
+export function selectVerification(
+  paths: readonly string[],
+  options: { deletedPaths?: readonly string[] } = {},
+): VerificationSelection {
+  const deletedPaths = stablePaths(options.deletedPaths ?? []);
+  const deleted = new Set(deletedPaths);
+  const markdownFiles = paths.filter((path) => path.endsWith(".md") && !deleted.has(path));
   const packageRoots = new Set(paths.flatMap(packageRoot));
   const hasClosure = paths.includes("bun.lock") || packageRoots.size >= 2;
   const unknownPaths = paths.filter((path) => !matchesKnownScope(path));
@@ -93,13 +122,41 @@ export function selectVerification(paths: readonly string[]): VerificationSelect
   return {
     scopeIds: selected.map(({ id }) => id),
     commands: deduplicateCommands([
+      CONTRACT,
+      DIFF_CHECK,
       ...selected.flatMap(({ commands }) => commands),
-      ...focusedTestCommands(paths),
+      ...(hasClosure ? [] : exactRootTestCommands(paths, deleted)),
+      ...focusedTestCommands(paths.filter((path) => !deleted.has(path))),
     ]),
     markdownFiles,
+    deletedPaths,
     unknownPaths,
     reasons: selected.flatMap(({ id }) => reasonsForScope(id, paths, hasClosure, unknownPaths)),
   };
+}
+
+function appTestRoot(name: string): VerificationTestRoot {
+  const root = `apps/${name}`;
+  return {
+    id: `app-test:${name}`,
+    root,
+    command: { id: `app-test:${name}`, argv: ["bun", "test", "tests"], cwd: root },
+  };
+}
+
+function packageTestRoot(name: string): VerificationTestRoot {
+  const root = `packages/${name}`;
+  return {
+    id: `package-test:${name}`,
+    root,
+    command: { id: `package-test:${name}`, argv: ["bun", "test", "tests"], cwd: root },
+  };
+}
+
+function exactRootTestCommands(paths: readonly string[], deleted: ReadonlySet<string>): CommandSpec[] {
+  return VERIFICATION_TEST_ROOTS
+    .filter(({ root }) => paths.some((path) => !deleted.has(path) && path.startsWith(`${root}/`)))
+    .map(({ command }) => command);
 }
 
 function selectKnownScopes(paths: readonly string[], hasClosure: boolean): VerificationScope[] {
@@ -165,6 +222,12 @@ function focusedTestCommands(paths: readonly string[]): CommandSpec[] {
       id: `focused-test:${path}`,
       argv: ["bun", "test", path],
     }));
+}
+
+function stablePaths(paths: readonly string[]): string[] {
+  return [...new Set(paths.filter(Boolean))].sort((left, right) =>
+    left < right ? -1 : left > right ? 1 : 0
+  );
 }
 
 function reasonsForScope(
