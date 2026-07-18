@@ -23,10 +23,14 @@ docs/                  Architecture, operations, contracts, and migration notes
 
 ## Quick Start
 
-Install dependencies and run the default local checks:
+For a first Codex checkout, complete the
+[local operator setup](docs/operations/codex-local-setup.md). Install locked
+dependencies and run the repository agent contract before the default product
+checks:
 
 ```bash
-bun install
+bun install --frozen-lockfile
+bun run agent:contract
 bun run check
 bun run platform:demo
 ```
@@ -74,6 +78,7 @@ durable state and TypeScript projections, not from chat context.
 - Run-state contract: [docs/contracts/run-state.md](docs/contracts/run-state.md)
 - Provider-result contract: [docs/contracts/provider-result.md](docs/contracts/provider-result.md)
 - Operations: [docs/operations/waygent.md](docs/operations/waygent.md)
+- Codex local setup: [docs/operations/codex-local-setup.md](docs/operations/codex-local-setup.md)
 - Recovery: [docs/operations/recovery.md](docs/operations/recovery.md)
 - Verification: [docs/operations/verification.md](docs/operations/verification.md)
 - State root migration: [docs/operations/state-root-migration.md](docs/operations/state-root-migration.md)

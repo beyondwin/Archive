@@ -20,29 +20,46 @@ Waygent 요청은 `skills/waygent/`에서 CLI로 라우팅하고, 런타임 상�
 스케줄링은 Waygent가 소유합니다. `kws-*` 스킬은 로컬 executor 계약이며
 Waygent 제품 런타임 의존성이 아닙니다.
 
+## Codex Executor Subtree Contract
+
+`skills/kws-codex-plan-executor/`는 승인된 Superpowers 스펙과 구현 계획을
+입력 스냅샷으로 고정하고, 계획 순서를 유지한 채 하나의 격리 worktree를
+재사용하며, 첫 미완료 계획에서 재개하는 strict-thin 순차 실행기입니다.
+Superpowers가 구현, 리뷰, 수정, 검증, 커밋과 품질 정책을 소유합니다.
+CPE는 Waygent 제품 런타임이 아니며 task mapping, 별도 오케스트레이션,
+품질 판단을 추가하지 않습니다.
+
+이 하위 트리를 변경하기 전에는
+[`AGENTS.md`](./kws-codex-plan-executor/AGENTS.md),
+[`SKILL.md`](./kws-codex-plan-executor/SKILL.md),
+[`README.md`](./kws-codex-plan-executor/README.md)를 읽고 최종적으로 해당
+디렉터리의 `./evals/run.sh`를 실행합니다.
+
 ## 심볼릭 링크 셋업
 
-두 도구 모두 사용자 홈의 `skills/` 디렉터리를 스캔합니다. 각 executor 폴더를 그 위치로 심링크해 두면 어느 한 쪽에서 수정하더라도 곧바로 양쪽에 반영됩니다.
+두 도구 모두 사용자 홈의 `skills/` 디렉터리를 스캔합니다. 아래 예제에서
+`ARCHIVE_REPO`를 현재 Archive checkout의 루트로 설정한 뒤 각 폴더를 그
+위치로 심링크하면 어느 한 쪽에서 수정하더라도 곧바로 양쪽에 반영됩니다.
 
 ### Claude Code (`~/.claude/skills/`)
 
 ```bash
-ln -sfn /Users/kws/source/private/Archive/skills/kws-claude-multi-agent-executor \
+ln -sfn "$ARCHIVE_REPO/skills/kws-claude-multi-agent-executor" \
         ~/.claude/skills/kws-claude-multi-agent-executor
-ln -sfn /Users/kws/source/private/Archive/skills/kws-codex-plan-executor \
+ln -sfn "$ARCHIVE_REPO/skills/kws-codex-plan-executor" \
         ~/.claude/skills/kws-codex-plan-executor
-ln -sfn /Users/kws/source/private/Archive/skills/waygent \
+ln -sfn "$ARCHIVE_REPO/skills/waygent" \
         ~/.claude/skills/waygent
 ```
 
 ### Codex (`~/.codex/skills/`)
 
 ```bash
-ln -sfn /Users/kws/source/private/Archive/skills/kws-claude-multi-agent-executor \
+ln -sfn "$ARCHIVE_REPO/skills/kws-claude-multi-agent-executor" \
         ~/.codex/skills/kws-claude-multi-agent-executor
-ln -sfn /Users/kws/source/private/Archive/skills/kws-codex-plan-executor \
+ln -sfn "$ARCHIVE_REPO/skills/kws-codex-plan-executor" \
         ~/.codex/skills/kws-codex-plan-executor
-ln -sfn /Users/kws/source/private/Archive/skills/waygent \
+ln -sfn "$ARCHIVE_REPO/skills/waygent" \
         ~/.codex/skills/waygent
 ```
 
@@ -55,7 +72,7 @@ ls -l ~/.claude/skills/ | grep -E 'kws-|waygent'
 ls -l ~/.codex/skills/  | grep -E 'kws-|waygent'
 ```
 
-두 곳 모두 `→ /Users/kws/source/private/Archive/skills/...` 로 표시되면 정상입니다.
+두 곳 모두 `ARCHIVE_REPO` 아래의 `skills/...` 경로를 가리키면 정상입니다.
 
 ## 수정 워크플로우
 

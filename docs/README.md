@@ -15,8 +15,9 @@ understanding current behavior.
 
 - Reviewers: read the root `README.md`, then `architecture/waygent.md`, then
   `operations/waygent.md`.
-- Operators: read `getting-started.md`, `operations/waygent.md`,
-  `operations/recovery.md`, and `operations/verification.md`.
+- Operators: read `getting-started.md`, `operations/codex-local-setup.md`,
+  `operations/waygent.md`, `operations/recovery.md`, and
+  `operations/verification.md`.
 - Developers: read `architecture/waygent.md`, `contracts/events.md`,
   `contracts/run-state.md`, and `contracts/provider-result.md`.
 - AI agents: read `../AGENTS.md`, the nearest subtree `AGENTS.md`,
@@ -29,6 +30,7 @@ understanding current behavior.
 - [AgentLens architecture](architecture/agentlens.md)
 - [Architecture decisions](architecture/decisions.md)
 - [Operations](operations/waygent.md)
+- [Codex local setup](operations/codex-local-setup.md)
 - [Codex best loop](operations/codex-best-loop.md)
 - [Recovery](operations/recovery.md)
 - [Verification](operations/verification.md)

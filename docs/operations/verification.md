@@ -1,5 +1,56 @@
 # Waygent Verification
 
+## Repository Agent Contract
+
+Run these repository-owned entry points from the repository root:
+
+```bash
+bun run agent:contract
+bun run agent:test
+bun run agent:verify
+bun run agent:verify -- --dry-run --path apps/console/src/App.tsx
+bun run agent:verify -- --base origin/main --head HEAD
+```
+
+`agent:contract` validates instruction discovery, Markdown links, patch hygiene,
+and the tested Codex execpolicy fixtures. `agent:test` runs the agent-script
+unit suite. `agent:verify` selects deterministic commands from changed tracked
+and untracked paths; `--base` and `--head` classify a Git range, while repeated
+`--path` arguments provide an explicit classifier probe. `--dry-run` prints the
+stable path, scope, and command manifest without executing it.
+
+Known paths select the narrowest sufficient scopes. Changes crossing two or
+more `packages/*` roots or touching `bun.lock` select `waygent-closure`. Any
+unknown path escalates to `full-offline` and is listed under `unknown-paths` in
+the summary. That conservative escalation is a visible manifest-gap warning,
+not permission to silently skip verification.
+
+The verifier is fail-fast and reports every command as passed, failed, skipped,
+or `NOT RUN (opt-in)`. It never runs live-provider smoke or the Claude executor
+full eval. The deterministic Claude substitute is:
+
+```bash
+bun run agent:claude-offline
+```
+
+Live-provider smoke and the Claude executor full eval require explicit operator
+choice and remain outside `agent:verify`:
+
+```bash
+WAYGENT_LIVE_PROVIDER=codex bun run waygent:live-smoke
+WAYGENT_LIVE_PROVIDER=claude bun run waygent:live-smoke
+(cd skills/kws-claude-multi-agent-executor && ./evals/run.sh)
+```
+
+Report each omitted check as `NOT RUN (opt-in)`. The Claude full eval invokes a
+live Claude provider and may update its version baseline, so it is not a
+deterministic acceptance gate.
+
+Local and CI verification use the same entry points. CI pins Bun `1.3.10`,
+Codex `0.144.6`, Rust `1.95.0`, Ubuntu `24.04`, and action revisions; see the
+[Codex local setup guide](codex-local-setup.md) for the support boundary and
+hosted-service limitations.
+
 ## Default Offline Gate
 
 ```bash
@@ -108,6 +159,7 @@ WAYGENT_LIVE_PROVIDER=claude bun run waygent:live-smoke
 
 Keep these checks opt-in. Use offline scenario gates when provider access is
 not configured or not appropriate for the current time and cost budget.
+`bun run agent:verify` never runs either command automatically.
 
 ## Docs-Only Gate
 
