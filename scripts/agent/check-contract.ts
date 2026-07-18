@@ -8,6 +8,11 @@ import {
   REQUIRED_PATHS,
   type ContractIssue,
 } from "./contract";
+import {
+  VERIFICATION_SCOPES,
+  type CommandSpec,
+  type VerificationScope,
+} from "./verification-map";
 
 const REQUIRED_PACKAGE_SCRIPTS = {
   "agent:contract": "bun run scripts/agent/check-contract.ts",
@@ -26,6 +31,7 @@ export interface CheckContractOptions {
   requiredPaths?: readonly string[];
   requiredAgentFiles?: readonly string[];
   trackedFiles?: readonly string[];
+  verificationScopes?: readonly VerificationScope[];
 }
 
 export async function checkContract(
@@ -35,6 +41,8 @@ export async function checkContract(
   const requiredPaths = options.requiredPaths ?? REQUIRED_PATHS;
   const requiredAgentFiles = options.requiredAgentFiles ?? REQUIRED_AGENT_FILES;
   const issues: ContractIssue[] = [];
+
+  issues.push(...checkVerificationMap(options.verificationScopes ?? VERIFICATION_SCOPES));
 
   for (const path of requiredPaths) {
     if (!await exists(join(root, path))) {
@@ -248,6 +256,49 @@ function trackedFileScanIssue(): ContractIssue {
     code: "tracked_file_scan_failed",
     path: "git ls-files -z",
     message: "unable to list tracked files",
+  };
+}
+
+function checkVerificationMap(scopes: readonly VerificationScope[]): ContractIssue[] {
+  const issues: ContractIssue[] = [];
+  const scopeIds = new Set<string>();
+  const commands = new Map<string, string>();
+
+  for (const scope of scopes) {
+    if (scopeIds.has(scope.id)) {
+      issues.push(verificationMapIssue(`verification scope ID is duplicated: ${scope.id}`));
+    }
+    scopeIds.add(scope.id);
+
+    if (scope.matchers.length === 0 || scope.matchers.some((matcher) => matcher.trim().length === 0)) {
+      issues.push(verificationMapIssue(`verification scope has no matchers: ${scope.id}`));
+    }
+    if (scope.commands.length === 0) {
+      issues.push(verificationMapIssue(`verification scope has no commands: ${scope.id}`));
+    }
+
+    for (const command of scope.commands) {
+      const previous = commands.get(command.id);
+      const current = commandIdentity(command);
+      if (previous !== undefined && previous !== current) {
+        issues.push(verificationMapIssue(`verification command ID conflicts: ${command.id}`));
+      }
+      commands.set(command.id, current);
+    }
+  }
+
+  return issues;
+}
+
+function commandIdentity(command: CommandSpec): string {
+  return JSON.stringify({ argv: command.argv, cwd: command.cwd, optIn: command.optIn });
+}
+
+function verificationMapIssue(message: string): ContractIssue {
+  return {
+    code: "invalid_verification_map",
+    path: "scripts/agent/verification-map.ts",
+    message,
   };
 }
 

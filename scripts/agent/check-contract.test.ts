@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { CURRENT_GUIDANCE_FILES } from "./contract";
 import { checkContract, formatContractIssues } from "./check-contract";
+import { VERIFICATION_SCOPES, type VerificationScope } from "./verification-map";
 
 const EXECUTOR_GATES = [
   "skills/kws-codex-plan-executor/evals/run.sh",
@@ -19,6 +20,52 @@ afterEach(async () => {
 describe("checkContract", () => {
   test("accepts the repository contract", async () => {
     expect(await checkContract({ root: process.cwd() })).toEqual([]);
+  });
+
+  test("rejects duplicate verification scope IDs", async () => {
+    const duplicate = { ...VERIFICATION_SCOPES[0]! };
+
+    const issues = await checkContract({
+      root: process.cwd(),
+      verificationScopes: [...VERIFICATION_SCOPES, duplicate],
+    });
+
+    expect(issues).toContainEqual(expect.objectContaining({
+      code: "invalid_verification_map",
+      message: "verification scope ID is duplicated: docs",
+    }));
+  });
+
+  test("rejects conflicting verification command IDs", async () => {
+    const scopes: VerificationScope[] = [
+      { id: "docs", matchers: ["docs/"], commands: [{ id: "shared", argv: ["first"] }] },
+      { id: "console", matchers: ["apps/console/"], commands: [{ id: "shared", argv: ["second"] }] },
+    ];
+
+    const issues = await checkContract({ root: process.cwd(), verificationScopes: scopes });
+
+    expect(issues).toContainEqual(expect.objectContaining({
+      code: "invalid_verification_map",
+      message: "verification command ID conflicts: shared",
+    }));
+  });
+
+  test("rejects empty verification matchers and scopes without commands", async () => {
+    const scopes: VerificationScope[] = [
+      { id: "docs", matchers: [], commands: [{ id: "docs", argv: ["docs"] }] },
+      { id: "console", matchers: ["apps/console/"], commands: [] },
+    ];
+
+    const issues = await checkContract({ root: process.cwd(), verificationScopes: scopes });
+
+    expect(issues).toContainEqual(expect.objectContaining({
+      code: "invalid_verification_map",
+      message: "verification scope has no matchers: docs",
+    }));
+    expect(issues).toContainEqual(expect.objectContaining({
+      code: "invalid_verification_map",
+      message: "verification scope has no commands: console",
+    }));
   });
 
   test("reports a missing active path", async () => {
