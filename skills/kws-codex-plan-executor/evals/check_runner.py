@@ -32,13 +32,6 @@ from cpe_runtime.launcher import (
     _terminate_group,
     _UsageFilter,
 )
-from cpe_runtime.compiler import (
-    CompiledIndexService,
-    MAX_COMPILER_OUTPUT_BYTES,
-    compiler_cache_key,
-    default_operator_contract,
-    validate_compiled_index,
-)
 from cpe_runtime.capabilities import (
     CapabilityObservation,
     blocker_resume_decision,
@@ -414,7 +407,6 @@ class VerificationReuseIntegrationTests(unittest.TestCase):
             starting_commit=git(self.repo, "rev-parse", "HEAD"),
             current_commit=git(self.repo, "rev-parse", "HEAD"),
             recovery_path=None,
-            compiled_run_index=self.store.root / "compiled-run-index.json",
             execution_ledger=self.repo / ".superpowers" / "sdd" / "execution-ledger.jsonl",
             verification_helper_descriptor=descriptor,
         )
@@ -438,7 +430,6 @@ class VerificationReuseIntegrationTests(unittest.TestCase):
             starting_commit=git(self.repo, "rev-parse", "HEAD"),
             current_commit=git(self.repo, "rev-parse", "HEAD"),
             recovery_path=None,
-            compiled_run_index=self.store.root / "compiled-run-index.json",
             execution_ledger=(
                 self.repo / ".superpowers" / "sdd" / "execution-ledger.jsonl"
             ),
@@ -457,6 +448,24 @@ class VerificationReuseIntegrationTests(unittest.TestCase):
         ):
             with self.subTest(policy=policy):
                 self.assertNotIn(policy, prompt)
+
+    def test_prompt_contains_only_infrastructure_worktree_boundaries(self) -> None:
+        prompt = CodexLauncher._prompt(
+            worktree=self.repo,
+            plan_id="plan-01",
+            plan_path=self.store.root / "inputs" / "plan-01.md",
+            spec_paths=[],
+            starting_commit=git(self.repo, "rev-parse", "HEAD"),
+            current_commit=git(self.repo, "rev-parse", "HEAD"),
+            recovery_path=None,
+            execution_ledger=self.repo / ".superpowers" / "sdd" / "execution-ledger.jsonl",
+            verification_helper_descriptor=self.store.root / "tools" / "run-and-record.json",
+        )
+
+        self.assertIn("already isolated", prompt)
+        self.assertNotIn("COMPILED_RUN_INDEX", prompt)
+        for forbidden in ("task mapping", "delta review", "finding cycle", "subagent count"):
+            self.assertNotIn(forbidden, prompt.lower())
 
     def test_replaced_helper_descriptor_becomes_recorded_direct_fallback(self) -> None:
         descriptor = materialize_helper_descriptor(
@@ -1715,6 +1724,20 @@ class SequentialRunnerTest(unittest.TestCase):
     def invocations(self) -> list[dict[str, object]]:
         return [json.loads(line) for line in self.log.read_text().splitlines()]
 
+    def test_run_launches_controller_directly_without_compiler_artifacts(self) -> None:
+        result = self.runner().run(
+            workspace=self.repo,
+            specs=[self.specs[0]],
+            plans=[self.plan(1, "completed")],
+            run_id="direct",
+        )
+
+        self.assertEqual("completed", result["status"])
+        root = self.home / "orchestrator" / "direct"
+        self.assertEqual(1, fake_codex_launch_count(root))
+        self.assertFalse((root / ("compiled" + "-run-index.json")).exists())
+        self.assertFalse((root / "operator-contract.json").exists())
+
     def test_report_marks_missing_usage_as_lower_bound(self) -> None:
         report = build_optimization_report(
             run_id="report-lower-bound",
@@ -1774,7 +1797,7 @@ class SequentialRunnerTest(unittest.TestCase):
         )
         root = self.home / "orchestrator" / "prepared-run"
         self.assertEqual(result["status"], "completed")
-        self.assertTrue((root / "compiled-run-index.json").is_file())
+        self.assertFalse((root / ("compiled" + "-run-index.json")).exists())
         self.assertTrue((root / "evidence" / "plan-01" / "evidence-manifest.json").is_file())
         self.assertTrue((root / "reports" / "optimization-report.json").is_file())
 
@@ -1932,326 +1955,6 @@ print(json.dumps(result, sort_keys=True), flush=True)
             specs=[],
             plans=[self.plan(1, "completed")],
         )
-
-    def create_compiler_store(self, run_id: str) -> StateStore:
-        plan = self.repo / f"{run_id}.md"
-        plan.write_text("Implement the compiler contract.\n", encoding="utf-8")
-        return StateStore.create(
-            run_root=self.home / "orchestrator" / run_id,
-            run_id=run_id,
-            source_repository=self.repo,
-            source_commit=git(self.repo, "rev-parse", "HEAD"),
-            worktree=self.home / "worktrees" / run_id,
-            branch=f"codex/{run_id}",
-            specs=[],
-            plans=[plan],
-        )
-
-    def compiler_payload(
-        self, store: StateStore, *, unknowns: list[str] | None = None
-    ) -> dict[str, object]:
-        contract = default_operator_contract(store.state)
-        plan = next(item for item in store.state["inputs"] if item["role"] == "plan")
-        source = Path(plan["snapshot_path"]).read_bytes()
-        return {
-            "format_version": 2,
-            "cache_key": compiler_cache_key(store.state, contract),
-            "plans": [{
-                "plan_id": "plan-01",
-                "source_sha256": plan["sha256"],
-                "byte_length": plan["byte_length"],
-                "line_count": 1,
-                "tasks": [{
-                    "task_id": "task-01", "order": 0,
-                    "source_line_start": 1, "source_line_end": 1,
-                    "source_text_sha256": hashlib.sha256(source).hexdigest(),
-                }],
-                "verifications": [], "capabilities": [],
-                "execution_advisories": [],
-                "unknowns": list(unknowns or []),
-            }],
-        }
-
-    def fake_compiler_with_unknown(self, unknown: str):
-        def compile_once(store, _contract, _repair):
-            return self.compiler_payload(store, unknowns=[unknown])
-        return compile_once
-
-    def test_compiler_launcher_is_read_only_bounded_and_has_no_git_add_dir(self) -> None:
-        launcher = self.runner().launcher
-        request = launcher.compiler_request(
-            run_root=self.root,
-            snapshot_paths=[self.plan(1, "completed")],
-            contract_path=self.root / "operator-contract.json",
-            result_path=self.root / "compiled-result.json",
-            repair=False,
-        )
-        self.assertIn("read-only", request.command)
-        self.assertNotIn("--add-dir", request.command)
-        self.assertIn("--ephemeral", request.command)
-        self.assertEqual(request.timeout_seconds, 300)
-        self.assertIn("Do not modify files", request.prompt)
-        self.assertIn("Do not spawn subagents", request.prompt)
-
-    def test_compiler_repair_prompt_names_sealed_output_and_validation_code(self) -> None:
-        prompt_log = self.root / "compiler-prompts.jsonl"
-        store = self.create_compiler_store("compiler-repair-prompt")
-        launcher = self.runner(
-            CPE_FAKE_COMPILER_INVALID_FIRST="1",
-            CPE_FAKE_COMPILER_PROMPT_LOG=str(prompt_log),
-        ).launcher
-        path = CompiledIndexService(compile_once=launcher.compile_index).prepare(store)
-        self.assertTrue(path.is_file())
-        prompts = [json.loads(line) for line in prompt_log.read_text().splitlines()]
-        self.assertEqual(len(prompts), 2)
-        attempt_one = store.root / "results" / "compiler-attempt-1.json"
-        self.assertIn(f"PREVIOUS_OUTPUT_PATH: {attempt_one}", prompts[1])
-        self.assertIn(
-            "PREVIOUS_ERROR_CODE: compiled_index_format_is_invalid",
-            prompts[1],
-        )
-        self.assertEqual(attempt_one.stat().st_mode & 0o777, 0o400)
-
-    def test_compiler_preserves_and_seals_all_produced_failure_outputs(self) -> None:
-        cases = (
-            ("malformed", b"{", None, 0, "compiler launch failed"),
-            ("non-object", b"[]", None, 0, "compiler launch failed"),
-            (
-                "oversized",
-                b"x" * (MAX_COMPILER_OUTPUT_BYTES + 1),
-                None,
-                0,
-                "compiler output exceeds size limit",
-            ),
-            ("nonzero", b"{}", {}, 1, "compiler launch failed"),
-        )
-        for name, content, payload, returncode, message in cases:
-            with self.subTest(name=name):
-                store = self.create_compiler_store(f"compiler-evidence-{name}")
-                launcher = self.runner().launcher
-                result_path = store.root / "results" / "compiler-attempt-1.json"
-
-                def fake_launch(request, _lock_fd):
-                    request.result_path.write_bytes(content)
-                    request.result_path.chmod(0o600)
-                    return LaunchResult(
-                        payload=payload, returncode=returncode,
-                        timed_out=False, forced_cleanup=False,
-                        discarded_log_bytes=0,
-                        result_path=request.result_path,
-                        log_path=request.log_path, duration_ms=1,
-                        input_tokens=None, cached_input_tokens=None,
-                        output_tokens=None, reasoning_output_tokens=None,
-                        launcher_prompt_bytes=len(request.prompt.encode()),
-                    )
-
-                with mock.patch.object(
-                    launcher, "_launch_structured", side_effect=fake_launch
-                ):
-                    with self.assertRaisesRegex(ValueError, message):
-                        launcher.compile_index(
-                            store, default_operator_contract(store.state), False
-                        )
-                self.assertEqual(result_path.read_bytes(), content)
-                self.assertEqual(result_path.stat().st_mode & 0o777, 0o400)
-
-    def test_compiler_never_overwrites_existing_attempt_output(self) -> None:
-        store = self.create_compiler_store("compiler-existing-evidence")
-        launcher = self.runner().launcher
-        result_path = store.root / "results" / "compiler-attempt-1.json"
-        result_path.write_bytes(b"existing evidence")
-        result_path.chmod(0o600)
-        with mock.patch.object(launcher, "_launch_structured") as launch:
-            with self.assertRaisesRegex(
-                ValueError, "compiler attempt output already exists"
-            ):
-                launcher.compile_index(
-                    store, default_operator_contract(store.state), False
-                )
-        launch.assert_not_called()
-        self.assertEqual(result_path.read_bytes(), b"existing evidence")
-        self.assertEqual(result_path.stat().st_mode & 0o777, 0o400)
-
-    def test_compiled_index_requires_exact_plan_source_spans(self) -> None:
-        store = self.create_compiler_store("compiler-source")
-        contract = default_operator_contract(store.state)
-        payload = self.compiler_payload(store)
-        payload["plans"][0]["tasks"][0]["source_text_sha256"] = "f" * 64
-        with self.assertRaisesRegex(ValueError, "source span digest"):
-            validate_compiled_index(payload, store.state, contract)
-
-    def test_optional_compiler_ambiguity_is_preserved_as_unknown(self) -> None:
-        store = self.create_compiler_store("compiler-unknown")
-        service = CompiledIndexService(
-            compile_once=self.fake_compiler_with_unknown("capability:browser"),
-        )
-        path = service.prepare(store)
-        index = json.loads(path.read_text(encoding="utf-8"))
-        self.assertEqual(index["plans"][0]["unknowns"], ["capability:browser"])
-        self.assertEqual(service.compile_calls, 1)
-        self.assertEqual(service.prepare(store), path)
-        self.assertEqual(service.compile_calls, 1)
-
-    def test_compiled_index_rejects_invalid_authorization_shapes(self) -> None:
-        store = self.create_compiler_store("compiler-shapes")
-        contract = default_operator_contract(store.state)
-        valid = self.compiler_payload(store)
-        cases = []
-        task_extra = json.loads(json.dumps(valid))
-        task_extra["plans"][0]["tasks"][0]["shell"] = "make test"
-        cases.append(task_extra)
-        task_missing_id = json.loads(json.dumps(valid))
-        del task_missing_id["plans"][0]["tasks"][0]["task_id"]
-        cases.append(task_missing_id)
-        task = valid["plans"][0]["tasks"][0]
-        verification = {
-            "command_id": "verify-01", "argv": ["make", "test"],
-            "allowed_branch_phases": ["task_green"], "deterministic": True,
-            "mutable_input_policy": "forbidden", "required_artifacts": [],
-            "source_line_start": task["source_line_start"],
-            "source_line_end": task["source_line_end"],
-            "source_text_sha256": task["source_text_sha256"],
-        }
-        for field, invalid in (
-            ("argv", "make test"),
-            ("allowed_branch_phases", ["deployment"]),
-            ("deterministic", 1),
-            ("mutable_input_policy", "unrestricted"),
-            ("required_artifacts", ["/tmp/result.json"]),
-        ):
-            invalid_verification = json.loads(json.dumps(valid))
-            candidate = dict(verification, **{field: invalid})
-            invalid_verification["plans"][0]["verifications"] = [candidate]
-            cases.append(invalid_verification)
-        verification_extra = json.loads(json.dumps(valid))
-        verification_extra["plans"][0]["verifications"] = [
-            dict(verification, shell=True)
-        ]
-        cases.append(verification_extra)
-        invalid_capability = json.loads(json.dumps(valid))
-        invalid_capability["plans"][0]["capabilities"] = [{
-            "capability_id": "browser", "task_ids": ["missing-task"],
-        }]
-        cases.append(invalid_capability)
-        capability_extra = json.loads(json.dumps(valid))
-        capability_extra["plans"][0]["capabilities"] = [{
-            "capability_id": "browser", "task_ids": ["task-01"], "grant": True,
-        }]
-        cases.append(capability_extra)
-        for payload in cases:
-            with self.subTest(payload=payload):
-                with self.assertRaisesRegex(ValueError, "compiled index schema"):
-                    validate_compiled_index(payload, store.state, contract)
-
-    def test_compiled_index_accepts_source_backed_execution_shapes(self) -> None:
-        store = self.create_compiler_store("compiler-valid-shapes")
-        contract = default_operator_contract(store.state)
-        payload = self.compiler_payload(store)
-        task = payload["plans"][0]["tasks"][0]
-        span = {
-            "source_line_start": task["source_line_start"],
-            "source_line_end": task["source_line_end"],
-            "source_text_sha256": task["source_text_sha256"],
-        }
-        payload["plans"][0]["verifications"] = [{
-            "command_id": "verify-01", "argv": ["python3", "-m", "unittest"],
-            "allowed_branch_phases": ["task_green"], "deterministic": True,
-            "mutable_input_policy": "forbidden",
-            "required_artifacts": ["reports/result.json"], **span,
-        }]
-        payload["plans"][0]["capabilities"] = [{
-            "capability_id": "browser", "task_ids": ["task-01"],
-        }]
-        self.assertIs(validate_compiled_index(payload, store.state, contract), payload)
-
-    def test_compiled_index_contains_execution_facts_without_subagent_policy(self) -> None:
-        store = self.create_compiler_store("compiler-no-subagent-policy")
-        contract = default_operator_contract(store.state)
-        payload = self.compiler_payload(store)
-        expected_plan_fields = {
-            "plan_id", "source_sha256", "byte_length", "line_count", "tasks",
-            "verifications", "capabilities", "execution_advisories", "unknowns",
-        }
-        self.assertEqual(expected_plan_fields, set(payload["plans"][0]))
-        self.assertIs(validate_compiled_index(payload, store.state, contract), payload)
-
-        schema = json.loads((
-            ROOT / "templates" / "compiled-run-index.schema.json"
-        ).read_text(
-            encoding="utf-8",
-        ))
-        self.assertEqual(
-            expected_plan_fields,
-            set(schema["$defs"]["plan"]["required"]),
-        )
-        self.assertEqual(
-            {"digest", "identifier", "relativePath", "task", "verification",
-             "capability", "plan"},
-            set(schema["$defs"]),
-        )
-
-    def test_compiler_repairs_unhashable_nested_schema_drift_once(self) -> None:
-        store = self.create_compiler_store("compiler-repair-list")
-        valid = self.compiler_payload(store)
-        task = valid["plans"][0]["tasks"][0]
-        span = {
-            "source_line_start": task["source_line_start"],
-            "source_line_end": task["source_line_end"],
-            "source_text_sha256": task["source_text_sha256"],
-        }
-        malformed = json.loads(json.dumps(valid))
-        malformed["plans"][0]["verifications"] = [{
-            "command_id": "verify-01", "argv": ["make", "test"],
-            "allowed_branch_phases": ["task_green"],
-            "deterministic": True, "mutable_input_policy": [],
-            "required_artifacts": [], **span,
-        }]
-        repairs = []
-
-        def compile_once(_store, _contract, repair):
-            repairs.append(repair)
-            return valid if repair else malformed
-
-        service = CompiledIndexService(compile_once=compile_once)
-        self.assertTrue(service.prepare(store).is_file())
-        self.assertEqual(service.compile_calls, 2)
-        self.assertEqual(repairs, [False, True])
-
-    def test_cached_compiled_index_revalidates_nested_contract(self) -> None:
-        store = self.create_compiler_store("compiler-cache-shape")
-        payload = self.compiler_payload(store)
-        payload["plans"][0]["tasks"][0]["unexpected"] = True
-        target = store.root / "compiled-run-index.json"
-        target.write_text(json.dumps(payload), encoding="utf-8")
-        target.chmod(0o600)
-        service = CompiledIndexService(compile_once=lambda *_args: payload)
-        with self.assertRaisesRegex(ValueError, "compiled index schema"):
-            service.prepare(store)
-        self.assertEqual(service.compile_calls, 0)
-
-    def test_cached_compiled_index_requires_bounded_private_regular_file(self) -> None:
-        stores = {
-            name: self.create_compiler_store(f"compiler-cache-{name}")
-            for name in ("symlink", "mode", "oversized")
-        }
-        symlink_target = self.root / "external-index.json"
-        symlink_target.write_text("not-json", encoding="utf-8")
-        (stores["symlink"].root / "compiled-run-index.json").symlink_to(symlink_target)
-        mode_target = stores["mode"].root / "compiled-run-index.json"
-        mode_target.write_text(json.dumps(self.compiler_payload(stores["mode"])), encoding="utf-8")
-        mode_target.chmod(0o644)
-        oversized_target = stores["oversized"].root / "compiled-run-index.json"
-        oversized_target.write_bytes(b" " * (MAX_COMPILER_OUTPUT_BYTES + 1))
-        oversized_target.chmod(0o600)
-        for name, message in (
-            ("symlink", "symlink"), ("mode", "private mode"),
-            ("oversized", "size limit"),
-        ):
-            with self.subTest(name=name):
-                service = CompiledIndexService(compile_once=lambda *_args: {})
-                with self.assertRaisesRegex(ValueError, message):
-                    service.prepare(stores[name])
-                self.assertEqual(service.compile_calls, 0)
 
     def test_format_two_state_has_preparation_and_budget_fields(self) -> None:
         source_commit = git(self.repo, "rev-parse", "HEAD")
@@ -2811,7 +2514,6 @@ print(json.dumps(result, sort_keys=True), flush=True)
             "owner": "operator",
         })
         self.assertFalse(worktree.exists())
-        self.assertEqual(runner.compiler.compile_calls, 1)
 
         inspected = runner.inspect(run_id="create-failure")
 
@@ -2827,7 +2529,6 @@ print(json.dumps(result, sort_keys=True), flush=True)
         self.assertEqual(repeated["plans"][0]["status"], "blocked")
         self.assertEqual(repeated["plans"][0]["attempt_count"], 0)
         self.assertEqual(repeated["plans"][0]["controller_launch_count"], 0)
-        self.assertEqual(runner.compiler.compile_calls, 1)
         self.assertFalse(worktree.exists())
         blocked_events = [
             event for event in _runner_events(run_root)
@@ -2851,7 +2552,6 @@ print(json.dumps(result, sort_keys=True), flush=True)
         self.assertIsNone(recovered["pre_execution_blocker"])
         self.assertEqual(recovered["plans"][0]["attempt_count"], 1)
         self.assertEqual(recovered["plans"][0]["controller_launch_count"], 1)
-        self.assertEqual(runner.compiler.compile_calls, 1)
         self.assertTrue(worktree.is_dir())
 
     def test_pre_execution_worktree_blocker_rejects_impossible_state_without_persisting(self) -> None:
@@ -2878,7 +2578,6 @@ print(json.dumps(result, sort_keys=True), flush=True)
                 store.state["plans"][0][field] = 1
             return mutate
 
-        def remove_compiled_artifact(field: str):
             digest = field.replace("_path", "_sha256")
 
             def mutate(store: StateStore) -> None:
@@ -2917,8 +2616,6 @@ print(json.dumps(result, sort_keys=True), flush=True)
             ("current-not-blocked", 1, change_current_status, "pre-execution blocker state is invalid"),
             ("attempt-present", 1, set_current_counter("attempt_count"), "pre-execution blocker state is invalid"),
             ("launch-present", 1, set_current_counter("controller_launch_count"), "pre-execution blocker state is invalid"),
-            ("contract-missing", 1, remove_compiled_artifact("operator_contract_path"), "pre-execution blocker state is invalid"),
-            ("index-missing", 1, remove_compiled_artifact("compiled_run_index_path"), "pre-execution blocker state is invalid"),
             ("index-advanced", 1, advance_current_index, "completed prefix"),
             ("completed-retains-blocker", 1, complete_while_retaining_blocker, "completed run cannot retain"),
             ("future-plan-blocked", 2, block_future_plan, "future plan is not pristine"),
@@ -2973,7 +2670,6 @@ print(json.dumps(result, sort_keys=True), flush=True)
         self.assertEqual(state["status"], "blocked")
         self.assertEqual(state["plans"][0]["attempt_count"], 0)
         self.assertEqual(state["plans"][0]["controller_launch_count"], 0)
-        self.assertEqual(runner.compiler.compile_calls, 1)
 
     def test_reconciles_verified_initializing_worktree(self) -> None:
         runner = self.runner()
@@ -3385,7 +3081,6 @@ print(json.dumps(result, sort_keys=True), flush=True)
         self.assertIn(b"[cpe log truncated; discarded_bytes=", payload)
 
     def test_spawn_failure_is_recorded_as_a_durable_failed_attempt(self) -> None:
-        compiler_launcher = self.runner().launcher
         launcher = CodexLauncher(
             schema_path=ROOT / "templates" / "plan-result-schema.json",
             codex_bin=str(self.root / "missing-codex"),
@@ -3395,9 +3090,6 @@ print(json.dumps(result, sort_keys=True), flush=True)
         runner = SequentialRunner(
             codex_home=self.home,
             launcher=launcher,
-            compiler=CompiledIndexService(
-                compile_once=compiler_launcher.compile_index,
-            ),
         )
         result = runner.run(
             workspace=self.repo,
@@ -3424,7 +3116,8 @@ print(json.dumps(result, sort_keys=True), flush=True)
     def test_launcher_command_and_prompt_are_minimal_and_ephemeral(self) -> None:
         launcher = self.runner().launcher
         result_path = self.root / "result.json"
-        command = launcher._command(self.repo, result_path)
+        command = launcher._command(self.repo, result_path, "danger-full-access")
+        restricted = launcher._command(self.repo, result_path, "workspace-write")
         prompt = launcher._prompt(
             worktree=self.repo,
             plan_id="plan-01",
@@ -3445,6 +3138,12 @@ print(json.dumps(result, sort_keys=True), flush=True)
             str(common.resolve()),
         )
         self.assertEqual(command.count("--output-last-message"), 1)
+        self.assertEqual(
+            "danger-full-access", command[command.index("--sandbox") + 1],
+        )
+        self.assertEqual(
+            "workspace-write", restricted[restricted.index("--sandbox") + 1],
+        )
         self.assertNotIn("REPOSITORY:", prompt)
         self.assertIn("WORKTREE:", prompt)
         self.assertNotIn(
@@ -3453,11 +3152,7 @@ print(json.dumps(result, sort_keys=True), flush=True)
         )
         self.assertIn("SPECIFICATIONS_REFERENCE_ONLY_IN_ORDER:", prompt)
         self.assertIn("Do not preload specifications", prompt)
-        self.assertIn(
-            "CPE records its evidence but does not prescribe task, review, "
-            "fix, or subagent semantics",
-            prompt,
-        )
+        self.assertIn("Ordinary agents reuse this worktree", prompt)
         for semantic_instruction in (
             "focused RED/GREEN",
             "no automatic full-suite run per task",
@@ -4550,10 +4245,6 @@ def fake_codex_launch_count(run_root: Path) -> int:
     )
 
 
-def compiler_launch_count(run_root: Path) -> int:
-    path = run_root / "compiler-invocations.jsonl"
-    return len(path.read_text(encoding="utf-8").splitlines()) if path.exists() else 0
-
 
 class _RecoveryRunnerFixture(unittest.TestCase):
     def setUp(self) -> None:
@@ -4601,9 +4292,6 @@ class _RecoveryRunnerFixture(unittest.TestCase):
                 "PATH": os.environ["PATH"],
                 "CODEX_HOME": str(self.home),
                 "CPE_FAKE_INVOCATION_LOG": str(self.invocations),
-                "CPE_FAKE_COMPILER_INVOCATION_LOG": str(
-                    run_root / "compiler-invocations.jsonl"
-                ),
             },
         )
         real_launch = launcher._launch_structured
@@ -5146,8 +4834,6 @@ class EnvelopeRepairTests(_RecoveryRunnerFixture):
         runner, run_root, _, original_path, original_bytes = self._failed_result(
             "repair-result-swap-before-parse",
         )
-        compiler_log = run_root / "compiler-invocations.jsonl"
-        compiler_log.write_text("", encoding="utf-8")
         before = StateStore.open(run_root).state["plans"][0]
         attempts = before["attempt_count"]
         controller_launches = before["controller_launch_count"]
@@ -5178,7 +4864,6 @@ class EnvelopeRepairTests(_RecoveryRunnerFixture):
 
         self.assertEqual("failed", rejected["status"])
         self.assertEqual(0, fake_codex_launch_count(run_root))
-        self.assertEqual(0, compiler_launch_count(run_root))
         self.assertEqual(original_bytes, original_path.read_bytes())
         plan = StateStore.open(run_root).state["plans"][0]
         self.assertEqual(attempts, plan["attempt_count"])
@@ -5201,7 +4886,6 @@ class EnvelopeRepairTests(_RecoveryRunnerFixture):
         runner, run_root, _, original_path, original_bytes = self._failed_result(
             "repair-result-mode-before-parse",
         )
-        (run_root / "compiler-invocations.jsonl").write_text("", encoding="utf-8")
         before = StateStore.open(run_root).state["plans"][0]
         attempts = before["attempt_count"]
         controller_launches = before["controller_launch_count"]
@@ -5229,7 +4913,6 @@ class EnvelopeRepairTests(_RecoveryRunnerFixture):
 
         self.assertEqual("failed", rejected["status"])
         self.assertEqual(0, fake_codex_launch_count(run_root))
-        self.assertEqual(0, compiler_launch_count(run_root))
         self.assertEqual(original_bytes, original_path.read_bytes())
         plan = StateStore.open(run_root).state["plans"][0]
         self.assertEqual(attempts, plan["attempt_count"])
@@ -5247,8 +4930,6 @@ class EnvelopeRepairTests(_RecoveryRunnerFixture):
         runner, run_root, _, original_path, original_bytes = self._failed_result(
             "repair-result-swap-before-seal",
         )
-        compiler_log = run_root / "compiler-invocations.jsonl"
-        compiler_log.write_text("", encoding="utf-8")
         before = StateStore.open(run_root).state["plans"][0]
         attempts = before["attempt_count"]
         controller_launches = before["controller_launch_count"]
@@ -5275,7 +4956,6 @@ class EnvelopeRepairTests(_RecoveryRunnerFixture):
 
         self.assertEqual("failed", rejected["status"])
         self.assertEqual(0, fake_codex_launch_count(run_root))
-        self.assertEqual(0, compiler_launch_count(run_root))
         self.assertEqual(original_bytes, original_path.read_bytes())
         plan = StateStore.open(run_root).state["plans"][0]
         self.assertEqual(attempts, plan["attempt_count"])
@@ -5300,7 +4980,6 @@ class EnvelopeRepairTests(_RecoveryRunnerFixture):
         runner, run_root, _, original_path, original_bytes = self._failed_result(
             "repair-result-mode-before-seal",
         )
-        (run_root / "compiler-invocations.jsonl").write_text("", encoding="utf-8")
         before = StateStore.open(run_root).state["plans"][0]
         attempts = before["attempt_count"]
         controller_launches = before["controller_launch_count"]
@@ -5325,7 +5004,6 @@ class EnvelopeRepairTests(_RecoveryRunnerFixture):
 
         self.assertEqual("failed", rejected["status"])
         self.assertEqual(0, fake_codex_launch_count(run_root))
-        self.assertEqual(0, compiler_launch_count(run_root))
         self.assertEqual(original_bytes, original_path.read_bytes())
         plan = StateStore.open(run_root).state["plans"][0]
         self.assertEqual(attempts, plan["attempt_count"])
@@ -5481,14 +5159,11 @@ class EnvelopeRepairTests(_RecoveryRunnerFixture):
         original_plan = StateStore.open(run_root).state["plans"][0]
         original_attempts = original_plan["attempt_count"]
         original_controller_launches = original_plan["controller_launch_count"]
-        compiler_log = run_root / "compiler-invocations.jsonl"
-        compiler_log.write_text("", encoding="utf-8")
 
         completed = runner.resume(run_id="repair-resume", retry_failed=True)
 
         self.assertEqual("completed", completed["status"])
         self.assertEqual(0, fake_codex_launch_count(run_root))
-        self.assertEqual(0, compiler_launch_count(run_root))
         state = StateStore.open(run_root).state
         plan = state["plans"][0]
         self.assertEqual(original_attempts, plan["attempt_count"])
@@ -5639,57 +5314,6 @@ class EnvelopeRepairTests(_RecoveryRunnerFixture):
         )
 
 
-class ResumeCapabilityTests(_RecoveryRunnerFixture):
-    def observation(self, outcome: str) -> CapabilityObservation:
-        return CapabilityObservation(
-            capability="loopback_bind",
-            scope="workspace",
-            outcome=outcome,  # type: ignore[arg-type]
-            reason_code="permission_denied" if outcome == "unavailable" else "bound",
-            observed_by="parent_observed",
-            stable_details={"host": "127.0.0.1"},
-        )
-
-    def test_unchanged_parent_blocker_stops_before_compiler_or_codex_launch(self) -> None:
-        run_id = "unchanged-blocker"
-        runner = self.runner(run_id)
-        with mock.patch(
-            "cpe_runtime.runner._observe_capabilities",
-            return_value=[self.observation("unavailable")],
-        ):
-            initial = runner.run(
-                workspace=self.repo,
-                specs=[],
-                plans=[self.plan("resume_completed", loopback=True)],
-                run_id=run_id,
-            )
-        self.assertEqual("blocked", initial["status"])
-        run_root = self.home / "orchestrator" / run_id
-        compiler_log = run_root / "compiler-invocations.jsonl"
-        compiler_log.write_text("", encoding="utf-8")
-
-        with mock.patch(
-            "cpe_runtime.runner._observe_capabilities",
-            return_value=[self.observation("unavailable")],
-        ):
-            resumed = runner.resume(run_id=run_id)
-        self.assertEqual("blocked", resumed["status"])
-        self.assertEqual(0, fake_codex_launch_count(run_root))
-        self.assertEqual(0, compiler_launch_count(run_root))
-        self.assertEqual(
-            "unchanged_environment_blocker", resumed["last_decision_reason"]
-        )
-        self.assertEqual(
-            "resume.stopped_unchanged_blocker", _runner_events(run_root)[-1]["action"]
-        )
-
-        with mock.patch(
-            "cpe_runtime.runner._observe_capabilities",
-            return_value=[self.observation("available")],
-        ):
-            changed = runner.resume(run_id=run_id)
-        self.assertEqual("completed", changed["status"])
-        self.assertEqual(1, fake_codex_launch_count(run_root))
 
 
 class ProgressRecoveryIntegrationTests(_RecoveryRunnerFixture):
@@ -5939,15 +5563,12 @@ class PreSpawnBudgetTests(_RecoveryRunnerFixture):
                 plan["status"] = "checkpointed"
                 store.state["status"] = "checkpointed"
                 store.save()
-                compiler_log = run_root / "compiler-invocations.jsonl"
-                compiler_log.write_text("", encoding="utf-8")
 
                 resumed = runner.resume(run_id=run_id)
 
                 self.assertEqual("blocked", resumed["status"])
                 self.assertEqual(reason, resumed["last_decision_reason"])
                 self.assertEqual(0, fake_codex_launch_count(run_root))
-                self.assertEqual(0, compiler_launch_count(run_root))
                 events = _runner_events(run_root)
                 self.assertTrue(any(
                     event.get("action") == "plan.pre_spawn_stopped"

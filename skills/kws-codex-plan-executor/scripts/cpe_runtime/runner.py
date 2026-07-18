@@ -8,7 +8,6 @@ import json
 import math
 import os
 import re
-import socket
 import stat
 import subprocess
 import time
@@ -18,16 +17,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from .capabilities import (
-    CapabilityObservation,
-    environment_fingerprint,
-    typed_blockers,
-)
-from .compiler import (
-    CompiledIndexService,
-    default_operator_contract,
-    validate_compiled_index,
-)
 from .evidence import (
     EnvelopeRepair,
     append_execution_event,
@@ -96,135 +85,8 @@ _VERIFY_PHASES = {
     "affected": {"task_green"},
     "branch_final": {"final_verification"},
 }
-_VERIFY_POLICIES = {
-    "forbidden": {"immutable"},
-    "declared_external_state": {"digest_complete", "always_execute"},
-}
-
-
-def _capability_ids(compiled_index: Mapping[str, object]) -> set[str]:
-    identifiers: set[str] = set()
-    plans = compiled_index.get("plans")
-    if not isinstance(plans, list):
-        return identifiers
-    for plan in plans:
-        if not isinstance(plan, Mapping):
-            continue
-        capabilities = plan.get("capabilities")
-        if not isinstance(capabilities, list):
-            continue
-        for capability in capabilities:
-            if isinstance(capability, Mapping):
-                identifier = capability.get("capability_id")
-                if isinstance(identifier, str):
-                    identifiers.add(identifier)
-    return identifiers
-
-
-def _observe_capabilities(
-    workspace: Path,
-    compiled_index: Mapping[str, object],
-) -> list[CapabilityObservation]:
-    """Run only CPE-required probes plus explicitly declared loopback binding."""
-    observations: list[CapabilityObservation] = []
-    try:
-        descriptor = os.open(
-            workspace,
-            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
-        )
-        os.close(descriptor)
-        repository_outcome, repository_reason = "available", "readable"
-    except OSError:
-        repository_outcome, repository_reason = "unavailable", "not_readable"
-    observations.append(CapabilityObservation(
-        "repository_read", "workspace", repository_outcome, repository_reason,
-        "parent_observed", {},
-    ))
-
-    probe = workspace / f".cpe-write-probe-{uuid.uuid4().hex}"
-    descriptor: int | None = None
-    try:
-        descriptor = os.open(
-            probe,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
-            0o600,
-        )
-        os.fsync(descriptor)
-        os.close(descriptor)
-        descriptor = None
-        probe.unlink()
-        write_outcome, write_reason = "available", "writable"
-    except OSError:
-        if descriptor is not None:
-            os.close(descriptor)
-        try:
-            probe.unlink()
-        except OSError:
-            pass
-        write_outcome, write_reason = "unavailable", "not_writable"
-    observations.append(CapabilityObservation(
-        "workspace_write", "workspace", write_outcome, write_reason,
-        "parent_observed", {},
-    ))
-
-    try:
-        completed = subprocess.run(
-            ["git", "--version"],
-            check=False,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        git_available = completed.returncode == 0
-    except OSError:
-        git_available = False
-    observations.append(CapabilityObservation(
-        "git", "workspace", "available" if git_available else "unavailable",
-        "available" if git_available else "command_unavailable",
-        "parent_observed", {},
-    ))
-
-    if "loopback_bind" in _capability_ids(compiled_index):
-        loopback = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        try:
-            loopback.bind(("127.0.0.1", 0))
-            loopback_outcome, loopback_reason = "available", "bound"
-        except OSError:
-            loopback_outcome, loopback_reason = "unavailable", "permission_denied"
-        finally:
-            loopback.close()
-        observations.append(CapabilityObservation(
-            "loopback_bind", "workspace", loopback_outcome, loopback_reason,
-            "parent_observed", {"host": "127.0.0.1"},
-        ))
-    return observations
-
-
 def _current_head(worktree: Path) -> str:
     return _git(worktree, "rev-parse", "HEAD")
-
-
-def _resume_preflight(
-    state: Mapping[str, object],
-    observations: Sequence[CapabilityObservation],
-) -> str:
-    plans = state.get("plans")
-    index = state.get("current_plan_index")
-    if not isinstance(plans, list) or not isinstance(index, int) or index >= len(plans):
-        return "launch"
-    plan = plans[index]
-    if not isinstance(plan, Mapping):
-        return "launch"
-    previous = plan.get("environment_fingerprint")
-    blockers = typed_blockers(observations)
-    if not blockers or not isinstance(previous, str):
-        return "environment_changed" if isinstance(previous, str) else "launch"
-    current = environment_fingerprint(observations)
-    return (
-        "unchanged_environment_blocker"
-        if current == previous
-        else "environment_changed"
-    )
 
 
 def _record_checkpoint(
@@ -623,14 +485,10 @@ class SequentialRunner:
         *,
         codex_home: Path | None = None,
         launcher: CodexLauncher | None = None,
-        compiler: CompiledIndexService | None = None,
     ) -> None:
         self.codex_home = (codex_home or Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))).expanduser().resolve()
         schema = Path(__file__).resolve().parents[2] / "templates" / "plan-result-schema.json"
         self.launcher = launcher or CodexLauncher(schema_path=schema)
-        self.compiler = compiler or CompiledIndexService(
-            compile_once=self.launcher.compile_index
-        )
 
     @staticmethod
     def _branch_handoff_payload(store: StateStore) -> dict[str, object]:
@@ -839,8 +697,6 @@ class SequentialRunner:
             sandbox_mode=sandbox_mode,
             controller_slice_seconds=controller_slice_seconds,
         )
-        if store.state["status"] == "failed":
-            return self._summary(store, error="compiled_index_preparation_failed")
         try:
             with _RunLock(store.root / "run.lock") as lock_fd:
                 blocked = self._create_worktree_or_block(store)
@@ -889,46 +745,6 @@ class SequentialRunner:
                     if status == "failed":
                         raise ValueError("failed run requires --retry-failed")
                     raise ValueError("retry-failed requires a failed run")
-                if store.state["current_plan_index"] < len(store.state["plans"]):
-                    plan = store.state["plans"][store.state["current_plan_index"]]
-                    if plan["environment_fingerprint"] is not None:
-                        compiled = self._compiled_plan(store)
-                        observations = _observe_capabilities(
-                            Path(store.state["worktree"]), compiled,
-                        )
-                        preflight = _resume_preflight(store.state, observations)
-                        if preflight == "unchanged_environment_blocker":
-                            plan["status"] = "blocked"
-                            store.state["status"] = "blocked"
-                            store.save()
-                            store.append_event(
-                                "run.resumed", retry_failed=retry_failed,
-                            )
-                            store.append_event(
-                                "resume.stopped_unchanged_blocker",
-                                plan_id=plan["plan_id"],
-                                reason=preflight,
-                                environment_fingerprint=environment_fingerprint(
-                                    observations
-                                ),
-                            )
-                            return self._report_and_summary(store)
-                        current_environment = environment_fingerprint(observations)
-                        if typed_blockers(observations):
-                            plan["environment_fingerprint"] = current_environment
-                            plan["capability_probe_ids"] = sorted({
-                                observation.capability for observation in observations
-                            })
-                        else:
-                            plan["environment_fingerprint"] = None
-                            plan["capability_probe_ids"] = []
-                        store.save()
-                        store.append_event(
-                            "resume.environment_changed",
-                            plan_id=plan["plan_id"],
-                            reason=preflight,
-                            environment_fingerprint=current_environment,
-                        )
                 if not resumed_recorded:
                     store.append_event("run.resumed", retry_failed=retry_failed)
                 try:
@@ -941,16 +757,6 @@ class SequentialRunner:
                     return self._record_interrupted(store)
         except RunBusyError:
             return self._busy_summary(store)
-
-    @staticmethod
-    def _compiled_plan(store: StateStore) -> dict[str, object]:
-        path = Path(store.state["compiled_run_index_path"])
-        compiled = json.loads(path.read_text(encoding="utf-8"))
-        plans = compiled.get("plans")
-        index = store.state["current_plan_index"]
-        if not isinstance(plans, list) or not 0 <= index < len(plans):
-            raise ValueError("compiled plan is unavailable")
-        return {"plans": [plans[index]]}
 
     @staticmethod
     def _progress_snapshot(
@@ -1253,30 +1059,15 @@ class SequentialRunner:
                     parent_confirmed, fingerprint, list(probe_ids),
                 )
             else:
-                probe_started = time.monotonic()
-                observations = _observe_capabilities(
-                    Path(state["worktree"]), self._compiled_plan(store),
-                )
-                blockers = typed_blockers(observations)
-                fingerprint = (
-                    environment_fingerprint(observations) if blockers else None
-                )
-                probe_ids = (
-                    sorted({observation.capability for observation in observations})
-                    if blockers else []
-                )
-                plan["plan_elapsed_seconds"] += math.ceil(
-                    time.monotonic() - probe_started
-                )
-                block_details = (bool(blockers), fingerprint, probe_ids)
+                block_details = (False, None, [])
                 _ensure_decision_scoped_event(
                     store,
                     "plan.blocked",
                     decision_id,
                     plan_id=plan["plan_id"],
-                    parent_confirmed=bool(blockers),
-                    environment_fingerprint=fingerprint,
-                    capability_probe_ids=probe_ids,
+                    parent_confirmed=False,
+                    environment_fingerprint=None,
+                    capability_probe_ids=[],
                 )
 
         _record_checkpoint(state, decision)
@@ -1466,70 +1257,9 @@ class SequentialRunner:
         cpe_script = Path(__file__).resolve().parent.parent / "cpe.py"
         materialize_helper_descriptor(store.root, cpe_script)
 
-        contract_path = Path(state["operator_contract_path"])
-        compiled_path = Path(state["compiled_run_index_path"])
-        contract = json.loads(contract_path.read_text(encoding="utf-8"))
-        if contract != default_operator_contract(state):
-            raise ValueError("operator contract no longer matches run state")
-        compiled = json.loads(compiled_path.read_text(encoding="utf-8"))
-        validate_compiled_index(compiled, state, contract)
         plan_index = state["current_plan_index"]
-        plans = compiled["plans"]
-        if not isinstance(plan_index, int) or not 0 <= plan_index < len(plans):
-            raise ValueError("current compiled plan is unavailable")
-        compiled_plan = plans[plan_index]
-        candidates = [
-            item
-            for item in compiled_plan["verifications"]
-            if item["command_id"] == command_id
-            and item["argv"] == list(argv)
-            and bool(set(item["allowed_branch_phases"]) & _VERIFY_PHASES[phase])
-            and mutable_input_policy
-            in _VERIFY_POLICIES[item["mutable_input_policy"]]
-        ]
-        if len(candidates) != 1:
-            argv_digest = hashlib.sha256(
-                json.dumps(list(argv), separators=(",", ":")).encode("utf-8")
-            ).hexdigest()
-            evidence_key = hashlib.sha256(
-                json.dumps(
-                    {
-                        "schema_version": 1,
-                        "run_id": run_id,
-                        "command_id": command_id,
-                        "argv_digest": argv_digest,
-                        "cwd": str(resolved_cwd),
-                        "head": _current_head(worktree),
-                        "phase": phase,
-                        "input_digest": input_digest,
-                        "mutable_input_policy": mutable_input_policy,
-                        "reuse_policy": "never",
-                    },
-                    sort_keys=True,
-                    separators=(",", ":"),
-                ).encode("utf-8")
-            ).hexdigest()
-            return {
-                "schema_version": 1,
-                "status": "uncached_command_required",
-                "reason": "command_not_exactly_source_declared",
-                "reason_code": "uncached_command_required",
-                "reused": False,
-                "receipt_path": None,
-                "command_id": command_id,
-                "argv_digest": argv_digest,
-                "evidence_key": evidence_key,
-                "phase": phase,
-            }
-        declaration = candidates[0]
-
-        observations = _observe_capabilities(
-            worktree, {"plans": [compiled_plan]},
-        )
-        current_environment = environment_fingerprint(observations)
-        saved_environment = state["plans"][plan_index]["environment_fingerprint"]
-        if saved_environment is not None and saved_environment != current_environment:
-            raise ValueError("verification environment no longer matches saved evidence")
+        if not isinstance(plan_index, int) or not 0 <= plan_index < len(state["plans"]):
+            raise ValueError("current plan is unavailable")
         head = _current_head(worktree)
         request = VerificationRequest(
             run_id=run_id,
@@ -1537,12 +1267,12 @@ class SequentialRunner:
             argv=tuple(argv),
             cwd=resolved_cwd,
             head=head,
-            environment_fingerprint=current_environment,
+            environment_fingerprint="direct-snapshot",
             phase=phase,  # type: ignore[arg-type]
             input_digest=input_digest,
-            deterministic=declaration["deterministic"],
+            deterministic=True,
             mutable_input_policy=mutable_input_policy,  # type: ignore[arg-type]
-            required_artifact_paths=tuple(declaration["required_artifacts"]),
+            required_artifact_paths=(),
             timeout_seconds=3600,
         )
         dirty_source_inputs = bool(
@@ -1671,6 +1401,8 @@ class SequentialRunner:
             "receipt_id": receipt.receipt_id,
             "status": receipt.status,
             "cache_key": receipt.cache_key,
+            "command_id": command_id,
+            "phase": phase,
         }
         if dirty_source_inputs:
             response["reason"] = "dirty_worktree_requires_execution"
@@ -1731,20 +1463,9 @@ class SequentialRunner:
             plans=plans,
             sandbox_mode=sandbox_mode,
             controller_slice_seconds=controller_slice_seconds,
-            initial_status="preparing",
+            initial_status="ready",
         )
-        try:
-            self.compiler.prepare(store)
-            store.state["status"] = "ready"
-            store.save()
-            store.append_event("run.prepared")
-        except (OSError, ValueError, subprocess.SubprocessError) as exc:
-            store.state["status"] = "failed"
-            store.save()
-            store.append_event(
-                "run.preparation_failed",
-                reason=(str(exc).strip() or type(exc).__name__)[:2000],
-            )
+        store.append_event("run.prepared", preparation="immutable_inputs")
         return store
 
     def _add_new_worktree(self, store: StateStore) -> None:
@@ -2303,7 +2024,11 @@ class SequentialRunner:
                     self._verification_helper_descriptor_for_launch(store)
                 )
                 request = StructuredLaunchRequest(
-                    command=self.launcher._command(worktree, result_path),
+                    command=self.launcher._command(
+                        worktree,
+                        result_path,
+                        state["run_config"]["sandbox_mode"],
+                    ),
                     cwd=worktree,
                     prompt=self.launcher._prompt(
                         worktree=worktree,
@@ -2313,7 +2038,6 @@ class SequentialRunner:
                         starting_commit=plan["starting_commit"],
                         current_commit=current_head,
                         recovery_path=recovery_path,
-                        compiled_run_index=Path(state["compiled_run_index_path"]),
                         execution_ledger=(
                             worktree / ".superpowers" / "sdd" / "execution-ledger.jsonl"
                         ),
@@ -2762,21 +2486,6 @@ class SequentialRunner:
             pass
         if last_decision is not None:
             result["last_decision_reason"] = last_decision
-        try:
-            compiled = json.loads(
-                Path(state["compiled_run_index_path"]).read_text(encoding="utf-8")
-            )
-            advisories = sorted({
-                advisory
-                for plan in compiled.get("plans", [])
-                if isinstance(plan, dict)
-                for advisory in plan.get("execution_advisories", [])
-                if isinstance(advisory, str)
-            })
-            if advisories:
-                result["execution_advisories"] = advisories
-        except (OSError, TypeError, UnicodeDecodeError, json.JSONDecodeError):
-            pass
         if error:
             result["error"] = error
         return result
