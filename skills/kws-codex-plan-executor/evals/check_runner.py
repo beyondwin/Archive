@@ -45,6 +45,7 @@ from cpe_runtime.progress import (
     ProgressSnapshot,
     decide_child_outcome,
     decide_checkpoint,
+    observe_worktree_changes,
     progress_fingerprint,
 )
 from cpe_runtime.verification import (
@@ -949,11 +950,97 @@ class CapabilityTests(unittest.TestCase):
         )
 
 
+class WorktreeProgressTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.repo = Path(self.temporary.name) / "repository"
+        self.repo.mkdir()
+        subprocess.run(["git", "-C", str(self.repo), "init"], check=True)
+        subprocess.run(
+            ["git", "-C", str(self.repo), "config", "user.email", "cpe@example.test"],
+            check=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(self.repo), "config", "user.name", "CPE"],
+            check=True,
+        )
+        (self.repo / "seed.txt").write_text("seed", encoding="utf-8")
+        subprocess.run(["git", "-C", str(self.repo), "add", "."], check=True)
+        subprocess.run(["git", "-C", str(self.repo), "commit", "-m", "seed"], check=True)
+
+    def test_clean_tree_has_canonical_clean_digest(self) -> None:
+        observed = observe_worktree_changes(self.repo)
+        self.assertEqual((False, None), (observed.changed, observed.reason_code))
+        self.assertRegex(observed.digest or "", r"^[0-9a-f]{64}$")
+        self.assertEqual(0, observed.regular_file_count)
+        self.assertEqual(0, observed.total_bytes)
+
+    def test_tracked_and_untracked_content_change_progress_without_leaking_content(self) -> None:
+        tracked = self.repo / "tracked-secret-name.txt"
+        tracked.write_text("sensitive-body", encoding="utf-8")
+        subprocess.run(["git", "-C", str(self.repo), "add", "."], check=True)
+        subprocess.run(["git", "-C", str(self.repo), "commit", "-m", "tracked"], check=True)
+        tracked.write_text("changed-sensitive-body", encoding="utf-8")
+        (self.repo / "untracked-secret-name.txt").write_text("other-body", encoding="utf-8")
+        observed = observe_worktree_changes(self.repo)
+        self.assertTrue(observed.changed)
+        self.assertRegex(observed.digest or "", r"^[0-9a-f]{64}$")
+        serialized = json.dumps(dataclasses.asdict(observed))
+        self.assertNotIn("secret-name", serialized)
+        self.assertNotIn("sensitive-body", serialized)
+        snapshot = ProgressSnapshot("a" * 40, (), None, observed.changed, observed.digest)
+        persisted_or_event_payload = json.dumps({
+            "progress_fingerprint": progress_fingerprint(snapshot),
+            "worktree_changed": snapshot.worktree_changed,
+            "worktree_change_digest": snapshot.worktree_change_digest,
+        })
+        self.assertNotIn("secret-name", persisted_or_event_payload)
+        self.assertNotIn("sensitive-body", persisted_or_event_payload)
+
+    def test_deletion_is_a_changed_digest_without_a_file_body(self) -> None:
+        (self.repo / "seed.txt").unlink()
+        observed = observe_worktree_changes(self.repo)
+        self.assertTrue(observed.changed)
+        self.assertRegex(observed.digest or "", r"^[0-9a-f]{64}$")
+        self.assertEqual(0, observed.regular_file_count)
+        self.assertEqual(0, observed.total_bytes)
+
+    def test_symlink_inventory_is_unavailable_without_path_leak(self) -> None:
+        secret = self.repo / "symlink-secret-name"
+        secret.symlink_to("seed.txt")
+        observed = observe_worktree_changes(self.repo)
+        self.assertEqual(
+            (True, None, "dirty_inventory_unavailable"),
+            (observed.changed, observed.digest, observed.reason_code),
+        )
+        self.assertNotIn("secret-name", json.dumps(dataclasses.asdict(observed)))
+
+    def test_over_limit_or_unreadable_inventory_is_unavailable(self) -> None:
+        over_limit = self.repo / "large.txt"
+        over_limit.write_bytes(b"x" * (16 * 1024 * 1024 + 1))
+        self.assertEqual(
+            "dirty_inventory_unavailable",
+            observe_worktree_changes(self.repo).reason_code,
+        )
+        over_limit.unlink()
+        unreadable = self.repo / "unreadable.txt"
+        unreadable.write_text("body", encoding="utf-8")
+        with mock.patch("cpe_runtime.progress.os.open", side_effect=PermissionError):
+            observed = observe_worktree_changes(self.repo)
+        self.assertEqual("dirty_inventory_unavailable", observed.reason_code)
+        with mock.patch(
+            "cpe_runtime.progress.subprocess.run",
+            return_value=subprocess.CompletedProcess([], 0, b"x\0" * 4097),
+        ):
+            observed = observe_worktree_changes(self.repo)
+        self.assertEqual("dirty_inventory_unavailable", observed.reason_code)
+
+
 class ProgressDecisionTests(unittest.TestCase):
     DEFAULT_BUDGET = CheckpointBudget(
-        max_progress_checkpoints=6,
-        max_controller_launches=8,
-        plan_wall_seconds=21_600,
+        max_controller_launches=6,
+        plan_wall_seconds=7_200,
     )
 
     def snapshot(self, *, head: str = "abc", completed: tuple[str, ...] = ()) -> ProgressSnapshot:
@@ -965,8 +1052,6 @@ class ProgressDecisionTests(unittest.TestCase):
         previous: ProgressSnapshot | None = None,
         current: ProgressSnapshot | None = None,
         timed_out: bool = True,
-        consecutive_no_progress: int = 0,
-        progress_checkpoints: int = 0,
         controller_launches: int = 0,
         plan_elapsed_seconds: int = 0,
         child_completed: bool = False,
@@ -975,8 +1060,6 @@ class ProgressDecisionTests(unittest.TestCase):
             previous=previous,
             current=current or self.snapshot(),
             timed_out=timed_out,
-            consecutive_no_progress=consecutive_no_progress,
-            progress_checkpoints=progress_checkpoints,
             controller_launches=controller_launches,
             plan_elapsed_seconds=plan_elapsed_seconds,
             budget=self.DEFAULT_BUDGET,
@@ -985,8 +1068,7 @@ class ProgressDecisionTests(unittest.TestCase):
 
     def test_child_completed_finishes_before_hard_budgets(self) -> None:
         decision = self.decide(
-            progress_checkpoints=6, controller_launches=8,
-            plan_elapsed_seconds=21_600, child_completed=True,
+            controller_launches=6, plan_elapsed_seconds=7_200, child_completed=True,
         )
         self.assertEqual("finish", decision.action)
         self.assertEqual("child_completed", decision.reason_code)
@@ -1003,8 +1085,6 @@ class ProgressDecisionTests(unittest.TestCase):
                     previous=self.snapshot(),
                     current=self.snapshot(),
                     timed_out=False,
-                    consecutive_no_progress=0,
-                    progress_checkpoints=0,
                     controller_launches=1,
                     plan_elapsed_seconds=1,
                     budget=self.DEFAULT_BUDGET,
@@ -1017,9 +1097,7 @@ class ProgressDecisionTests(unittest.TestCase):
             previous=self.snapshot(),
             current=self.snapshot(),
             timed_out=False,
-            consecutive_no_progress=0,
-            progress_checkpoints=0,
-            controller_launches=8,
+            controller_launches=6,
             plan_elapsed_seconds=1,
             budget=self.DEFAULT_BUDGET,
             child_status="checkpointed",
@@ -1032,35 +1110,22 @@ class ProgressDecisionTests(unittest.TestCase):
         self.assertEqual("continue", decision.action)
         self.assertEqual("productive_timeout", decision.reason_code)
 
-    def test_timed_out_first_unchanged_slice_continues(self) -> None:
+    def test_first_unchanged_timeout_stops_immediately(self) -> None:
         current = self.snapshot()
         decision = self.decide(previous=current)
-        self.assertEqual("continue", decision.action)
-        self.assertEqual("first_no_progress_slice", decision.reason_code)
-
-    def test_timed_out_second_unchanged_slice_stops_stalled(self) -> None:
-        current = self.snapshot()
-        decision = self.decide(previous=current, consecutive_no_progress=1)
         self.assertEqual("stop_stalled", decision.action)
-        self.assertEqual("second_no_progress_slice", decision.reason_code)
-
-    def test_changed_fingerprint_stops_at_checkpoint_budget(self) -> None:
-        decision = self.decide(
-            previous=self.snapshot(head="before"), progress_checkpoints=6,
-        )
-        self.assertEqual("stop_budget", decision.action)
-        self.assertEqual("checkpoint_budget_exhausted", decision.reason_code)
+        self.assertEqual("no_progress_timeout", decision.reason_code)
 
     def test_changed_fingerprint_stops_at_launch_budget(self) -> None:
         decision = self.decide(
-            previous=self.snapshot(head="before"), controller_launches=8,
+            previous=self.snapshot(head="before"), controller_launches=6,
         )
         self.assertEqual("stop_budget", decision.action)
         self.assertEqual("launch_budget_exhausted", decision.reason_code)
 
     def test_changed_fingerprint_stops_at_wall_budget(self) -> None:
         decision = self.decide(
-            previous=self.snapshot(head="before"), plan_elapsed_seconds=21_600,
+            previous=self.snapshot(head="before"), plan_elapsed_seconds=7_200,
         )
         self.assertEqual("stop_budget", decision.action)
         self.assertEqual("wall_budget_exhausted", decision.reason_code)
@@ -1129,7 +1194,10 @@ class ProgressDecisionTests(unittest.TestCase):
         self.assertEqual(("T1",), snapshot.completed_task_ids)
         self.assertEqual("T2", snapshot.current_task_id)
         self.assertEqual(
-            {"head", "completed_task_ids", "current_task_id"},
+            {
+                "head", "completed_task_ids", "current_task_id",
+                "worktree_changed", "worktree_change_digest",
+            },
             set(dataclasses.asdict(snapshot)),
         )
 
@@ -1986,13 +2054,10 @@ print(json.dumps(result, sort_keys=True), flush=True)
             store.state["plans"][0]["budget"],
             {
                 "controller_slice_timeout_seconds": 3600,
-                "max_progress_checkpoints": 6,
-                "plan_wall_budget_seconds": 21600,
-                "max_controller_launches": 8,
+                "plan_wall_budget_seconds": 7200,
+                "max_controller_launches": 6,
             },
         )
-        self.assertEqual(store.state["plans"][0]["consecutive_no_progress_slices"], 0)
-        self.assertEqual(store.state["plans"][0]["progress_checkpoint_count"], 0)
         self.assertIsNone(store.state["plans"][0]["progress_fingerprint"])
         self.assertIsNone(store.state["plans"][0]["environment_fingerprint"])
         self.assertEqual(store.state["plans"][0]["plan_elapsed_seconds"], 0)
@@ -2319,7 +2384,7 @@ print(json.dumps(result, sort_keys=True), flush=True)
         self.assertIsNone(inspected["observed_head"])
         self.assertEqual(inspected["last_known_head"], second_head)
 
-    def test_timeout_persists_advanced_head_and_stops_after_two_stalled_slices(self) -> None:
+    def test_timeout_persists_advanced_head_and_stops_on_first_stalled_slice(self) -> None:
         runner = self.runner(timeout_seconds=1.0)
         real_launch = runner.launcher._launch_structured
         observed_timeouts: list[float] = []
@@ -2346,7 +2411,7 @@ print(json.dumps(result, sort_keys=True), flush=True)
         inspected = runner.inspect(run_id="timeout-after-commit")
 
         self.assertEqual(result["status"], "blocked")
-        self.assertEqual(result["last_decision_reason"], "second_no_progress_slice")
+        self.assertEqual(result["last_decision_reason"], "no_progress_timeout")
         self.assertIsNone(inspected["observed_head"])
         self.assertEqual(inspected["last_known_head"], advanced_head)
         self.assertEqual(len(self.invocations()), 3)
@@ -5368,7 +5433,7 @@ class ProgressRecoveryIntegrationTests(_RecoveryRunnerFixture):
             ("resume.stopped_unchanged_blocker", {"reason": "unchanged_environment_blocker"}),
             ("result.envelope_repaired", {"plan_id": "plan-01"}),
             ("plan.checkpoint_decided", {"decision": "continue", "reason": "productive_timeout"}),
-            ("plan.checkpoint_decided", {"decision": "stop_stalled", "reason": "second_no_progress_slice"}),
+            ("plan.checkpoint_decided", {"decision": "stop_stalled", "reason": "no_progress_timeout"}),
             ("plan.pre_spawn_stopped", {"decision": "stop_budget", "reason": "launch_budget_exhausted"}),
         ):
             store.append_event(action, **details)
@@ -5403,7 +5468,7 @@ class ProgressRecoveryIntegrationTests(_RecoveryRunnerFixture):
             {
                 "action": "plan.checkpoint_decided",
                 "decision": "stop_stalled",
-                "reason": "second_no_progress_slice",
+                "reason": "no_progress_timeout",
             },
             {
                 "action": "plan.checkpoint_decided",
@@ -5418,7 +5483,6 @@ class ProgressRecoveryIntegrationTests(_RecoveryRunnerFixture):
 
     def test_pre_spawn_budget_stops_are_counted_from_events(self) -> None:
         reasons = (
-            "checkpoint_budget_exhausted",
             "launch_budget_exhausted",
             "wall_budget_exhausted",
         )
@@ -5430,7 +5494,7 @@ class ProgressRecoveryIntegrationTests(_RecoveryRunnerFixture):
             }
             for reason in reasons
         ])
-        self.assertEqual(3, metrics["budget_stops"])
+        self.assertEqual(2, metrics["budget_stops"])
         self.assertEqual({}, metrics["continuation_reason_counts"])
 
     def test_productive_timeout_continues_once_and_completes(self) -> None:
@@ -5448,8 +5512,7 @@ class ProgressRecoveryIntegrationTests(_RecoveryRunnerFixture):
         self.assertEqual([3600.0, 3600.0], self.captured_timeouts)
         state = StateStore.open(run_root).state["plans"][0]
         self.assertEqual(2, state["controller_launch_count"])
-        self.assertEqual(2, state["checkpoint_count"])
-        self.assertEqual(2, state["progress_checkpoint_count"])
+        self.assertEqual(0, state["checkpoint_count"])
         events = _runner_events(run_root)
         self.assertTrue(any(
             event.get("action") == "plan.checkpoint_decided"
@@ -5457,7 +5520,7 @@ class ProgressRecoveryIntegrationTests(_RecoveryRunnerFixture):
             for event in events
         ))
 
-    def test_second_stalled_timeout_stops_with_typed_blocker(self) -> None:
+    def test_first_no_progress_timeout_stops_without_confirmation_launch(self) -> None:
         run_id = "stalled-timeout"
         runner = self.runner(run_id)
         result = runner.run(
@@ -5468,16 +5531,15 @@ class ProgressRecoveryIntegrationTests(_RecoveryRunnerFixture):
         )
         run_root = self.home / "orchestrator" / run_id
         self.assertEqual("blocked", result["status"])
-        self.assertEqual("second_no_progress_slice", result["last_decision_reason"])
-        self.assertEqual(2, fake_codex_launch_count(run_root))
-        self.assertEqual([3600.0, 3600.0], self.captured_timeouts)
+        self.assertEqual("no_progress_timeout", result["last_decision_reason"])
+        self.assertEqual(1, fake_codex_launch_count(run_root))
+        self.assertEqual([1200.0], self.captured_timeouts)
         state = StateStore.open(run_root).state["plans"][0]
-        self.assertEqual(2, state["controller_launch_count"])
-        self.assertEqual(2, state["checkpoint_count"])
-        self.assertEqual(2, state["consecutive_no_progress_slices"])
+        self.assertEqual(1, state["controller_launch_count"])
+        self.assertEqual(0, state["checkpoint_count"])
         blocker = json.loads(Path(state["result_path"]).read_text(encoding="utf-8"))
         self.assertEqual("operator_owned", blocker["blocker"]["kind"])
-        self.assertEqual("second_no_progress_slice", blocker["blocker"]["code"])
+        self.assertEqual("no_progress_timeout", blocker["blocker"]["code"])
 
     def test_historical_direct_cpe_timeouts_split_without_comparative_inflation(self) -> None:
         fixtures = ROOT / "evals" / "fixtures"
@@ -5552,9 +5614,8 @@ class ProgressRecoveryIntegrationTests(_RecoveryRunnerFixture):
 class PreSpawnBudgetTests(_RecoveryRunnerFixture):
     def test_resume_stops_before_launch_for_every_hard_plan_budget(self) -> None:
         cases = (
-            ("launch", "controller_launch_count", 8, "launch_budget_exhausted"),
-            ("checkpoint", "progress_checkpoint_count", 6, "checkpoint_budget_exhausted"),
-            ("wall", "plan_elapsed_seconds", 21_600, "wall_budget_exhausted"),
+            ("launch", "controller_launch_count", 6, "launch_budget_exhausted"),
+            ("wall", "plan_elapsed_seconds", 7_200, "wall_budget_exhausted"),
         )
         for label, field, value, reason in cases:
             with self.subTest(label=label):
@@ -5851,18 +5912,14 @@ class Format2RecoveryStateValidationTests(_RecoveryRunnerFixture):
         invalid_cases = (
             {"decision": "finish", "reason": "productive_timeout"},
             {"decision": "checkpoint", "reason": "child_checkpointed", "timed_out": True},
-            {"decision": "stop_budget", "reason": "second_no_progress_slice"},
+            {"decision": "stop_budget", "reason": "no_progress_timeout"},
             {"previous_progress_fingerprint": "d" * 64},
             {"head": "e" * 40},
             {"progress_fingerprint": "a" * 64},
             {
                 "decision": "stop_stalled",
-                "reason": "second_no_progress_slice",
+                "reason": "no_progress_timeout",
                 "progress_fingerprint": "a" * 64,
-            },
-            {
-                "decision": "stop_budget",
-                "reason": "checkpoint_budget_exhausted",
             },
             {
                 "decision": "stop_budget",
@@ -5893,35 +5950,24 @@ class Format2RecoveryStateValidationTests(_RecoveryRunnerFixture):
         cases = (
             ("continue", "productive_timeout", {}, {}),
             (
-                "continue", "first_no_progress_slice",
-                {"progress_fingerprint": "a" * 64}, {},
-            ),
-            (
                 "checkpoint", "child_checkpointed",
                 {"timed_out": False}, {},
             ),
             ("block", "child_blocked", {"timed_out": False}, {}),
             ("fail", "child_failed", {"timed_out": False}, {}),
             (
-                "stop_stalled", "second_no_progress_slice",
+                "stop_stalled", "no_progress_timeout",
                 {"progress_fingerprint": "a" * 64},
-                {"consecutive_no_progress_slices": 1},
+                {},
             ),
-            (
-                "stop_stalled", "child_stopped_without_completion",
-                {"timed_out": False}, {},
-            ),
-            (
-                "stop_budget", "checkpoint_budget_exhausted", {},
-                {"progress_checkpoint_count": 6},
-            ),
+            ("stop_stalled", "child_stopped_without_completion", {"timed_out": False}, {}),
             (
                 "stop_budget", "launch_budget_exhausted", {},
-                {"controller_launch_count": 8},
+                {"controller_launch_count": 6},
             ),
             (
                 "stop_budget", "wall_budget_exhausted", {},
-                {"plan_elapsed_seconds": 21_600},
+                {"plan_elapsed_seconds": 7_200},
             ),
             (
                 "finish", "child_completed",
@@ -5959,11 +6005,10 @@ class Format2RecoveryStateValidationTests(_RecoveryRunnerFixture):
         store = self._active_store("invalid-nontimeout-stalled-reason")
         valid_bytes = store.state_path.read_bytes()
         plan = store.state["plans"][0]
-        plan["consecutive_no_progress_slices"] = 1
         plan["pending_checkpoint_decision"] = self._pending(
             plan,
             decision="stop_stalled",
-            reason="second_no_progress_slice",
+            reason="no_progress_timeout",
             progress_fingerprint="a" * 64,
             timed_out=False,
         )
@@ -6094,7 +6139,7 @@ class FullActionWalReconciliationTests(_RecoveryRunnerFixture):
                 "stop_budget",
                 "blocked",
                 "wal-stop-budget",
-                CheckpointBudget(6, 1, 21_600),
+                CheckpointBudget(1, 7_200),
             ),
         )
         for scenario, decision, status, run_id, budget in cases:
@@ -6126,7 +6171,7 @@ class FullActionWalReconciliationTests(_RecoveryRunnerFixture):
         self.assertEqual("completed", reconciled["status"])
         plan = StateStore.open(run_root).state["plans"][0]
         self.assertEqual(2, plan["attempt_count"])
-        self.assertEqual(2, plan["checkpoint_count"])
+        self.assertEqual(0, plan["checkpoint_count"])
         decisions = [
             event for event in _runner_events(run_root)
             if event.get("action") == "plan.checkpoint_decided"
@@ -6168,8 +6213,8 @@ class FullActionWalReconciliationTests(_RecoveryRunnerFixture):
             if event.get("action") == "plan.attempt_started"
         ]))
         plan = stalled_store.state["plans"][0]
-        self.assertEqual(2, plan["attempt_count"])
-        self.assertEqual(2, plan["checkpoint_count"])
+        self.assertEqual(1, plan["attempt_count"])
+        self.assertEqual(0, plan["checkpoint_count"])
         self.assertEqual(1, len([
             event for event in _runner_events(run_root)
             if event.get("action") == "plan.checkpoint_decided"
@@ -6178,7 +6223,7 @@ class FullActionWalReconciliationTests(_RecoveryRunnerFixture):
         recovery_events = [
             event for event in _runner_events(run_root)
             if event.get("action") == "plan.recovery_stopped"
-            and event.get("reason") == "second_no_progress_slice"
+            and event.get("reason") == "no_progress_timeout"
         ]
         self.assertEqual(1, len(recovery_events))
 

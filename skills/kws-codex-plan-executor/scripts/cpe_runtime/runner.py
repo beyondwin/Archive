@@ -41,6 +41,7 @@ from .progress import (
     CheckpointDecision,
     ProgressSnapshot,
     decide_child_outcome,
+    observe_worktree_changes,
     progress_fingerprint,
 )
 from .reporting import (
@@ -98,13 +99,8 @@ def _record_checkpoint(
     assert isinstance(plans, list) and isinstance(index, int)
     plan = plans[index]
     assert isinstance(plan, dict)
-    changed = plan["progress_fingerprint"] != decision.progress_fingerprint
-    plan["checkpoint_count"] += 1
-    if changed:
-        plan["progress_checkpoint_count"] += 1
-        plan["consecutive_no_progress_slices"] = 0
-    else:
-        plan["consecutive_no_progress_slices"] += 1
+    if decision.action == "checkpoint":
+        plan["checkpoint_count"] += 1
     plan["progress_fingerprint"] = decision.progress_fingerprint
 
 
@@ -187,9 +183,7 @@ def _pre_spawn_budget_decision(
     if not isinstance(budget, Mapping):
         raise ValueError("plan budget is unavailable")
     reason = None
-    if plan.get("progress_checkpoint_count", 0) >= budget["max_progress_checkpoints"]:
-        reason = "checkpoint_budget_exhausted"
-    elif plan.get("controller_launch_count", 0) >= budget["max_controller_launches"]:
+    if plan.get("controller_launch_count", 0) >= budget["max_controller_launches"]:
         reason = "launch_budget_exhausted"
     elif plan.get("plan_elapsed_seconds", 0) >= budget["plan_wall_budget_seconds"]:
         reason = "wall_budget_exhausted"
@@ -772,10 +766,13 @@ class SequentialRunner:
             / "sdd"
             / "execution-ledger.jsonl"
         )
+        observation = observe_worktree_changes(Path(store.state["worktree"]))
         if not ledger.exists():
             if plan["execution_ledger_event_digests"]:
                 raise ProgressLedgerError("execution_ledger_regressed")
-            return ProgressSnapshot(head, (), None)
+            return ProgressSnapshot(
+                head, (), None, observation.changed, observation.digest,
+            )
         try:
             events = validate_execution_ledger(
                 ledger, expected_plan_id=plan["plan_id"],
@@ -792,7 +789,11 @@ class SequentialRunner:
         except (OSError, ValueError) as exc:
             raise ProgressLedgerError("execution_ledger_invalid") from exc
         plan["execution_ledger_event_digests"] = current_digests
-        return snapshot
+        return replace(
+            snapshot,
+            worktree_changed=observation.changed,
+            worktree_change_digest=observation.digest,
+        )
 
     @staticmethod
     def _ingest_verification_observations(store: StateStore) -> None:
@@ -1154,7 +1155,6 @@ class SequentialRunner:
         budget = plan["budget"]
         assert isinstance(budget, Mapping)
         return CheckpointBudget(
-            max_progress_checkpoints=int(budget["max_progress_checkpoints"]),
             max_controller_launches=int(budget["max_controller_launches"]),
             plan_wall_seconds=int(budget["plan_wall_budget_seconds"]),
         )
@@ -1865,11 +1865,11 @@ class SequentialRunner:
             )
             return "evidence_failed", reason
         decision = decide_child_outcome(
-            previous=ProgressSnapshot(observed_head, (), None),
+            previous=self._progress_snapshot(
+                store, plan_index=plan_index, head=observed_head,
+            ),
             current=current_snapshot,
             timed_out=False,
-            consecutive_no_progress=plan["consecutive_no_progress_slices"],
-            progress_checkpoints=plan["progress_checkpoint_count"],
             controller_launches=plan["controller_launch_count"],
             plan_elapsed_seconds=plan["plan_elapsed_seconds"],
             budget=self._checkpoint_budget(plan),
@@ -1944,12 +1944,8 @@ class SequentialRunner:
                     return self._report_and_summary(store)
                 if plan["starting_commit"] is None:
                     plan["starting_commit"] = current_head
-                previous_snapshot = (
-                    self._progress_snapshot(
-                        store, plan_index=index, head=current_head,
-                    )
-                    if plan["progress_fingerprint"] is not None
-                    else ProgressSnapshot(current_head, (), None)
+                previous_snapshot = self._progress_snapshot(
+                    store, plan_index=index, head=current_head,
                 )
                 previous_attempt = plan["attempt_count"]
                 prior_result = (
@@ -2155,8 +2151,6 @@ class SequentialRunner:
                     previous=previous_snapshot,
                     current=current_snapshot,
                     timed_out=outcome.timed_out,
-                    consecutive_no_progress=plan["consecutive_no_progress_slices"],
-                    progress_checkpoints=plan["progress_checkpoint_count"],
                     controller_launches=plan["controller_launch_count"],
                     plan_elapsed_seconds=plan["plan_elapsed_seconds"],
                     budget=self._checkpoint_budget(plan),

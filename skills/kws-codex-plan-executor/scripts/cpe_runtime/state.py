@@ -39,7 +39,6 @@ PLAN_STATUSES = {
 }
 DEFAULT_PLAN_BUDGET = {
     "controller_slice_timeout_seconds": DEFAULT_CONTROLLER_SLICE_SECONDS,
-    "max_progress_checkpoints": 6,
     "plan_wall_budget_seconds": 7200,
     "max_controller_launches": 6,
 }
@@ -54,13 +53,12 @@ _DIGEST_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _DECISION_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 _RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _DECISION_REASONS = {
-    "continue": {"productive_timeout", "first_no_progress_slice"},
+    "continue": {"productive_timeout"},
     "checkpoint": {"child_checkpointed"},
     "block": {"child_blocked"},
     "fail": {"child_failed"},
-    "stop_stalled": {"second_no_progress_slice", "child_stopped_without_completion"},
+    "stop_stalled": {"no_progress_timeout", "child_stopped_without_completion"},
     "stop_budget": {
-        "checkpoint_budget_exhausted",
         "launch_budget_exhausted",
         "wall_budget_exhausted",
     },
@@ -251,8 +249,6 @@ class StateStore:
                 "attempt_count": 0,
                 "controller_launch_count": 0,
                 "checkpoint_count": 0,
-                "progress_checkpoint_count": 0,
-                "consecutive_no_progress_slices": 0,
                 "progress_fingerprint": None,
                 "execution_ledger_event_digests": [],
                 "pending_checkpoint_decision": None,
@@ -387,7 +383,6 @@ class StateStore:
             if not isinstance(record, dict) or set(record) != {
                 "plan_id", "status", "starting_commit", "accepted_commit",
                 "attempt_count", "controller_launch_count", "checkpoint_count",
-                "progress_checkpoint_count", "consecutive_no_progress_slices",
                 "progress_fingerprint", "execution_ledger_event_digests",
                 "pending_checkpoint_decision", "environment_fingerprint",
                 "capability_probe_ids", "plan_started_at", "plan_elapsed_seconds",
@@ -400,7 +395,6 @@ class StateStore:
                 raise ValueError("plan attempt count is invalid")
             for name in (
                 "controller_launch_count", "checkpoint_count",
-                "progress_checkpoint_count", "consecutive_no_progress_slices",
                 "plan_elapsed_seconds",
             ):
                 value = record[name]
@@ -517,10 +511,6 @@ class StateStore:
                     pending["progress_fingerprint"]
                     != pending["previous_progress_fingerprint"]
                 )
-                checkpoints_exhausted = (
-                    record["progress_checkpoint_count"]
-                    >= budget["max_progress_checkpoints"]
-                )
                 launches_exhausted = (
                     record["controller_launch_count"]
                     >= budget["max_controller_launches"]
@@ -534,7 +524,6 @@ class StateStore:
                     "child_completed": not pending["timed_out"],
                     "child_checkpointed": (
                         not pending["timed_out"]
-                        and not checkpoints_exhausted
                         and not launches_exhausted
                         and not wall_exhausted
                     ),
@@ -543,39 +532,25 @@ class StateStore:
                     "productive_timeout": (
                         pending["timed_out"]
                         and changed
-                        and not checkpoints_exhausted
                         and not launches_exhausted
                         and not wall_exhausted
                     ),
-                    "first_no_progress_slice": (
+                    "no_progress_timeout": (
                         pending["timed_out"]
                         and not changed
-                        and record["consecutive_no_progress_slices"] == 0
-                        and not checkpoints_exhausted
-                        and not launches_exhausted
-                        and not wall_exhausted
-                    ),
-                    "second_no_progress_slice": (
-                        pending["timed_out"]
-                        and not changed
-                        and record["consecutive_no_progress_slices"] >= 1
-                        and not checkpoints_exhausted
                         and not launches_exhausted
                         and not wall_exhausted
                     ),
                     "child_stopped_without_completion": (
                         not pending["timed_out"]
-                        and not checkpoints_exhausted
                         and not launches_exhausted
                         and not wall_exhausted
                     ),
-                    "checkpoint_budget_exhausted": checkpoints_exhausted,
                     "launch_budget_exhausted": (
-                        not checkpoints_exhausted and launches_exhausted
+                        launches_exhausted
                     ),
                     "wall_budget_exhausted": (
-                        not checkpoints_exhausted
-                        and not launches_exhausted
+                        not launches_exhausted
                         and wall_exhausted
                     ),
                 }.get(reason, False)
@@ -630,8 +605,6 @@ class StateStore:
             "attempt_count": 0,
             "controller_launch_count": 0,
             "checkpoint_count": 0,
-            "progress_checkpoint_count": 0,
-            "consecutive_no_progress_slices": 0,
             "progress_fingerprint": None,
             "execution_ledger_event_digests": [],
             "pending_checkpoint_decision": None,
