@@ -90,6 +90,9 @@ function selectKnownScopes(paths: readonly string[], hasClosure: boolean): Verif
     if (candidate.id === "full-offline" || candidate.id === "package" || candidate.id === "waygent-closure") {
       continue;
     }
+    if (hasClosure && (candidate.id === "console" || candidate.id === "app")) {
+      continue;
+    }
     if (paths.some((path) => matches(candidate, path)) && !isCoveredByNarrowerScope(candidate.id, paths)) {
       selected.push(candidate);
     }
