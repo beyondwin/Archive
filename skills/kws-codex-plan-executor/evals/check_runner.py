@@ -77,7 +77,6 @@ import cpe_runtime.runner as runner_module
 from cpe_runtime.runner import (
     SequentialRunner,
     _ledger_progress,
-    _recovery_decision,
     _write_private_json,
 )
 from cpe_runtime.state import StateStore
@@ -1715,6 +1714,36 @@ class ProgressDecisionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "duplicated"):
             read_progress_snapshot(store.root, plan_index=0, head="2" * 40)
 
+    def test_execution_ledger_filters_only_completed_prior_plan_events(self) -> None:
+        temporary, _, worktree = self.create_progress_store()
+        self.addCleanup(temporary.cleanup)
+        ledger = worktree / ".superpowers" / "sdd" / "execution-ledger.jsonl"
+        append_execution_event(
+            ledger,
+            self.ledger_event(
+                "task-complete-1",
+                "task",
+                action="completed",
+                task_id="T1",
+                duration_ms=1,
+            ),
+        )
+
+        self.assertEqual(
+            [],
+            validate_execution_ledger(
+                ledger,
+                expected_plan_id="plan-02",
+                allowed_prior_plan_ids=("plan-01",),
+            ),
+        )
+        with self.assertRaisesRegex(ValueError, "plan identity"):
+            validate_execution_ledger(
+                ledger,
+                expected_plan_id="plan-02",
+                allowed_prior_plan_ids=("plan-03",),
+            )
+
     def test_execution_ledger_schema_matches_runtime_validator_contract(self) -> None:
         schema = json.loads((
             ROOT / "templates" / "execution-ledger.schema.json"
@@ -2681,7 +2710,7 @@ print(json.dumps(result, sort_keys=True), flush=True)
             store.save()
         self.assertEqual(before, store.state_path.read_bytes())
 
-    def create_format_two_store(self, run_id: str) -> StateStore:
+    def create_format_three_store(self, run_id: str) -> StateStore:
         return StateStore.create(
             run_root=self.home / "orchestrator" / run_id,
             run_id=run_id,
@@ -2693,24 +2722,24 @@ print(json.dumps(result, sort_keys=True), flush=True)
             plans=[self.plan(1, "completed")],
         )
 
-    def test_format_two_state_has_preparation_and_budget_fields(self) -> None:
+    def test_format_three_state_has_preparation_and_budget_fields(self) -> None:
         source_commit = git(self.repo, "rev-parse", "HEAD")
         store = StateStore.create(
-            run_root=self.home / "orchestrator" / "format-two",
-            run_id="format-two",
+            run_root=self.home / "orchestrator" / "format-three",
+            run_id="format-three",
             source_repository=self.repo,
             source_commit=source_commit,
-            worktree=self.home / "worktrees" / "format-two",
-            branch="codex/format-two",
+            worktree=self.home / "worktrees" / "format-three",
+            branch="codex/format-three",
             specs=[],
             plans=[self.plan(1, "completed")],
         )
-        self.assertEqual(store.state["format_version"], 2)
+        self.assertEqual(store.state["format_version"], 3)
         self.assertEqual(store.state["status"], "preparing")
         self.assertEqual(
             store.state["plans"][0]["budget"],
             {
-                "controller_slice_timeout_seconds": 3600,
+                "controller_slice_timeout_seconds": 1200,
                 "plan_wall_budget_seconds": 7200,
                 "max_controller_launches": 6,
             },
@@ -3037,7 +3066,7 @@ print(json.dumps(result, sort_keys=True), flush=True)
 
         inspected = runner.inspect(run_id="missing-later-worktree-summary")
 
-        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["status"], "blocked")
         self.assertIsNone(inspected["observed_head"])
         self.assertEqual(inspected["last_known_head"], second_head)
 
@@ -3051,7 +3080,7 @@ print(json.dumps(result, sort_keys=True), flush=True)
         ) -> LaunchResult:
             if "PLAN_ID: " in request.prompt:
                 observed_timeouts.append(request.timeout_seconds)
-                request = dataclasses.replace(request, timeout_seconds=0.12)
+                request = dataclasses.replace(request, timeout_seconds=1.0)
             return real_launch(request, lock_fd)
 
         runner.launcher._launch_structured = mock.Mock(side_effect=accelerated)
@@ -3071,8 +3100,8 @@ print(json.dumps(result, sort_keys=True), flush=True)
         self.assertEqual(result["last_decision_reason"], "no_progress_timeout")
         self.assertIsNone(inspected["observed_head"])
         self.assertEqual(inspected["last_known_head"], advanced_head)
-        self.assertEqual(len(self.invocations()), 3)
-        self.assertEqual(observed_timeouts, [3600.0, 3600.0, 3600.0])
+        self.assertEqual(len(self.invocations()), 2)
+        self.assertEqual(observed_timeouts, [1200.0, 1200.0])
 
     def test_format_one_state_is_unsupported_without_mutation(self) -> None:
         root = self.home / "orchestrator" / "legacy-format-one"
@@ -3084,8 +3113,8 @@ print(json.dumps(result, sort_keys=True), flush=True)
             StateStore.open(root)
         self.assertEqual(state_path.read_bytes(), before)
 
-    def test_format_two_event_has_bounded_trust_labelled_envelope(self) -> None:
-        store = self.create_format_two_store("event-envelope")
+    def test_format_three_event_has_bounded_trust_labelled_envelope(self) -> None:
+        store = self.create_format_three_store("event-envelope")
         store.append_event(
             "plan.attempt_finished",
             plan_id="plan-01",
@@ -3101,8 +3130,8 @@ print(json.dumps(result, sort_keys=True), flush=True)
         self.assertEqual(event["category"], "plan")
         self.assertEqual(event["action"], "plan.attempt_finished")
 
-    def test_format_two_event_rejects_reserved_envelope_collisions(self) -> None:
-        store = self.create_format_two_store("event-collision")
+    def test_format_three_event_rejects_reserved_envelope_collisions(self) -> None:
+        store = self.create_format_three_store("event-collision")
         before = store.events_path.read_bytes()
         reserved = {
             "event_id": "forged-event",
@@ -3117,7 +3146,7 @@ print(json.dumps(result, sort_keys=True), flush=True)
         self.assertEqual(store.events_path.read_bytes(), before)
 
     def test_state_rejects_non_integer_budget_values(self) -> None:
-        store = self.create_format_two_store("budget-types")
+        store = self.create_format_three_store("budget-types")
         budget = store.state["plans"][0]["budget"]
         for value in (3600.0, True):
             with self.subTest(value=value):
@@ -3412,6 +3441,8 @@ print(json.dumps(result, sort_keys=True), flush=True)
             specs=[],
             plans=[self.plan(1, "completed")],
             run_id="reconcile-create",
+            sandbox_mode="danger-full-access",
+            controller_slice_seconds=1200,
         )
         runner._add_new_worktree(store)
 
@@ -3431,6 +3462,8 @@ print(json.dumps(result, sort_keys=True), flush=True)
             specs=[],
             plans=[self.plan(1, "completed")],
             run_id="recreate-initializing",
+            sandbox_mode="danger-full-access",
+            controller_slice_seconds=1200,
         )
 
         runner._create_or_reconcile_worktree(store)
@@ -3449,6 +3482,8 @@ print(json.dumps(result, sort_keys=True), flush=True)
             specs=[],
             plans=[self.plan(1, "completed")],
             run_id="mismatched-initializing",
+            sandbox_mode="danger-full-access",
+            controller_slice_seconds=1200,
         )
         runner._add_new_worktree(store)
         worktree = Path(store.state["worktree"])
@@ -3571,6 +3606,8 @@ print(json.dumps(result, sort_keys=True), flush=True)
             specs=[],
             plans=[self.plan(1, "failed")],
             run_id="numeric-attempts",
+            sandbox_mode="danger-full-access",
+            controller_slice_seconds=1200,
         )
         runner._create_or_reconcile_worktree(store)
         worktree = Path(store.state["worktree"])
@@ -3722,23 +3759,10 @@ print(json.dumps(result, sort_keys=True), flush=True)
                     result_path=result_path,
                     log_path=log_path,
                     lock_fd=lock_fd,
+                    sandbox_mode="danger-full-access",
                 )
             self.assertTrue(outcome.timed_out)
             self.assertIsNone(outcome.payload)
-            self.assertEqual(
-                _recovery_decision(
-                    payload=None,
-                    timed_out=True,
-                    previous_signature=None,
-                    automatic_available=True,
-                ),
-                (
-                    True,
-                    "eligible",
-                    "timeout",
-                    "resume the first incomplete task from durable evidence after process timeout",
-                ),
-            )
             pids = [int(line) for line in pid_path.read_text().splitlines()]
             self.assertGreaterEqual(len(pids), 1)
             for pid in pids:
@@ -3832,7 +3856,7 @@ print(json.dumps(result, sort_keys=True), flush=True)
             run_id="spawn-failure",
         )
         self.assertEqual(result["status"], "failed")
-        self.assertEqual(result["error"], "invalid_result")
+        self.assertEqual(result["error"], "controller_spawn_failed")
         self.assertEqual(result["plans"][0]["attempt_count"], 1)
         state = json.loads(
             (self.home / "orchestrator" / "spawn-failure" / "state.json").read_text()
@@ -3894,8 +3918,8 @@ print(json.dumps(result, sort_keys=True), flush=True)
             "cross-task final review",
         ):
             self.assertNotIn(semantic_instruction, prompt)
-        self.assertIn("same normalized verification command", prompt)
-        self.assertIn("workflow_receipt", prompt)
+        self.assertNotIn("same normalized verification command", prompt)
+        self.assertNotIn("workflow_receipt", prompt)
         self.assertLess(len(prompt.encode("utf-8")), 2_400)
 
     def test_usage_filter_keeps_only_bounded_final_totals(self) -> None:
@@ -4121,6 +4145,7 @@ print(json.dumps(result, sort_keys=True), flush=True)
                 result_path=self.root / "timeout-drain-result.json",
                 log_path=timeout_log,
                 lock_fd=0,
+                sandbox_mode="danger-full-access",
             )
 
         self.assertTrue(outcome.timed_out)
@@ -4173,6 +4198,7 @@ print(json.dumps(result, sort_keys=True), flush=True)
                     result_path=self.root / "exception-drain-result.json",
                     log_path=exception_log,
                     lock_fd=0,
+                    sandbox_mode="danger-full-access",
                 )
 
         self.assertEqual(drain_sizes, [2])
@@ -4248,7 +4274,7 @@ print(json.dumps(result, sort_keys=True), flush=True)
             )
             with self.subTest(field=label):
                 self.assertEqual(result["status"], "failed")
-                self.assertEqual(result["error"], "invalid_result")
+                self.assertEqual(result["error"], "controller_result_invalid")
                 self.assertEqual(result["current_plan_index"], 0)
                 self.assertEqual(result["plans"][0]["status"], "failed")
                 self.assertIsNone(result["plans"][0]["accepted_commit"])
@@ -4654,7 +4680,7 @@ print(json.dumps(result, sort_keys=True), flush=True)
         prior_head = first["observed_head"]
         self.assertEqual(launch_plan_ids, ["plan-01", "plan-02"])
         self.assertEqual(len(self.invocations()), 1)
-        resumed = runner.resume(run_id="resume")
+        resumed = runner.resume(run_id="resume", retry_blocked=True)
         self.assertEqual(resumed["status"], "completed")
         self.assertNotEqual(resumed["observed_head"], prior_head)
         self.assertEqual(
@@ -4667,20 +4693,6 @@ print(json.dumps(result, sort_keys=True), flush=True)
         )
 
     def test_failed_result_stops_without_automatic_recovery(self) -> None:
-        self.assertEqual(
-            _recovery_decision(
-                payload={"status": "interrupted"},
-                timed_out=False,
-                previous_signature=None,
-                automatic_available=True,
-            ),
-            (
-                True,
-                "eligible",
-                "status:interrupted",
-                "resume the first incomplete task from durable evidence after child interruption",
-            ),
-        )
         runner = self.runner()
         launch_calls: list[dict[str, object]] = []
         attempts: dict[str, int] = {}
@@ -4799,7 +4811,7 @@ print(json.dumps(result, sort_keys=True), flush=True)
         persisted = StateStore.open(
             self.home / "orchestrator" / "recovery-wiring"
         ).state
-        self.assertEqual(persisted["format_version"], 2)
+        self.assertEqual(persisted["format_version"], 3)
         self.assertEqual(persisted["status"], "failed")
         self.assertEqual(persisted["plans"][1]["status"], "pending")
         self.assertEqual(persisted["plans"][1]["checkpoint_count"], 0)
@@ -4891,15 +4903,6 @@ print(json.dumps(result, sort_keys=True), flush=True)
         self.assertFalse(target.exists())
 
     def test_nonretryable_failure_stops_until_one_explicit_retry(self) -> None:
-        self.assertEqual(
-            _recovery_decision(
-                payload={"status": "failed"},
-                timed_out=False,
-                previous_signature=None,
-                automatic_available=True,
-            ),
-            (False, "not_retryable", "status:failed", ""),
-        )
         runner = self.runner()
         launch_count = 0
 
@@ -5013,7 +5016,7 @@ class _RecoveryRunnerFixture(unittest.TestCase):
         return path
 
     def runner(
-        self, run_id: str, *, accelerated_timeout: float = 0.12,
+        self, run_id: str, *, accelerated_timeout: float = 1.0,
     ) -> SequentialRunner:
         run_root = self.home / "orchestrator" / run_id
         launcher = CodexLauncher(
@@ -5569,7 +5572,7 @@ class EnvelopeRepairTests(_RecoveryRunnerFixture):
                 _, run_root, worktree, original_path, _ = self._failed_result(
                     f"repair-semantic-error-{index}",
                     mutate=mutate,
-                    expected_error="invalid_result",
+                    expected_error="controller_result_invalid",
                 )
                 self.assertIsNone(
                     self._repair(run_root, worktree, original_path)
@@ -6444,7 +6447,7 @@ class ProgressRecoveryIntegrationTests(_RecoveryRunnerFixture):
         run_root = self.home / "orchestrator" / run_id
         self.assertEqual("completed", result["status"])
         self.assertEqual(2, fake_codex_launch_count(run_root))
-        self.assertEqual([3600.0, 3600.0], self.captured_timeouts)
+        self.assertEqual([1200.0, 1200.0], self.captured_timeouts)
         state = StateStore.open(run_root).state["plans"][0]
         self.assertEqual(2, state["controller_launch_count"])
         self.assertEqual(0, state["checkpoint_count"])
@@ -6503,7 +6506,7 @@ class ProgressRecoveryIntegrationTests(_RecoveryRunnerFixture):
         productive_root = self.home / "orchestrator" / productive_id
         self.assertEqual("completed", productive["status"])
         self.assertEqual(2, fake_codex_launch_count(productive_root))
-        self.assertEqual([3600.0, 3600.0], self.captured_timeouts)
+        self.assertEqual([1200.0, 1200.0], self.captured_timeouts)
         productive_events = _runner_events(productive_root)
         self.assertTrue(any(
             event.get("action") == "plan.checkpoint_decided"
@@ -6511,35 +6514,6 @@ class ProgressRecoveryIntegrationTests(_RecoveryRunnerFixture):
             and event.get("reason") == "productive_timeout"
             for event in productive_events
         ))
-
-        self.captured_timeouts.clear()
-        self.invocations.write_text("", encoding="utf-8")
-        blocker_id = "fixture-unchanged-blocker"
-        blocker_runner = self.runner(blocker_id)
-        unavailable = CapabilityObservation(
-            "loopback_bind", "workspace", "unavailable", "permission_denied",
-            "parent_observed", {"host": "127.0.0.1"},
-        )
-        with mock.patch(
-            "cpe_runtime.runner._observe_capabilities",
-            return_value=[unavailable],
-        ):
-            first = blocker_runner.run(
-                workspace=self.repo,
-                specs=[],
-                plans=[self.plan("resume_completed", loopback=True)],
-                run_id=blocker_id,
-            )
-            stopped = blocker_runner.resume(run_id=blocker_id)
-        blocker_root = self.home / "orchestrator" / blocker_id
-        self.assertEqual("blocked", first["status"])
-        self.assertEqual("blocked", stopped["status"])
-        self.assertEqual(0, fake_codex_launch_count(blocker_root))
-        self.assertEqual([3600.0], self.captured_timeouts)
-        self.assertEqual(
-            "resume.stopped_unchanged_blocker",
-            _runner_events(blocker_root)[-1]["action"],
-        )
 
         for name in ("readmates-comparative.json", "gasstation-comparative.json"):
             payload = json.loads((fixtures / name).read_text(encoding="utf-8"))
@@ -6707,7 +6681,7 @@ class CheckpointCrashReconciliationTests(_RecoveryRunnerFixture):
         self.assertEqual("completed", completed["status"])
         plan = StateStore.open(run_root).state["plans"][0]
         self.assertIsNone(plan["pending_checkpoint_decision"])
-        self.assertEqual(2, plan["checkpoint_count"])
+        self.assertEqual(0, plan["checkpoint_count"])
         decisions = [
             event for event in _runner_events(run_root)
             if event.get("action") == "plan.checkpoint_decided"
@@ -6773,7 +6747,7 @@ class Format3StateValidationTests(unittest.TestCase):
                 self.assertEqual(before, state_path.read_bytes())
 
 
-class Format2RecoveryStateValidationTests(_RecoveryRunnerFixture):
+class Format3RecoveryStateValidationTests(_RecoveryRunnerFixture):
     def _active_store(self, run_id: str) -> StateStore:
         source_head = git(self.repo, "rev-parse", "HEAD")
         store = StateStore.create(
@@ -6819,7 +6793,7 @@ class Format2RecoveryStateValidationTests(_RecoveryRunnerFixture):
         pending.update(changes)
         return pending
 
-    def test_format2_ledger_progress_uses_only_canonical_content_digests(self) -> None:
+    def test_format3_ledger_progress_uses_only_canonical_content_digests(self) -> None:
         store = self._active_store("state-ledger-digests")
         plan = store.state["plans"][0]
         plan["execution_ledger_event_digests"] = ["d" * 64]
@@ -6851,11 +6825,6 @@ class Format2RecoveryStateValidationTests(_RecoveryRunnerFixture):
             {"previous_progress_fingerprint": "d" * 64},
             {"head": "e" * 40},
             {"progress_fingerprint": "a" * 64},
-            {
-                "decision": "stop_stalled",
-                "reason": "no_progress_timeout",
-                "progress_fingerprint": "a" * 64,
-            },
             {
                 "decision": "stop_budget",
                 "reason": "launch_budget_exhausted",
@@ -7044,7 +7013,10 @@ class FullActionWalReconciliationTests(_RecoveryRunnerFixture):
         ]))
         plan = reconciled_store.state["plans"][0]
         self.assertIsNone(plan["pending_checkpoint_decision"])
-        self.assertEqual(1, plan["checkpoint_count"])
+        self.assertEqual(
+            1 if decision == "checkpoint" else 0,
+            plan["checkpoint_count"],
+        )
         decisions = [
             event for event in _runner_events(run_root)
             if event.get("action") == "plan.checkpoint_decided"
@@ -7054,7 +7026,6 @@ class FullActionWalReconciliationTests(_RecoveryRunnerFixture):
         secondary_action = {
             "checkpoint": "plan.checkpointed",
             "fail": "plan.failed",
-            "block": "plan.blocked",
             "stop_budget": "plan.recovery_stopped",
         }[decision]
         secondary = [
@@ -7064,11 +7035,10 @@ class FullActionWalReconciliationTests(_RecoveryRunnerFixture):
         self.assertEqual(1, len(secondary))
         self.assertEqual(decisions[0]["decision_id"], secondary[0]["decision_id"])
 
-    def test_checkpoint_fail_block_and_budget_stop_apply_before_retry_validation(self) -> None:
+    def test_checkpoint_fail_and_budget_stop_apply_before_retry_validation(self) -> None:
         cases = (
             ("interrupted", "checkpoint", "checkpointed", "wal-checkpoint", None),
             ("failed", "fail", "failed", "wal-fail", None),
-            ("blocked", "block", "blocked", "wal-block", None),
             (
                 "interrupted",
                 "stop_budget",
@@ -7162,15 +7132,16 @@ class FullActionWalReconciliationTests(_RecoveryRunnerFixture):
         ]
         self.assertEqual(1, len(recovery_events))
 
-    def test_block_reuses_durable_probe_event_after_secondary_event_crash(self) -> None:
-        run_id = "wal-block-secondary-event"
+    def test_child_blocker_state_survives_secondary_event_crash(self) -> None:
+        run_id = "child-blocker-secondary-event"
         runner = self.runner(run_id)
+        plan = self.plan("blocked", loopback=True)
+        plan.write_text(
+            "scenario:blocked\nblocker-resource:loopback_bind\n",
+            encoding="utf-8",
+        )
         unavailable = CapabilityObservation(
             "loopback_bind", "workspace", "unavailable", "permission_denied",
-            "parent_observed", {"host": "127.0.0.1"},
-        )
-        available = CapabilityObservation(
-            "loopback_bind", "workspace", "available", "bound",
             "parent_observed", {"host": "127.0.0.1"},
         )
         original = StateStore._append_event_bytes
@@ -7181,46 +7152,40 @@ class FullActionWalReconciliationTests(_RecoveryRunnerFixture):
             original(store, encoded)
             if b'"action":"plan.blocked"' in encoded and not injected:
                 injected = True
-                raise RuntimeError("injected block secondary event crash")
+                raise RuntimeError("injected blocker event crash")
 
         with (
             mock.patch(
-                "cpe_runtime.runner._observe_capabilities",
-                return_value=[unavailable],
+                "cpe_runtime.runner.observe_loopback_bind",
+                return_value=unavailable,
             ),
             mock.patch.object(StateStore, "_append_event_bytes", new=crash),
-            self.assertRaisesRegex(RuntimeError, "injected block secondary event crash"),
+            self.assertRaisesRegex(RuntimeError, "injected blocker event crash"),
         ):
             runner.run(
                 workspace=self.repo,
                 specs=[],
-                plans=[self.plan("blocked", loopback=True)],
+                plans=[plan],
                 run_id=run_id,
             )
         run_root = self.home / "orchestrator" / run_id
 
-        with mock.patch(
-            "cpe_runtime.runner._observe_capabilities",
-            return_value=[available],
+        with self.assertRaisesRegex(
+            ValueError, "retry-failed requires a failed run",
         ):
-            with self.assertRaisesRegex(
-                ValueError, "retry-failed requires a failed run",
-            ):
-                runner.resume(run_id=run_id, retry_failed=True)
+            runner.resume(run_id=run_id, retry_failed=True)
 
-        self.assertEqual("blocked", StateStore.open(run_root).state["status"])
+        state = StateStore.open(run_root).state
+        self.assertEqual("blocked", state["status"])
         self.assertEqual(1, len([
             event for event in _runner_events(run_root)
             if event.get("action") == "plan.attempt_started"
         ]))
-        plan = StateStore.open(run_root).state["plans"][0]
-        self.assertIsNotNone(plan["environment_fingerprint"])
-        events = [
+        self.assertIsNotNone(state["plans"][0]["environment_fingerprint"])
+        self.assertEqual(1, len([
             event for event in _runner_events(run_root)
             if event.get("action") == "plan.blocked"
-        ]
-        self.assertEqual(1, len(events))
-        self.assertIs(events[0]["parent_confirmed"], True)
+        ]))
 
 
 class BranchHandoffTests(_RecoveryRunnerFixture):
@@ -7447,8 +7412,7 @@ class ReconciledResumeDispatchTests(_RecoveryRunnerFixture):
     def test_retry_failed_is_rejected_for_reconciled_nonfailed_actions(self) -> None:
         cases = (
             ("interrupted", "checkpoint", 1),
-            ("blocked", "block", 1),
-            ("timeout_without_progress", "stop_stalled", 2),
+            ("timeout_without_progress", "stop_stalled", 1),
         )
         for scenario, decision, attempts in cases:
             with self.subTest(decision=decision):
@@ -7567,7 +7531,7 @@ class FinishWalAndEvidenceTests(_RecoveryRunnerFixture):
         plan = state["plans"][0]
         self.assertIsNone(plan["pending_checkpoint_decision"])
         self.assertEqual(1, plan["attempt_count"])
-        self.assertEqual(1, plan["checkpoint_count"])
+        self.assertEqual(0, plan["checkpoint_count"])
         decisions = [
             event for event in _runner_events(run_root)
             if event.get("action") == "plan.checkpoint_decided"
