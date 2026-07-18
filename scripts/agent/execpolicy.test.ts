@@ -18,9 +18,9 @@ test("destructive policy matrix", async () => {
   expect(await decision(["git", "branch", "-D", "feature"])).toBe("prompt");
   expect(await decision(["git", "worktree", "remove", "/tmp/wt"]))
     .toBe("prompt");
-  expect(await decision(["git", "status", "--short"])).toBeUndefined();
+  expect(await decision(["git", "status", "--short"])).toBe("prompt");
   expect(await decision(["git", "worktree", "list", "--porcelain"]))
-    .toBeUndefined();
+    .toBe("prompt");
 });
 
 test("force-with-lease requires confirmation", async () => {
@@ -41,4 +41,14 @@ test("destructive option spellings cannot bypass the policy", async () => {
     .toBe("prompt");
   expect(await decision(["git", "push", "origin", "main", "--force-with-lease=refs/heads/main"]))
     .toBe("prompt");
+});
+
+test("global Git options cannot bypass the prompt fallback", async () => {
+  expect(await decision(["git", "-C", "/tmp", "push", "--force", "origin", "main"]))
+    .toBe("prompt");
+  expect(await decision(["git", "--git-dir=/tmp/example.git", "push", "--force", "origin", "main"]))
+    .toBe("prompt");
+  expect(await decision(["git", "--work-tree=/tmp", "push", "-f", "origin", "main"]))
+    .toBe("prompt");
+  expect(await decision(["git", "log", "-1", "--oneline"])).toBe("prompt");
 });
