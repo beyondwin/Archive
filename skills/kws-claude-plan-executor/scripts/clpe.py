@@ -323,3 +323,45 @@ def snapshot_inputs(rdir, plan, specs):
         shutil.copy2(spec, copy)
         spec_copies.append(copy)
     return plan_copy, spec_copies
+
+
+@dataclass
+class LaunchOutcome:
+    kind: str  # "exited" | "timed_out" | "spawn_failed"
+    exit_code: int | None
+    detail: str
+
+
+def _kill_group(child, signum):
+    try:
+        os.killpg(os.getpgid(child.pid), signum)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
+def launch(argv, cwd, env, timeout_seconds, stream_path):
+    try:
+        stream = open(stream_path, "w", encoding="utf-8")
+    except OSError as error:
+        return LaunchOutcome("spawn_failed", None, str(error))
+    with stream:
+        try:
+            child = subprocess.Popen(
+                argv, cwd=str(cwd), env=env, stdout=stream,
+                stderr=subprocess.PIPE, text=True, start_new_session=True,
+            )
+        except OSError as error:
+            return LaunchOutcome("spawn_failed", None, str(error))
+        try:
+            _, stderr = child.communicate(timeout=timeout_seconds)
+            return LaunchOutcome("exited", child.returncode,
+                                 (stderr or "").strip()[-2000:])
+        except subprocess.TimeoutExpired:
+            _kill_group(child, signal.SIGTERM)
+            try:
+                child.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                _kill_group(child, signal.SIGKILL)
+                child.wait()
+            return LaunchOutcome("timed_out", None,
+                                 f"timed out after {timeout_seconds}s")
