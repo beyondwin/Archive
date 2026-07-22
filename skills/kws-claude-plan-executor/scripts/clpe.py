@@ -41,6 +41,7 @@ EXIT_RESUMABLE = 3
 
 PROVIDER_BLOCKED = {
     "rate_limit": "provider_usage_blocked",
+    "api_error": "provider_unavailable",  # INFERRED: non-null result.api_error_status; exact mapping unverified
     "overloaded": "provider_unavailable",
     "server_error": "provider_unavailable",
     "authentication_failed": "provider_auth_blocked",
@@ -105,10 +106,21 @@ def parse_stream(stream_path):
             continue
         if session_id is None and isinstance(event.get("session_id"), str):
             session_id = event["session_id"]
-        if event.get("type") == "system" and isinstance(event.get("error"), str):
-            categories.append(event["error"])
+        # Real CLI (v2.1.206): rate limiting surfaces as a rate_limit_event whose
+        # rate_limit_info.status is "allowed" on a healthy call. Key on status,
+        # NOT overageStatus (which is "rejected" even on allowed calls).
+        # INFERRED: the exact non-"allowed" status strings are unverified.
+        if event.get("type") == "rate_limit_event":
+            info = event.get("rate_limit_info")
+            if (isinstance(info, dict) and isinstance(info.get("status"), str)
+                    and info["status"] != "allowed"):
+                categories.append("rate_limit")
         if event.get("type") == "result":
             result_event = event
+            # INFERRED: a non-null api_error_status signals a provider-side API
+            # error; exact values and the usage-vs-auth distinction are unverified.
+            if isinstance(event.get("api_error_status"), str) and event["api_error_status"]:
+                categories.append("api_error")
     return session_id, result_event, categories
 
 
