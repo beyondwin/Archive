@@ -322,5 +322,38 @@ class StateStoreTest(unittest.TestCase):
         self.assertEqual(plan_copy.read_text(encoding="utf-8"), "# p\n")
 
 
+class LaunchTest(unittest.TestCase):
+    def stream_path(self):
+        handle = tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False)
+        handle.close()
+        self.addCleanup(Path(handle.name).unlink)
+        return Path(handle.name)
+
+    def test_exited_captures_stdout(self):
+        path = self.stream_path()
+        outcome = clpe.launch(
+            [sys.executable, "-c", "print('{\"type\":\"result\"}')"],
+            cwd=".", env=dict(os.environ), timeout_seconds=30, stream_path=path,
+        )
+        self.assertEqual((outcome.kind, outcome.exit_code), ("exited", 0))
+        self.assertIn('"result"', path.read_text(encoding="utf-8"))
+
+    def test_timeout_kills_process_group(self):
+        path = self.stream_path()
+        outcome = clpe.launch(
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+            cwd=".", env=dict(os.environ), timeout_seconds=1, stream_path=path,
+        )
+        self.assertEqual(outcome.kind, "timed_out")
+
+    def test_spawn_failure(self):
+        outcome = clpe.launch(
+            ["/nonexistent/claude-binary"],
+            cwd=".", env=dict(os.environ), timeout_seconds=5,
+            stream_path=self.stream_path(),
+        )
+        self.assertEqual(outcome.kind, "spawn_failed")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
