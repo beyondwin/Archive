@@ -1,7 +1,7 @@
 # KWS Claude Plan Executor (CLPE)
 
-Version 1.0.0. A ~400-line launcher for approved Superpowers implementation
-plans on the `claude` CLI. Ownership boundary (same as CPE): CLPE maintains
+Version 1.0.0. A thin (~550-line) launcher for approved Superpowers
+implementation plans on the `claude` CLI. Ownership boundary (same as CPE): CLPE maintains
 one execution environment and verifies submitted facts; the child session's
 Superpowers owns plan interpretation, implementation, tests, reviews,
 subagents, and commits.
