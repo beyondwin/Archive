@@ -491,6 +491,30 @@ def cmd_run(args):
     return execute_cycle(record, resume=False)
 
 
+def cmd_resume(args):
+    record = load_run(args.run_id)
+    if record is None:
+        return _halt("unknown_run", args.run_id, EXIT_FAILED)
+    if record["status"] == "completed":
+        print(json.dumps({"noop": "already_completed",
+                          "run_id": args.run_id}))
+        return EXIT_COMPLETED
+    if not record.get("session_id"):
+        return _halt("no_session_to_resume", "start a new run", EXIT_FAILED)
+    if record["launches"] >= MAX_LAUNCHES:
+        return _halt("launch_budget_exhausted",
+                     f"max {MAX_LAUNCHES} launches", EXIT_BLOCKED)
+    if args.timeout_seconds:
+        if not _timeout_floor() <= args.timeout_seconds <= TIMEOUT_CEILING:
+            return _halt(
+                "invalid_timeout",
+                f"{args.timeout_seconds} not in "
+                f"[{_timeout_floor()}, {TIMEOUT_CEILING}]",
+                EXIT_FAILED)
+        record["timeout_seconds"] = args.timeout_seconds
+    return execute_cycle(record, resume=True)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="clpe", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -502,8 +526,14 @@ def main(argv=None):
     run_parser.add_argument("--max-turns", type=int, dest="max_turns")
     run_parser.add_argument("--timeout-seconds", type=int,
                             dest="timeout_seconds")
+    resume_parser = sub.add_parser("resume", help="resume an interrupted run")
+    resume_parser.add_argument("--run-id", required=True, dest="run_id")
+    resume_parser.add_argument("--timeout-seconds", type=int,
+                               dest="timeout_seconds")
     args = parser.parse_args(argv)
-    return cmd_run(args)
+    if args.command == "run":
+        return cmd_run(args)
+    return cmd_resume(args)
 
 
 if __name__ == "__main__":
