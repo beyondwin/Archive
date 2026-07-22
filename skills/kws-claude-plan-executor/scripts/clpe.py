@@ -82,3 +82,96 @@ def validate_result_shape(obj):
         ):
             errors.append("blocked result requires blocker.kind and blocker.detail")
     return errors
+
+
+def parse_stream(stream_path):
+    """Extract (session_id, last result event, error categories) from stream-json."""
+    session_id = None
+    result_event = None
+    categories = []
+    try:
+        text = Path(stream_path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None, None, []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        if session_id is None and isinstance(event.get("session_id"), str):
+            session_id = event["session_id"]
+        if event.get("type") == "system" and isinstance(event.get("error"), str):
+            categories.append(event["error"])
+        if event.get("type") == "result":
+            result_event = event
+    return session_id, result_event, categories
+
+
+@dataclass
+class Observation:
+    launch_kind: str  # "exited" | "timed_out" | "spawn_failed"
+    result_event: dict | None
+    session_id: str | None
+    error_categories: list
+    gate_failures: list
+    shape_errors: list
+
+
+@dataclass
+class Verdict:
+    status: str  # completed | failed | blocked | resumable
+    exit_code: int
+    detail: str
+    resumable: bool
+
+
+def classify(obs):
+    """Spec §7 classification table. Fail closed on anything unexpected."""
+    if obs.launch_kind == "spawn_failed":
+        return Verdict("failed", EXIT_FAILED, "controller_spawn_failed", False)
+    if obs.launch_kind == "timed_out":
+        if obs.session_id:
+            return Verdict("resumable", EXIT_RESUMABLE, "timed_out", True)
+        return Verdict("failed", EXIT_FAILED, "timed_out_without_session", False)
+    provider = next(
+        (PROVIDER_BLOCKED[c] for c in obs.error_categories if c in PROVIDER_BLOCKED),
+        None,
+    )
+    resumable = obs.session_id is not None
+    event = obs.result_event
+    if event is None:
+        if provider:
+            return Verdict("blocked", EXIT_BLOCKED, provider, False)
+        return Verdict("failed", EXIT_FAILED,
+                       "result_invalid: no result event", resumable)
+    subtype = event.get("subtype")
+    if subtype in ("error_max_turns", "error_max_budget_usd"):
+        return Verdict("resumable", EXIT_RESUMABLE, str(subtype), resumable)
+    if subtype != "success":
+        if provider:
+            return Verdict("blocked", EXIT_BLOCKED, provider, False)
+        return Verdict("failed", EXIT_FAILED,
+                       f"result_invalid: subtype={subtype!r}", resumable)
+    structured = event.get("structured_output")
+    if not structured:
+        return Verdict("failed", EXIT_FAILED,
+                       "result_invalid: success without structured_output", resumable)
+    if obs.shape_errors:
+        return Verdict("failed", EXIT_FAILED,
+                       "result_invalid: " + "; ".join(obs.shape_errors), resumable)
+    status = structured.get("status")
+    if status == "blocked":
+        return Verdict("blocked", EXIT_BLOCKED,
+                       structured["blocker"]["kind"], False)
+    if status == "failed":
+        return Verdict("failed", EXIT_FAILED, "child_reported_failed", resumable)
+    if obs.gate_failures:
+        return Verdict("failed", EXIT_FAILED,
+                       "completion_gate_failed: " + "; ".join(obs.gate_failures),
+                       resumable)
+    return Verdict("completed", EXIT_COMPLETED, "completed", False)
