@@ -13,8 +13,10 @@ CLPE maintains one execution environment and verifies submitted facts. The
 child Claude session's Superpowers decides what work, verification, and
 parallelism are correct — including whether to dispatch its own subagents.
 CLPE never compiles a plan, selects a task, computes review tiers, or judges
-quality. It replaced the v3 multi-agent orchestrator (archived at
-`archive/kws-claude-multi-agent-executor-v3/`).
+quality. It supersedes the v3 multi-agent orchestrator, which for now remains
+at `skills/kws-claude-multi-agent-executor/` (its archival to `archive/`, along
+with migrating the `scripts/agent` verification tooling that references it, is a
+pending follow-up).
 
 ## Commands
 

@@ -6,7 +6,8 @@
 
 | 스킬 | 용도 |
 |------|------|
-| [`kws-claude-multi-agent-executor`](./kws-claude-multi-agent-executor/) | 구현 계획 + 디자인 스펙을 자율 실행. Opus가 오케스트레이션, Sonnet 서브에이전트가 구현/리뷰/검증/문서화. |
+| [`kws-claude-plan-executor`](./kws-claude-plan-executor/) | 승인된 Superpowers 구현 계획을 헤드리스 자식 Claude 세션(`claude -p`)으로 자율 실행하는 얇은 런처. fail-closed 완료 검증 + 세션 위임 재개. v3 오케스트레이터를 대체할 예정이며, 현재 `kws-claude-multi-agent-executor`는 그대로 유지(아카이브는 후속 작업). |
+| [`kws-claude-multi-agent-executor`](./kws-claude-multi-agent-executor/) | (v3, 대체 예정) 구현 계획 + 디자인 스펙을 자율 실행. Opus가 오케스트레이션, Sonnet 서브에이전트가 구현/리뷰/검증/문서화. `kws-claude-plan-executor`로 대체 중; agent 검증 툴링 마이그레이션 후 아카이브 예정. |
 | [`kws-codex-plan-executor`](./kws-codex-plan-executor/) | 2.1 strict-thin 계약: 승인된 Superpowers 구현 계획을 한 worktree에서 고정 순서로 실행·재개하는 소형 Codex 실행기. |
 | [`waygent`](./waygent/) | 활성 제품 런타임 스킬. 자연어 실행, 상태, 이벤트, 검사, 설명, 재개, 적용 요청을 Waygent CLI로 변환합니다. KWS executor 스킬은 별도 비제품 executor 계약으로 유지됩니다. |
 
@@ -44,6 +45,8 @@ CPE는 Waygent 제품 런타임이 아니며 task mapping, 별도 오케스트�
 ### Claude Code (`~/.claude/skills/`)
 
 ```bash
+ln -sfn "$ARCHIVE_REPO/skills/kws-claude-plan-executor" \
+        ~/.claude/skills/kws-claude-plan-executor
 ln -sfn "$ARCHIVE_REPO/skills/kws-claude-multi-agent-executor" \
         ~/.claude/skills/kws-claude-multi-agent-executor
 ln -sfn "$ARCHIVE_REPO/skills/kws-codex-plan-executor" \
@@ -55,6 +58,8 @@ ln -sfn "$ARCHIVE_REPO/skills/waygent" \
 ### Codex (`~/.codex/skills/`)
 
 ```bash
+ln -sfn "$ARCHIVE_REPO/skills/kws-claude-plan-executor" \
+        ~/.codex/skills/kws-claude-plan-executor
 ln -sfn "$ARCHIVE_REPO/skills/kws-claude-multi-agent-executor" \
         ~/.codex/skills/kws-claude-multi-agent-executor
 ln -sfn "$ARCHIVE_REPO/skills/kws-codex-plan-executor" \
