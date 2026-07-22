@@ -94,12 +94,13 @@ python3 scripts/clpe.py inspect --run-id RUN_ID
    제거한다. 미제거 시 중첩 세션으로 분류되어 `--resume`·히스토리에서
    제외된다 (GitHub anthropics/claude-agent-sdk-python#573,
    claude-code#32618). CPE 와 동일하게 `*_API_KEY`, `*_TOKEN`,
-   `*_SECRET` 패턴의 시크릿 변수도 제거한다.
+   `*_SECRET` 패턴의 시크릿 변수도 제거하되, `ANTHROPIC_` 접두 변수는
+   예외로 보존한다(API 키 사용자의 자식 인증이 깨지면 안 됨).
 4. 자식 런칭 — 프로세스 그룹 분리(`start_new_session=True`), cwd=워크트리:
 
 ```
 claude -p <prompt> \
-  --output-format json \
+  --output-format stream-json --verbose \
   --json-schema <templates/plan-result.schema.json> \
   --permission-mode bypassPermissions \
   --disallowedTools "Bash(git push*)" "Bash(git merge*)" \
@@ -107,13 +108,18 @@ claude -p <prompt> \
   [--model X] [--max-turns N]
 ```
 
-  stdout 을 `~/.claude/clpe/<run-id>/envelope.json` 으로 캡처한다.
-  `--bare` 는 사용하지 않는다 — 자식이 Superpowers 플러그인/유저 스킬을
-  자동 로드해야 한다.
+  stdout(stream-json 라인들)을 `~/.claude/clpe/<run-id>/stream-NN.jsonl`
+  로 캡처한다. **`json` 이 아니라 `stream-json` 을 쓰는 이유:** 최종 JSON
+  봉투는 프로세스 종료 시에만 출력되므로, 타임아웃 SIGTERM 시
+  `session_id` 를 잃어 §8 의 재개가 불가능해진다. stream-json 은 첫
+  `system/init` 이벤트에서 `session_id` 를 조기 확보한다. "봉투" 는 이후
+  스트림의 마지막 `type=="result"` 이벤트를 뜻한다. `--bare` 는 사용하지
+  않는다 — 자식이 Superpowers 플러그인/유저 스킬을 자동 로드해야 한다.
 5. wall-clock 타임아웃: `claude -p` 에는 전체 타임아웃 플래그가 없으므로
    CLPE 가 경과 시간 후 프로세스 그룹에 SIGTERM → grace → SIGKILL.
-6. 봉투 파싱 → run.json 에 `session_id`, `subtype`, `total_cost_usd`,
-   상태를 기록.
+   타임아웃되어도 stream 에서 이미 확보한 `session_id` 로 resume 가능.
+6. 봉투(마지막 result 이벤트) 파싱 → run.json 에 `session_id`, `subtype`,
+   `total_cost_usd`, 상태를 기록.
 
 **자식 프롬프트** 는 CPE 와 같은 선언적 사실 나열 + 위임 지시 + 금지
 prose 로 구성한다:
