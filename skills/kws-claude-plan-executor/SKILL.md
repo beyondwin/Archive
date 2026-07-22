@@ -33,8 +33,9 @@ python3 scripts/clpe.py inspect --run-id RUN_ID
 0, `failed` 1, `blocked` 2, `resumable` 3. State lives under
 `~/.claude/clpe/<run-id>/` (override the prefix with `CLPE_HOME`); the
 worktree is `~/.claude/worktrees/<run-id>/`, on branch `clpe/<run-id>`.
-Nothing is written inside the source repository. The worktree is never
-auto-deleted.
+No working-tree files are written inside the source repository — the only
+additions to it are the `clpe/<run-id>` branch ref and worktree registration
+in its `.git`. The worktree is never auto-deleted.
 
 ## Launch contract
 
