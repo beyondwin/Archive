@@ -243,3 +243,33 @@ def build_argv(prompt, model=None, max_turns=None, resume_session=None):
     if max_turns:
         argv.extend(["--max-turns", str(max_turns)])
     return argv
+
+
+def git(args, cwd):
+    return subprocess.run(["git", *args], cwd=str(cwd),
+                          capture_output=True, text=True)
+
+
+def completion_gates(structured, worktree, starting_commit):
+    """Spec §6 gates 3-6. Returns [] when the completion may be accepted."""
+    status = git(["status", "--porcelain"], worktree)
+    if status.returncode != 0:
+        return [f"git status failed: {status.stderr.strip()}"]
+    failures = []
+    if status.stdout.strip():
+        failures.append("worktree not clean")
+    head = git(["rev-parse", "HEAD"], worktree)
+    if head.returncode != 0:
+        failures.append("git rev-parse HEAD failed")
+        return failures
+    observed = head.stdout.strip()
+    reported = structured.get("head_commit") or ""
+    if not observed.startswith(reported):
+        failures.append(f"head mismatch: reported {reported}, observed {observed}")
+    ancestor = git(["merge-base", "--is-ancestor", starting_commit, "HEAD"],
+                   worktree)
+    if ancestor.returncode != 0:
+        failures.append("starting commit is not an ancestor of HEAD")
+    if structured.get("open_findings"):
+        failures.append("open_findings not empty")
+    return failures
