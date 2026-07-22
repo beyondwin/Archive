@@ -227,21 +227,18 @@ RESUME_PROMPT = (
 )
 
 
-def build_argv(prompt, model=None, max_turns=None, resume_session=None):
+def build_argv(prompt, model=None, resume_session=None):
     argv = [
         "claude", "-p", prompt,
         "--output-format", "stream-json", "--verbose",
-        "--json-schema", str(SCHEMA_PATH),
+        "--json-schema", SCHEMA_PATH.read_text(encoding="utf-8"),
         "--permission-mode", "bypassPermissions",
+        "--disallowedTools", *DENY_TOOLS,
     ]
-    for rule in DENY_TOOLS:
-        argv.extend(["--disallowedTools", rule])
     if resume_session:
         argv.extend(["--resume", resume_session])
     if model:
         argv.extend(["--model", model])
-    if max_turns:
-        argv.extend(["--max-turns", str(max_turns)])
     return argv
 
 
@@ -387,7 +384,6 @@ def execute_cycle(record, resume):
                               record["branch"])
         resume_session = None
     argv = build_argv(prompt, model=record.get("model"),
-                      max_turns=record.get("max_turns"),
                       resume_session=resume_session)
     stream_path = run_dir(record["run_id"]) / f"stream-{record['launches']:02d}.jsonl"
     outcome = launch(argv, cwd=record["worktree"],
@@ -477,7 +473,6 @@ def cmd_run(args):
         "plan": str(plan_copy),
         "specs": [str(copy) for copy in spec_copies],
         "model": args.model,
-        "max_turns": args.max_turns,
         "timeout_seconds": timeout_seconds,
         "launches": 0,
         "session_id": None,
@@ -531,7 +526,6 @@ def main(argv=None):
     run_parser.add_argument("--plan", required=True)
     run_parser.add_argument("--workspace", required=True)
     run_parser.add_argument("--model")
-    run_parser.add_argument("--max-turns", type=int, dest="max_turns")
     run_parser.add_argument("--timeout-seconds", type=int,
                             dest="timeout_seconds")
     resume_parser = sub.add_parser("resume", help="resume an interrupted run")

@@ -40,6 +40,14 @@ def main():
                 "env_has_claudecode": "CLAUDECODE" in os.environ,
                 "env_has_entrypoint": "CLAUDE_CODE_ENTRYPOINT" in os.environ,
             }) + "\n")
+    if "--json-schema" in argv:
+        schema_value = argv[argv.index("--json-schema") + 1]
+        try:
+            json.loads(schema_value)
+        except (ValueError, TypeError):
+            print(f"Error: --json-schema is not valid JSON: {schema_value[:40]}",
+                  file=sys.stderr)
+            return 1
     if scenario == "invalid":
         print("this is not stream json")
         return 1
