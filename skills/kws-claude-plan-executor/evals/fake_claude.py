@@ -82,13 +82,17 @@ def main():
     elif scenario == "max_turns":
         result["subtype"] = "error_max_turns"
     elif scenario == "rate_limit":
-        emit({"type": "system", "subtype": "api_retry",
-              "session_id": "sess-0001", "error": "rate_limit"})
+        # INFERRED shape: real CLI emits a rate_limit_event; the exact non-"allowed"
+        # status string is unverified against a real rate-limit block.
+        emit({"type": "rate_limit_event", "session_id": "sess-0001",
+              "rate_limit_info": {"status": "rejected"}})
         result["subtype"] = "error_during_execution"
     elif scenario == "auth":
-        emit({"type": "system", "subtype": "api_retry",
-              "session_id": "sess-0001", "error": "authentication_failed"})
+        # INFERRED shape: real CLI surfaces API errors on the result event's
+        # api_error_status; exact value + usage-vs-auth distinction unverified.
         result["subtype"] = "error_during_execution"
+        result["api_error_status"] = "Unauthorized"
+        result["is_error"] = True
     elif scenario == "success_no_structured":
         pass
     else:

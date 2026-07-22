@@ -78,11 +78,15 @@ class ParseStreamTest(unittest.TestCase):
         return Path(handle.name)
 
     def test_extracts_session_result_and_categories(self):
+        """Structural: drives the NEW inferred shape (rate_limit_event, not
+        system/error). Verifies parse_stream harvests a non-"allowed"
+        rate_limit_event as a 'rate_limit' category; does NOT assert the
+        status string is a verified real-CLI block value."""
         path = self.write_stream([
             json.dumps({"type": "system", "subtype": "init", "session_id": "s1"}),
             "not json at all",
-            json.dumps({"type": "system", "subtype": "api_retry",
-                        "session_id": "s1", "error": "rate_limit"}),
+            json.dumps({"type": "rate_limit_event", "session_id": "s1",
+                        "rate_limit_info": {"status": "rejected"}}),
             json.dumps({"type": "result", "subtype": "success",
                         "session_id": "s1", "total_cost_usd": 0.01}),
         ])
@@ -90,6 +94,28 @@ class ParseStreamTest(unittest.TestCase):
         self.assertEqual(session_id, "s1")
         self.assertEqual(result_event["subtype"], "success")
         self.assertEqual(categories, ["rate_limit"])
+
+    def test_api_error_status_harvested_as_category(self):
+        """Structural: a non-null result.api_error_status (INFERRED shape) yields
+        an 'api_error' category. Does NOT assert this is a verified real value."""
+        path = self.write_stream([
+            json.dumps({"type": "result", "subtype": "error_during_execution",
+                        "session_id": "s1", "api_error_status": "Overloaded"}),
+        ])
+        _, _, categories = clpe.parse_stream(path)
+        self.assertIn("api_error", categories)
+
+    def test_allowed_rate_limit_event_not_harvested(self):
+        """A healthy rate_limit_event (status 'allowed') must NOT be harvested,
+        even though overageStatus is 'rejected' — we key on status, not overage."""
+        path = self.write_stream([
+            json.dumps({"type": "rate_limit_event", "session_id": "s1",
+                        "rate_limit_info": {"status": "allowed",
+                                            "overageStatus": "rejected"}}),
+            json.dumps({"type": "result", "subtype": "success", "session_id": "s1"}),
+        ])
+        _, _, categories = clpe.parse_stream(path)
+        self.assertEqual(categories, [])
 
     def test_missing_file_and_garbage_yield_nothing(self):
         session_id, result_event, categories = clpe.parse_stream(
