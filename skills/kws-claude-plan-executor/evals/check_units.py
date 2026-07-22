@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -64,6 +65,138 @@ class ResultShapeTest(unittest.TestCase):
         self.assertTrue(any("blocker" in e for e in errors))
         record["blocker"] = {"kind": "env", "detail": "docker missing"}
         self.assertEqual(clpe.validate_result_shape(record), [])
+
+
+class ParseStreamTest(unittest.TestCase):
+    def write_stream(self, lines):
+        handle = tempfile.NamedTemporaryFile(
+            "w", suffix=".jsonl", delete=False, encoding="utf-8"
+        )
+        handle.write("\n".join(lines) + "\n")
+        handle.close()
+        self.addCleanup(Path(handle.name).unlink)
+        return Path(handle.name)
+
+    def test_extracts_session_result_and_categories(self):
+        path = self.write_stream([
+            json.dumps({"type": "system", "subtype": "init", "session_id": "s1"}),
+            "not json at all",
+            json.dumps({"type": "system", "subtype": "api_retry",
+                        "session_id": "s1", "error": "rate_limit"}),
+            json.dumps({"type": "result", "subtype": "success",
+                        "session_id": "s1", "total_cost_usd": 0.01}),
+        ])
+        session_id, result_event, categories = clpe.parse_stream(path)
+        self.assertEqual(session_id, "s1")
+        self.assertEqual(result_event["subtype"], "success")
+        self.assertEqual(categories, ["rate_limit"])
+
+    def test_missing_file_and_garbage_yield_nothing(self):
+        session_id, result_event, categories = clpe.parse_stream(
+            Path("/nonexistent/stream.jsonl")
+        )
+        self.assertIsNone(session_id)
+        self.assertIsNone(result_event)
+        self.assertEqual(categories, [])
+        path = self.write_stream(["garbage", "[1,2]"])
+        session_id, result_event, categories = clpe.parse_stream(path)
+        self.assertIsNone(session_id)
+        self.assertIsNone(result_event)
+
+
+class ClassifyTest(unittest.TestCase):
+    def observe(self, **overrides):
+        base = dict(
+            launch_kind="exited",
+            result_event={"type": "result", "subtype": "success",
+                          "structured_output": {"status": "completed"}},
+            session_id="s1",
+            error_categories=[],
+            gate_failures=[],
+            shape_errors=[],
+        )
+        base.update(overrides)
+        return clpe.Observation(**base)
+
+    def test_spawn_failed(self):
+        verdict = clpe.classify(self.observe(launch_kind="spawn_failed",
+                                             result_event=None, session_id=None))
+        self.assertEqual((verdict.status, verdict.exit_code),
+                         ("failed", clpe.EXIT_FAILED))
+
+    def test_timed_out_with_session_is_resumable(self):
+        verdict = clpe.classify(self.observe(launch_kind="timed_out",
+                                             result_event=None))
+        self.assertEqual((verdict.status, verdict.exit_code, verdict.resumable),
+                         ("resumable", clpe.EXIT_RESUMABLE, True))
+
+    def test_timed_out_without_session_fails(self):
+        verdict = clpe.classify(self.observe(launch_kind="timed_out",
+                                             result_event=None, session_id=None))
+        self.assertEqual((verdict.status, verdict.exit_code),
+                         ("failed", clpe.EXIT_FAILED))
+
+    def test_no_result_event_is_invalid(self):
+        verdict = clpe.classify(self.observe(result_event=None))
+        self.assertEqual(verdict.status, "failed")
+        self.assertIn("result_invalid", verdict.detail)
+
+    def test_provider_category_beats_missing_result(self):
+        verdict = clpe.classify(self.observe(result_event=None,
+                                             error_categories=["rate_limit"]))
+        self.assertEqual((verdict.status, verdict.exit_code),
+                         ("blocked", clpe.EXIT_BLOCKED))
+        self.assertEqual(verdict.detail, "provider_usage_blocked")
+
+    def test_auth_category_on_error_subtype(self):
+        event = {"type": "result", "subtype": "error_during_execution"}
+        verdict = clpe.classify(self.observe(result_event=event,
+                                             error_categories=["authentication_failed"]))
+        self.assertEqual(verdict.detail, "provider_auth_blocked")
+        self.assertEqual(verdict.exit_code, clpe.EXIT_BLOCKED)
+
+    def test_max_turns_and_budget_are_resumable(self):
+        for subtype in ("error_max_turns", "error_max_budget_usd"):
+            event = {"type": "result", "subtype": subtype}
+            verdict = clpe.classify(self.observe(result_event=event))
+            self.assertEqual((verdict.status, verdict.exit_code),
+                             ("resumable", clpe.EXIT_RESUMABLE), subtype)
+
+    def test_success_without_structured_output_fails(self):
+        event = {"type": "result", "subtype": "success"}
+        verdict = clpe.classify(self.observe(result_event=event))
+        self.assertEqual(verdict.status, "failed")
+        self.assertIn("without structured_output", verdict.detail)
+
+    def test_shape_errors_fail(self):
+        verdict = clpe.classify(self.observe(shape_errors=["missing field: summary"]))
+        self.assertEqual(verdict.status, "failed")
+
+    def test_child_reported_failed(self):
+        event = {"type": "result", "subtype": "success",
+                 "structured_output": {"status": "failed"}}
+        verdict = clpe.classify(self.observe(result_event=event))
+        self.assertEqual((verdict.status, verdict.exit_code),
+                         ("failed", clpe.EXIT_FAILED))
+
+    def test_child_blocked_carries_blocker_kind(self):
+        event = {"type": "result", "subtype": "success",
+                 "structured_output": {"status": "blocked",
+                                       "blocker": {"kind": "env_missing_tool",
+                                                   "detail": "x"}}}
+        verdict = clpe.classify(self.observe(result_event=event))
+        self.assertEqual((verdict.status, verdict.exit_code, verdict.detail),
+                         ("blocked", clpe.EXIT_BLOCKED, "env_missing_tool"))
+
+    def test_gate_failures_block_completion(self):
+        verdict = clpe.classify(self.observe(gate_failures=["worktree not clean"]))
+        self.assertEqual(verdict.status, "failed")
+        self.assertIn("completion_gate_failed", verdict.detail)
+
+    def test_clean_completion(self):
+        verdict = clpe.classify(self.observe())
+        self.assertEqual((verdict.status, verdict.exit_code),
+                         ("completed", clpe.EXIT_COMPLETED))
 
 
 if __name__ == "__main__":
