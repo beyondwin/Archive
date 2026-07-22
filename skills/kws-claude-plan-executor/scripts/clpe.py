@@ -359,9 +359,9 @@ def launch(argv, cwd, env, timeout_seconds, stream_path):
         except subprocess.TimeoutExpired:
             _kill_group(child, signal.SIGTERM)
             try:
-                child.wait(timeout=10)
+                child.communicate(timeout=10)
             except subprocess.TimeoutExpired:
                 _kill_group(child, signal.SIGKILL)
-                child.wait()
+                child.communicate()
             return LaunchOutcome("timed_out", None,
                                  f"timed out after {timeout_seconds}s")
