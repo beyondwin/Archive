@@ -32,10 +32,19 @@ prefix); worktree: `~/.claude/worktrees/<run-id>/`, branch `clpe/<run-id>`.
 See SKILL.md for the launch contract, fail-closed completion gates, failure
 classification, and resume semantics.
 
+## Versioning
+
+The authoritative version is `metadata.version` in `SKILL.md` (currently
+`1.0.0`); this line and the `CHANGELOG.md` mirror it. Versioning follows
+SemVer — bump MAJOR for a breaking CLI-contract or run-state-format change,
+MINOR for a backward-compatible capability, PATCH for fixes and docs — and
+record every change in `CHANGELOG.md` in the same commit as the version bump.
+
 ## Tracked inventory
 
 ```text
 AGENTS.md
+CHANGELOG.md
 README.md
 SKILL.md
 evals/check_cli.py
