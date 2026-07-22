@@ -8,7 +8,8 @@ subagents, and commits.
 
 Design spec:
 `docs/superpowers/specs/2026-07-22-claude-plan-executor-thin-rewrite-design.md`.
-Predecessor (fat v3 orchestrator): `archive/kws-claude-multi-agent-executor-v3/`.
+Predecessor (fat v3 orchestrator): `skills/kws-claude-multi-agent-executor/`
+(archival to `archive/` pending — see SKILL.md).
 
 ## Requirements
 
