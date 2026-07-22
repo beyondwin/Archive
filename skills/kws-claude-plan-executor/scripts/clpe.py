@@ -175,3 +175,71 @@ def classify(obs):
                        "completion_gate_failed: " + "; ".join(obs.gate_failures),
                        resumable)
     return Verdict("completed", EXIT_COMPLETED, "completed", False)
+
+
+def scrub_env(env):
+    """Remove nesting markers and secret-like vars; keep ANTHROPIC_* auth."""
+    clean = {}
+    for key, value in env.items():
+        if key in SCRUB_EXACT:
+            continue
+        if not key.startswith("ANTHROPIC_") and key.endswith(SCRUB_SUFFIXES):
+            continue
+        clean[key] = value
+    return clean
+
+
+_PROHIBITIONS = (
+    "Do not merge, push, deploy, or modify files outside WORKTREE.\n"
+    "Do not ask the user questions; if blocked, return status \"blocked\" "
+    "with a blocker object."
+)
+
+_SCHEMA_CONTRACT = (
+    "Your FINAL response must be only the JSON object matching the enforced "
+    "schema (status / head_commit / summary / open_findings / blocker?)."
+)
+
+
+def build_prompt(worktree, plan_snapshot, spec_snapshots, starting_commit, branch):
+    spec_lines = "\n".join(f"- {path}" for path in spec_snapshots)
+    return (
+        f"WORKTREE: {worktree}\n"
+        f"PLAN: {plan_snapshot}\n"
+        f"SPECIFICATIONS:\n{spec_lines}\n"
+        f"STARTING_COMMIT: {starting_commit}\n"
+        f"BRANCH: {branch}\n"
+        "\n"
+        "Execute the approved implementation plan with Superpowers\n"
+        "(superpowers:executing-plans). You may dispatch subagents for\n"
+        "independent tasks (superpowers:subagent-driven-development) - that\n"
+        "choice is yours. Commit work to the current branch.\n"
+        "\n"
+        f"{_SCHEMA_CONTRACT}\n"
+        "\n"
+        f"{_PROHIBITIONS}\n"
+    )
+
+
+RESUME_PROMPT = (
+    "Continue executing the plan from where the session left off.\n"
+    f"{_SCHEMA_CONTRACT}\n\n{_PROHIBITIONS}\n"
+)
+
+
+def build_argv(prompt, model=None, max_turns=None, resume_session=None):
+    argv = [
+        "claude", "-p", prompt,
+        "--output-format", "stream-json", "--verbose",
+        "--json-schema", str(SCHEMA_PATH),
+        "--permission-mode", "bypassPermissions",
+    ]
+    for rule in DENY_TOOLS:
+        argv.extend(["--disallowedTools", rule])
+    if resume_session:
+        argv.extend(["--resume", resume_session])
+    if model:
+        argv.extend(["--model", model])
+    if max_turns:
+        argv.extend(["--max-turns", str(max_turns)])
+    return argv

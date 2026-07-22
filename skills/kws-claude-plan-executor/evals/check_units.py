@@ -199,5 +199,80 @@ class ClassifyTest(unittest.TestCase):
                          ("completed", clpe.EXIT_COMPLETED))
 
 
+class ScrubEnvTest(unittest.TestCase):
+    def test_scrubs_nesting_and_secrets_keeps_anthropic_and_path(self):
+        env = {
+            "CLAUDECODE": "1",
+            "CLAUDE_CODE_CHILD_SESSION": "1",
+            "CLAUDE_CODE_ENTRYPOINT": "cli",
+            "GITHUB_API_KEY": "x",
+            "MY_TOKEN": "x",
+            "DB_SECRET": "x",
+            "ANTHROPIC_API_KEY": "keep-me",
+            "PATH": "/usr/bin",
+            "HOME": "/home/u",
+        }
+        clean = clpe.scrub_env(env)
+        for gone in ("CLAUDECODE", "CLAUDE_CODE_CHILD_SESSION",
+                     "CLAUDE_CODE_ENTRYPOINT", "GITHUB_API_KEY",
+                     "MY_TOKEN", "DB_SECRET"):
+            self.assertNotIn(gone, clean)
+        self.assertEqual(clean["ANTHROPIC_API_KEY"], "keep-me")
+        self.assertEqual(clean["PATH"], "/usr/bin")
+        self.assertEqual(clean["HOME"], "/home/u")
+
+
+class PromptTest(unittest.TestCase):
+    def test_prompt_contains_facts_delegation_and_prohibitions(self):
+        prompt = clpe.build_prompt(
+            worktree="/wt", plan_snapshot="/state/inputs/plan-p.md",
+            spec_snapshots=["/state/inputs/spec-0-s.md"],
+            starting_commit="a" * 40, branch="clpe/run-1",
+        )
+        for token in (
+            "WORKTREE: /wt",
+            "PLAN: /state/inputs/plan-p.md",
+            "- /state/inputs/spec-0-s.md",
+            f"STARTING_COMMIT: {'a' * 40}",
+            "BRANCH: clpe/run-1",
+            "superpowers:executing-plans",
+            "superpowers:subagent-driven-development",
+            "Do not merge, push, deploy",
+            "Do not ask the user questions",
+        ):
+            self.assertIn(token, prompt)
+
+    def test_resume_prompt_repeats_schema_contract_and_prohibitions(self):
+        self.assertIn("Continue executing the plan", clpe.RESUME_PROMPT)
+        self.assertIn("Do not merge, push, deploy", clpe.RESUME_PROMPT)
+
+
+class ArgvTest(unittest.TestCase):
+    def test_base_argv_contract(self):
+        argv = clpe.build_argv("PROMPT")
+        self.assertEqual(argv[0], "claude")
+        self.assertEqual(argv[1:3], ["-p", "PROMPT"])
+        self.assertNotIn("--bare", argv)
+        self.assertIn("stream-json", argv)
+        self.assertIn("--verbose", argv)
+        self.assertIn("--json-schema", argv)
+        self.assertIn(str(clpe.SCHEMA_PATH), argv)
+        self.assertIn("bypassPermissions", argv)
+        for rule in clpe.DENY_TOOLS:
+            self.assertIn(rule, argv)
+        self.assertNotIn("--resume", argv)
+        self.assertNotIn("--model", argv)
+        self.assertNotIn("--max-turns", argv)
+
+    def test_optional_flags(self):
+        argv = clpe.build_argv("P", model="opus", max_turns=80,
+                               resume_session="sess-1")
+        self.assertIn("--model", argv)
+        self.assertIn("opus", argv)
+        self.assertIn("--max-turns", argv)
+        self.assertIn("80", argv)
+        self.assertEqual(argv[argv.index("--resume") + 1], "sess-1")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
