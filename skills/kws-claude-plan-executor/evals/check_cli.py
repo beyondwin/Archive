@@ -217,5 +217,22 @@ class ResumeCommandTest(CliFixture):
         self.assertIn("unknown_run", resume.stdout)
 
 
+class InspectCommandTest(CliFixture):
+    def test_inspect_prints_run_record(self):
+        self.run_plan()
+        run_id = self.only_run_record()["run_id"]
+        argv_count_before = len(self.argv_lines())
+        result = self.clpe("inspect", "--run-id", run_id)
+        self.assertEqual(result.returncode, 0)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["run_id"], run_id)
+        self.assertEqual(payload["status"], "completed")
+        self.assertEqual(len(self.argv_lines()), argv_count_before)  # read-only
+
+    def test_inspect_unknown_run(self):
+        result = self.clpe("inspect", "--run-id", "nope")
+        self.assertEqual(result.returncode, 1)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

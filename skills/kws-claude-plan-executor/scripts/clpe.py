@@ -515,6 +515,14 @@ def cmd_resume(args):
     return execute_cycle(record, resume=True)
 
 
+def cmd_inspect(args):
+    record = load_run(args.run_id)
+    if record is None:
+        return _halt("unknown_run", args.run_id, EXIT_FAILED)
+    print(json.dumps(record, indent=2, sort_keys=True))
+    return EXIT_COMPLETED
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="clpe", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -530,10 +538,14 @@ def main(argv=None):
     resume_parser.add_argument("--run-id", required=True, dest="run_id")
     resume_parser.add_argument("--timeout-seconds", type=int,
                                dest="timeout_seconds")
+    inspect_parser = sub.add_parser("inspect", help="read-only run state dump")
+    inspect_parser.add_argument("--run-id", required=True, dest="run_id")
     args = parser.parse_args(argv)
     if args.command == "run":
         return cmd_run(args)
-    return cmd_resume(args)
+    if args.command == "resume":
+        return cmd_resume(args)
+    return cmd_inspect(args)
 
 
 if __name__ == "__main__":
