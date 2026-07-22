@@ -256,7 +256,15 @@ class ArgvTest(unittest.TestCase):
         self.assertIn("stream-json", argv)
         self.assertIn("--verbose", argv)
         self.assertIn("--json-schema", argv)
-        self.assertIn(str(clpe.SCHEMA_PATH), argv)
+        schema_content = clpe.SCHEMA_PATH.read_text(encoding="utf-8")
+        self.assertIn(schema_content, argv)            # inline JSON content, not a path
+        self.assertNotIn(str(clpe.SCHEMA_PATH), argv)  # the path must NOT be an argv element
+        self.assertEqual(argv.count("--disallowedTools"), 1)  # single variadic flag
+        deny_at = argv.index("--disallowedTools")
+        self.assertEqual(
+            tuple(argv[deny_at + 1:deny_at + 1 + len(clpe.DENY_TOOLS)]),
+            tuple(clpe.DENY_TOOLS),
+        )
         self.assertIn("bypassPermissions", argv)
         for rule in clpe.DENY_TOOLS:
             self.assertIn(rule, argv)
@@ -265,12 +273,11 @@ class ArgvTest(unittest.TestCase):
         self.assertNotIn("--max-turns", argv)
 
     def test_optional_flags(self):
-        argv = clpe.build_argv("P", model="opus", max_turns=80,
+        argv = clpe.build_argv("P", model="opus",
                                resume_session="sess-1")
         self.assertIn("--model", argv)
         self.assertIn("opus", argv)
-        self.assertIn("--max-turns", argv)
-        self.assertIn("80", argv)
+        self.assertNotIn("--max-turns", argv)
         self.assertEqual(argv[argv.index("--resume") + 1], "sess-1")
 
 
