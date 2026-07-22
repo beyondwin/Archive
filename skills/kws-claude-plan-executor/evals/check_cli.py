@@ -151,5 +151,71 @@ class RunCommandTest(CliFixture):
         self.assertFalse((self.home / "worktrees").exists())
 
 
+class ResumeCommandTest(CliFixture):
+    def run_then_resume(self, scenario, resume_scenario, run_kwargs=None):
+        result = self.run_plan(scenario=scenario, **(run_kwargs or {}))
+        record = self.only_run_record()
+        resume = self.clpe("resume", "--run-id", record["run_id"],
+                           scenario=scenario, resume_scenario=resume_scenario)
+        return result, resume, record["run_id"]
+
+    def test_max_turns_then_resume_to_completion(self):
+        first, resume, run_id = self.run_then_resume("max_turns", "completed")
+        self.assertEqual(first.returncode, 3)
+        self.assertEqual(resume.returncode, 0, resume.stdout + resume.stderr)
+        record = self.only_run_record()
+        self.assertEqual(record["status"], "completed")
+        self.assertEqual(record["launches"], 2)
+        lines = self.argv_lines()
+        self.assertEqual(len(lines), 2)
+        resume_argv = lines[1]["argv"]
+        self.assertEqual(resume_argv[resume_argv.index("--resume") + 1],
+                         "sess-0001")
+        self.assertIn("Continue executing the plan",
+                      resume_argv[resume_argv.index("-p") + 1])
+
+    def test_timeout_then_resume(self):
+        first = self.run_plan("--timeout-seconds", "2", scenario="timeout",
+                              fake_sleep="30")
+        self.assertEqual(first.returncode, 3, first.stdout + first.stderr)
+        record = self.only_run_record()
+        self.assertEqual(record["status"], "resumable")
+        self.assertEqual(record["detail"], "timed_out")
+        self.assertEqual(record["session_id"], "sess-0001")
+        resume = self.clpe("resume", "--run-id", record["run_id"],
+                           scenario="timeout", resume_scenario="completed")
+        self.assertEqual(resume.returncode, 0, resume.stdout + resume.stderr)
+
+    def test_resume_of_completed_run_is_noop(self):
+        self.run_plan()
+        run_id = self.only_run_record()["run_id"]
+        resume = self.clpe("resume", "--run-id", run_id)
+        self.assertEqual(resume.returncode, 0)
+        self.assertIn("already_completed", resume.stdout)
+        self.assertEqual(len(self.argv_lines()), 1)  # no second launch
+
+    def test_resume_without_session_fails(self):
+        self.run_plan(scenario="invalid")
+        run_id = self.only_run_record()["run_id"]
+        resume = self.clpe("resume", "--run-id", run_id)
+        self.assertEqual(resume.returncode, 1)
+        self.assertIn("no_session_to_resume", resume.stdout)
+
+    def test_launch_budget_exhaustion_blocks(self):
+        self.run_plan(scenario="max_turns")
+        record = self.only_run_record()
+        record["launches"] = 5
+        run_json = self.home / "clpe" / record["run_id"] / "run.json"
+        run_json.write_text(json.dumps(record), encoding="utf-8")
+        resume = self.clpe("resume", "--run-id", record["run_id"])
+        self.assertEqual(resume.returncode, 2)
+        self.assertIn("launch_budget_exhausted", resume.stdout)
+
+    def test_unknown_run_id_fails(self):
+        resume = self.clpe("resume", "--run-id", "nope")
+        self.assertEqual(resume.returncode, 1)
+        self.assertIn("unknown_run", resume.stdout)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
