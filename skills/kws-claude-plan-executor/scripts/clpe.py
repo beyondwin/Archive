@@ -365,3 +365,146 @@ def launch(argv, cwd, env, timeout_seconds, stream_path):
                 child.communicate()
             return LaunchOutcome("timed_out", None,
                                  f"timed out after {timeout_seconds}s")
+
+
+def _timeout_floor():
+    return int(os.environ.get("CLPE_TIMEOUT_FLOOR", "1200"))
+
+
+def _halt(reason, detail, exit_code):
+    print(json.dumps({"halt": reason, "detail": detail}))
+    return exit_code
+
+
+def execute_cycle(record, resume):
+    record["launches"] += 1
+    if resume:
+        prompt = RESUME_PROMPT
+        resume_session = record["session_id"]
+    else:
+        prompt = build_prompt(record["worktree"], record["plan"],
+                              record["specs"], record["starting_commit"],
+                              record["branch"])
+        resume_session = None
+    argv = build_argv(prompt, model=record.get("model"),
+                      max_turns=record.get("max_turns"),
+                      resume_session=resume_session)
+    stream_path = run_dir(record["run_id"]) / f"stream-{record['launches']:02d}.jsonl"
+    outcome = launch(argv, cwd=record["worktree"],
+                     env=scrub_env(dict(os.environ)),
+                     timeout_seconds=record["timeout_seconds"],
+                     stream_path=stream_path)
+    session_id, result_event, categories = parse_stream(stream_path)
+    if session_id:
+        record["session_id"] = session_id
+    structured = (result_event or {}).get("structured_output")
+    shape_errors = validate_result_shape(structured) if structured else []
+    gate_failures = []
+    if (result_event and result_event.get("subtype") == "success"
+            and structured and not shape_errors
+            and structured.get("status") == "completed"):
+        gate_failures = completion_gates(structured, Path(record["worktree"]),
+                                         record["starting_commit"])
+    verdict = classify(Observation(
+        launch_kind=outcome.kind,
+        result_event=result_event,
+        session_id=record["session_id"],
+        error_categories=categories,
+        gate_failures=gate_failures,
+        shape_errors=shape_errors,
+    ))
+    if result_event and isinstance(result_event.get("total_cost_usd"),
+                                   (int, float)):
+        record["total_cost_usd"] = round(
+            record["total_cost_usd"] + result_event["total_cost_usd"], 6)
+    record.update({"status": verdict.status, "exit_code": verdict.exit_code,
+                   "detail": verdict.detail, "resumable": verdict.resumable})
+    save_run(record)
+    if verdict.status == "completed":
+        head = git(["rev-parse", "HEAD"], record["worktree"]).stdout.strip()
+        write_json(run_dir(record["run_id"]) / "handoff.json", {
+            "run_id": record["run_id"], "branch": record["branch"],
+            "worktree": record["worktree"], "head": head,
+            "integration": "not_observed",
+        })
+    print(json.dumps({
+        "run_id": record["run_id"], "status": verdict.status,
+        "detail": verdict.detail, "session_id": record["session_id"],
+        "worktree": record["worktree"], "branch": record["branch"],
+        "launches": record["launches"],
+        "total_cost_usd": record["total_cost_usd"],
+    }, indent=2))
+    return verdict.exit_code
+
+
+def cmd_run(args):
+    workspace = Path(args.workspace).resolve()
+    plan = Path(args.plan).resolve()
+    specs = [Path(item).resolve() for item in args.spec]
+    timeout_seconds = args.timeout_seconds or DEFAULT_TIMEOUT_SECONDS
+    if not _timeout_floor() <= timeout_seconds <= TIMEOUT_CEILING:
+        return _halt("invalid_timeout",
+                     f"{timeout_seconds} not in [{_timeout_floor()}, {TIMEOUT_CEILING}]",
+                     EXIT_FAILED)
+    for path in [plan, *specs]:
+        try:
+            path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as error:
+            return _halt("unreadable_input", f"{path}: {error}", EXIT_FAILED)
+    status = git(["status", "--porcelain"], workspace)
+    if status.returncode != 0:
+        return _halt("not_a_git_workspace", status.stderr.strip(), EXIT_FAILED)
+    if status.stdout.strip():
+        return _halt("dirty_workspace", "commit or stash changes first",
+                     EXIT_BLOCKED)
+    run_id = derive_run_id(plan)
+    rdir = run_dir(run_id)
+    rdir.mkdir(parents=True, exist_ok=False)
+    plan_copy, spec_copies = snapshot_inputs(rdir, plan, specs)
+    worktree = worktree_dir(run_id)
+    worktree.parent.mkdir(parents=True, exist_ok=True)
+    added = git(["worktree", "add", "-b", f"clpe/{run_id}", str(worktree)],
+                workspace)
+    if added.returncode != 0:
+        return _halt("worktree_add_failed", added.stderr.strip(), EXIT_FAILED)
+    starting = git(["rev-parse", "HEAD"], worktree).stdout.strip()
+    record = {
+        "run_id": run_id,
+        "workspace": str(workspace),
+        "worktree": str(worktree),
+        "branch": f"clpe/{run_id}",
+        "starting_commit": starting,
+        "plan": str(plan_copy),
+        "specs": [str(copy) for copy in spec_copies],
+        "model": args.model,
+        "max_turns": args.max_turns,
+        "timeout_seconds": timeout_seconds,
+        "launches": 0,
+        "session_id": None,
+        "status": "running",
+        "exit_code": None,
+        "detail": None,
+        "resumable": False,
+        "total_cost_usd": 0.0,
+    }
+    save_run(record)
+    return execute_cycle(record, resume=False)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(prog="clpe", description=__doc__)
+    sub = parser.add_subparsers(dest="command", required=True)
+    run_parser = sub.add_parser("run", help="launch a new plan run")
+    run_parser.add_argument("--spec", action="append", required=True)
+    run_parser.add_argument("--plan", required=True)
+    run_parser.add_argument("--workspace", required=True)
+    run_parser.add_argument("--model")
+    run_parser.add_argument("--max-turns", type=int, dest="max_turns")
+    run_parser.add_argument("--timeout-seconds", type=int,
+                            dest="timeout_seconds")
+    args = parser.parse_args(argv)
+    return cmd_run(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
