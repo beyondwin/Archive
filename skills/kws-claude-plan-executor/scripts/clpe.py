@@ -273,3 +273,53 @@ def completion_gates(structured, worktree, starting_commit):
     if structured.get("open_findings"):
         failures.append("open_findings not empty")
     return failures
+
+
+def state_home():
+    return Path(os.environ.get("CLPE_HOME", str(Path.home() / ".claude"))).expanduser()
+
+
+def run_dir(run_id):
+    return state_home() / "clpe" / run_id
+
+
+def worktree_dir(run_id):
+    return state_home() / "worktrees" / run_id
+
+
+def derive_run_id(plan_path):
+    slug = re.sub(r"[^a-z0-9]+", "-", Path(plan_path).stem.lower()).strip("-")
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    return f"{slug or 'plan'}-{stamp}"
+
+
+def write_json(path, payload):
+    path = Path(path)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n",
+                   encoding="utf-8")
+    tmp.replace(path)
+
+
+def save_run(record):
+    write_json(run_dir(record["run_id"]) / "run.json", record)
+
+
+def load_run(run_id):
+    try:
+        return json.loads((run_dir(run_id) / "run.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def snapshot_inputs(rdir, plan, specs):
+    inputs = Path(rdir) / "inputs"
+    inputs.mkdir(parents=True, exist_ok=True)
+    plan_copy = inputs / f"plan-{Path(plan).name}"
+    shutil.copy2(plan, plan_copy)
+    spec_copies = []
+    for index, spec in enumerate(specs):
+        copy = inputs / f"spec-{index}-{Path(spec).name}"
+        shutil.copy2(spec, copy)
+        spec_copies.append(copy)
+    return plan_copy, spec_copies

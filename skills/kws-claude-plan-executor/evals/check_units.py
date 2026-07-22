@@ -274,5 +274,53 @@ class ArgvTest(unittest.TestCase):
         self.assertEqual(argv[argv.index("--resume") + 1], "sess-1")
 
 
+import os
+
+
+class StateStoreTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="clpe-state-")
+        self.addCleanup(self.temp.cleanup)
+        self.old_home = os.environ.get("CLPE_HOME")
+        os.environ["CLPE_HOME"] = self.temp.name
+        def restore():
+            if self.old_home is None:
+                os.environ.pop("CLPE_HOME", None)
+            else:
+                os.environ["CLPE_HOME"] = self.old_home
+        self.addCleanup(restore)
+
+    def test_paths_derive_from_clpe_home(self):
+        self.assertEqual(clpe.state_home(), Path(self.temp.name))
+        self.assertEqual(clpe.run_dir("r1"),
+                         Path(self.temp.name) / "clpe" / "r1")
+        self.assertEqual(clpe.worktree_dir("r1"),
+                         Path(self.temp.name) / "worktrees" / "r1")
+
+    def test_derive_run_id_slugs_plan_name(self):
+        run_id = clpe.derive_run_id(Path("/tmp/My Plan v2.md"))
+        self.assertRegex(run_id, r"^my-plan-v2-\d{8}-\d{6}$")
+
+    def test_save_and_load_round_trip(self):
+        record = {"run_id": "r1", "status": "running", "launches": 0}
+        clpe.run_dir("r1").mkdir(parents=True)
+        clpe.save_run(record)
+        self.assertEqual(clpe.load_run("r1"), record)
+        self.assertIsNone(clpe.load_run("missing"))
+
+    def test_snapshot_inputs_copies_plan_and_specs(self):
+        base = Path(self.temp.name)
+        plan = base / "plan.md"
+        plan.write_text("# p\n", encoding="utf-8")
+        spec = base / "spec.md"
+        spec.write_text("# s\n", encoding="utf-8")
+        rdir = clpe.run_dir("r2")
+        rdir.mkdir(parents=True)
+        plan_copy, spec_copies = clpe.snapshot_inputs(rdir, plan, [spec])
+        self.assertEqual(plan_copy, rdir / "inputs" / "plan-plan.md")
+        self.assertEqual(spec_copies, [rdir / "inputs" / "spec-0-spec.md"])
+        self.assertEqual(plan_copy.read_text(encoding="utf-8"), "# p\n")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
