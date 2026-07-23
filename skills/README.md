@@ -1,14 +1,16 @@
 # skills/
 
-이 디렉터리는 Archive 레포에서 관리되는 **개인용 executor 스킬**의 단일 출처(source of truth)입니다. Claude Code와 Codex 모두 여기로 심볼릭 링크해서 동일한 정의를 공유합니다.
+이 디렉터리는 Archive 레포에서 관리되는 **개인용 runner/executor 스킬**의
+단일 출처(source of truth)입니다. 순차 plan 실행은 provider별 독립 runner를
+사용하고, 전문화된 multi-agent executor는 별도 계약으로 유지합니다.
 
 ## 포함된 스킬
 
 | 스킬 | 용도 |
 |------|------|
-| [`kws-claude-plan-executor`](./kws-claude-plan-executor/) | 승인된 Superpowers 구현 계획을 헤드리스 자식 Claude 세션(`claude -p`)으로 자율 실행하는 얇은 런처. fail-closed 완료 검증 + 세션 위임 재개. v3 오케스트레이터를 대체할 예정이며, 현재 `kws-claude-multi-agent-executor`는 그대로 유지(아카이브는 후속 작업). |
-| [`kws-claude-multi-agent-executor`](./kws-claude-multi-agent-executor/) | (v3, 대체 예정) 구현 계획 + 디자인 스펙을 자율 실행. Opus가 오케스트레이션, Sonnet 서브에이전트가 구현/리뷰/검증/문서화. `kws-claude-plan-executor`로 대체 중; agent 검증 툴링 마이그레이션 후 아카이브 예정. |
-| [`kws-codex-plan-executor`](./kws-codex-plan-executor/) | 2.1 strict-thin 계약: 승인된 Superpowers 구현 계획을 한 worktree에서 고정 순서로 실행·재개하는 소형 Codex 실행기. |
+| [`kws-codex-plan-runner`](./kws-codex-plan-runner/) | 승인된 Superpowers spec과 순서가 있는 plan들을 Codex로 자율 구현하는 durable sequential runner. |
+| [`kws-claude-plan-runner`](./kws-claude-plan-runner/) | 같은 공통 완료·복구 계약을 Claude Code transport로 독립 구현한 durable sequential runner. |
+| [`kws-claude-multi-agent-executor`](./kws-claude-multi-agent-executor/) | Opus orchestrator와 Sonnet sub-agent 역할 분리를 사용하는 전문화된 multi-agent executor. 순차 Claude runner와 독립적으로 설치·사용합니다. |
 | [`waygent`](./waygent/) | 활성 제품 런타임 스킬. 자연어 실행, 상태, 이벤트, 검사, 설명, 재개, 적용 요청을 Waygent CLI로 변환합니다. KWS executor 스킬은 별도 비제품 executor 계약으로 유지됩니다. |
 
 각 스킬 디렉터리의 `SKILL.md`가 정식 진입점입니다. 자세한 사용법은 먼저
@@ -21,36 +23,61 @@ Waygent 요청은 `skills/waygent/`에서 CLI로 라우팅하고, 런타임 상�
 스케줄링은 Waygent가 소유합니다. `kws-*` 스킬은 로컬 executor 계약이며
 Waygent 제품 런타임 의존성이 아닙니다.
 
-## Codex Executor Subtree Contract
+## 공통 순차 실행 계약
 
-`skills/kws-codex-plan-executor/`는 승인된 Superpowers 스펙과 구현 계획을
-입력 스냅샷으로 고정하고, 계획 순서를 유지한 채 하나의 격리 worktree를
-재사용하며, 첫 미완료 계획에서 재개하는 strict-thin 순차 실행기입니다.
-Superpowers가 구현, 리뷰, 수정, 검증, 커밋과 품질 정책을 소유합니다.
-CPE는 Waygent 제품 런타임이 아니며 task mapping, 별도 오케스트레이션,
-품질 판단을 추가하지 않습니다.
+두 plan runner는 provider 구현은 독립적이지만 완료 의미는 같습니다.
+task의 `reported_done`은 provider 보고이며, plan의 `implemented`는 해당
+plan의 Git 결과와 durable ledger가 봉인되었다는 plan-local 상태입니다.
+둘 다 전체 실행 완료를 뜻하지 않습니다. 모든 plan이 구현되고 동일한
+최종 candidate HEAD에서 선언된 verification set과 fresh final review가
+성공해야 run-level `ready_for_integration`이 됩니다.
 
-이 하위 트리를 변경하기 전에는
-[`AGENTS.md`](./kws-codex-plan-executor/AGENTS.md),
-[`SKILL.md`](./kws-codex-plan-executor/SKILL.md),
-[`README.md`](./kws-codex-plan-executor/README.md)를 읽고 최종적으로 해당
-디렉터리의 `./evals/run.sh`를 실행합니다.
+`--spec`과 `--plan`은 각각 반복할 수 있으며 CLI 입력 순서를 보존합니다.
+모든 spec은 immutable common context이고, plan은 전달 순서대로 하나의
+worktree와 branch에서 순차 구현합니다. `spec[i]`와 `plan[i]`를 위치로
+짝짓지 않으며 runner가 문서를 병합하거나 재작성하지 않습니다. 각 provider
+packet은 현재 plan만 작업 대상으로 표시하고 이후 plan은 노출하지 않습니다.
+
+두 runner 모두 미리 설치된 uv-managed normal-GIL CPython
+`>=3.13,<3.14`를 사용하며 active run/resume 중 Python을 다운로드하거나
+system Python으로 fallback하지 않습니다. 최초 준비는 한 번 명시적으로
+실행합니다.
+
+```bash
+uv python install 3.13
+```
+
+각 runner 하위 트리를 변경할 때는 그 디렉터리의 `AGENTS.md`, `SKILL.md`,
+`README.md`를 먼저 읽고 `./evals/run.sh`를 실행합니다. 공통 parity와
+cutover 단위 테스트는 repository verification map에서 함께 선택됩니다.
+
+```bash
+./scripts/agent/check-plan-runner-parity
+./scripts/agent/plan-runner-cutover self-test
+```
+
+위 명령은 offline 검증이며 provider를 호출하거나 operator home을
+감사하지 않습니다. 실제 provider 호환성 확인은 자동 offline scope에
+포함하지 않고 다음 canary를 명시적으로 선택한 경우에만 실행합니다.
+
+```bash
+./scripts/agent/plan-runner-live-canary --provider codex --mode all
+./scripts/agent/plan-runner-live-canary --provider claude --mode all
+```
 
 ## 심볼릭 링크 셋업
 
-두 도구 모두 사용자 홈의 `skills/` 디렉터리를 스캔합니다. 아래 예제에서
-`ARCHIVE_REPO`를 현재 Archive checkout의 루트로 설정한 뒤 각 폴더를 그
-위치로 심링크하면 어느 한 쪽에서 수정하더라도 곧바로 양쪽에 반영됩니다.
+아래 예제에서 `ARCHIVE_REPO`를 현재 Archive checkout의 절대 루트로
+설정합니다. Provider별 순차 runner는 해당 provider 홈에만 설치합니다.
+Claude multi-agent executor와 Waygent는 필요한 도구 쪽에 별도로 설치합니다.
 
 ### Claude Code (`~/.claude/skills/`)
 
 ```bash
-ln -sfn "$ARCHIVE_REPO/skills/kws-claude-plan-executor" \
-        ~/.claude/skills/kws-claude-plan-executor
+ln -sfn "$ARCHIVE_REPO/skills/kws-claude-plan-runner" \
+        ~/.claude/skills/kws-claude-plan-runner
 ln -sfn "$ARCHIVE_REPO/skills/kws-claude-multi-agent-executor" \
         ~/.claude/skills/kws-claude-multi-agent-executor
-ln -sfn "$ARCHIVE_REPO/skills/kws-codex-plan-executor" \
-        ~/.claude/skills/kws-codex-plan-executor
 ln -sfn "$ARCHIVE_REPO/skills/waygent" \
         ~/.claude/skills/waygent
 ```
@@ -58,12 +85,8 @@ ln -sfn "$ARCHIVE_REPO/skills/waygent" \
 ### Codex (`~/.codex/skills/`)
 
 ```bash
-ln -sfn "$ARCHIVE_REPO/skills/kws-claude-plan-executor" \
-        ~/.codex/skills/kws-claude-plan-executor
-ln -sfn "$ARCHIVE_REPO/skills/kws-claude-multi-agent-executor" \
-        ~/.codex/skills/kws-claude-multi-agent-executor
-ln -sfn "$ARCHIVE_REPO/skills/kws-codex-plan-executor" \
-        ~/.codex/skills/kws-codex-plan-executor
+ln -sfn "$ARCHIVE_REPO/skills/kws-codex-plan-runner" \
+        ~/.codex/skills/kws-codex-plan-runner
 ln -sfn "$ARCHIVE_REPO/skills/waygent" \
         ~/.codex/skills/waygent
 ```
@@ -77,13 +100,16 @@ ls -l ~/.claude/skills/ | grep -E 'kws-|waygent'
 ls -l ~/.codex/skills/  | grep -E 'kws-|waygent'
 ```
 
-두 곳 모두 `ARCHIVE_REPO` 아래의 `skills/...` 경로를 가리키면 정상입니다.
+Codex 홈에는 Codex plan runner만, Claude 홈에는 Claude plan runner만
+설치되어야 합니다. Claude multi-agent executor는 위의 독립 링크로
+유지합니다. 모든 링크가 `ARCHIVE_REPO/skills/...` 아래의 정확한 source를
+가리키는지 확인하세요.
 
 ## 수정 워크플로우
 
 1. 이 디렉터리 안에서 직접 편집 (`skills/<skill>/SKILL.md` 등).
 2. `git status` 로 Archive 레포에 변경 사항이 잡히는지 확인.
-3. Claude/Codex 둘 다 즉시 새 내용을 사용 — 추가 설치 불필요.
+3. 해당 provider는 심볼릭 링크를 통해 즉시 새 내용을 사용합니다.
 4. 의미 있는 런타임 변경이면 각 스킬의 `SKILL.md` 프론트매터 버전과
    실제로 존재하는 README, 계약 테스트, 관련 문서를 함께 갱신합니다.
    문서만 정리한 경우에는 버전 bump가 필요하지 않습니다.

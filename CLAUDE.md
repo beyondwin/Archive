@@ -22,8 +22,11 @@ file. This file only adds Claude-specific notes after that canonical guidance.
 - If a task asks for execution through Waygent, invoke `waygent` through
   `apps/cli/src/index.ts` or the installed `waygent` command rather than
   coordinating worker prompts manually.
-- If a task asks for plan execution through the KWS Claude executor, use
-  `skills/kws-claude-multi-agent-executor/SKILL.md` as the contract.
+- For sequential implementation of approved Superpowers specifications and
+  plans, use `skills/kws-claude-plan-runner/SKILL.md`.
+- Use `skills/kws-claude-multi-agent-executor/SKILL.md` only when the task
+  specifically calls for its specialized Opus/Sonnet multi-agent workflow. It
+  remains independently supported and is not the default sequential runner.
 
 ## Useful Checks
 
