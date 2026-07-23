@@ -610,8 +610,15 @@ def runner_failure_evidence(
     ):
         return None
     path = home / f".{provider}" / "plan-runner" / run_id / "state.json"
+    descriptor = -1
     try:
-        metadata = path.lstat()
+        descriptor = os.open(
+            path,
+            os.O_RDONLY
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_CLOEXEC", 0),
+        )
+        metadata = os.fstat(descriptor)
         if (
             not stat.S_ISREG(metadata.st_mode)
             or metadata.st_uid != os.getuid()
@@ -619,12 +626,57 @@ def runner_failure_evidence(
             or metadata.st_size > STREAM_LIMIT
         ):
             return None
-        raw = path.read_bytes()
+        chunks: list[bytes] = []
+        total = 0
+        while total <= STREAM_LIMIT:
+            chunk = os.read(
+                descriptor,
+                min(65_536, STREAM_LIMIT + 1 - total),
+            )
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+        raw = b"".join(chunks)
         if len(raw) != metadata.st_size:
+            return None
+        opened_after = os.fstat(descriptor)
+        path_after = path.lstat()
+        identity_before = (
+            metadata.st_dev,
+            metadata.st_ino,
+            metadata.st_mode,
+            metadata.st_uid,
+            metadata.st_size,
+            metadata.st_mtime_ns,
+        )
+        identity_opened_after = (
+            opened_after.st_dev,
+            opened_after.st_ino,
+            opened_after.st_mode,
+            opened_after.st_uid,
+            opened_after.st_size,
+            opened_after.st_mtime_ns,
+        )
+        identity_path_after = (
+            path_after.st_dev,
+            path_after.st_ino,
+            path_after.st_mode,
+            path_after.st_uid,
+            path_after.st_size,
+            path_after.st_mtime_ns,
+        )
+        if (
+            identity_opened_after != identity_before
+            or identity_path_after != identity_before
+        ):
             return None
         state = json.loads(raw)
     except (OSError, UnicodeError, json.JSONDecodeError):
         return None
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
     if not isinstance(state, Mapping):
         return None
     status = state.get("status")
