@@ -575,7 +575,7 @@ def _classified_provider_outcome(
     if code in _USAGE_CODES:
         return "blocked", "provider_usage_blocked"
     if code in _UNAVAILABLE_CODES:
-        return "blocked", "provider_unavailable"
+        return "transport_failed", "provider_unavailable"
     if code in _RESUME_CODES and requested_session_id is not None:
         return "resume_failed", "session_resume_failed"
     if code in _CONTEXT_CODES:

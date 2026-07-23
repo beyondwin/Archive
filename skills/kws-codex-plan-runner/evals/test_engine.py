@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 import uuid
@@ -60,6 +61,7 @@ class ScriptedAdapter:
         self.helper = helper
 
     def launch(self, request, _lease, on_session_id=None):
+        self.owner.leases.append(_lease)
         packet = json.loads(request.prompt.split("\nEXECUTION_PACKET=", 1)[1])
         self.owner.packets.append(packet)
         self.owner.requests.append(request)
@@ -175,6 +177,7 @@ class ScriptedAdapter:
                     "candidate_head": head,
                     "set_digest": digest,
                     "command_index": 0,
+                    "deadline_seconds": 10,
                 },
             }
             helper_client(self.helper.socket_path, self.helper.nonce, envelope)
@@ -192,6 +195,16 @@ class ScriptedAdapter:
                     "id": "R1",
                     "severity": "Important",
                     "summary": "fix final review issue",
+                    "evidence": "review evidence",
+                }
+            ]
+        elif self.owner.minor_findings_once:
+            self.owner.minor_findings_once = False
+            findings = [
+                {
+                    "id": "R-minor",
+                    "severity": "Minor",
+                    "summary": "allowed polish item",
                     "evidence": "review evidence",
                 }
             ]
@@ -229,10 +242,13 @@ class EngineTest(unittest.TestCase):
         )
         self.packets = []
         self.requests = []
+        self.leases = []
+        self.adapter_values = []
         self.output = []
         self.crash_after_session = False
         self.outcome_hook = None
         self.review_findings_once = False
+        self.minor_findings_once = False
         self.after_final_hook = None
         self.engine_event_hook = None
 
@@ -240,12 +256,14 @@ class EngineTest(unittest.TestCase):
         self.temporary.cleanup()
 
     def runner(self, runtime_checker=runtime_identity):
+        def adapter_factory(**values):
+            self.adapter_values.append(values)
+            return ScriptedAdapter(self, values["helper"])
+
         return PlanRunner(
             self.paths,
             runtime_checker=runtime_checker,
-            adapter_factory=lambda **values: ScriptedAdapter(
-                self, values["helper"]
-            ),
+            adapter_factory=adapter_factory,
             output=self.output.append,
             environment={"PATH": os.environ["PATH"]},
             event_hook=self.engine_event_hook,
@@ -371,6 +389,100 @@ class EngineTest(unittest.TestCase):
             state["finalization"]["verification_set_digest"],
             packet["invalidated_final_verification_set_digest"],
         )
+
+    def test_review_fix_interruption_retries_review_fix_without_normal_plan_routing(self):
+        self.review_findings_once = True
+        interrupted = False
+
+        def interrupt_once(_adapter, _request, packet, session_id):
+            nonlocal interrupted
+            if packet["mode"] == "final_review_fix" and not interrupted:
+                interrupted = True
+                return ProviderOutcome(
+                    "transport_failed",
+                    1,
+                    session_id,
+                    None,
+                    "controller_transport_failed",
+                    {},
+                    (),
+                    "",
+                )
+            return None
+
+        self.outcome_hook = interrupt_once
+        code = self.runner().create_run(
+            specs=self.specs,
+            plans=self.plans[:1],
+            workspace=self.source,
+            stall_seconds=30,
+            sandbox="workspace-write",
+            model=None,
+        )
+        self.assertEqual(code, ExitCode.READY)
+        modes = [packet["mode"] for packet in self.packets]
+        first_fix = modes.index("final_review_fix")
+        self.assertEqual(
+            modes[first_fix:first_fix + 3],
+            ["final_review_fix", "final_review_fix", "finalization"],
+        )
+        self.assertNotIn("implementation", modes[first_fix:])
+
+    def test_declared_helper_command_extends_provider_activity_lease(self):
+        observed = False
+
+        def run_silent_command(adapter, _request, packet, _session_id):
+            nonlocal observed
+            if packet["mode"] != "implementation" or observed:
+                return None
+            observed = True
+            envelope = {
+                "protocol_version": adapter.helper.protocol_version,
+                "run_id": packet["run_id"],
+                "nonce": adapter.helper.nonce,
+                "operation": "verify_focused",
+                "payload": {
+                    "candidate_head": packet["current_head"],
+                    "command": {
+                        "command_id": "silent-focused",
+                        "command_role": "focused",
+                        "argv": [sys.executable, "-c", "import time; time.sleep(0.15)"],
+                        "cwd": ".",
+                        "input_digest": "b" * 64,
+                        "deadline_seconds": 1,
+                    },
+                },
+            }
+            errors = []
+
+            def invoke():
+                try:
+                    helper_client(
+                        adapter.helper.socket_path,
+                        adapter.helper.nonce,
+                        envelope,
+                    )
+                except Exception as error:
+                    errors.append(error)
+
+            thread = threading.Thread(target=invoke)
+            thread.start()
+            time.sleep(0.08)
+            self.assertFalse(self.leases[-1].expired(time.monotonic()))
+            thread.join(2)
+            self.assertEqual(errors, [])
+            return None
+
+        self.outcome_hook = run_silent_command
+        code = self.runner().create_run(
+            specs=self.specs,
+            plans=self.plans[:1],
+            workspace=self.source,
+            stall_seconds=0.03,
+            sandbox="workspace-write",
+            model=None,
+        )
+        self.assertEqual(code, ExitCode.READY)
 
     def test_finalization_transport_resumes_healthy_session_and_context_loss_is_fresh(self):
         final_failures = ["transport_failed", "context_overflow"]
@@ -786,6 +898,147 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(
             {request.model for request in self.requests}, {"fixed-model"}
         )
+        final_state = self.state()
+        strategy_ref = next(
+            item
+            for item in final_state["artifact_refs"]
+            if item["kind"] == "strategy_note"
+        )
+        strategy_payload = json.loads(
+            (
+                self.paths.state_home
+                / state["run_id"]
+                / strategy_ref["relative_path"]
+            ).read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            strategy_payload["strategy_note"],
+            "rebuild the affected boundary from repository evidence",
+        )
+        resumed_packet = self.packets[launch_count]
+        self.assertTrue(resumed_packet["required_strategy_change"])
+        self.assertEqual(
+            resumed_packet["operator_strategy_notes"][0]["digest"],
+            strategy_ref["digest"],
+        )
+
+    def test_repository_remotes_are_passed_to_every_adapter(self):
+        git("remote", "add", "origin", "https://example.invalid/archive.git", cwd=self.source)
+        code = self.runner().create_run(
+            specs=self.specs,
+            plans=self.plans[:1],
+            workspace=self.source,
+            stall_seconds=30,
+            sandbox="workspace-write",
+            model=None,
+        )
+        self.assertEqual(code, ExitCode.READY)
+        self.assertTrue(self.adapter_values)
+        self.assertTrue(
+            all(values["remotes"] == ("origin",) for values in self.adapter_values)
+        )
+
+    def test_transient_provider_unavailable_resumes_before_blocking(self):
+        unavailable = True
+
+        def unavailable_once(_adapter, _request, packet, session_id):
+            nonlocal unavailable
+            if packet["mode"] == "implementation" and unavailable:
+                unavailable = False
+                return ProviderOutcome(
+                    "transport_failed",
+                    1,
+                    session_id,
+                    None,
+                    "provider_unavailable",
+                    {},
+                    (),
+                    "",
+                )
+            return None
+
+        self.outcome_hook = unavailable_once
+        code = self.runner().create_run(
+            specs=self.specs,
+            plans=self.plans[:1],
+            workspace=self.source,
+            stall_seconds=30,
+            sandbox="workspace-write",
+            model=None,
+        )
+        self.assertEqual(code, ExitCode.READY)
+        implementations = [
+            request
+            for request, packet in zip(self.requests, self.packets, strict=True)
+            if packet["mode"] == "implementation"
+        ]
+        self.assertEqual(len(implementations), 2)
+        self.assertEqual(implementations[1].session_id, str(uuid.UUID(int=1)))
+
+    def test_durable_provider_unavailable_blocks_after_bounded_recovery(self):
+        def always_unavailable(_adapter, _request, _packet, session_id):
+            return ProviderOutcome(
+                "transport_failed",
+                1,
+                session_id,
+                None,
+                "provider_unavailable",
+                {},
+                (),
+                "",
+            )
+
+        self.outcome_hook = always_unavailable
+        code = self.runner().create_run(
+            specs=self.specs,
+            plans=self.plans[:1],
+            workspace=self.source,
+            stall_seconds=30,
+            sandbox="workspace-write",
+            model=None,
+        )
+        self.assertEqual(code, ExitCode.BLOCKED)
+        state = self.state()
+        self.assertEqual(state["status"], "blocked")
+        self.assertEqual(state["failure"]["reason_code"], "provider_unavailable")
+        self.assertLessEqual(len(self.requests), 4)
+
+    def test_final_review_receipt_seals_allowed_minor_findings_into_handoff(self):
+        self.minor_findings_once = True
+        code = self.runner().create_run(
+            specs=self.specs,
+            plans=self.plans[:1],
+            workspace=self.source,
+            stall_seconds=30,
+            sandbox="workspace-write",
+            model=None,
+        )
+        self.assertEqual(code, ExitCode.READY)
+        state = self.state()
+        receipt_ref = next(
+            item
+            for item in state["artifact_refs"]
+            if item["kind"] == "final_review_receipt"
+        )
+        receipt = json.loads(
+            (
+                self.paths.state_home
+                / state["run_id"]
+                / receipt_ref["relative_path"]
+            ).read_text(encoding="utf-8")
+        )
+        self.assertEqual(receipt["open_findings"][0]["severity"], "Minor")
+        handoff_ref = next(
+            item for item in state["artifact_refs"] if item["kind"] == "branch_handoff"
+        )
+        handoff = json.loads(
+            (
+                self.paths.state_home
+                / state["run_id"]
+                / handoff_ref["relative_path"]
+            ).read_text(encoding="utf-8")
+        )
+        self.assertEqual(handoff["review_receipt"], receipt_ref)
 
     def test_runtime_failure_blocks_before_worktree_or_provider(self):
         def unavailable():

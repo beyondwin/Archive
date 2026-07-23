@@ -10,7 +10,7 @@ import stat
 import tempfile
 import threading
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -88,6 +88,8 @@ class HelperServer:
         state_store: StateStore | None = None,
         sealed_final_set_digest: str | None = None,
         sealed_candidate_head: str | None = None,
+        on_command_started: Callable[[float], None] | None = None,
+        on_command_finished: Callable[[float], None] | None = None,
         io_timeout_seconds: float = _CLIENT_TIMEOUT_SECONDS,
         shutdown_timeout_seconds: float = _CLIENT_TIMEOUT_SECONDS,
     ) -> None:
@@ -141,6 +143,8 @@ class HelperServer:
         self._active_command_deadline: float | None = None
         self._final_set_digest = sealed_final_set_digest
         self._final_candidate_head = sealed_candidate_head
+        self._on_command_started = on_command_started
+        self._on_command_finished = on_command_finished
         self._io_timeout_seconds = float(io_timeout_seconds)
         self._shutdown_timeout_seconds = float(shutdown_timeout_seconds)
 
@@ -197,7 +201,13 @@ class HelperServer:
             listener.close()
         thread = self._thread
         if thread is not None:
-            thread.join(self._shutdown_timeout_seconds)
+            active_deadline = self.active_command_deadline
+            command_grace = (
+                max(0.0, active_deadline - time.monotonic()) + 1.0
+                if active_deadline is not None
+                else 0.0
+            )
+            thread.join(max(self._shutdown_timeout_seconds, command_grace))
         try:
             self._socket_path.unlink()
         except FileNotFoundError:
@@ -268,13 +278,18 @@ class HelperServer:
 
     def _execute(self, command: ExactCommand, candidate_head: str, operation: str) -> dict[str, object]:
         with self._dispatch_lock:
+            command_deadline = time.monotonic() + command.deadline_seconds
             with self._active_lock:
-                self._active_command_deadline = time.monotonic() + command.deadline_seconds
+                self._active_command_deadline = command_deadline
+            if self._on_command_started is not None:
+                self._on_command_started(command_deadline)
             try:
                 receipt = self._evidence.execute(command, candidate_head=candidate_head)
             finally:
                 with self._active_lock:
                     self._active_command_deadline = None
+                if self._on_command_finished is not None:
+                    self._on_command_finished(time.monotonic())
         return {"ok": True, "operation": operation, "artifact": {"digest": receipt.artifact.digest}}
 
     def _verify_focused(self, payload: Mapping[str, object]) -> dict[str, object]:
@@ -298,7 +313,7 @@ class HelperServer:
         return {"ok": True, "operation": "declare_final_set", "artifact": {"digest": artifact.digest}}
 
     def _verify_final(self, payload: Mapping[str, object]) -> dict[str, object]:
-        if set(payload) != {"candidate_head", "set_digest", "command_index"}:
+        if set(payload) != {"candidate_head", "set_digest", "command_index", "deadline_seconds"}:
             raise ValueError("final verification payload is invalid")
         candidate_head = _candidate_head(payload["candidate_head"])
         set_digest = require_digest(payload["set_digest"])
@@ -311,6 +326,13 @@ class HelperServer:
             if candidate_head != self._final_candidate_head:
                 raise _ProtocolError("candidate_head_mismatch", "candidate head does not match the sealed final verification set")
             command = self._evidence.load_final_command(set_digest, index)
+            deadline = payload["deadline_seconds"]
+            if (
+                not isinstance(deadline, (int, float))
+                or isinstance(deadline, bool)
+                or float(deadline) != float(command.deadline_seconds)
+            ):
+                raise ValueError("final command deadline does not match sealed command")
         return self._execute(command, candidate_head, "verify_final")
 
     def _record_liveness(self, payload: Mapping[str, object]) -> dict[str, object]:
@@ -373,6 +395,26 @@ def _encode(response: Mapping[str, object]) -> bytes:
     return encoded
 
 
+def _client_response_timeout(request: Mapping[str, object]) -> float:
+    payload = request.get("payload")
+    deadline: object = None
+    if isinstance(payload, Mapping):
+        if request.get("operation") == "verify_focused":
+            command = payload.get("command")
+            if isinstance(command, Mapping):
+                deadline = command.get("deadline_seconds")
+        elif request.get("operation") == "verify_final":
+            deadline = payload.get("deadline_seconds")
+    if (
+        isinstance(deadline, (int, float))
+        and not isinstance(deadline, bool)
+        and math.isfinite(deadline)
+        and deadline > 0
+    ):
+        return float(deadline) + _CLIENT_TIMEOUT_SECONDS
+    return _CLIENT_TIMEOUT_SECONDS
+
+
 def helper_client(socket_path: Path, nonce: str, request: Mapping[str, object]) -> dict[str, object]:
     path = Path(socket_path)
     if not path.is_absolute() or not isinstance(nonce, str) or len(nonce) != 64:
@@ -382,6 +424,7 @@ def helper_client(socket_path: Path, nonce: str, request: Mapping[str, object]) 
     encoded = canonical_json(dict(request)) + b"\n"
     if len(encoded) > MAX_MESSAGE_BYTES:
         raise RuntimeError("helper request exceeds byte limit")
+    response_timeout = _client_response_timeout(request)
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
             client.settimeout(_CLIENT_TIMEOUT_SECONDS)
@@ -390,7 +433,7 @@ def helper_client(socket_path: Path, nonce: str, request: Mapping[str, object]) 
             client.shutdown(socket.SHUT_WR)
             raw = _read_line(
                 client,
-                deadline=time.monotonic() + _CLIENT_TIMEOUT_SECONDS,
+                deadline=time.monotonic() + response_timeout,
                 clock=time.monotonic,
             )
     except (OSError, _ProtocolError) as error:

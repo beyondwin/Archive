@@ -20,6 +20,7 @@ from .helper import HelperDescriptor, HelperServer
 from .provider import CodexAdapter, ProviderOutcome, ProviderRequest
 from .recovery import (
     ActivityLease,
+    normalize_strategy_note,
     ProgressSnapshot,
     RecoveryPolicy,
     strategy_note_digest,
@@ -341,10 +342,28 @@ class PlanRunner:
                 digest = strategy_note_digest(strategy_note)
                 if digest in prior:
                     raise ValueError("strategy note duplicates a prior strategy")
+                normalized_note = normalize_strategy_note(strategy_note)
+                strategy_artifact = store.put_artifact(
+                    "strategy_note",
+                    {
+                        "run_id": state["run_id"],
+                        "failure_signature": (
+                            failure.get("failure_signature")
+                            if isinstance(failure, Mapping)
+                            else None
+                        ),
+                        "strategy_note": normalized_note,
+                        "strategy_note_digest": digest,
+                    },
+                )
+                if strategy_artifact.as_dict() not in state["artifact_refs"]:
+                    state["artifact_refs"].append(strategy_artifact.as_dict())
                 state["status"] = "resumable"
                 state["failure"] = {
                     **(dict(failure) if isinstance(failure, Mapping) else {}),
-                    "operator_strategy_note": strategy_note.strip(),
+                    "operator_strategy_note": normalized_note,
+                    "operator_strategy_artifact": strategy_artifact.as_dict(),
+                    "required_strategy_change": True,
                     "strategy_digests": [*prior, digest],
                     "next_session_action": "fresh_session",
                 }
@@ -591,6 +610,9 @@ class PlanRunner:
             and isinstance(finalization, Mapping)
             else None
         )
+        lease = ActivityLease(
+            state["immutable_config"]["stall_seconds"], self._clock()
+        )
         with HelperServer(
             run_id=state["run_id"],
             worktree=workspace.worktree,
@@ -599,6 +621,8 @@ class PlanRunner:
             state_store=store,
             sealed_final_set_digest=sealed_digest,
             sealed_candidate_head=sealed_head,
+            on_command_started=lease.cover_command_until,
+            on_command_finished=lease.command_finished,
         ) as helper:
             if mode == "implementation":
                 packet = self._implementation_packet(
@@ -629,7 +653,9 @@ class PlanRunner:
                 store.root
                 / f".provider-{mode}-{uuid.uuid4().hex}-result.json"
             )
-            adapter = self._make_adapter(state["run_id"], helper.descriptor)
+            adapter = self._make_adapter(
+                state["run_id"], helper.descriptor, workspace
+            )
             request = ProviderRequest(
                 worktree=workspace.worktree,
                 git_common_dir=workspace._common_dir,
@@ -645,9 +671,7 @@ class PlanRunner:
             try:
                 return adapter.launch(
                     request,
-                    ActivityLease(
-                        state["immutable_config"]["stall_seconds"], self._clock()
-                    ),
+                    lease,
                     on_session_id=lambda captured: self._capture_session(
                         store,
                         attempt_id=attempt_id,
@@ -661,12 +685,17 @@ class PlanRunner:
                 output_path.unlink(missing_ok=True)
 
     def _make_adapter(
-        self, run_id: str, helper: HelperDescriptor
+        self, run_id: str, helper: HelperDescriptor, workspace: GitWorkspace
     ) -> Any:
         values = {
             "source_env": self._environment,
             "run_id": run_id,
             "helper": helper,
+            "remotes": tuple(
+                line
+                for line in _git_text(workspace.worktree, "remote").splitlines()
+                if line
+            ),
         }
         if self._adapter_factory is None:
             return CodexAdapter(**values)
@@ -688,6 +717,7 @@ class PlanRunner:
         handoffs = self._artifact_summaries(state, "plan_handoff")
         receipts = self._artifact_summaries(state, "verification_receipt")
         failure = state.get("failure")
+        operator_notes = self._operator_strategy_notes(state)
         return {
             "packet_version": 1,
             "mode": "implementation",
@@ -716,7 +746,8 @@ class PlanRunner:
             "required_strategy_change": bool(
                 isinstance(failure, Mapping)
                 and failure.get("required_strategy_change")
-            ),
+            ) or bool(operator_notes),
+            "operator_strategy_notes": operator_notes,
             "helper": _descriptor_document(helper),
             "quality_profile": "quality_first",
             "integration": "not_observed",
@@ -730,6 +761,7 @@ class PlanRunner:
     ) -> dict[str, object]:
         finalization = state.get("finalization")
         failure = state.get("failure")
+        operator_notes = self._operator_strategy_notes(state)
         return {
             "packet_version": 1,
             "mode": "finalization",
@@ -747,7 +779,8 @@ class PlanRunner:
             "required_strategy_change": bool(
                 isinstance(failure, Mapping)
                 and failure.get("required_strategy_change")
-            ),
+            ) or bool(operator_notes),
+            "operator_strategy_notes": operator_notes,
             "specifications": [
                 {
                     "snapshot_path": item["snapshot_path"],
@@ -782,13 +815,17 @@ class PlanRunner:
         helper: HelperDescriptor,
     ) -> dict[str, object]:
         failure = state.get("failure")
+        finalization = state.get("finalization")
         findings = (
-            failure.get("review_findings")
-            if isinstance(failure, Mapping)
+            finalization.get("review_findings")
+            if isinstance(finalization, Mapping)
             else None
         )
+        if not isinstance(findings, list) and isinstance(failure, Mapping):
+            findings = failure.get("review_findings")
         if not isinstance(findings, list) or not findings:
             raise ValueError("bundled review findings are unavailable")
+        operator_notes = self._operator_strategy_notes(state)
         return {
             "packet_version": 1,
             "mode": "final_review_fix",
@@ -828,6 +865,8 @@ class PlanRunner:
                 else None
             ),
             "checkpoint_revision": state["revision"],
+            "required_strategy_change": True,
+            "operator_strategy_notes": operator_notes,
             "helper": _descriptor_document(helper),
             "quality_profile": "quality_first",
             "integration": "not_observed",
@@ -849,6 +888,43 @@ class PlanRunner:
             for item in references
             if isinstance(item, Mapping) and item.get("kind") == kind
         ]
+
+    @staticmethod
+    def _operator_strategy_notes(
+        state: Mapping[str, object],
+    ) -> list[dict[str, object]]:
+        inputs = state.get("inputs")
+        references = state.get("artifact_refs")
+        if not isinstance(inputs, list) or not inputs or not isinstance(references, list):
+            return []
+        run_root = Path(inputs[0]["snapshot_path"]).parent.parent.resolve()
+        notes: list[dict[str, object]] = []
+        for reference in references:
+            if (
+                not isinstance(reference, Mapping)
+                or reference.get("kind") != "strategy_note"
+            ):
+                continue
+            path = (run_root / reference["relative_path"]).resolve()
+            if run_root not in path.parents:
+                raise ValueError("strategy note artifact escapes run root")
+            raw = path.read_bytes()
+            payload = json.loads(raw)
+            if (
+                canonical_json(payload) != raw
+                or sha256_json(payload) != reference.get("digest")
+                or not isinstance(payload.get("strategy_note"), str)
+            ):
+                raise ValueError("strategy note artifact is invalid")
+            notes.append(
+                {
+                    "digest": reference["digest"],
+                    "snapshot_path": str(path),
+                    "strategy_note": payload["strategy_note"],
+                    "failure_signature": payload.get("failure_signature"),
+                }
+            )
+        return notes
 
     def _checkpoint_outcome(
         self,
@@ -1182,6 +1258,8 @@ class PlanRunner:
         workspace: GitWorkspace,
         outcome: ProviderOutcome,
         index: int,
+        *,
+        continue_execution: bool = True,
     ) -> int | None:
         state = store.snapshot()
         failure = state.get("failure")
@@ -1264,9 +1342,10 @@ class PlanRunner:
             },
         )
         if decision.action != "recover":
-            state["status"] = "failed"
+            unavailable = reason == "provider_unavailable"
+            state["status"] = "blocked" if unavailable else "failed"
             state["failure"] = {
-                "reason_code": decision.reason_code,
+                "reason_code": reason if unavailable else decision.reason_code,
                 "failure_signature": decision.failure_signature,
                 "failure_sequence": active_sequence,
                 "strategy_digests": [
@@ -1277,7 +1356,7 @@ class PlanRunner:
             }
             store.commit(state)
             self._emit_summary(store.snapshot())
-            return int(ExitCode.FAILED)
+            return int(ExitCode.BLOCKED if unavailable else ExitCode.FAILED)
         active_sequence.append(
             {
                 "failure_signature": decision.failure_signature,
@@ -1298,7 +1377,9 @@ class PlanRunner:
             ],
         }
         store.commit(state)
-        return self._execute_current_plan(store, workspace)
+        if continue_execution:
+            return self._execute_current_plan(store, workspace)
+        return None
 
     @staticmethod
     def _reported_done_evidence(
@@ -1446,6 +1527,15 @@ class PlanRunner:
                         "review recovery did not produce a new candidate HEAD",
                     )
                 continue
+            review_receipt = store.put_artifact(
+                "final_review_receipt",
+                {
+                    "run_id": state["run_id"],
+                    "candidate_head": candidate.head,
+                    "review_session_id": outcome.session_id,
+                    **dict(result),
+                },
+            )
             handoff = store.put_artifact(
                 "branch_handoff",
                 {
@@ -1457,10 +1547,13 @@ class PlanRunner:
                         "verification_set_digest"
                     ],
                     "review_head": result["review_head"],
+                    "review_receipt": review_receipt.as_dict(),
                     "integration": "not_observed",
                 },
             )
             state = store.snapshot()
+            if review_receipt.as_dict() not in state["artifact_refs"]:
+                state["artifact_refs"].append(review_receipt.as_dict())
             if handoff.as_dict() not in state["artifact_refs"]:
                 state["artifact_refs"].append(handoff.as_dict())
             state["finalization"] = {
@@ -1615,9 +1708,10 @@ class PlanRunner:
             },
         )
         if decision.action != "recover":
-            state["status"] = "failed"
+            unavailable = reason == "provider_unavailable"
+            state["status"] = "blocked" if unavailable else "failed"
             state["failure"] = {
-                "reason_code": decision.reason_code,
+                "reason_code": reason if unavailable else decision.reason_code,
                 "failure_signature": decision.failure_signature,
                 "failure_sequence": active_sequence,
                 "strategy_digests": [
@@ -1628,7 +1722,7 @@ class PlanRunner:
             }
             store.commit(state)
             self._emit_summary(store.snapshot())
-            return int(ExitCode.FAILED)
+            return int(ExitCode.BLOCKED if unavailable else ExitCode.FAILED)
         active_sequence.append(
             {
                 "failure_signature": decision.failure_signature,
@@ -1732,6 +1826,9 @@ class PlanRunner:
     ) -> int | None:
         state = store.snapshot()
         index = len(state["plans"]) - 1
+        finalization = dict(state.get("finalization") or {})
+        finalization["review_findings"] = [dict(item) for item in findings]
+        state["finalization"] = finalization
         state["status"] = "recovering"
         state["failure"] = {
             "reason_code": "review_failed",
@@ -1739,52 +1836,91 @@ class PlanRunner:
             "next_session_action": "fresh_session",
             "review_findings": [dict(item) for item in findings],
         }
-        attempt_id = str(uuid.uuid4())
-        state["attempts"].append(
-            {
-                "attempt_id": attempt_id,
-                "mode": "implementation",
-                "plan_index": index,
-                "controller_pid": os.getpid(),
-                "completed": False,
-                "review_recovery": True,
-            }
-        )
         store.commit(state)
-        outcome = self._launch(
-            store,
-            workspace,
-            mode="final_review_fix",
-            observation_head=workspace.observe().head,
-            current_plan_index=index,
-            session_id=None,
-            attempt_id=attempt_id,
-        )
-        self._event("provider_outcome_received")
-        self._checkpoint_outcome(
-            store, outcome, attempt_id, index, "implementation"
-        )
-        if outcome.kind == "blocked":
-            return self._block(store, outcome)
-        if outcome.kind != "implemented":
-            return self._recover(store, workspace, outcome, index)
-        result = outcome.result
-        observation = workspace.require_clean_ancestor(
-            state["repository"]["source_commit"]
-        )
-        if (
-            not isinstance(result, Mapping)
-            or result.get("head_commit") != observation.head
-            or result.get("open_obligation_ids") != []
-        ):
-            return self._integrity_failure(
-                store, "review recovery result is invalid"
+        while True:
+            state = store.snapshot()
+            candidate_head = workspace.observe().head
+            session_id = self._review_fix_resume_session(state, candidate_head)
+            attempt_id = str(uuid.uuid4())
+            state["attempts"].append(
+                {
+                    "attempt_id": attempt_id,
+                    "mode": "final_review_fix",
+                    "plan_index": index,
+                    "controller_pid": os.getpid(),
+                    "completed": False,
+                    "review_recovery": True,
+                    "baseline_progress": dataclasses.asdict(
+                        self._progress(state, workspace)
+                    ),
+                }
             )
-        state = store.snapshot()
-        state["failure"] = None
-        state["status"] = "resumable"
-        state["finalization"] = None
-        store.commit(state)
+            store.commit(state)
+            outcome = self._launch(
+                store,
+                workspace,
+                mode="final_review_fix",
+                observation_head=candidate_head,
+                current_plan_index=index,
+                session_id=session_id,
+                attempt_id=attempt_id,
+            )
+            self._event("provider_outcome_received")
+            self._checkpoint_outcome(
+                store, outcome, attempt_id, index, "final_review_fix"
+            )
+            if outcome.kind == "blocked":
+                return self._block(store, outcome)
+            if outcome.kind != "implemented":
+                code = self._recover(
+                    store,
+                    workspace,
+                    outcome,
+                    index,
+                    continue_execution=False,
+                )
+                if code is not None:
+                    return code
+                continue
+            result = outcome.result
+            current_state = store.snapshot()
+            observation = workspace.require_clean_ancestor(
+                current_state["repository"]["source_commit"]
+            )
+            if (
+                not isinstance(result, Mapping)
+                or result.get("head_commit") != observation.head
+                or result.get("open_obligation_ids") != []
+            ):
+                return self._integrity_failure(
+                    store, "review recovery result is invalid"
+                )
+            state = store.snapshot()
+            state["failure"] = None
+            state["status"] = "resumable"
+            state["finalization"] = None
+            store.commit(state)
+            return None
+
+    @staticmethod
+    def _review_fix_resume_session(
+        state: Mapping[str, object], candidate_head: str
+    ) -> str | None:
+        failure = state.get("failure")
+        if (
+            isinstance(failure, Mapping)
+            and failure.get("next_session_action") == "fresh_session"
+        ):
+            return None
+        for session in reversed(state.get("sessions", [])):
+            if (
+                isinstance(session, Mapping)
+                and session.get("mode") == "final_review_fix"
+                and session.get("health") == "healthy"
+                and session.get("candidate_head") == candidate_head
+                and isinstance(session.get("session_id"), str)
+            ):
+                return session["session_id"]
         return None
 
     def _integrity_failure(self, store: StateStore, detail: object) -> int:
