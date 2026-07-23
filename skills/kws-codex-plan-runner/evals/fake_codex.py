@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import fcntl
 import subprocess
 import sys
 import time
@@ -28,8 +29,17 @@ def _launch_number(log_path: Path) -> int:
     return len(log_path.read_text(encoding="utf-8").splitlines()) + 1
 
 
-def _record(argv: list[str]) -> None:
-    log_path = Path(os.environ["FAKE_CODEX_LOG"])
+def _record(
+    argv: list[str],
+    prompt: str,
+    *,
+    action: str | None = None,
+    action_index: int | None = None,
+) -> None:
+    log_value = os.environ.get("PLAN_RUNNER_FAKE_LOG")
+    if log_value is None:
+        log_value = os.environ["FAKE_CODEX_LOG"]
+    log_path = Path(log_value)
     selected = {
         key: value
         for key, value in os.environ.items()
@@ -41,8 +51,17 @@ def _record(argv: list[str]) -> None:
         "cwd": os.getcwd(),
         "env": selected,
         "launch_number": _launch_number(log_path),
-        "prompt": sys.stdin.read(),
+        "prompt": prompt,
     }
+    if action is not None:
+        record.update(
+            {
+                "action": action,
+                "action_index": action_index,
+                "mode": _packet(prompt)["mode"],
+                "session_action": "resume" if "resume" in argv else "fresh",
+            }
+        )
     with log_path.open("a", encoding="utf-8") as stream:
         stream.write(json.dumps(record, sort_keys=True) + "\n")
 
@@ -53,22 +72,213 @@ def _write_result(argv: list[str], result: object) -> None:
     )
 
 
-def _commit_if_requested() -> None:
-    marker = Path("implemented.txt")
+def _commit_if_requested(
+    marker_name: str = "implemented.txt",
+    commit_message: str = "fake implementation",
+) -> None:
+    marker = Path(marker_name)
     marker.write_text("implemented\n", encoding="utf-8")
     subprocess.run(["git", "add", str(marker)], check=True)
     subprocess.run(
-        ["git", "-c", "user.name=Fake Codex", "-c", "user.email=fake@example.test",
-         "commit", "-m", "fake implementation"],
+        ["git", "-c", "user.name=Plan Runner Parity",
+         "-c", "user.email=parity@example.test",
+         "commit", "-m", commit_message],
         check=True,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
 
 
+def _packet(prompt: str) -> dict[str, object]:
+    marker = "\nEXECUTION_PACKET="
+    if marker not in prompt:
+        raise ValueError("execution packet is missing")
+    packet = json.loads(prompt.split(marker, 1)[1])
+    if not isinstance(packet, dict):
+        raise ValueError("execution packet is invalid")
+    return packet
+
+
+def _consume_action(path: Path) -> tuple[int, str]:
+    lock_path = path.with_suffix(path.suffix + ".lock")
+    lock_path.touch(mode=0o600, exist_ok=True)
+    with lock_path.open("r+", encoding="utf-8") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        document = json.loads(path.read_text(encoding="utf-8"))
+        if document.get("protocol_version") != 1:
+            raise ValueError("fake sequence protocol is unsupported")
+        actions = document.get("actions")
+        index = document.get("next_index")
+        if (
+            not isinstance(actions, list)
+            or not isinstance(index, int)
+            or isinstance(index, bool)
+            or not 0 <= index < len(actions)
+            or not isinstance(actions[index], str)
+        ):
+            raise ValueError("fake sequence is exhausted or invalid")
+        document["next_index"] = index + 1
+        temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+        temporary.write_text(
+            json.dumps(document, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        os.replace(temporary, path)
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+        return index, actions[index]
+
+
+def _helper_call(packet: dict[str, object], operation: str, payload: object) -> dict:
+    helper = packet["helper"]
+    envelope = {
+        "protocol_version": helper["protocol_version"],
+        "run_id": packet["run_id"],
+        "nonce": helper["nonce"],
+        "operation": operation,
+        "payload": payload,
+    }
+    result = subprocess.run(
+        helper["client_argv"],
+        input=json.dumps(envelope),
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    response = json.loads(result.stdout)
+    if not isinstance(response, dict):
+        raise ValueError("helper response is invalid")
+    return response
+
+
+def _generic_result(packet: dict[str, object], action: str) -> dict[str, object]:
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    if action == "blocked":
+        return {
+            "status": "blocked",
+            "head_commit": head,
+            "summary": "external authority is required",
+            "task_ledger": packet["task_ledger"],
+            "open_obligation_ids": [],
+            "failure_signature": None,
+            "strategy_note": None,
+            "blocker": {
+                "kind": "external_authority_required",
+                "detail": "provider-neutral parity blocker",
+            },
+        }
+    return {
+        "status": "implemented",
+        "head_commit": head,
+        "summary": "provider-neutral implementation",
+        "task_ledger": packet["task_ledger"],
+        "open_obligation_ids": [],
+        "failure_signature": None,
+        "strategy_note": None,
+    }
+
+
+def _generic_finalization(packet: dict[str, object]) -> dict[str, object]:
+    head = packet["candidate_head"]
+    digest = packet.get("sealed_verification_set_digest")
+    if digest is None:
+        final_set = {
+            "kind": "commands",
+            "candidate_head": head,
+            "commands": [
+                {
+                    "command_id": "parity-final",
+                    "command_role": "final",
+                    "argv": ["/usr/bin/true"],
+                    "cwd": ".",
+                    "input_digest": "a" * 64,
+                    "deadline_seconds": 10,
+                }
+            ],
+        }
+        declaration = _helper_call(
+            packet,
+            "declare_final_set",
+            {"candidate_head": head, "final_set": final_set},
+        )
+        digest = declaration["artifact"]["digest"]
+        _helper_call(
+            packet,
+            "verify_final",
+            {
+                "candidate_head": head,
+                "set_digest": digest,
+                "command_index": 0,
+                "deadline_seconds": 10,
+            },
+        )
+    return {
+        "status": "reviewed",
+        "review_head": head,
+        "verification_set_digest": digest,
+        "open_findings": [],
+        "open_obligation_ids": [],
+        "no_applicable_verification_approved": False,
+        "summary": "provider-neutral whole-branch review",
+    }
+
+
+def _generic_main(argv: list[str], prompt: str, sequence_path: Path) -> int:
+    action_index, action = _consume_action(sequence_path)
+    _record(
+        argv,
+        prompt,
+        action=action,
+        action_index=action_index,
+    )
+    packet = _packet(prompt)
+    session_id = (
+        argv[-2]
+        if "resume" in argv
+        else str(uuid.UUID(int=action_index + 1))
+    )
+    _emit({"type": "thread.started", "thread_id": session_id})
+    if action == "stalled":
+        time.sleep(2)
+        return 7
+    if action in {"interrupted", "same-failure"}:
+        return 7
+    _emit({"type": "turn.started", "turn_id": f"turn-{action_index + 1}"})
+    if action == "implemented":
+        index = packet["current_plan"]["index"]
+        _commit_if_requested(f"plan-{index}.txt", f"implement plan {index}")
+        result = _generic_result(packet, action)
+    elif action == "blocked":
+        result = _generic_result(packet, action)
+    elif action == "finalized":
+        result = _generic_finalization(packet)
+    else:
+        raise ValueError(f"unknown provider-neutral action: {action}")
+    _emit(
+        {
+            "type": "turn.completed",
+            "turn_id": f"turn-{action_index + 1}",
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+        }
+    )
+    _write_result(argv, result)
+    return 0
+
+
 def main() -> int:
     argv = sys.argv[1:]
-    _record(argv)
+    prompt = sys.stdin.read()
+    sequence = os.environ.get("PLAN_RUNNER_FAKE_SEQUENCE")
+    if sequence is not None:
+        return _generic_main(argv, prompt, Path(sequence))
+    _record(argv, prompt)
     scenario = os.environ.get("FAKE_CODEX_SCENARIO", "initial")
     session_id = argv[-2] if "resume" in argv else SESSION_ID
 

@@ -1,0 +1,49 @@
+{
+  "fixture_version": 1,
+  "scenarios": [
+    {
+      "id": "ordered-two-plan-ready",
+      "fake_sequence": ["implemented", "implemented", "finalized"],
+      "expected_status": "ready_for_integration",
+      "expected_plan_statuses": ["implemented", "implemented"],
+      "expected_task_statuses": [],
+      "expected_exit": 0
+    },
+    {
+      "id": "authority-blocked",
+      "fake_sequence": ["blocked"],
+      "expected_status": "blocked",
+      "expected_plan_statuses": ["running", "pending"],
+      "expected_task_statuses": [],
+      "expected_failure": "external_authority_required",
+      "expected_exit": 3
+    },
+    {
+      "id": "healthy-resume",
+      "fake_sequence": ["interrupted", "implemented", "implemented", "finalized"],
+      "expected_status": "ready_for_integration",
+      "expected_plan_statuses": ["implemented", "implemented"],
+      "expected_task_statuses": [],
+      "expected_session_action": "resume",
+      "expected_exit": 0
+    },
+    {
+      "id": "stalled-fresh-strategy",
+      "fake_sequence": ["stalled", "implemented", "implemented", "finalized"],
+      "expected_status": "ready_for_integration",
+      "expected_plan_statuses": ["implemented", "implemented"],
+      "expected_task_statuses": [],
+      "expected_session_action": "fresh",
+      "expected_exit": 0
+    },
+    {
+      "id": "recovery-exhausted",
+      "fake_sequence": ["same-failure", "same-failure", "same-failure", "same-failure"],
+      "expected_status": "failed",
+      "expected_plan_statuses": ["running", "pending"],
+      "expected_task_statuses": [],
+      "expected_failure": "recovery_exhausted",
+      "expected_exit": 4
+    }
+  ]
+}
