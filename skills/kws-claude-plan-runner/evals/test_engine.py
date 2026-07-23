@@ -1013,6 +1013,64 @@ class EngineTest(unittest.TestCase):
             )
         )
 
+    def test_recovery_packet_carries_bounded_failure_context_and_checkpoint(self):
+        failed_once = False
+        strategy = (
+            "replace the contaminated approach API_TOKEN=top-secret "
+            + ("with repository evidence " * 300)
+        )
+
+        def fail_once(_adapter, _request, packet, session_id):
+            nonlocal failed_once
+            if packet["mode"] == "implementation" and not failed_once:
+                failed_once = True
+                return ProviderOutcome(
+                    "context_overflow",
+                    1,
+                    session_id,
+                    {"strategy_note": strategy},
+                    "session_invalid",
+                    {},
+                    (),
+                    "",
+                )
+            return None
+
+        self.outcome_hook = fail_once
+        code = self.runner().create_run(
+            specs=self.specs,
+            plans=self.plans[:1],
+            workspace=self.source,
+            stall_seconds=30,
+            model=None,
+        )
+        self.assertEqual(code, ExitCode.READY)
+        retry_packet = [
+            packet for packet in self.packets if packet["mode"] == "implementation"
+        ][1]
+        context = retry_packet["recovery_context"]
+        self.assertEqual(context["failure_reason"], "session_invalid")
+        self.assertRegex(context["failure_signature"], r"^[0-9a-f]{64}$")
+        self.assertTrue(context["required_strategy_change"])
+        self.assertEqual(context["next_session_action"], "fresh_session")
+        self.assertEqual(
+            context["checkpoint"],
+            {
+                "revision": retry_packet["checkpoint_revision"],
+                "head": retry_packet["current_head"],
+                "plan_index": retry_packet["current_plan"]["index"],
+            },
+        )
+        attempted = context["attempted_strategies"]
+        self.assertEqual(len(attempted), 1)
+        self.assertEqual(
+            attempted[0]["failure_signature"], context["failure_signature"]
+        )
+        self.assertRegex(attempted[0]["strategy_note_digest"], r"^[0-9a-f]{64}$")
+        self.assertIn("API_TOKEN=[REDACTED]", attempted[0]["strategy_note"])
+        self.assertLessEqual(len(attempted[0]["strategy_note"].encode()), 4096)
+        self.assertNotIn("top-secret", json.dumps(context))
+
     def test_missing_uncaptured_session_crash_recovers_without_phantom_resume(self):
         self.skip_session_capture_once = True
         missing_once = True
