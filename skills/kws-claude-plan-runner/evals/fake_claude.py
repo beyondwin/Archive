@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import fcntl
+import hashlib
 import subprocess
 import sys
 import time
@@ -193,7 +194,17 @@ def generic_main(sequence_path: Path) -> int:
         "argv": sys.argv[1:],
         "cwd": os.getcwd(),
         "mode": packet["mode"],
+        "packet_digest": hashlib.sha256(
+            json.dumps(
+                packet,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest(),
+        "required_strategy_change": packet.get("required_strategy_change"),
         "session_action": "resume" if "--resume" in sys.argv else "fresh",
+        "session_id": session_id,
     }
     with log_path.open("a", encoding="utf-8") as stream:
         stream.write(json.dumps(record, sort_keys=True) + "\n")

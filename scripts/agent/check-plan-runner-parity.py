@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import os
+import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -39,6 +42,8 @@ PROVIDERS = {
     },
 }
 OUTPUT_LIMIT = 4_096
+SHA256 = re.compile(r"^[0-9a-f]{64}$")
+GIT_HEAD = re.compile(r"^[0-9a-f]{40}(?:[0-9a-f]{24})?$")
 GIT_ENV = {
     "GIT_AUTHOR_DATE": "2026-01-01T00:00:00+00:00",
     "GIT_COMMITTER_DATE": "2026-01-01T00:00:00+00:00",
@@ -51,6 +56,24 @@ class ParityFailure(RuntimeError):
 
 def _load_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _canonical_json(value: object) -> bytes:
+    return json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+
+
+def _require_digest(value: object, label: str) -> str:
+    if not isinstance(value, str) or SHA256.fullmatch(value) is None:
+        raise ParityFailure(f"{label} digest is invalid")
+    return value
+
+
+def _require_head(value: object, label: str) -> str:
+    if not isinstance(value, str) or GIT_HEAD.fullmatch(value) is None:
+        raise ParityFailure(f"{label} Git HEAD is invalid")
+    return value
 
 
 def _run(
@@ -197,81 +220,309 @@ def _last_json(stdout: str, label: str) -> Mapping[str, Any]:
 
 
 def _read_artifact(run_root: Path, reference: Mapping[str, Any]) -> Mapping[str, Any]:
+    if set(reference) != {"kind", "digest", "relative_path"}:
+        raise ParityFailure("artifact reference fields drift")
+    kind = reference.get("kind")
+    if not isinstance(kind, str) or not kind:
+        raise ParityFailure("artifact reference kind is invalid")
+    digest = _require_digest(reference.get("digest"), "artifact reference")
     relative = reference.get("relative_path")
     if not isinstance(relative, str):
         raise ParityFailure("artifact reference lacks relative_path")
-    path = run_root / relative
-    value = _load_json(path)
+    relative_path = Path(relative)
+    expected = Path("artifacts") / kind / f"{digest}.json"
+    if relative_path != expected or relative_path.is_absolute() or ".." in relative_path.parts:
+        raise ParityFailure("artifact reference path is invalid")
+    path = run_root / relative_path
+    payload = path.read_bytes()
+    if hashlib.sha256(payload).hexdigest() != digest:
+        raise ParityFailure("artifact reference digest mismatch")
+    value = json.loads(payload)
     if not isinstance(value, Mapping):
         raise ParityFailure(f"artifact is not an object: {relative}")
     return value
 
 
+def _validate_executable_identity(value: object) -> dict[str, Any]:
+    if not isinstance(value, Mapping) or set(value) != {
+        "path",
+        "sha256",
+        "mode",
+        "size",
+    }:
+        raise ParityFailure("verification executable identity fields drift")
+    path_value = value["path"]
+    mode = value["mode"]
+    size = value["size"]
+    if (
+        not isinstance(path_value, str)
+        or not Path(path_value).is_absolute()
+        or not isinstance(mode, int)
+        or isinstance(mode, bool)
+        or not stat.S_ISREG(mode)
+        or not isinstance(size, int)
+        or isinstance(size, bool)
+        or size < 0
+    ):
+        raise ParityFailure("verification executable identity types are invalid")
+    digest = _require_digest(value["sha256"], "verification executable")
+    executable = Path(path_value)
+    try:
+        metadata = executable.stat()
+        actual_digest = hashlib.sha256(executable.read_bytes()).hexdigest()
+    except OSError as error:
+        raise ParityFailure("verification executable path is unavailable") from error
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_mode != mode
+        or metadata.st_size != size
+        or actual_digest != digest
+    ):
+        raise ParityFailure("verification executable path or hash mismatch")
+    return {
+        "path": executable.name,
+        "sha256": digest,
+        "mode": mode,
+        "size": size,
+    }
+
+
+def _validate_receipt(
+    receipt: Mapping[str, Any], worktree: Path
+) -> tuple[dict[str, Any], Mapping[str, Any]]:
+    if receipt.get("schema_version") != 1:
+        raise ParityFailure("verification receipt schema version drift")
+    identity = receipt.get("identity")
+    fields = _load_json(CONTRACT)["receipt_identity_fields"]
+    if not isinstance(identity, Mapping) or set(identity) != set(fields):
+        raise ParityFailure("verification receipt identity fields drift")
+    argv = identity["argv"]
+    if (
+        not isinstance(argv, list)
+        or not argv
+        or any(not isinstance(item, str) or not item for item in argv)
+    ):
+        raise ParityFailure("verification argv is invalid")
+    candidate_head = _require_head(identity["candidate_head"], "verification")
+    if identity["command_role"] != "final":
+        raise ParityFailure("verification command role is not final")
+    cwd_value = identity["cwd"]
+    if not isinstance(cwd_value, str) or not Path(cwd_value).is_absolute():
+        raise ParityFailure("verification cwd is invalid")
+    cwd = Path(cwd_value)
+    try:
+        relative_cwd = str(cwd.relative_to(worktree))
+    except ValueError as error:
+        raise ParityFailure("verification cwd escapes worktree") from error
+    environment_fingerprint = _require_digest(
+        identity["environment_fingerprint"], "environment fingerprint"
+    )
+    input_digest = _require_digest(identity["input_digest"], "verification input")
+    worktree_digest = _require_digest(identity["worktree_digest"], "worktree")
+    executable = _validate_executable_identity(identity["executable_identity"])
+    identity_digest = _require_digest(
+        receipt.get("identity_digest"), "verification identity"
+    )
+    if hashlib.sha256(_canonical_json(identity)).hexdigest() != identity_digest:
+        raise ParityFailure("verification identity digest mismatch")
+    if receipt.get("outcome") != "success" or receipt.get("exit_code") != 0:
+        raise ParityFailure("required verification receipt is not successful")
+    return (
+        {
+            "argv": argv,
+            "candidate_head": candidate_head,
+            "command_role": "final",
+            "cwd": relative_cwd or ".",
+            "environment_fingerprint": "<sha256>",
+            "executable_identity": executable,
+            "input_digest": input_digest,
+            "worktree_digest": worktree_digest,
+            "outcome": "success",
+        },
+        identity,
+    )
+
+
 def _normalized_receipts(
     state: Mapping[str, Any], run_root: Path, worktree: Path
 ) -> list[dict[str, Any]]:
-    contract = _load_json(CONTRACT)
-    fields = contract["receipt_identity_fields"]
     normalized = []
     for reference in state["artifact_refs"]:
         if reference.get("kind") != "verification_receipt":
             continue
         receipt = _read_artifact(run_root, reference)
-        identity = receipt.get("identity")
-        if not isinstance(identity, Mapping) or set(identity) != set(fields):
-            raise ParityFailure("verification receipt identity fields drift")
-        executable = identity["executable_identity"]
-        if not isinstance(executable, Mapping):
-            raise ParityFailure("verification executable identity is invalid")
-        cwd = Path(identity["cwd"])
-        try:
-            relative_cwd = str(cwd.relative_to(worktree))
-        except ValueError as error:
-            raise ParityFailure("verification cwd escapes worktree") from error
-        environment_fingerprint = identity["environment_fingerprint"]
-        if (
-            not isinstance(environment_fingerprint, str)
-            or len(environment_fingerprint) != 64
-        ):
-            raise ParityFailure("environment fingerprint is invalid")
-        normalized.append(
-            {
-                "argv": identity["argv"],
-                "candidate_head": identity["candidate_head"],
-                "command_role": identity["command_role"],
-                "cwd": relative_cwd or ".",
-                "environment_fingerprint": "<sha256>",
-                "executable_identity": {
-                    "path": Path(executable["path"]).name,
-                    "sha256": executable["sha256"],
-                    "mode": executable["mode"],
-                    "size": executable["size"],
-                },
-                "input_digest": identity["input_digest"],
-                "worktree_digest": identity["worktree_digest"],
-                "outcome": receipt.get("outcome"),
-            }
-        )
+        normalized.append(_validate_receipt(receipt, worktree)[0])
     return normalized
 
 
-def _session_action(log_path: Path, actions: Sequence[str]) -> str | None:
-    failure_indexes = [
-        index
-        for index, action in enumerate(actions)
-        if action in {"interrupted", "stalled"}
-    ]
-    if not failure_indexes:
+def _validate_recovery_evidence(
+    scenario_id: str,
+    records: Sequence[Mapping[str, Any]],
+    state: Mapping[str, Any] | None = None,
+) -> str | None:
+    expected_action = {
+        "healthy-resume": "interrupted",
+        "stalled-fresh-strategy": "stalled",
+    }.get(scenario_id)
+    if expected_action is None:
         return None
-    records = [
-        json.loads(line)
-        for line in log_path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
-    next_launch = failure_indexes[0] + 1
-    if next_launch >= len(records):
+    first = next(
+        (
+            index
+            for index, record in enumerate(records)
+            if record.get("action") == expected_action
+        ),
+        None,
+    )
+    if first is None or first + 1 >= len(records):
         raise ParityFailure("recovery launch was not recorded")
-    return "resume" if records[next_launch].get("session_action") == "resume" else "fresh"
+    failed = records[first]
+    recovered = records[first + 1]
+    failed_session = failed.get("session_id")
+    recovered_session = recovered.get("session_id")
+    if (
+        not isinstance(failed_session, str)
+        or not isinstance(recovered_session, str)
+    ):
+        raise ParityFailure("recovery session identity was not recorded")
+    _require_digest(recovered.get("packet_digest"), "recovery packet")
+    if expected_action == "interrupted":
+        if (
+            recovered.get("session_action") != "resume"
+            or recovered_session != failed_session
+        ):
+            raise ParityFailure("resume did not use the exact captured session ID")
+        action = "resume"
+    else:
+        if (
+            recovered.get("session_action") != "fresh"
+            or recovered_session == failed_session
+        ):
+            raise ParityFailure("contaminated recovery did not use a distinct fresh session")
+        if recovered.get("required_strategy_change") is not True:
+            raise ParityFailure("fresh recovery lacks a durable changed-strategy packet")
+        action = "fresh"
+    if state is not None:
+        sessions = [
+            item
+            for item in state.get("sessions", [])
+            if isinstance(item, Mapping)
+            and item.get("mode") == "implementation"
+            and item.get("session_id") in {failed_session, recovered_session}
+        ]
+        if len(sessions) < 2:
+            raise ParityFailure("durable session recovery evidence is incomplete")
+        if expected_action == "stalled" and not any(
+            item.get("session_id") == failed_session
+            and item.get("health") == "invalid"
+            for item in sessions
+        ):
+            raise ParityFailure("stalled session is not durably marked invalid")
+    return action
+
+
+def _references(
+    state: Mapping[str, Any], kind: str
+) -> list[Mapping[str, Any]]:
+    return [
+        item
+        for item in state.get("artifact_refs", [])
+        if isinstance(item, Mapping) and item.get("kind") == kind
+    ]
+
+
+def _one_reference(state: Mapping[str, Any], kind: str) -> Mapping[str, Any]:
+    references = _references(state, kind)
+    if len(references) != 1:
+        raise ParityFailure(f"ready run requires exactly one {kind} artifact")
+    return references[0]
+
+
+def _validate_ready_evidence(
+    state: Mapping[str, Any],
+    run_root: Path,
+    worktree: Path,
+    observed_head: str,
+) -> dict[str, Any]:
+    observed_head = _require_head(observed_head, "observed candidate")
+    if state.get("integration") != "not_observed":
+        raise ParityFailure("ready integration must remain not_observed")
+    finalization = state.get("finalization")
+    if not isinstance(finalization, Mapping):
+        raise ParityFailure("ready finalization state is missing")
+    set_ref = _one_reference(state, "final_verification_set")
+    final_set = _read_artifact(run_root, set_ref)
+    if (
+        final_set.get("kind") != "commands"
+        or not isinstance(final_set.get("commands"), list)
+        or not final_set["commands"]
+    ):
+        raise ParityFailure("ready run requires a nonempty final command set")
+    set_digest = set_ref["digest"]
+    if finalization.get("verification_set_digest") != set_digest:
+        raise ParityFailure("finalization verification set digest mismatch")
+    receipt_refs = _references(state, "verification_receipt")
+    if len(receipt_refs) != len(final_set["commands"]):
+        raise ParityFailure("not every required final command has one receipt")
+    normalized_receipts: list[dict[str, Any]] = []
+    raw_identities: list[Mapping[str, Any]] = []
+    for reference in receipt_refs:
+        receipt = _read_artifact(run_root, reference)
+        normalized, identity = _validate_receipt(receipt, worktree)
+        normalized_receipts.append(normalized)
+        raw_identities.append(identity)
+    unmatched = list(raw_identities)
+    for command in final_set["commands"]:
+        expected_cwd = str((worktree / command["cwd"]).resolve())
+        match = next(
+            (
+                identity
+                for identity in unmatched
+                if identity.get("candidate_head") == observed_head
+                and identity.get("command_role") == command.get("command_role")
+                and identity.get("argv") == command.get("argv")
+                and identity.get("cwd") == expected_cwd
+                and identity.get("input_digest") == command.get("input_digest")
+            ),
+            None,
+        )
+        if match is None:
+            raise ParityFailure("required final command receipt identity mismatch")
+        unmatched.remove(match)
+    review_ref = _one_reference(state, "final_review_receipt")
+    review = _read_artifact(run_root, review_ref)
+    if (
+        review.get("status") != "reviewed"
+        or review.get("candidate_head") != observed_head
+        or review.get("review_head") != observed_head
+        or review.get("verification_set_digest") != set_digest
+        or review.get("open_findings") != []
+        or review.get("open_obligation_ids") != []
+    ):
+        raise ParityFailure("final review is not approved at the candidate HEAD")
+    handoff_ref = _one_reference(state, "branch_handoff")
+    handoff = _read_artifact(run_root, handoff_ref)
+    if (
+        handoff.get("status") != "ready_for_integration"
+        or handoff.get("candidate_head") != observed_head
+        or handoff.get("review_head") != observed_head
+        or handoff.get("verification_set_digest") != set_digest
+        or handoff.get("review_receipt") != review_ref
+        or handoff.get("verification_receipts") != receipt_refs
+        or handoff.get("integration") != "not_observed"
+        or finalization.get("candidate_head") != observed_head
+        or finalization.get("review_head") != observed_head
+    ):
+        raise ParityFailure("final handoff evidence does not share one candidate HEAD")
+    return {
+        "verification_receipts": normalized_receipts,
+        "required_receipt_count": len(receipt_refs),
+        "all_required_receipts": True,
+        "final_head_equal": True,
+        "review_outcome": "approved",
+        "review_approved": True,
+        "integration": "not_observed",
+    }
 
 
 def _normalize(
@@ -285,23 +536,26 @@ def _normalize(
 ) -> dict[str, Any]:
     worktree = Path(state["repository"]["worktree"])
     observed_head = _checked_git(worktree, ("rev-parse", "HEAD"), env)
-    receipts = _normalized_receipts(state, run_root, worktree)
-    finalization = state.get("finalization")
-    review_head = (
-        finalization.get("review_head")
-        if isinstance(finalization, Mapping)
-        else None
+    records = [
+        json.loads(line)
+        for line in log_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    ready = (
+        _validate_ready_evidence(state, run_root, worktree, observed_head)
+        if state["status"] == "ready_for_integration"
+        else {
+            "verification_receipts": _normalized_receipts(
+                state, run_root, worktree
+            ),
+            "required_receipt_count": 0,
+            "all_required_receipts": None,
+            "final_head_equal": None,
+            "review_outcome": None,
+            "review_approved": None,
+            "integration": state["integration"],
+        }
     )
-    candidate_heads = [item["candidate_head"] for item in receipts]
-    if isinstance(finalization, Mapping):
-        candidate_heads.extend(
-            value
-            for value in (
-                finalization.get("candidate_head"),
-                finalization.get("review_head"),
-            )
-            if isinstance(value, str)
-        )
     failure = state.get("failure")
     return {
         "exit": exit_code,
@@ -311,16 +565,16 @@ def _normalize(
         "failure": (
             failure.get("reason_code") if isinstance(failure, Mapping) else None
         ),
-        "verification_receipts": receipts,
-        "candidate_head_equal": (
-            bool(candidate_heads)
-            and all(head == observed_head for head in candidate_heads)
-        )
-        if state["status"] == "ready_for_integration"
-        else None,
-        "review_outcome": "reviewed" if isinstance(review_head, str) else None,
-        "session_action": _session_action(log_path, actions),
-        "integration": state["integration"],
+        "verification_receipts": ready["verification_receipts"],
+        "required_receipt_count": ready["required_receipt_count"],
+        "all_required_receipts": ready["all_required_receipts"],
+        "final_head_equal": ready["final_head_equal"],
+        "review_outcome": ready["review_outcome"],
+        "review_approved": ready["review_approved"],
+        "session_action": _validate_recovery_evidence(
+            log_path.parent.name, records, state
+        ),
+        "integration": ready["integration"],
     }
 
 
@@ -332,6 +586,12 @@ def _expected(scenario: Mapping[str, Any]) -> dict[str, Any]:
         "expected_task_statuses": "task_statuses",
         "expected_failure": "failure",
         "expected_session_action": "session_action",
+        "expected_required_receipt_count": "required_receipt_count",
+        "expected_all_required_receipts": "all_required_receipts",
+        "expected_final_head_equal": "final_head_equal",
+        "expected_review_outcome": "review_outcome",
+        "expected_review_approved": "review_approved",
+        "expected_integration": "integration",
     }
     return {
         normalized: scenario[source]
