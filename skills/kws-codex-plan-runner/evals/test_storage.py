@@ -1,0 +1,316 @@
+import hashlib
+import json
+import os
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+SKILL_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(SKILL_ROOT / "scripts"))
+
+from plan_runner import storage  # noqa: E402
+from plan_runner.contracts import canonical_json, sha256_json  # noqa: E402
+from plan_runner.storage import RunLock, StateStore  # noqa: E402
+
+
+class InjectedStorageFault(RuntimeError):
+    def __init__(self, stage):
+        super().__init__(stage)
+        self.stage = stage
+
+
+class StateStoreTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.repo = self.root / "repo"
+        self.repo.mkdir()
+        self.spec_a = self.root / "spec-a.md"
+        self.spec_b = self.root / "spec-b.md"
+        self.plan_a = self.root / "plan-a.md"
+        self.plan_b = self.root / "plan-b.md"
+        for path, text in (
+            (self.spec_a, "spec a\n"),
+            (self.spec_b, "spec b\n"),
+            (self.plan_a, "plan a\n"),
+            (self.plan_b, "plan b\n"),
+        ):
+            path.write_text(text, encoding="utf-8")
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def create_store(self, root=None):
+        return StateStore.create(
+            root=root or self.root / "state" / "run-1",
+            provider="codex",
+            run_id="plan-a-12345678-1234-4234-8234-123456789abc",
+            source_repository=self.repo,
+            source_commit="a" * 40,
+            worktree=self.root / "worktree",
+            branch="codex-plan/plan-a-12345678-1234-4234-8234-123456789abc",
+            specs=[self.spec_b, self.spec_a],
+            plans=[self.plan_b, self.plan_a],
+            immutable_config={"stall_seconds": 3600, "sandbox": "workspace-write"},
+            runner_runtime={
+                "uv_version": "uv 0.11.28",
+                "implementation": "cpython",
+                "python_version": "3.13.14",
+                "executable": "/managed/python3.13",
+                "architecture": "arm64",
+                "gil_disabled": False,
+            },
+        )
+
+    def rewrite_state(self, store, mutate):
+        state = store.snapshot()
+        mutate(state)
+        state_without_digest = dict(state)
+        state_without_digest.pop("state_digest", None)
+        state["state_digest"] = sha256_json(state_without_digest)
+        (store.root / "state.json").write_bytes(canonical_json(state))
+
+    def assert_references_exist(self, store):
+        state = store.snapshot()
+        for reference in state["artifact_refs"]:
+            self.assertTrue(store.referenced_artifact(reference).is_file())
+
+    def test_preserves_role_local_cli_order_and_original_digest(self):
+        store = self.create_store()
+        state = store.snapshot()
+        specs = [item for item in state["inputs"] if item["role"] == "spec"]
+        plans = [item for item in state["inputs"] if item["role"] == "plan"]
+        self.assertEqual(
+            [Path(item["source_path"]).name for item in specs],
+            ["spec-b.md", "spec-a.md"],
+        )
+        self.assertEqual(
+            [Path(item["source_path"]).name for item in plans],
+            ["plan-b.md", "plan-a.md"],
+        )
+        self.assertEqual([item["input_order"] for item in specs], [0, 1])
+        self.assertEqual([item["input_order"] for item in plans], [0, 1])
+        self.assertEqual([item["status"] for item in state["plans"]], ["pending", "pending"])
+        self.assertEqual(state["runner_runtime"]["python_version"], "3.13.14")
+        self.assertEqual(
+            [item["sha256"] for item in specs],
+            [
+                hashlib.sha256(b"spec b\n").hexdigest(),
+                hashlib.sha256(b"spec a\n").hexdigest(),
+            ],
+        )
+
+    def test_artifact_is_durable_before_state_reference_and_orphan_is_ignored(self):
+        store = self.create_store()
+        orphan = store.put_artifact("receipts", {"outcome": "success"})
+        reopened = StateStore.open(store.root)
+        self.assertNotIn(orphan.digest, json.dumps(reopened.snapshot()))
+        next_state = reopened.snapshot()
+        next_state["artifact_refs"] = [orphan.as_dict()]
+        committed = reopened.commit(next_state)
+        self.assertEqual(committed["revision"], 2)
+        self.assertTrue(reopened.referenced_artifact(orphan.as_dict()).is_file())
+
+    def test_fault_windows_reopen_previous_then_next_complete_revision(self):
+        store = self.create_store()
+        previous = store.snapshot()
+        pre_orphan = store.put_artifact("receipts", {"window": "before"})
+        pre_state = store.snapshot()
+        pre_state["artifact_refs"] = [pre_orphan.as_dict()]
+        reached = []
+
+        def fail_before(stage):
+            reached.append(stage)
+            if stage == storage.BEFORE_STATE_REPLACE:
+                raise InjectedStorageFault(stage)
+
+        store._fault_injector = fail_before
+        with self.assertRaises(InjectedStorageFault) as raised:
+            store.commit(pre_state)
+        self.assertEqual(raised.exception.stage, storage.BEFORE_STATE_REPLACE)
+        self.assertEqual(reached, [storage.BEFORE_STATE_REPLACE])
+
+        reopened_previous = StateStore.open(store.root)
+        self.assertEqual(reopened_previous.snapshot(), previous)
+        self.assertNotIn(pre_orphan.digest, json.dumps(reopened_previous.snapshot()))
+        self.assert_references_exist(reopened_previous)
+
+        post_artifact = reopened_previous.put_artifact("receipts", {"window": "after"})
+        post_state = reopened_previous.snapshot()
+        post_state["artifact_refs"] = [post_artifact.as_dict()]
+        reached = []
+
+        def fail_after(stage):
+            reached.append(stage)
+            if stage == storage.AFTER_STATE_REPLACE:
+                raise InjectedStorageFault(stage)
+
+        reopened_previous._fault_injector = fail_after
+        with self.assertRaises(InjectedStorageFault) as raised:
+            reopened_previous.commit(post_state)
+        self.assertEqual(raised.exception.stage, storage.AFTER_STATE_REPLACE)
+        self.assertEqual(
+            reached,
+            [storage.BEFORE_STATE_REPLACE, storage.AFTER_STATE_REPLACE],
+        )
+
+        reopened_next = StateStore.open(store.root)
+        self.assertEqual(reopened_next.snapshot()["revision"], previous["revision"] + 1)
+        self.assertEqual(reopened_next.snapshot()["artifact_refs"], [post_artifact.as_dict()])
+        self.assertNotIn(pre_orphan.digest, json.dumps(reopened_next.snapshot()))
+        self.assert_references_exist(reopened_next)
+
+    def test_rejects_symlink_input(self):
+        link = self.root / "linked-spec.md"
+        link.symlink_to(self.spec_a)
+        with self.assertRaisesRegex(ValueError, "regular file"):
+            StateStore.create(
+                root=self.root / "state" / "bad",
+                provider="codex",
+                run_id="bad-12345678-1234-4234-8234-123456789abc",
+                source_repository=self.repo,
+                source_commit="a" * 40,
+                worktree=self.root / "worktree",
+                branch="codex-plan/bad-12345678-1234-4234-8234-123456789abc",
+                specs=[link],
+                plans=[self.plan_a],
+                immutable_config={"stall_seconds": 3600, "sandbox": "workspace-write"},
+                runner_runtime={
+                    "uv_version": "uv 0.11.28",
+                    "implementation": "cpython",
+                    "python_version": "3.13.14",
+                    "executable": "/managed/python3.13",
+                    "architecture": "arm64",
+                    "gil_disabled": False,
+                },
+            )
+
+    def test_open_rejects_symlink_root_and_non_private_directory(self):
+        store = self.create_store()
+        alias = self.root / "state-link"
+        alias.symlink_to(store.root, target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, "symlink"):
+            StateStore.open(alias)
+
+        os.chmod(store.root, 0o777)
+        with self.assertRaisesRegex(ValueError, "private"):
+            StateStore.open(store.root)
+
+    def test_create_rejects_symlink_component_in_repository_path(self):
+        repository_alias = self.root / "repository-alias"
+        repository_alias.symlink_to(self.root, target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, "symlink"):
+            StateStore.create(
+                root=self.root / "state" / "bad-repository",
+                provider="codex",
+                run_id="bad-12345678-1234-4234-8234-123456789abc",
+                source_repository=repository_alias / "repo",
+                source_commit="a" * 40,
+                worktree=self.root / "worktree",
+                branch="codex-plan/bad-12345678-1234-4234-8234-123456789abc",
+                specs=[self.spec_a],
+                plans=[self.plan_a],
+                immutable_config={"stall_seconds": 3600, "sandbox": "workspace-write"},
+                runner_runtime={
+                    "uv_version": "uv 0.11.28",
+                    "implementation": "cpython",
+                    "python_version": "3.13.14",
+                    "executable": "/managed/python3.13",
+                    "architecture": "arm64",
+                    "gil_disabled": False,
+                },
+            )
+
+    def test_open_rejects_tampered_or_invalid_state(self):
+        cases = (
+            ("format version", lambda state: state.__setitem__("format_version", 999)),
+            ("run status", lambda state: state.__setitem__("status", "made-up")),
+            ("plan status", lambda state: state["plans"][0].__setitem__("status", "made-up")),
+            ("provider", lambda state: state.__setitem__("provider", "claude")),
+            ("revision", lambda state: state.__setitem__("revision", 0)),
+        )
+        for label, mutate in cases:
+            with self.subTest(label=label):
+                store = self.create_store(self.root / label.replace(" ", "-"))
+                self.rewrite_state(store, mutate)
+                with self.assertRaises(ValueError):
+                    StateStore.open(store.root)
+
+        store = self.create_store(self.root / "digest")
+        state_path = store.root / "state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state["status"] = "running"
+        state_path.write_bytes(canonical_json(state))
+        with self.assertRaisesRegex(ValueError, "digest"):
+            StateStore.open(store.root)
+
+    def test_rejects_stale_revision_and_unsafe_or_missing_artifact_reference(self):
+        first = self.create_store()
+        stale = StateStore.open(first.root)
+        next_state = first.snapshot()
+        first.commit(next_state)
+        with self.assertRaisesRegex(ValueError, "revision"):
+            stale.commit(stale.snapshot())
+
+        unsafe = first.snapshot()
+        unsafe["artifact_refs"] = [
+            {
+                "kind": "receipts",
+                "digest": "b" * 64,
+                "relative_path": "../outside.json",
+            }
+        ]
+        with self.assertRaisesRegex(ValueError, "relative artifact path"):
+            first.commit(unsafe)
+
+        missing = first.snapshot()
+        missing["artifact_refs"] = [
+            {
+                "kind": "receipts",
+                "digest": "b" * 64,
+                "relative_path": f"artifacts/receipts/{'b' * 64}.json",
+            }
+        ]
+        with self.assertRaisesRegex(ValueError, "missing artifact"):
+            first.commit(missing)
+
+    def test_rejects_noncanonical_paths_even_when_they_resolve_inside_root(self):
+        store = self.create_store()
+        artifact = store.put_artifact("receipts", {"outcome": "success"})
+        noncanonical_artifact = store.snapshot()
+        reference = artifact.as_dict()
+        reference["relative_path"] = (
+            f"artifacts/receipts/./{artifact.digest}.json"
+        )
+        noncanonical_artifact["artifact_refs"] = [reference]
+        with self.assertRaisesRegex(ValueError, "relative artifact path"):
+            store.commit(noncanonical_artifact)
+
+        state = store.snapshot()
+        spec = next(item for item in state["inputs"] if item["role"] == "spec")
+        state["inputs"][0]["snapshot_path"] = str(
+            store.root
+            / "inputs"
+            / ".."
+            / "inputs"
+            / Path(spec["snapshot_path"]).name
+        )
+        self.rewrite_state(store, lambda target: target.update(state))
+        with self.assertRaisesRegex(ValueError, "snapshot"):
+            StateStore.open(store.root)
+
+    def test_second_nonblocking_lock_is_rejected_and_release_allows_reacquire(self):
+        store = self.create_store()
+        lock_path = store.root / "run.lock"
+        with RunLock(lock_path) as held:
+            self.assertIsInstance(held, RunLock)
+            with self.assertRaisesRegex(RuntimeError, "run is busy"):
+                with RunLock(lock_path):
+                    self.fail("second lock must not be acquired")
+        with RunLock(lock_path):
+            pass
+
+
+if __name__ == "__main__":
+    unittest.main()
