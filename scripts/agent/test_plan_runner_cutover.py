@@ -473,6 +473,10 @@ class ApplyTests(CutoverFixture):
                 runtime_identity=report["runtime"],
             )
         self.assertEqual("applied", result["status"])
+        self.assertEqual(4, len(result["quarantined_legacy_links"]))
+        for move in result["quarantined_legacy_links"]:
+            self.assertFalse(Path(move["source"]).exists())
+            self.assertTrue(Path(move["destination"]).is_symlink())
         self.assertEqual(
             str(self.repo / "skills" / "kws-codex-plan-runner"),
             os.readlink(self.home / ".codex" / "skills" / "kws-codex-plan-runner"),
@@ -578,7 +582,7 @@ class ApplyTests(CutoverFixture):
         self.assertFalse(destination.is_symlink())
         self.assertEqual("operator data", destination.read_text(encoding="utf-8"))
 
-    def test_narrow_unlink_never_removes_raced_regular_or_directory(self):
+    def test_quarantine_move_preserves_and_reports_raced_regular_or_directory(self):
         for replacement in ("regular", "directory"):
             with self.subTest(replacement=replacement):
                 parent = self.home / replacement
@@ -588,7 +592,7 @@ class ApplyTests(CutoverFixture):
                 link.symlink_to(target)
                 expected = cutover._lstat_fact(link)
 
-                def swap() -> None:
+                def swap(_source: Path, _destination: Path) -> None:
                     link.unlink()
                     if replacement == "regular":
                         link.write_text("operator data", encoding="utf-8")
@@ -597,36 +601,72 @@ class ApplyTests(CutoverFixture):
 
                 with self.assertRaisesRegex(
                     cutover.CutoverError, "^legacy_link_integrity$"
-                ):
-                    cutover.unlink_exact_symlink(
+                ) as caught:
+                    cutover.quarantine_legacy_entry(
                         link,
                         expected,
                         expected_target=str(target),
-                        before_unlink=swap,
+                        before_rename=swap,
                     )
+                recovery = Path(
+                    caught.exception.details["quarantine_recovery_path"]
+                )
+                self.assertFalse(link.exists())
+                self.assertFalse(link.is_symlink())
                 if replacement == "regular":
-                    self.assertTrue(link.is_file())
+                    self.assertTrue(recovery.is_file())
                     self.assertEqual(
-                        "operator data", link.read_text(encoding="utf-8")
+                        "operator data", recovery.read_text(encoding="utf-8")
                     )
                 else:
-                    self.assertTrue(link.is_dir())
+                    self.assertTrue(recovery.is_dir())
 
-    def test_narrow_unlink_maps_filesystem_errors_to_integrity_failure(self):
-        parent = self.home / "permission-error"
+    def test_quarantine_destination_race_never_overwrites_existing_entry(self):
+        parent = self.home / "destination-race"
         parent.mkdir()
         target = self.repo / "skills" / "kws-codex-plan-executor"
         link = parent / "kws-codex-plan-executor"
         link.symlink_to(target)
         expected = cutover._lstat_fact(link)
-        with mock.patch.object(cutover.os, "stat", side_effect=PermissionError):
+
+        def occupy_destination(_source: Path, destination: Path) -> None:
+            destination.write_text("existing quarantine data", encoding="utf-8")
+
+        with self.assertRaisesRegex(
+            cutover.CutoverError, "^legacy_link_integrity$"
+        ) as caught:
+            cutover.quarantine_legacy_entry(
+                link,
+                expected,
+                expected_target=str(target),
+                before_rename=occupy_destination,
+            )
+        self.assertTrue(link.is_symlink())
+        collision = Path(caught.exception.details["quarantine_collision_path"])
+        self.assertEqual(
+            "existing quarantine data", collision.read_text(encoding="utf-8")
+        )
+
+    def test_post_move_io_failure_reports_exact_recovery_path(self):
+        parent = self.home / "post-move-error"
+        parent.mkdir()
+        target = self.repo / "skills" / "kws-codex-plan-executor"
+        link = parent / "kws-codex-plan-executor"
+        link.symlink_to(target)
+        expected = cutover._lstat_fact(link)
+        with mock.patch.object(
+            cutover.os, "fsync", side_effect=OSError("injected fsync failure")
+        ):
             with self.assertRaisesRegex(
                 cutover.CutoverError, "^legacy_link_integrity$"
-            ):
-                cutover.unlink_exact_symlink(
+            ) as caught:
+                cutover.quarantine_legacy_entry(
                     link, expected, expected_target=str(target)
                 )
-        self.assertTrue(link.is_symlink())
+        recovery = Path(caught.exception.details["quarantine_recovery_path"])
+        self.assertFalse(link.exists())
+        self.assertTrue(recovery.is_symlink())
+        self.assertEqual(str(target), os.readlink(recovery))
 
 
 class QuarantineTests(ApplyTests):

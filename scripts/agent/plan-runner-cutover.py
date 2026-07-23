@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
+import errno
 import hashlib
 import json
 import os
@@ -57,10 +59,17 @@ SECRET_OPTION = re.compile(
 
 
 class CutoverError(RuntimeError):
-    def __init__(self, reason_code: str, exit_code: int = 65) -> None:
+    def __init__(
+        self,
+        reason_code: str,
+        exit_code: int = 65,
+        *,
+        details: Mapping[str, object] | None = None,
+    ) -> None:
         super().__init__(reason_code)
         self.reason_code = reason_code
         self.exit_code = exit_code
+        self.details = dict(details or {})
 
 
 class InvocationError(ValueError):
@@ -1329,35 +1338,190 @@ def atomic_symlink(
             os.close(directory)
 
 
-def unlink_exact_symlink(
+def _rename_noreplace(
+    source_name: str,
+    destination_name: str,
+    *,
+    source_dir: int,
+    destination_dir: int,
+) -> None:
+    libc = ctypes.CDLL(None, use_errno=True)
+    source = os.fsencode(source_name)
+    destination = os.fsencode(destination_name)
+    if sys.platform == "darwin" and hasattr(libc, "renameatx_np"):
+        rename = libc.renameatx_np
+        rename.argtypes = (
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        )
+        rename.restype = ctypes.c_int
+        result = rename(
+            source_dir,
+            source,
+            destination_dir,
+            destination,
+            0x00000004,  # RENAME_EXCL
+        )
+    elif hasattr(libc, "renameat2"):
+        rename = libc.renameat2
+        rename.argtypes = (
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        )
+        rename.restype = ctypes.c_int
+        result = rename(
+            source_dir,
+            source,
+            destination_dir,
+            destination,
+            0x00000001,  # RENAME_NOREPLACE
+        )
+    else:
+        raise CutoverError("legacy_link_integrity")
+    if result == 0:
+        return
+    error_number = ctypes.get_errno()
+    if error_number == errno.EEXIST:
+        raise FileExistsError(error_number, os.strerror(error_number))
+    raise OSError(error_number, os.strerror(error_number))
+
+
+def _create_private_quarantine(
+    parent: Path, parent_directory: int
+) -> tuple[Path, int]:
+    for _attempt in range(16):
+        name = f".plan-runner-cutover-quarantine-{uuid.uuid4().hex}"
+        try:
+            os.mkdir(name, 0o700, dir_fd=parent_directory)
+        except FileExistsError:
+            continue
+        path = parent / name
+        directory = _open_safe_directory(path)
+        return path, directory
+    raise CutoverError("legacy_link_integrity")
+
+
+def quarantine_legacy_entry(
     path: Path,
     expected: Mapping[str, object],
     *,
     expected_target: str,
-    before_unlink: Callable[[], None] | None = None,
-) -> None:
+    before_rename: Callable[[Path, Path], None] | None = None,
+) -> dict[str, object]:
     if path.name in {"", ".", ".."} or os.sep in path.name:
         raise CutoverError("legacy_link_integrity")
-    if before_unlink is not None:
-        before_unlink()
-    directory = _open_safe_directory(path.parent)
+    parent_directory = _open_safe_directory(path.parent)
+    quarantine_path: Path | None = None
+    quarantine_directory: int | None = None
+    destination: Path | None = None
+    move_completed = False
     try:
-        metadata = os.stat(path.name, dir_fd=directory, follow_symlinks=False)
+        quarantine_path, quarantine_directory = _create_private_quarantine(
+            path.parent, parent_directory
+        )
+        destination = quarantine_path / path.name
+        metadata = os.stat(
+            path.name, dir_fd=parent_directory, follow_symlinks=False
+        )
         if (
             not stat.S_ISLNK(metadata.st_mode)
             or metadata.st_uid != os.getuid()
             or metadata.st_dev != expected.get("device")
             or metadata.st_ino != expected.get("inode")
             or stat.S_IMODE(metadata.st_mode) != expected.get("mode")
-            or os.readlink(path.name, dir_fd=directory) != expected_target
+            or os.readlink(path.name, dir_fd=parent_directory) != expected_target
         ):
             raise CutoverError("legacy_link_integrity")
-        os.unlink(path.name, dir_fd=directory)
-        os.fsync(directory)
+        if before_rename is not None:
+            before_rename(path, destination)
+        parent_now = path.parent.lstat()
+        parent_opened = os.fstat(parent_directory)
+        quarantine_now = quarantine_path.lstat()
+        quarantine_opened = os.fstat(quarantine_directory)
+        if (
+            (parent_now.st_dev, parent_now.st_ino)
+            != (parent_opened.st_dev, parent_opened.st_ino)
+            or (quarantine_now.st_dev, quarantine_now.st_ino)
+            != (quarantine_opened.st_dev, quarantine_opened.st_ino)
+        ):
+            raise CutoverError("legacy_link_integrity")
+        try:
+            _rename_noreplace(
+                path.name,
+                path.name,
+                source_dir=parent_directory,
+                destination_dir=quarantine_directory,
+            )
+            move_completed = True
+        except FileExistsError as error:
+            raise CutoverError(
+                "legacy_link_integrity",
+                details={
+                    "quarantine_collision_path": str(destination),
+                    "source_preserved": True,
+                },
+            ) from error
+        moved = os.stat(
+            path.name, dir_fd=quarantine_directory, follow_symlinks=False
+        )
+        moved_target = (
+            os.readlink(path.name, dir_fd=quarantine_directory)
+            if stat.S_ISLNK(moved.st_mode)
+            else None
+        )
+        os.fsync(parent_directory)
+        os.fsync(quarantine_directory)
+        if (
+            not stat.S_ISLNK(moved.st_mode)
+            or moved.st_uid != os.getuid()
+            or moved.st_dev != expected.get("device")
+            or moved.st_ino != expected.get("inode")
+            or stat.S_IMODE(moved.st_mode) != expected.get("mode")
+            or moved_target != expected_target
+        ):
+            raise CutoverError(
+                "legacy_link_integrity",
+                details={
+                    "quarantine_recovery_path": str(destination),
+                    "quarantined_kind": (
+                        "directory"
+                        if stat.S_ISDIR(moved.st_mode)
+                        else "regular"
+                        if stat.S_ISREG(moved.st_mode)
+                        else "symlink"
+                        if stat.S_ISLNK(moved.st_mode)
+                        else "other"
+                    ),
+                    "source_preserved": True,
+                },
+            )
+        return {
+            "source": str(path),
+            "destination": str(destination),
+            "device": moved.st_dev,
+            "inode": moved.st_ino,
+            "target": moved_target,
+        }
+    except CutoverError:
+        raise
     except OSError as error:
-        raise CutoverError("legacy_link_integrity") from error
+        details: dict[str, object] = {}
+        if move_completed and destination is not None:
+            details["quarantine_recovery_path"] = str(destination)
+            details["source_preserved"] = True
+        elif quarantine_path is not None:
+            details["quarantine_directory"] = str(quarantine_path)
+        raise CutoverError("legacy_link_integrity", details=details) from error
     finally:
-        os.close(directory)
+        if quarantine_directory is not None:
+            os.close(quarantine_directory)
+        os.close(parent_directory)
 
 
 def apply_cutover(
@@ -1401,22 +1565,33 @@ def apply_cutover(
             or fact.get("target") != str(repository / "skills" / name)
         ):
             raise CutoverError("legacy_link_integrity")
-    removed: list[str] = []
+    quarantined: list[dict[str, object]] = []
     for provider in ("codex", "claude"):
         for name in LEGACY_NAMES:
             path = links[f"{provider}:{name}"]
             expected = removal_identities.get(str(path))
             if expected is not None:
-                unlink_exact_symlink(
-                    path,
-                    expected,
-                    expected_target=str(repository / "skills" / name),
-                )
-                removed.append(str(path))
+                try:
+                    quarantined.append(
+                        quarantine_legacy_entry(
+                            path,
+                            expected,
+                            expected_target=str(repository / "skills" / name),
+                        )
+                    )
+                except CutoverError as error:
+                    details = dict(error.details)
+                    details["completed_quarantine_moves"] = list(quarantined)
+                    raise CutoverError(
+                        error.reason_code,
+                        error.exit_code,
+                        details=details,
+                    ) from error
     return {
         "status": "applied",
         "installed": [str(links[f"{provider}:{name}"]) for provider, name in additions],
-        "removed": removed,
+        "removed": [move["source"] for move in quarantined],
+        "quarantined_legacy_links": quarantined,
     }
 
 
@@ -1614,7 +1789,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         _print_result({"status": "failed", "reason_code": str(error)})
         return 64
     except CutoverError as error:
-        _print_result({"status": "blocked", "reason_code": error.reason_code})
+        result: dict[str, object] = {
+            "status": "blocked",
+            "reason_code": error.reason_code,
+        }
+        if error.details:
+            result["details"] = error.details
+        _print_result(result)
         return error.exit_code
     except KeyboardInterrupt:
         return 130
