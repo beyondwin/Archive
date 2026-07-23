@@ -41,6 +41,11 @@ Use `resume` after controller or terminal interruption. Use `--retry-blocked`
 only after the external blocker is corrected. A failed run requires new
 information: `--retry-failed --strategy-note "changed strategy"`.
 
+`SIGINT` and `SIGTERM` stop the active provider process group before exposing a
+durable `resumable` checkpoint. If an interrupted implementation left
+uncommitted work, that exact bounded Git worktree identity is sealed; resume
+accepts it only while unchanged and rejects any drift as an integrity failure.
+
 ## Recovery and Completion
 
 The canonical recovery source is durable state, Git HEAD, ledger, and receipts,

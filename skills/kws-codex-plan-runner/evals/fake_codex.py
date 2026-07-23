@@ -53,6 +53,7 @@ def _record(
         "cwd": os.getcwd(),
         "env": selected,
         "launch_number": _launch_number(log_path),
+        "pid": os.getpid(),
         "prompt": prompt,
     }
     if action is not None:
@@ -261,16 +262,43 @@ def _generic_main(argv: list[str], prompt: str, sequence_path: Path) -> int:
         session_id=session_id,
     )
     _emit({"type": "thread.started", "thread_id": session_id})
-    if action == "stalled":
+    if action in {"stalled", "dirty-stalled"}:
+        if action == "dirty-stalled":
+            Path("partial-provider-edit.txt").write_text(
+                "partial implementation\n", encoding="utf-8"
+            )
         time.sleep(2)
         return 7
     if action in {"interrupted", "same-failure"}:
         return 7
     _emit({"type": "turn.started", "turn_id": f"turn-{action_index + 1}"})
-    if action == "implemented":
+    if action in {"implemented", "resume-dirty-implemented"}:
         index = packet["current_plan"]["index"]
-        _commit_if_requested(f"plan-{index}.txt", f"implement plan {index}")
-        result = _generic_result(packet, action)
+        marker = f"plan-{index}.txt"
+        Path(marker).write_text("implemented\n", encoding="utf-8")
+        paths = [marker]
+        partial = Path("partial-provider-edit.txt")
+        if action == "resume-dirty-implemented":
+            if not partial.is_file():
+                raise ValueError("sealed partial implementation is missing")
+            paths.append(partial.name)
+        subprocess.run(["git", "add", *paths], check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Plan Runner Parity",
+                "-c",
+                "user.email=parity@example.test",
+                "commit",
+                "-m",
+                f"implement plan {index}",
+            ],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        result = _generic_result(packet, "implemented")
     elif action == "blocked":
         result = _generic_result(packet, action)
     elif action == "finalized":

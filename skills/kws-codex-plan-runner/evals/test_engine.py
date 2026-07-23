@@ -1,6 +1,7 @@
 import dataclasses
 import json
 import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -283,6 +284,130 @@ class EngineTest(unittest.TestCase):
     def test_runtime_paths_are_immutable(self):
         with self.assertRaises(dataclasses.FrozenInstanceError):
             self.paths.state_home = self.root / "other"
+
+    def _assert_graceful_dirty_signal_checkpoint(self, signum, *, drift=False):
+        home = self.root / "home"
+        fake_bin = self.root / "fake-bin"
+        fake_bin.mkdir()
+        fake = SKILL_ROOT / "evals" / "fake_codex.py"
+        fake.chmod(fake.stat().st_mode | 0o100)
+        (fake_bin / "codex").symlink_to(fake)
+        sequence = self.root / "signal-sequence.json"
+        sequence.write_text(
+            json.dumps(
+                {
+                    "protocol_version": 1,
+                    "actions": [
+                        "dirty-stalled",
+                        "resume-dirty-implemented",
+                        "finalized",
+                    ],
+                    "next_index": 0,
+                }
+            ),
+            encoding="utf-8",
+        )
+        launch_log = self.root / "signal-launches.jsonl"
+        environment = dict(os.environ)
+        environment.update(
+            {
+                "HOME": str(home),
+                "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+                "UV_PYTHON_INSTALL_DIR": str(Path(sys.executable).parents[2]),
+                "PLAN_RUNNER_FAKE_SEQUENCE": str(sequence),
+                "PLAN_RUNNER_FAKE_LOG": str(launch_log),
+            }
+        )
+        process = subprocess.Popen(
+            [
+                sys.executable,
+                str(SKILL_ROOT / "scripts" / "runner.py"),
+                "run",
+                "--spec",
+                str(self.specs[0]),
+                "--plan",
+                str(self.plans[0]),
+                "--workspace",
+                str(self.source),
+                "--stall-seconds",
+                "30",
+            ],
+            env=environment,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        state_path = None
+        partial = None
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            roots = list((home / ".codex" / "plan-runner").glob("*/state.json"))
+            if roots:
+                candidate = json.loads(roots[0].read_text(encoding="utf-8"))
+                partial = (
+                    Path(candidate["repository"]["worktree"])
+                    / "partial-provider-edit.txt"
+                )
+                if candidate["sessions"] and partial.is_file():
+                    state_path = roots[0]
+                    break
+            time.sleep(0.02)
+        self.assertIsNotNone(state_path, "dirty provider session was not captured")
+        process.send_signal(signum)
+        stdout, stderr = process.communicate(timeout=10)
+        self.assertEqual(process.returncode, ExitCode.RESUMABLE, stderr)
+        self.assertEqual(stderr, "")
+        self.assertEqual(json.loads(stdout.splitlines()[-1])["status"], "resumable")
+        checkpoint = json.loads(state_path.read_text(encoding="utf-8"))
+        sealed = checkpoint["failure"]["partial_worktree"]
+        self.assertEqual(sealed["attempt_id"], checkpoint["attempts"][-1]["attempt_id"])
+        self.assertEqual(sealed["mode"], "implementation")
+        self.assertEqual(sealed["plan_index"], 0)
+        self.assertEqual(sealed["branch"], checkpoint["repository"]["branch"])
+        self.assertEqual(sealed["head"], git("rev-parse", "HEAD", cwd=partial.parent))
+        self.assertFalse(sealed["clean"])
+        self.assertEqual(len(sealed["porcelain_digest"]), 64)
+        self.assertEqual(len(sealed["tree_digest"]), 64)
+        first_launch = json.loads(launch_log.read_text().splitlines()[0])
+        with self.assertRaises(ProcessLookupError):
+            os.kill(first_launch["pid"], 0)
+
+        if drift:
+            partial.write_text("operator drift\n", encoding="utf-8")
+        resumed = subprocess.run(
+            [
+                sys.executable,
+                str(SKILL_ROOT / "scripts" / "runner.py"),
+                "resume",
+                "--run-id",
+                checkpoint["run_id"],
+            ],
+            env=environment,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        if drift:
+            self.assertEqual(resumed.returncode, ExitCode.INTEGRITY, resumed.stderr)
+            self.assertEqual(len(launch_log.read_text().splitlines()), 1)
+            return
+        self.assertEqual(resumed.returncode, ExitCode.READY, resumed.stderr)
+        launches = [
+            json.loads(line)
+            for line in launch_log.read_text(encoding="utf-8").splitlines()
+        ]
+        self.assertEqual(launches[1]["session_action"], "resume")
+        self.assertEqual(launches[1]["session_id"], checkpoint["sessions"][-1]["session_id"])
+
+    def test_sigint_seals_dirty_worktree_and_resumes_after_provider_cleanup(self):
+        self._assert_graceful_dirty_signal_checkpoint(signal.SIGINT)
+
+    def test_sigterm_seals_dirty_worktree_and_resumes_after_provider_cleanup(self):
+        self._assert_graceful_dirty_signal_checkpoint(signal.SIGTERM)
+
+    def test_dirty_resume_rejects_worktree_drift_before_provider_launch(self):
+        self._assert_graceful_dirty_signal_checkpoint(signal.SIGINT, drift=True)
 
     def test_multiple_specs_and_plans_are_ordered_and_finalization_is_fresh(self):
         code = self.runner().create_run(

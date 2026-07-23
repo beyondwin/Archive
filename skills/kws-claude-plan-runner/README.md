@@ -66,6 +66,13 @@ identity. Simple interruptions prefer healthy session resume. Repeated failure,
 stall, context overflow, abnormal compaction, session damage, or failed resume
 uses a durable fresh session with a changed strategy.
 
+`SIGINT` and `SIGTERM` terminate and reap the isolated provider process group
+before atomically exposing an external `resumable` state. An interrupted
+implementation may resume an uncommitted partial tree only when its HEAD,
+branch, porcelain digest, and bounded content digest exactly match the sealed
+checkpoint; arbitrary dirty state or later drift fails closed without launching
+another provider.
+
 While the controller is alive, provider/session loss and stalls enter a bounded
 automatic `recovering` loop. `resumable` is reserved for a stopped controller
 requiring another invocation. `--retry-blocked` follows correction of a real

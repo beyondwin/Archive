@@ -62,6 +62,13 @@ Codex session, then falls back to a fresh session. Suspected context corruption,
 repeated failure, context overflow, or a failed resume starts a fresh session
 with a changed strategy. Every new plan always starts a new session.
 
+`SIGINT` and `SIGTERM` terminate and reap the isolated provider process group
+before atomically exposing an external `resumable` state. An interrupted
+implementation may resume an uncommitted partial tree only when its HEAD,
+branch, porcelain digest, and bounded content digest exactly match the sealed
+checkpoint; arbitrary dirty state or later drift fails closed without launching
+another provider.
+
 While the controller remains alive, provider loss, session loss, and stall
 outcomes enter a bounded automatic `recovering` loop; the user is not asked to
 drive ordinary defect repair. `resumable` is reserved for a stopped controller
