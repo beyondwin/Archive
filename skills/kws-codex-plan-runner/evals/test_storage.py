@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SKILL_ROOT / "scripts"))
@@ -23,7 +24,7 @@ class InjectedStorageFault(RuntimeError):
 class StateStoreTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         self.repo = self.root / "repo"
         self.repo.mkdir()
         self.spec_a = self.root / "spec-a.md"
@@ -100,6 +101,18 @@ class StateStoreTest(unittest.TestCase):
                 hashlib.sha256(b"spec a\n").hexdigest(),
             ],
         )
+
+    def test_reopen_uses_immutable_snapshots_after_sources_change_or_disappear(self):
+        modified = self.create_store(self.root / "state" / "modified")
+        expected_modified = modified.snapshot()
+        self.spec_a.write_text("modified after capture\n", encoding="utf-8")
+        self.assertEqual(StateStore.open(modified.root).snapshot(), expected_modified)
+
+        self.spec_a.write_text("spec a\n", encoding="utf-8")
+        deleted = self.create_store(self.root / "state" / "deleted")
+        expected_deleted = deleted.snapshot()
+        self.spec_a.unlink()
+        self.assertEqual(StateStore.open(deleted.root).snapshot(), expected_deleted)
 
     def test_artifact_is_durable_before_state_reference_and_orphan_is_ignored(self):
         store = self.create_store()
@@ -299,6 +312,27 @@ class StateStoreTest(unittest.TestCase):
         self.rewrite_state(store, lambda target: target.update(state))
         with self.assertRaisesRegex(ValueError, "snapshot"):
             StateStore.open(store.root)
+
+    def test_rejects_artifact_beneath_non_private_kind_directory(self):
+        store = self.create_store()
+        artifact = store.put_artifact("receipts", {"outcome": "success"})
+        artifact_path = store.root / artifact.relative_path
+        os.chmod(artifact_path.parent, 0o777)
+        with self.assertRaisesRegex(ValueError, "private|writable"):
+            store.referenced_artifact(artifact.as_dict())
+
+    def test_rejects_every_intermediate_symlink_regardless_of_owner(self):
+        real = self.root / "real"
+        real.mkdir()
+        target = real / "payload.json"
+        target.write_text("{}", encoding="utf-8")
+        alias = self.root / "alias"
+        alias.symlink_to(real, target_is_directory=True)
+        candidate = alias / target.name
+
+        with mock.patch.object(storage.os, "getuid", return_value=os.getuid() + 1):
+            with self.assertRaisesRegex(ValueError, "symlink"):
+                storage._reject_symlink_components(candidate)
 
     def test_second_nonblocking_lock_is_rejected_and_release_allows_reacquire(self):
         store = self.create_store()

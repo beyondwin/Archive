@@ -128,8 +128,7 @@ def _reject_symlink_components(path: Path, *, boundary: Path | None = None) -> N
         except FileNotFoundError:
             metadata = None
         if metadata is not None and stat.S_ISLNK(metadata.st_mode):
-            if current == candidate or metadata.st_uid == os.getuid():
-                raise ValueError(f"path contains an unsafe symlink component: {current}")
+            raise ValueError(f"path contains an unsafe symlink component: {current}")
         if current == stop or current.parent == current:
             return
         if stop is not None:
@@ -246,6 +245,9 @@ def _safe_artifact_reference(
     artifact_path = root / expected
     _reject_symlink_components(artifact_path, boundary=root)
     if require_file:
+        if not artifact_path.parent.exists():
+            raise ValueError("missing artifact")
+        _require_private_directory(artifact_path.parent)
         if not artifact_path.exists():
             raise ValueError("missing artifact")
         _require_private_regular(artifact_path, "referenced artifact")
@@ -371,11 +373,6 @@ def _validate_state(
             snapshot_payload.decode("utf-8")
         except UnicodeDecodeError as error:
             raise ValueError("input snapshot is not UTF-8") from error
-        source_path, source_payload = _read_utf8_regular(Path(item["source_path"]))
-        if source_path != Path(item["source_path"]) or hashlib.sha256(source_payload).hexdigest() != item[
-            "sha256"
-        ]:
-            raise ValueError("input source digest changed")
         if role == "plan":
             plan_inputs.append(item)
     if role_orders["spec"] < 1 or role_orders["plan"] < 1:
