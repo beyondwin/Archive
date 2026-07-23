@@ -283,6 +283,22 @@ class ClaudeProviderTest(unittest.TestCase):
         self.assertEqual(outcome.provider_code, "stall_expired")
         self.assertLess(time.monotonic() - started, 2)
 
+    def test_controller_stop_request_cleans_process_group_boundedly(self):
+        started = time.monotonic()
+        outcome = self.launch(
+            "stall",
+            stop_requested=self.log.exists,
+        )
+        elapsed = time.monotonic() - started
+        self.assertEqual(
+            (outcome.kind, outcome.provider_code),
+            ("controller_stopped", "controller_transport_failed"),
+        )
+        self.assertLess(elapsed, 5)
+        child_pid = self.record()["pid"]
+        with self.assertRaises(ProcessLookupError):
+            os.kill(child_pid, 0)
+
     def test_rate_limit_and_provider_api_errors_classify_fail_closed(self):
         rate = self.launch("rate-limit")
         self.assertEqual((rate.kind, rate.provider_code), ("blocked", "provider_usage_blocked"))

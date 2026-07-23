@@ -193,6 +193,7 @@ def generic_main(sequence_path: Path) -> int:
         "action_index": action_index,
         "argv": sys.argv[1:],
         "cwd": os.getcwd(),
+        "pid": os.getpid(),
         "mode": packet["mode"],
         "packet_digest": hashlib.sha256(
             json.dumps(
@@ -259,6 +260,7 @@ if log_path.exists():
 record = {
     "argv": sys.argv[1:],
     "cwd": os.getcwd(),
+    "pid": os.getpid(),
     "launch_count": launch_count,
     "resume": "--resume" in sys.argv,
     "nesting_markers": {
