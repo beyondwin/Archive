@@ -1562,7 +1562,7 @@ class PlanRunner:
                 continue
             result = outcome.result
             try:
-                self._validate_final_result(
+                verification_receipts = self._validate_final_result(
                     store, workspace, candidate.head, result
                 )
             except ValueError as error:
@@ -1621,6 +1621,7 @@ class PlanRunner:
                     ],
                     "review_head": result["review_head"],
                     "review_receipt": review_receipt.as_dict(),
+                    "verification_receipts": verification_receipts,
                     "integration": "not_observed",
                 },
             )
@@ -1891,7 +1892,7 @@ class PlanRunner:
         workspace: GitWorkspace,
         candidate_head: str,
         result: Mapping[str, object],
-    ) -> None:
+    ) -> list[dict[str, str]]:
         state = store.snapshot()
         ledger = self._validated_task_ledger(state["task_ledger"])
         self._require_all_tasks_reported_done(ledger)
@@ -1932,6 +1933,7 @@ class PlanRunner:
         ):
             raise ValueError("final verification declaration HEAD mismatch")
         evidence = EvidenceStore(store, workspace, self._environment)
+        receipt_refs: list[dict[str, str]] = []
         if declaration.get("kind") == "commands":
             commands = declaration.get("commands")
             if not isinstance(commands, list) or not commands:
@@ -1944,6 +1946,7 @@ class PlanRunner:
                 receipt = evidence.reusable_success(identity)
                 if receipt is None or receipt.outcome != "success":
                     raise ValueError("successful final verification receipt is missing")
+                receipt_refs.append(receipt.artifact.as_dict())
             if result.get("no_applicable_verification_approved") is not False:
                 raise ValueError("verification approval flag is inconsistent")
         elif declaration.get("kind") == "no_applicable_verification":
@@ -1960,6 +1963,7 @@ class PlanRunner:
         self._require_git_contract(state, workspace)
         if workspace.observe().head != candidate_head:
             raise ValueError("candidate HEAD changed during finalization")
+        return receipt_refs
 
     def _recover_review_findings(
         self,
@@ -2026,6 +2030,15 @@ class PlanRunner:
                     return code
                 continue
             result = outcome.result
+            try:
+                review_ledger = self._validated_task_ledger(
+                    result.get("task_ledger")
+                    if isinstance(result, Mapping)
+                    else None
+                )
+                self._require_all_tasks_reported_done(review_ledger)
+            except ValueError as error:
+                return self._integrity_failure(store, str(error))
             current_state = store.snapshot()
             observation = workspace.require_clean_ancestor(
                 current_state["repository"]["source_commit"]

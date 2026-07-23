@@ -18,7 +18,7 @@
         "status": {"const": "implemented"},
         "head_commit": {"type": "string", "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"},
         "summary": {"type": "string", "minLength": 1, "maxLength": 4096},
-        "task_ledger": {"$ref": "#/$defs/taskLedger"},
+        "task_ledger": {"$ref": "#/$defs/implementedTaskLedger"},
         "open_obligation_ids": {"type": "array", "maxItems": 0},
         "failure_signature": {"type": "null"},
         "strategy_note": {
@@ -107,6 +107,25 @@
         "properties": {
           "task_id": {"$ref": "#/$defs/identifier"},
           "status": {"enum": ["pending", "running", "reported_done"]},
+          "evidence_digests": {
+            "type": "array",
+            "maxItems": 256,
+            "uniqueItems": true,
+            "items": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+          }
+        }
+      }
+    },
+    "implementedTaskLedger": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["task_id", "status", "evidence_digests"],
+        "properties": {
+          "task_id": {"$ref": "#/$defs/identifier"},
+          "status": {"const": "reported_done"},
           "evidence_digests": {
             "type": "array",
             "maxItems": 256,
