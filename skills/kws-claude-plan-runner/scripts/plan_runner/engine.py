@@ -4,8 +4,10 @@ import dataclasses
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
@@ -96,6 +98,32 @@ class RuntimePaths:
             if not value.is_absolute():
                 raise ValueError(f"{name} must be absolute")
             object.__setattr__(self, name, value)
+
+
+class _SignalGate:
+    def __init__(self) -> None:
+        self._event = threading.Event()
+        self._previous: dict[int, object] = {}
+
+    def requested(self) -> bool:
+        return self._event.is_set()
+
+    def __enter__(self) -> "_SignalGate":
+        self._event.clear()
+        if threading.current_thread() is not threading.main_thread():
+            return self
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            self._previous[signum] = signal.getsignal(signum)
+            signal.signal(signum, self._request_stop)
+        return self
+
+    def __exit__(self, _type: object, _value: object, _traceback: object) -> None:
+        for signum, previous in self._previous.items():
+            signal.signal(signum, previous)
+        self._previous.clear()
+
+    def _request_stop(self, _signum: int, _frame: object) -> None:
+        self._event.set()
 
 
 def _runtime_document(identity: RuntimeIdentity) -> dict[str, object]:
@@ -233,6 +261,7 @@ class PlanRunner:
         self._clock = clock
         self._recovery = RecoveryPolicy()
         self._event_hook = event_hook
+        self._signals = _SignalGate()
 
     def _event(self, stage: str) -> None:
         if self._event_hook is not None:
@@ -503,7 +532,7 @@ class PlanRunner:
 
     def _execute(self, store: StateStore) -> int:
         try:
-            with RunLock(store.root / "run.lock"):
+            with self._signals, RunLock(store.root / "run.lock"):
                 state = store.snapshot()
                 self._reconcile_controller(store, state)
                 state = store.snapshot()
@@ -670,6 +699,8 @@ class PlanRunner:
                 store, workspace, outcome, index, attempt_id
             )
         self._checkpoint_outcome(store, outcome, attempt_id, index, "implementation")
+        if outcome.kind == "controller_stopped":
+            return self._pause_resumable(store, attempt_id)
         if outcome.kind == "blocked":
             return self._block(store, outcome)
         return self._recover(store, workspace, outcome, index)
@@ -779,6 +810,17 @@ class PlanRunner:
                 session_id=session_id or str(uuid.uuid4()),
                 resume=session_id is not None,
             )
+            if self._signals.requested():
+                return ProviderOutcome(
+                    "controller_stopped",
+                    None,
+                    None,
+                    None,
+                    "controller_transport_failed",
+                    {},
+                    (),
+                    "",
+                )
             return adapter.launch(
                 request,
                 lease,
@@ -804,6 +846,7 @@ class PlanRunner:
                 for line in _git_text(workspace.worktree, "remote").splitlines()
                 if line
             ),
+            "stop_requested": self._signals.requested,
         }
         if self._adapter_factory is None:
             return ClaudeAdapter(**values)
@@ -1168,6 +1211,32 @@ class PlanRunner:
             }
         )
         store.commit(state)
+
+    def _pause_resumable(self, store: StateStore, attempt_id: str) -> int:
+        state = store.snapshot()
+        session = next(
+            (
+                item
+                for item in reversed(state["sessions"])
+                if isinstance(item, Mapping)
+                and item.get("attempt_id") == attempt_id
+                and item.get("health") == "healthy"
+                and isinstance(item.get("session_id"), str)
+            ),
+            None,
+        )
+        state["status"] = "resumable"
+        state["failure"] = {
+            "reason_code": "controller_transport_failed",
+            "detail": "controller_signal",
+            "required_strategy_change": session is None,
+            "next_session_action": (
+                "explicit_resume" if session is not None else "fresh_session"
+            ),
+        }
+        store.commit(state)
+        self._emit_summary(store.snapshot())
+        return int(ExitCode.RESUMABLE)
 
     def _accept_implemented(
         self,
@@ -1638,6 +1707,8 @@ class PlanRunner:
                 self._checkpoint_outcome(
                     store, outcome, attempt_id, None, "finalization"
                 )
+            if outcome.kind == "controller_stopped":
+                return self._pause_resumable(store, attempt_id)
             if outcome.kind != "reviewed" or not isinstance(
                 outcome.result, Mapping
             ):
@@ -2116,6 +2187,8 @@ class PlanRunner:
             self._checkpoint_outcome(
                 store, outcome, attempt_id, index, "final_review_fix"
             )
+            if outcome.kind == "controller_stopped":
+                return self._pause_resumable(store, attempt_id)
             if outcome.kind == "blocked":
                 return self._block(store, outcome)
             if outcome.kind != "implemented":

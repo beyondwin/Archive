@@ -283,6 +283,7 @@ class ClaudeAdapter:
         run_id: str = "claude-plan-runner",
         helper: HelperDescriptor | None = None,
         poll_seconds: float = 0.05,
+        stop_requested: Callable[[], bool] | None = None,
     ) -> None:
         if (
             isinstance(poll_seconds, bool)
@@ -296,6 +297,9 @@ class ClaudeAdapter:
         self._run_id = run_id
         self._helper = helper
         self._poll_seconds = float(poll_seconds)
+        if stop_requested is not None and not callable(stop_requested):
+            raise ValueError("stop_requested must be callable")
+        self._stop_requested = stop_requested or (lambda: False)
 
     def build_argv(self, request: ProviderRequest) -> list[str]:
         session_id = _canonical_uuid(request.session_id)
@@ -336,6 +340,7 @@ class ClaudeAdapter:
         stderr_tail = _RedactedStderrTail()
         malformed = False
         stalled = False
+        controller_stopped = False
         return_code: int | None = None
 
         try:
@@ -369,6 +374,15 @@ class ClaudeAdapter:
                     leader_finished = False
                     try:
                         while True:
+                            if (
+                                not leader_finished
+                                and self._stop_requested()
+                            ):
+                                controller_stopped = True
+                                return_code, _forced = _finish_anchored_group(
+                                    process, pgid, terminate_leader=True
+                                )
+                                leader_finished = True
                             if (
                                 not leader_finished
                                 and not malformed
@@ -447,6 +461,15 @@ class ClaudeAdapter:
 
         if stdout_buffer:
             malformed = True
+        if controller_stopped:
+            return self._outcome(
+                "controller_stopped",
+                return_code,
+                state,
+                request,
+                stderr_tail,
+                provider_code="controller_transport_failed",
+            )
         if stalled:
             return self._outcome(
                 "stalled",
