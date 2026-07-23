@@ -123,6 +123,7 @@ class CodexAdapter:
         run_id: str = "codex-plan-runner",
         helper: HelperDescriptor | None = None,
         poll_seconds: float = 0.05,
+        stop_requested: Callable[[], bool] | None = None,
     ) -> None:
         if (
             not isinstance(poll_seconds, (int, float))
@@ -137,6 +138,9 @@ class CodexAdapter:
         self._run_id = run_id
         self._helper = helper
         self._poll_seconds = float(poll_seconds)
+        if stop_requested is not None and not callable(stop_requested):
+            raise ValueError("stop_requested must be callable")
+        self._stop_requested = stop_requested or (lambda: False)
 
     def build_argv(self, request: ProviderRequest) -> list[str]:
         if request.session_id is not None:
@@ -188,6 +192,7 @@ class CodexAdapter:
         provider_code: str | None = None
         malformed = False
         stalled = False
+        controller_stopped = False
         stderr_tail = bytearray()
         stdout_buffer = bytearray()
         return_code: int | None = None
@@ -233,6 +238,12 @@ class CodexAdapter:
                     leader_finished = False
                     try:
                         while True:
+                            if not leader_finished and self._stop_requested():
+                                controller_stopped = True
+                                return_code, _forced = _finish_group(
+                                    process, pgid, terminate_leader=True
+                                )
+                                leader_finished = True
                             if (
                                 not leader_finished
                                 and not malformed
@@ -321,6 +332,17 @@ class CodexAdapter:
         if stdout_buffer:
             malformed = True
         stderr = _scrub(stderr_tail)
+        if controller_stopped:
+            return ProviderOutcome(
+                "controller_stopped",
+                return_code,
+                session_id or request.session_id,
+                None,
+                "controller_transport_failed",
+                dict(usage),
+                tuple(activity_keys),
+                stderr,
+            )
         if stalled:
             return ProviderOutcome(
                 "stalled",

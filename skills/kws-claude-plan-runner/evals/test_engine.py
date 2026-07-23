@@ -332,7 +332,7 @@ class EngineTest(unittest.TestCase):
                 self.assertTrue(gate.requested())
             self.assertEqual(signal.getsignal(signum), before[signum])
 
-    def _assert_graceful_signal_checkpoint(self, signum):
+    def _assert_graceful_signal_checkpoint(self, signum, *, drift=False):
         home = self.root / "home"
         fake_bin = self.root / "fake-bin"
         fake_bin.mkdir()
@@ -344,7 +344,11 @@ class EngineTest(unittest.TestCase):
             json.dumps(
                 {
                     "protocol_version": 1,
-                    "actions": ["stalled", "implemented", "finalized"],
+                    "actions": [
+                        "dirty-stalled",
+                        "resume-dirty-implemented",
+                        "finalized",
+                    ],
                     "next_index": 0,
                 }
             ),
@@ -387,7 +391,11 @@ class EngineTest(unittest.TestCase):
             roots = list((home / ".claude" / "plan-runner").glob("*/state.json"))
             if launch_log.exists() and roots:
                 candidate = json.loads(roots[0].read_text(encoding="utf-8"))
-                if candidate["sessions"]:
+                partial = (
+                    Path(candidate["repository"]["worktree"])
+                    / "partial-provider-edit.txt"
+                )
+                if candidate["sessions"] and partial.is_file():
                     state_path = roots[0]
                     break
             time.sleep(0.02)
@@ -401,11 +409,25 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(checkpoint["status"], "resumable")
         self.assertEqual(checkpoint["plans"][0]["status"], "running")
         self.assertEqual(checkpoint["sessions"][-1]["health"], "healthy")
+        sealed = checkpoint["failure"]["partial_worktree"]
+        self.assertEqual(sealed["attempt_id"], checkpoint["attempts"][-1]["attempt_id"])
+        self.assertEqual(sealed["mode"], "implementation")
+        self.assertEqual(sealed["plan_index"], 0)
+        self.assertEqual(sealed["branch"], checkpoint["repository"]["branch"])
+        self.assertEqual(
+            sealed["head"],
+            git("rev-parse", "HEAD", cwd=Path(checkpoint["repository"]["worktree"])),
+        )
+        self.assertFalse(sealed["clean"])
+        self.assertEqual(len(sealed["porcelain_digest"]), 64)
+        self.assertEqual(len(sealed["tree_digest"]), 64)
         captured = checkpoint["sessions"][-1]["session_id"]
         first_launch = json.loads(launch_log.read_text().splitlines()[0])
         with self.assertRaises(ProcessLookupError):
             os.kill(first_launch["pid"], 0)
 
+        if drift:
+            partial.write_text("operator drift\n", encoding="utf-8")
         resumed = subprocess.run(
             [
                 sys.executable,
@@ -420,6 +442,10 @@ class EngineTest(unittest.TestCase):
             text=True,
             timeout=20,
         )
+        if drift:
+            self.assertEqual(resumed.returncode, ExitCode.INTEGRITY, resumed.stderr)
+            self.assertEqual(len(launch_log.read_text().splitlines()), 1)
+            return
         self.assertEqual(resumed.returncode, ExitCode.READY, resumed.stderr)
         launches = [
             json.loads(line)
@@ -427,6 +453,9 @@ class EngineTest(unittest.TestCase):
         ]
         self.assertEqual(launches[1]["session_action"], "resume")
         self.assertEqual(launches[1]["session_id"], captured)
+
+    def test_dirty_resume_rejects_worktree_drift_before_provider_launch(self):
+        self._assert_graceful_signal_checkpoint(signal.SIGINT, drift=True)
 
     def test_sigint_leaves_bounded_resumable_checkpoint(self):
         self._assert_graceful_signal_checkpoint(signal.SIGINT)

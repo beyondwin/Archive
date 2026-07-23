@@ -210,16 +210,26 @@ def generic_main(sequence_path: Path) -> int:
     with log_path.open("a", encoding="utf-8") as stream:
         stream.write(json.dumps(record, sort_keys=True) + "\n")
     emit({"type": "system", "subtype": "init", "session_id": session_id})
-    if action == "stalled":
+    if action in {"stalled", "dirty-stalled"}:
+        if action == "dirty-stalled":
+            Path("partial-provider-edit.txt").write_text(
+                "partial implementation\n", encoding="utf-8"
+            )
         time.sleep(2)
         return 7
     if action in {"interrupted", "same-failure"}:
         return 7
-    if action == "implemented":
+    if action in {"implemented", "resume-dirty-implemented"}:
         index = packet["current_plan"]["index"]
         marker = Path(f"plan-{index}.txt")
         marker.write_text("implemented\n", encoding="utf-8")
-        subprocess.run(["git", "add", marker.name], check=True)
+        paths = [marker.name]
+        partial = Path("partial-provider-edit.txt")
+        if action == "resume-dirty-implemented":
+            if not partial.is_file():
+                raise ValueError("sealed partial implementation is missing")
+            paths.append(partial.name)
+        subprocess.run(["git", "add", *paths], check=True)
         subprocess.run(
             [
                 "git",
@@ -235,7 +245,7 @@ def generic_main(sequence_path: Path) -> int:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        structured = generic_result(packet, action)
+        structured = generic_result(packet, "implemented")
     elif action == "blocked":
         structured = generic_result(packet, action)
     elif action == "finalized":

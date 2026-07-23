@@ -17,7 +17,7 @@ from typing import Any
 
 from .contracts import ExitCode, TASK_STATUSES, canonical_json, sha256_json
 from .evidence import EvidenceStore
-from .git_ops import GitWorkspace
+from .git_ops import GitWorkspace, WorktreeObservation
 from .helper import HelperDescriptor, HelperServer
 from .provider import ClaudeAdapter, DENY_TOOLS, ProviderOutcome, ProviderRequest
 from .recovery import (
@@ -547,10 +547,7 @@ class PlanRunner:
                     Path(repository["worktree"]),
                     repository["branch"],
                 )
-                pending_review_fix = self._pending_review_fix(state)
-                self._require_git_contract(
-                    state, workspace, allow_dirty=pending_review_fix
-                )
+                self._require_git_contract(state, workspace)
                 self._reconcile_completed_attempt(store, workspace)
                 state = store.snapshot()
                 while state["current_plan_index"] < len(state["plans"]):
@@ -586,17 +583,12 @@ class PlanRunner:
         self,
         state: Mapping[str, object],
         workspace: GitWorkspace,
-        *,
-        allow_dirty: bool = False,
-    ) -> None:
+    ) -> WorktreeObservation:
         config = state["immutable_config"]
         if str(workspace._common_dir) != config.get("git_common_dir"):
             raise ValueError("Git common directory drift detected")
         if workspace.protected_refs() != config.get("protected_refs"):
             raise ValueError("protected ref mutation detected")
-        if not allow_dirty:
-            workspace.require_clean_ancestor(state["repository"]["source_commit"])
-            return
         observation = workspace.require_identity()
         _git_text(
             workspace.worktree,
@@ -605,6 +597,58 @@ class PlanRunner:
             state["repository"]["source_commit"],
             observation.head,
         )
+        if observation.clean:
+            return observation
+        self._require_sealed_partial_worktree(state, observation)
+        return observation
+
+    @staticmethod
+    def _require_sealed_partial_worktree(
+        state: Mapping[str, object], observation: WorktreeObservation
+    ) -> None:
+        failure = state.get("failure")
+        sealed = (
+            failure.get("partial_worktree")
+            if isinstance(failure, Mapping)
+            else None
+        )
+        expected_keys = {
+            "version",
+            "attempt_id",
+            "mode",
+            "plan_index",
+            "head",
+            "branch",
+            "porcelain_digest",
+            "tree_digest",
+            "clean",
+        }
+        if not isinstance(sealed, Mapping) or set(sealed) != expected_keys:
+            raise ValueError("dirty worktree has no exact resumable checkpoint")
+        identity = dataclasses.asdict(observation)
+        if any(sealed.get(key) != value for key, value in identity.items()):
+            raise ValueError("sealed partial worktree identity drift detected")
+        if sealed.get("version") != 1 or sealed.get("clean") is not False:
+            raise ValueError("sealed partial worktree checkpoint is invalid")
+        if sealed.get("mode") not in {"implementation", "final_review_fix"}:
+            raise ValueError("dirty worktree mode is not resumable")
+        attempts = state.get("attempts")
+        attempt = next(
+            (
+                item
+                for item in reversed(attempts)
+                if isinstance(item, Mapping)
+                and item.get("attempt_id") == sealed.get("attempt_id")
+            ),
+            None,
+        ) if isinstance(attempts, list) else None
+        if (
+            not isinstance(attempt, Mapping)
+            or attempt.get("mode") != sealed.get("mode")
+            or attempt.get("plan_index") != sealed.get("plan_index")
+            or attempt.get("outcome") != "controller_stopped"
+        ):
+            raise ValueError("sealed partial worktree attempt is invalid")
 
     @staticmethod
     def _pending_review_fix(state: Mapping[str, object]) -> bool:
@@ -723,9 +767,7 @@ class PlanRunner:
             }
         )
         store.commit(state)
-        observation = workspace.require_clean_ancestor(
-            state["repository"]["source_commit"]
-        )
+        observation = self._require_git_contract(state, workspace)
         session_id = self._implementation_session(state, index)
         outcome = self._launch(
             store,
@@ -741,9 +783,11 @@ class PlanRunner:
             return self._accept_implemented(
                 store, workspace, outcome, index, attempt_id
             )
-        self._checkpoint_outcome(store, outcome, attempt_id, index, "implementation")
         if outcome.kind == "controller_stopped":
-            return self._pause_resumable(store, attempt_id)
+            return self._pause_resumable(
+                store, workspace, outcome, attempt_id, index, "implementation"
+            )
+        self._checkpoint_outcome(store, outcome, attempt_id, index, "implementation")
         if outcome.kind == "blocked":
             return self._block(store, outcome)
         return self._recover(store, workspace, outcome, index)
@@ -1342,7 +1386,15 @@ class PlanRunner:
         )
         store.commit(state)
 
-    def _pause_resumable(self, store: StateStore, attempt_id: str) -> int:
+    def _pause_resumable(
+        self,
+        store: StateStore,
+        workspace: GitWorkspace,
+        outcome: ProviderOutcome,
+        attempt_id: str,
+        plan_index: int | None,
+        mode: str,
+    ) -> int:
         state = store.snapshot()
         attempt = next(
             (
@@ -1353,9 +1405,13 @@ class PlanRunner:
             ),
             None,
         )
-        pending_mode = (
-            attempt.get("mode") if isinstance(attempt, Mapping) else None
-        )
+        if not isinstance(attempt, dict):
+            raise ValueError("provider attempt is unavailable at signal checkpoint")
+        if attempt.get("mode") != mode or attempt.get("plan_index") != plan_index:
+            raise ValueError("provider attempt changed at signal checkpoint")
+        attempt["completed"] = True
+        attempt["outcome"] = "controller_stopped"
+        attempt["provider_code"] = outcome.provider_code
         session = next(
             (
                 item
@@ -1367,6 +1423,25 @@ class PlanRunner:
             ),
             None,
         )
+        if session is None:
+            attempt["session_missing"] = True
+        elif outcome.session_id is not None:
+            if session.get("session_id") != outcome.session_id:
+                raise ValueError("provider outcome session does not match capture")
+            session["phase"] = "completed"
+            session["health"] = "healthy"
+        observation = workspace.require_identity()
+        partial = None
+        if not observation.clean:
+            if mode not in {"implementation", "final_review_fix"}:
+                raise ValueError("provider modified worktree in non-mutating mode")
+            partial = {
+                "version": 1,
+                "attempt_id": attempt_id,
+                "mode": mode,
+                "plan_index": plan_index,
+                **dataclasses.asdict(observation),
+            }
         state["status"] = "resumable"
         state["failure"] = {
             "reason_code": "controller_transport_failed",
@@ -1375,11 +1450,12 @@ class PlanRunner:
             "next_session_action": (
                 "explicit_resume" if session is not None else "fresh_session"
             ),
-            "pending_mode": pending_mode,
+            "pending_mode": mode,
+            "partial_worktree": partial,
         }
-        if pending_mode == "final_review_fix":
+        if mode == "final_review_fix":
             finalization = dict(state.get("finalization") or {})
-            finalization["pending_mode"] = pending_mode
+            finalization["pending_mode"] = mode
             state["finalization"] = finalization
         store.commit(state)
         self._emit_summary(store.snapshot())
@@ -1851,11 +1927,18 @@ class PlanRunner:
                     attempt_id=attempt_id,
                 )
                 self._event("provider_outcome_received")
+                if outcome.kind == "controller_stopped":
+                    return self._pause_resumable(
+                        store,
+                        workspace,
+                        outcome,
+                        attempt_id,
+                        None,
+                        "finalization",
+                    )
                 self._checkpoint_outcome(
                     store, outcome, attempt_id, None, "finalization"
                 )
-            if outcome.kind == "controller_stopped":
-                return self._pause_resumable(store, attempt_id)
             if outcome.kind != "reviewed" or not isinstance(
                 outcome.result, Mapping
             ):
@@ -2336,11 +2419,18 @@ class PlanRunner:
                 attempt_id=attempt_id,
             )
             self._event("provider_outcome_received")
+            if outcome.kind == "controller_stopped":
+                return self._pause_resumable(
+                    store,
+                    workspace,
+                    outcome,
+                    attempt_id,
+                    index,
+                    "final_review_fix",
+                )
             self._checkpoint_outcome(
                 store, outcome, attempt_id, index, "final_review_fix"
             )
-            if outcome.kind == "controller_stopped":
-                return self._pause_resumable(store, attempt_id)
             if outcome.kind == "blocked":
                 return self._block(store, outcome)
             if outcome.kind != "implemented":

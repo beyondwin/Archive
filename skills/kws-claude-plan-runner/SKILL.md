@@ -39,6 +39,11 @@ Use `resume` after controller interruption, `--retry-blocked` after an external
 blocker changes, and `--retry-failed --strategy-note` only with meaningful new
 input.
 
+`SIGINT` and `SIGTERM` stop the active provider process group before exposing a
+durable `resumable` checkpoint. If an interrupted implementation left
+uncommitted work, that exact bounded Git worktree identity is sealed; resume
+accepts it only while unchanged and rejects any drift as an integrity failure.
+
 ## Claude transport
 
 Initial attempts use `claude -p`, `stream-json`, `--verbose`, an inline JSON schema,
