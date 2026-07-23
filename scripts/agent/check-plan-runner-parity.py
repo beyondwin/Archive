@@ -42,6 +42,7 @@ PROVIDERS = {
     },
 }
 OUTPUT_LIMIT = 4_096
+PARITY_STALL_SECONDS = 1.0
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 GIT_HEAD = re.compile(r"^[0-9a-f]{40}(?:[0-9a-f]{24})?$")
 GIT_ENV = {
@@ -657,7 +658,7 @@ def run_provider(
         "--workspace",
         str(source),
         "--stall-seconds",
-        "0.4",
+        str(PARITY_STALL_SECONDS),
     ]
     result = _run(argv, cwd=root, env=env)
     summary = _last_json(result.stdout, f"{provider}/{scenario['id']} run")
