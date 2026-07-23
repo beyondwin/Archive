@@ -98,7 +98,7 @@ class ScriptedAdapter:
                 "status": "implemented",
                 "head_commit": head,
                 "summary": f"plan {packet['current_plan']['index']}",
-                "task_ledger": [],
+                "task_ledger": list(self.owner.implementation_ledger),
                 "open_obligation_ids": [],
                 "failure_signature": None,
                 "strategy_note": None,
@@ -249,6 +249,7 @@ class EngineTest(unittest.TestCase):
         self.outcome_hook = None
         self.review_findings_once = False
         self.minor_findings_once = False
+        self.implementation_ledger = []
         self.after_final_hook = None
         self.engine_event_hook = None
 
@@ -879,6 +880,17 @@ class EngineTest(unittest.TestCase):
         }
         store.commit(failed)
         launch_count = len(self.requests)
+        prior_failure = dict(failed["failure"])
+        observed_active_audits = []
+
+        def observe_fresh_audit(_adapter, _request, packet, _session_id):
+            if packet["mode"] == "implementation":
+                observed_active_audits.append(
+                    list(self.state()["failure"]["failure_sequence"])
+                )
+            return None
+
+        self.outcome_hook = observe_fresh_audit
         duplicate = self.runner().resume(
             state["run_id"],
             retry_blocked=False,
@@ -921,6 +933,20 @@ class EngineTest(unittest.TestCase):
             resumed_packet["operator_strategy_notes"][0]["digest"],
             strategy_ref["digest"],
         )
+        self.assertEqual(observed_active_audits, [[]])
+        audit_ref = next(
+            item
+            for item in final_state["artifact_refs"]
+            if item["kind"] == "recovery_audit"
+        )
+        audit_payload = json.loads(
+            (
+                self.paths.state_home
+                / state["run_id"]
+                / audit_ref["relative_path"]
+            ).read_text(encoding="utf-8")
+        )
+        self.assertEqual(audit_payload["failure"], prior_failure)
 
     def test_repository_remotes_are_passed_to_every_adapter(self):
         git("remote", "add", "origin", "https://example.invalid/archive.git", cwd=self.source)
@@ -1039,6 +1065,117 @@ class EngineTest(unittest.TestCase):
             ).read_text(encoding="utf-8")
         )
         self.assertEqual(handoff["review_receipt"], receipt_ref)
+        self.assertEqual(handoff["status"], "ready_for_integration")
+        self.assertEqual(handoff["worktree"], state["repository"]["worktree"])
+        self.assertEqual(handoff["runner_identity"], state["runner_runtime"])
+        self.assertEqual(
+            handoff["provider_identity"],
+            {
+                "provider": "codex",
+                "model": state["immutable_config"]["model"],
+            },
+        )
+        self.assertEqual(
+            [item["plan_index"] for item in handoff["plan_implementations"]],
+            [0],
+        )
+        self.assertEqual(
+            handoff["non_blocking_observations"][0]["severity"], "Minor"
+        )
+
+    def test_implemented_result_rejects_any_task_not_reported_done(self):
+        self.implementation_ledger = [
+            {
+                "task_id": "unfinished",
+                "status": "running",
+                "evidence_digests": [],
+            }
+        ]
+        code = self.runner().create_run(
+            specs=self.specs,
+            plans=self.plans[:1],
+            workspace=self.source,
+            stall_seconds=30,
+            sandbox="workspace-write",
+            model=None,
+        )
+        self.assertEqual(code, ExitCode.INTEGRITY)
+        self.assertEqual(self.state()["failure"]["reason_code"], "state_integrity_failed")
+
+    def test_final_gate_rejects_persisted_task_not_reported_done(self):
+        self.implementation_ledger = [
+            {
+                "task_id": "submitted",
+                "status": "reported_done",
+                "evidence_digests": [],
+            }
+        ]
+        ready = self.runner().create_run(
+            specs=self.specs,
+            plans=self.plans[:1],
+            workspace=self.source,
+            stall_seconds=30,
+            sandbox="workspace-write",
+            model=None,
+        )
+        self.assertEqual(ready, ExitCode.READY)
+        state = self.state()
+        store = StateStore.open(self.paths.state_home / state["run_id"])
+        changed = store.snapshot()
+        changed["status"] = "resumable"
+        changed["task_ledger"][0]["status"] = "pending"
+        store.commit(changed)
+        code = self.runner().resume(
+            state["run_id"],
+            retry_blocked=False,
+            retry_failed=False,
+            strategy_note=None,
+        )
+        self.assertEqual(code, ExitCode.INTEGRITY)
+        self.assertIn("task", self.state()["failure"]["detail"])
+
+    def test_completed_same_head_review_is_reconciled_without_provider_replay(self):
+        runner = self.runner()
+        original_validate = runner._validate_final_result
+        crashed = False
+
+        def crash_after_review_checkpoint(*args, **kwargs):
+            nonlocal crashed
+            if not crashed:
+                crashed = True
+                raise SimulatedCrash("after reviewed checkpoint")
+            return original_validate(*args, **kwargs)
+
+        runner._validate_final_result = crash_after_review_checkpoint
+        with self.assertRaises(SimulatedCrash):
+            runner.create_run(
+                specs=self.specs,
+                plans=self.plans[:1],
+                workspace=self.source,
+                stall_seconds=30,
+                sandbox="workspace-write",
+                model=None,
+            )
+        state = self.state()
+        final_launches = sum(
+            packet["mode"] == "finalization" for packet in self.packets
+        )
+        self.assertEqual(final_launches, 1)
+        attempt = state["attempts"][-1]
+        self.assertEqual(attempt["outcome"], "reviewed")
+        self.assertIn("result_artifact", attempt)
+
+        code = self.runner().resume(
+            state["run_id"],
+            retry_blocked=False,
+            retry_failed=False,
+            strategy_note=None,
+        )
+        self.assertEqual(code, ExitCode.READY)
+        self.assertEqual(
+            sum(packet["mode"] == "finalization" for packet in self.packets),
+            final_launches,
+        )
 
     def test_runtime_failure_blocks_before_worktree_or_provider(self):
         def unavailable():
