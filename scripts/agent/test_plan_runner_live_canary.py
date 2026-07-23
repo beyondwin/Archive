@@ -874,6 +874,105 @@ class SessionAndRunnerOutcomeTests(unittest.TestCase):
             self.assertFalse(valid)
             self.assertEqual(reason, "verification_receipt_identity_mismatch")
 
+    def test_failed_runner_preserves_sanitized_state_evidence_before_cleanup(self):
+        run_id = "plan-observability"
+
+        def failed_runner(argv, *, cwd, timeout, env, input_text=None):
+            state_root = Path(env["HOME"]) / ".codex" / "plan-runner" / run_id
+            state_root.mkdir(parents=True)
+            (state_root / "state.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": run_id,
+                        "status": "failed",
+                        "revision": 7,
+                        "plans": [
+                            {"status": "implemented"},
+                            {"status": "running"},
+                        ],
+                        "sessions": [{"mode": "implementation"}],
+                        "artifact_refs": [
+                            {"kind": "receipt"},
+                            {"kind": "checkpoint"},
+                        ],
+                        "failure": {
+                            "reason_code": "provider_command_failed",
+                            "detail": "SECRET prompt and raw provider stream",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            return canary.CommandResult(
+                4,
+                json.dumps({"run_id": run_id, "status": "failed"}) + "\n",
+                "",
+                False,
+            )
+
+        with (
+            mock.patch.object(
+                canary,
+                "_runner_environment",
+                side_effect=lambda provider, home: {"HOME": str(home)},
+            ),
+            mock.patch.object(
+                canary,
+                "_provider_version",
+                return_value=("codex-cli test", None),
+            ),
+            mock.patch.object(canary, "_create_repository"),
+            mock.patch.object(canary, "run_bounded", side_effect=failed_runner),
+        ):
+            result = canary.probe_runner("codex")
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["reason_code"], "provider_command_failed")
+        self.assertEqual(
+            result["failure_evidence"],
+            {
+                "artifact_count": 2,
+                "implemented_plan_count": 1,
+                "plan_count": 2,
+                "reason_code": "provider_command_failed",
+                "receipt_count": 1,
+                "revision": 7,
+                "runner_status": "failed",
+                "session_count": 1,
+                "state_sha256": mock.ANY,
+            },
+        )
+        self.assertRegex(
+            result["failure_evidence"]["state_sha256"], r"^[0-9a-f]{64}$"
+        )
+        serialized = json.dumps(result, sort_keys=True)
+        for forbidden in ("SECRET", "prompt", "raw provider stream"):
+            self.assertNotIn(forbidden, serialized)
+
+    def test_failure_evidence_never_echoes_unknown_reason_text(self):
+        with tempfile.TemporaryDirectory() as raw:
+            home = Path(raw)
+            run_id = "plan-unknown-reason"
+            state_root = home / ".codex" / "plan-runner" / run_id
+            state_root.mkdir(parents=True)
+            (state_root / "state.json").write_text(
+                json.dumps(
+                    {
+                        "status": "failed",
+                        "failure": {
+                            "reason_code": "SECRET prompt raw provider stream"
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            evidence = canary.runner_failure_evidence(home, "codex", run_id)
+        self.assertIsNotNone(evidence)
+        self.assertEqual(
+            evidence["reason_code"], "unknown_provider_stage_failure"
+        )
+        self.assertNotIn("secret", json.dumps(evidence).lower())
+
     def test_normalized_result_has_public_bounded_shape(self):
         result = canary.normalized_result(
             provider="codex",

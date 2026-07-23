@@ -60,6 +60,26 @@ BLOCKED_REASON_CODES = frozenset(
         *AUTH_CODES,
     }
 )
+SAFE_RUNNER_FAILURE_CODES = BLOCKED_REASON_CODES | frozenset(
+    {
+        "controller_spawn_failed",
+        "controller_transport_failed",
+        "destructive_authorization_required",
+        "external_authority_required",
+        "input_changed_requires_new_run",
+        "irreconcilable_requirements",
+        "provider_command_failed",
+        "recovery_exhausted",
+        "review_failed",
+        "session_invalid",
+        "session_resume_failed",
+        "stall_expired",
+        "state_integrity_failed",
+        "unknown_provider_stage_failure",
+        "verification_failed",
+        "verification_timed_out",
+    }
+)
 AUTH_TEXT = re.compile(
     r"(?:not[ -]?logged[ -]?in|authentication|authenticate|unauthorized|"
     r"invalid[ _-]?(?:api[ _-]?)?key|login required|credential)",
@@ -537,6 +557,20 @@ def classify_runner_summary(
             and isinstance(summary.get("run_id"), str)
         ):
             return "passed", None
+        if status == "failed":
+            normalized = (
+                re.sub(r"[^a-z0-9]+", "_", reason.lower()).strip("_")
+                if isinstance(reason, str)
+                else ""
+            )
+            return (
+                "failed",
+                (
+                    normalized
+                    if normalized in SAFE_RUNNER_FAILURE_CODES
+                    else "unknown_provider_stage_failure"
+                ),
+            )
     if AUTH_TEXT.search(stderr):
         return "blocked", "provider_auth_blocked"
     return "failed", "runner_not_ready"
@@ -565,6 +599,102 @@ def blocked_runner_reason(home: Path, provider: str, run_id: str) -> str | None:
     if normalized not in BLOCKED_REASON_CODES:
         return None
     return "provider_auth_blocked" if normalized in AUTH_CODES else normalized
+
+
+def runner_failure_evidence(
+    home: Path, provider: str, run_id: str
+) -> dict[str, object] | None:
+    if (
+        provider not in {"codex", "claude"}
+        or re.fullmatch(r"[a-z0-9][a-z0-9-]{0,126}", run_id) is None
+    ):
+        return None
+    path = home / f".{provider}" / "plan-runner" / run_id / "state.json"
+    try:
+        metadata = path.lstat()
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != os.getuid()
+            or stat.S_IMODE(metadata.st_mode) & 0o022
+            or metadata.st_size > STREAM_LIMIT
+        ):
+            return None
+        raw = path.read_bytes()
+        if len(raw) != metadata.st_size:
+            return None
+        state = json.loads(raw)
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(state, Mapping):
+        return None
+    status = state.get("status")
+    if status not in {
+        "running",
+        "recovering",
+        "resumable",
+        "blocked",
+        "failed",
+        "ready_for_integration",
+    }:
+        return None
+    failure = state.get("failure")
+    raw_reason = (
+        failure.get("reason_code") if isinstance(failure, Mapping) else None
+    )
+    normalized_reason = (
+        re.sub(r"[^a-z0-9]+", "_", raw_reason.lower()).strip("_")
+        if isinstance(raw_reason, str)
+        else ""
+    )
+    reason = (
+        normalized_reason
+        if normalized_reason in SAFE_RUNNER_FAILURE_CODES
+        else "unknown_provider_stage_failure"
+    )
+    plans = state.get("plans")
+    sessions = state.get("sessions")
+    artifacts = state.get("artifact_refs")
+    plan_items = plans if isinstance(plans, list) else []
+    session_items = sessions if isinstance(sessions, list) else []
+    artifact_items = artifacts if isinstance(artifacts, list) else []
+    revision = state.get("revision")
+    bounded_revision = (
+        min(revision, 1_000_000)
+        if isinstance(revision, int)
+        and not isinstance(revision, bool)
+        and revision >= 0
+        else 0
+    )
+    return {
+        "artifact_count": min(len(artifact_items), 1_000_000),
+        "implemented_plan_count": min(
+            sum(
+                1
+                for plan in plan_items
+                if isinstance(plan, Mapping) and plan.get("status") == "implemented"
+            ),
+            1_000_000,
+        ),
+        "plan_count": min(len(plan_items), 1_000_000),
+        "reason_code": reason,
+        "receipt_count": min(
+            sum(
+                1
+                for artifact in artifact_items
+                if isinstance(artifact, Mapping)
+                and isinstance(artifact.get("kind"), str)
+                and (
+                    artifact["kind"] == "receipt"
+                    or artifact["kind"].endswith("_receipt")
+                )
+            ),
+            1_000_000,
+        ),
+        "revision": bounded_revision,
+        "runner_status": status,
+        "session_count": min(len(session_items), 1_000_000),
+        "state_sha256": hashlib.sha256(raw).hexdigest(),
+    }
 
 
 def validate_session_evidence(
@@ -599,6 +729,7 @@ def normalized_result(
     final_head: str | None,
     elapsed: float,
     reason_code: str | None = None,
+    failure_evidence: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     result: dict[str, object] = {
         "provider": provider,
@@ -615,6 +746,8 @@ def normalized_result(
     }
     if reason_code is not None:
         result["reason_code"] = _bounded_text(reason_code, 80)
+    if failure_evidence is not None:
+        result["failure_evidence"] = dict(failure_evidence)
     if len(json.dumps(result, sort_keys=True)) > RESULT_LIMIT:
         raise CanaryError("normalized_result_too_large")
     return result
@@ -1539,7 +1672,33 @@ def probe_runner(provider: str) -> dict[str, object]:
                     reason_code=durable_reason or classified_reason,
                 )
             if classification != "passed" or not isinstance(summary, Mapping):
-                raise CanaryError(classified_reason or "runner_not_ready")
+                run_id_value = (
+                    summary.get("run_id")
+                    if isinstance(summary, Mapping)
+                    else None
+                )
+                evidence = (
+                    runner_failure_evidence(home, provider, run_id_value)
+                    if isinstance(run_id_value, str)
+                    else None
+                )
+                reason = (
+                    evidence.get("reason_code")
+                    if isinstance(evidence, Mapping)
+                    and isinstance(evidence.get("reason_code"), str)
+                    else classified_reason or "unknown_provider_stage_failure"
+                )
+                return normalized_result(
+                    provider=provider,
+                    mode="runner",
+                    status="failed",
+                    provider_version=version,
+                    session_action="not_completed",
+                    final_head=None,
+                    elapsed=time.monotonic() - started,
+                    reason_code=reason,
+                    failure_evidence=evidence,
+                )
             run_id = summary["run_id"]
             state_root = home / f".{provider}" / "plan-runner" / run_id
             state = json.loads((state_root / "state.json").read_text(encoding="utf-8"))
