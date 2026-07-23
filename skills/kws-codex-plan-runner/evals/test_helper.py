@@ -17,6 +17,8 @@ from plan_runner.evidence import ExactCommand, VerificationReceipt  # noqa: E402
 from plan_runner.helper import (  # noqa: E402
     MAX_MESSAGE_BYTES,
     HelperServer,
+    _ProtocolError,
+    _read_line,
     helper_client,
 )
 from plan_runner.storage import ArtifactRef  # noqa: E402
@@ -163,6 +165,10 @@ class HelperProtocolTest(unittest.TestCase):
         with self.server:
             first = self.raw_request(self.envelope("declare_final_set", {"candidate_head": HEAD, "final_set": declaration}))
             second = self.raw_request(self.envelope("declare_final_set", {"candidate_head": HEAD, "final_set": declaration}))
+            mismatch = self.raw_request(self.envelope("verify_final", {"candidate_head": "c" * 40, "set_digest": DIGEST, "command_index": 0}))
+            self.assertFalse(mismatch["ok"])
+            self.assertEqual(mismatch["error_code"], "candidate_head_mismatch")
+            self.assertEqual(self.evidence.executed, [])
             final = self.raw_request(self.envelope("verify_final", {"candidate_head": HEAD, "set_digest": DIGEST, "command_index": 0}))
         self.assertTrue(first["ok"])
         self.assertFalse(second["ok"])
@@ -170,6 +176,54 @@ class HelperProtocolTest(unittest.TestCase):
         self.assertTrue(final["ok"])
         self.assertEqual(len(self.evidence.declarations), 1)
         self.assertEqual(self.evidence.executed[-1][0].command_id, "final-1")
+
+    def test_trickled_request_has_one_total_deadline(self):
+        class Clock:
+            def __init__(self):
+                self.values = iter((0.0, 0.5, 1.0, 1.5))
+
+            def __call__(self):
+                return next(self.values)
+
+        class TricklingSocket:
+            def __init__(self):
+                self.timeouts = []
+
+            def settimeout(self, value):
+                self.timeouts.append(value)
+
+            def recv(self, _size):
+                return b"x"
+
+        with self.assertRaises(_ProtocolError) as raised:
+            _read_line(TricklingSocket(), deadline=1.0, clock=Clock())
+        self.assertEqual(raised.exception.code, "request_timeout")
+
+    def test_shutdown_join_is_bounded_when_command_is_stuck(self):
+        self.evidence.block = True
+        server = HelperServer(
+            run_id=RUN_ID,
+            worktree=self.worktree,
+            evidence_store=self.evidence,
+            client_argv=(sys.executable,),
+            io_timeout_seconds=0.05,
+            shutdown_timeout_seconds=0.01,
+        )
+        server.__enter__()
+        try:
+            request = self.envelope("verify_focused", self.focused_payload())
+            request["nonce"] = server.descriptor.nonce
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                client.connect(str(server.descriptor.socket_path))
+                client.sendall(json.dumps(request, sort_keys=True, separators=(",", ":")).encode() + b"\n")
+                client.shutdown(socket.SHUT_WR)
+            self.assertTrue(self.evidence.started.wait(1))
+            with self.assertRaisesRegex(RuntimeError, "shutdown timed out"):
+                server.__exit__(None, None, None)
+            self.assertFalse(server.descriptor.socket_path.exists())
+        finally:
+            self.evidence.release.set()
+            server.__exit__(None, None, None)
 
     def test_liveness_is_observable_without_executing_verification(self):
         with self.server:

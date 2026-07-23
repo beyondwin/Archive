@@ -85,6 +85,7 @@ class HelperServer:
         client_argv: tuple[str, ...],
         state_store: StateStore | None = None,
         io_timeout_seconds: float = _CLIENT_TIMEOUT_SECONDS,
+        shutdown_timeout_seconds: float = _CLIENT_TIMEOUT_SECONDS,
     ) -> None:
         if not isinstance(run_id, str) or not run_id:
             raise ValueError("run ID is invalid")
@@ -99,6 +100,8 @@ class HelperServer:
             raise ValueError("state store run ID does not match helper run ID")
         if not isinstance(io_timeout_seconds, (int, float)) or isinstance(io_timeout_seconds, bool) or not math.isfinite(io_timeout_seconds) or io_timeout_seconds <= 0:
             raise ValueError("helper I/O timeout must be finite and positive")
+        if not isinstance(shutdown_timeout_seconds, (int, float)) or isinstance(shutdown_timeout_seconds, bool) or not math.isfinite(shutdown_timeout_seconds) or shutdown_timeout_seconds <= 0:
+            raise ValueError("helper shutdown timeout must be finite and positive")
         self._run_id = run_id
         self._worktree = resolved
         self._evidence = evidence_store
@@ -112,7 +115,9 @@ class HelperServer:
         self._active_lock = threading.Lock()
         self._active_command_deadline: float | None = None
         self._final_set_digest: str | None = None
+        self._final_candidate_head: str | None = None
         self._io_timeout_seconds = float(io_timeout_seconds)
+        self._shutdown_timeout_seconds = float(shutdown_timeout_seconds)
 
     @property
     def descriptor(self) -> HelperDescriptor:
@@ -167,11 +172,13 @@ class HelperServer:
             listener.close()
         thread = self._thread
         if thread is not None:
-            thread.join()
+            thread.join(self._shutdown_timeout_seconds)
         try:
             self._socket_path.unlink()
         except FileNotFoundError:
             pass
+        if thread is not None and thread.is_alive():
+            raise RuntimeError("helper server shutdown timed out")
         return False
 
     def _serve(self) -> None:
@@ -195,10 +202,13 @@ class HelperServer:
 
     def _handle_connection(self, connection: socket.socket) -> dict[str, object]:
         try:
-            raw = _read_line(connection)
+            deadline = time.monotonic() + self._io_timeout_seconds
+            raw = _read_line(connection, deadline=deadline, clock=time.monotonic)
             request = json.loads(raw.decode("utf-8"))
             if canonical_json(request) != raw:
                 return _error("invalid_request", "request must use canonical JSON")
+            if time.monotonic() >= deadline:
+                return _error("request_timeout", "request timed out")
             return self._dispatch(request)
         except _ProtocolError as error:
             return _error(error.code, error.detail)
@@ -259,6 +269,7 @@ class HelperServer:
                 raise _ProtocolError("final_set_sealed", "a final verification set is already sealed")
             artifact = self._evidence.declare_final_set(final_set, candidate_head)
             self._final_set_digest = artifact.digest
+            self._final_candidate_head = candidate_head
         return {"ok": True, "operation": "declare_final_set", "artifact": {"digest": artifact.digest}}
 
     def _verify_final(self, payload: Mapping[str, object]) -> dict[str, object]:
@@ -272,6 +283,8 @@ class HelperServer:
         with self._dispatch_lock:
             if set_digest != self._final_set_digest:
                 raise _ProtocolError("final_set_unavailable", "final verification set is not sealed by this helper")
+            if candidate_head != self._final_candidate_head:
+                raise _ProtocolError("candidate_head_mismatch", "candidate head does not match the sealed final verification set")
             command = self._evidence.load_final_command(set_digest, index)
         return self._execute(command, candidate_head, "verify_final")
 
@@ -289,10 +302,14 @@ class _ProtocolError(Exception):
     detail: str
 
 
-def _read_line(connection: socket.socket) -> bytes:
+def _read_line(connection: socket.socket, *, deadline: float, clock: Any = time.monotonic) -> bytes:
     chunks: list[bytes] = []
     size = 0
     while True:
+        remaining = deadline - clock()
+        if remaining <= 0:
+            raise _ProtocolError("request_timeout", "request timed out")
+        connection.settimeout(remaining)
         try:
             block = connection.recv(min(8192, MAX_MESSAGE_BYTES + 1 - size))
         except TimeoutError as error:
@@ -311,6 +328,10 @@ def _read_line(connection: socket.socket) -> bytes:
             # The provider is required to half-close after its single request.
             # Waiting for EOF avoids responding before that shutdown reaches the
             # peer, which keeps the client-side shutdown deterministic.
+            remaining = deadline - clock()
+            if remaining <= 0:
+                raise _ProtocolError("request_timeout", "request timed out")
+            connection.settimeout(remaining)
             try:
                 trailing = connection.recv(1)
             except TimeoutError as error:
@@ -342,7 +363,11 @@ def helper_client(socket_path: Path, nonce: str, request: Mapping[str, object]) 
             client.connect(str(path))
             client.sendall(encoded)
             client.shutdown(socket.SHUT_WR)
-            raw = _read_line(client)
+            raw = _read_line(
+                client,
+                deadline=time.monotonic() + _CLIENT_TIMEOUT_SECONDS,
+                clock=time.monotonic,
+            )
     except (OSError, _ProtocolError) as error:
         raise RuntimeError(_bounded_detail(error)) from None
     try:
