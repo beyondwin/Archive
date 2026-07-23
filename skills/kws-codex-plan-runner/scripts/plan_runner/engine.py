@@ -46,6 +46,15 @@ helper, then execute every declared command through the helper, then return
 one structured whole-branch review. Do not modify the worktree and do not
 repeat existing exact successful evidence."""
 
+FINAL_REVIEW_FIX_PROMPT = """This is a fresh implementation context for bundled
+whole-branch review findings at CANDIDATE_HEAD. Fix only the supplied
+REVIEW_FINDINGS against the immutable specifications and already implemented
+plans. Preserve the implemented-plan ledger and do not invent plans, tasks, or
+verification requirements. Resolve the findings autonomously through
+Superpowers, use the supplied helper for focused verification, and return only
+the enforced structured result. Do not merge, push, deploy, or modify files
+outside WORKTREE."""
+
 _RUN_SLUG = re.compile(r"[^a-z0-9]+")
 _AUTHORITY_BLOCKERS = frozenset(
     {
@@ -186,6 +195,7 @@ class PlanRunner:
         output: Callable[[str], None] = print,
         environment: Mapping[str, str] | None = None,
         clock: Callable[[], float] = time.monotonic,
+        event_hook: Callable[[str], None] | None = None,
     ) -> None:
         if not isinstance(paths, RuntimePaths):
             raise TypeError("paths must be RuntimePaths")
@@ -196,6 +206,11 @@ class PlanRunner:
         self._environment = dict(os.environ if environment is None else environment)
         self._clock = clock
         self._recovery = RecoveryPolicy()
+        self._event_hook = event_hook
+
+    def _event(self, stage: str) -> None:
+        if self._event_hook is not None:
+            self._event_hook(stage)
 
     def create_run(
         self,
@@ -430,6 +445,8 @@ class PlanRunner:
                     repository["branch"],
                 )
                 self._require_git_contract(state, workspace)
+                self._reconcile_completed_attempt(store, workspace)
+                state = store.snapshot()
                 while state["current_plan_index"] < len(state["plans"]):
                     code = self._execute_current_plan(store, workspace)
                     if code is not None:
@@ -509,10 +526,14 @@ class PlanRunner:
             observation_head=observation.head,
             current_plan_index=index,
             session_id=session_id,
+            attempt_id=attempt_id,
         )
-        self._checkpoint_outcome(store, outcome, attempt_id, index, "implementation")
+        self._event("provider_outcome_received")
         if outcome.kind == "implemented":
-            return self._accept_implemented(store, workspace, outcome, index)
+            return self._accept_implemented(
+                store, workspace, outcome, index, attempt_id
+            )
+        self._checkpoint_outcome(store, outcome, attempt_id, index, "implementation")
         if outcome.kind == "blocked":
             return self._block(store, outcome)
         return self._recover(store, workspace, outcome, index)
@@ -549,6 +570,7 @@ class PlanRunner:
         observation_head: str,
         current_plan_index: int | None,
         session_id: str | None,
+        attempt_id: str,
     ) -> ProviderOutcome:
         state = store.snapshot()
         client_argv = (
@@ -587,6 +609,12 @@ class PlanRunner:
                 )
                 prompt = IMPLEMENTATION_PROMPT
                 schema = self.paths.skill_root / "templates" / "plan-result.schema.json"
+            elif mode == "final_review_fix":
+                packet = self._final_review_fix_packet(
+                    store.snapshot(), observation_head, helper.descriptor
+                )
+                prompt = FINAL_REVIEW_FIX_PROMPT
+                schema = self.paths.skill_root / "templates" / "plan-result.schema.json"
             else:
                 packet = self._finalization_packet(
                     store.snapshot(), observation_head, helper.descriptor
@@ -619,6 +647,14 @@ class PlanRunner:
                     request,
                     ActivityLease(
                         state["immutable_config"]["stall_seconds"], self._clock()
+                    ),
+                    on_session_id=lambda captured: self._capture_session(
+                        store,
+                        attempt_id=attempt_id,
+                        mode=mode,
+                        plan_index=current_plan_index,
+                        session_id=captured,
+                        candidate_head=observation_head,
                     ),
                 )
             finally:
@@ -692,6 +728,8 @@ class PlanRunner:
         candidate_head: str,
         helper: HelperDescriptor,
     ) -> dict[str, object]:
+        finalization = state.get("finalization")
+        failure = state.get("failure")
         return {
             "packet_version": 1,
             "mode": "finalization",
@@ -700,6 +738,16 @@ class PlanRunner:
             "branch": state["repository"]["branch"],
             "starting_commit": state["repository"]["source_commit"],
             "candidate_head": candidate_head,
+            "sealed_verification_set_digest": (
+                finalization.get("verification_set_digest")
+                if isinstance(finalization, Mapping)
+                and finalization.get("candidate_head") == candidate_head
+                else None
+            ),
+            "required_strategy_change": bool(
+                isinstance(failure, Mapping)
+                and failure.get("required_strategy_change")
+            ),
             "specifications": [
                 {
                     "snapshot_path": item["snapshot_path"],
@@ -720,6 +768,64 @@ class PlanRunner:
             ),
             "verification_receipts": self._artifact_summaries(
                 state, "verification_receipt"
+            ),
+            "checkpoint_revision": state["revision"],
+            "helper": _descriptor_document(helper),
+            "quality_profile": "quality_first",
+            "integration": "not_observed",
+        }
+
+    def _final_review_fix_packet(
+        self,
+        state: Mapping[str, object],
+        candidate_head: str,
+        helper: HelperDescriptor,
+    ) -> dict[str, object]:
+        failure = state.get("failure")
+        findings = (
+            failure.get("review_findings")
+            if isinstance(failure, Mapping)
+            else None
+        )
+        if not isinstance(findings, list) or not findings:
+            raise ValueError("bundled review findings are unavailable")
+        return {
+            "packet_version": 1,
+            "mode": "final_review_fix",
+            "run_id": state["run_id"],
+            "worktree": state["repository"]["worktree"],
+            "branch": state["repository"]["branch"],
+            "starting_commit": state["repository"]["source_commit"],
+            "candidate_head": candidate_head,
+            "review_findings": [dict(item) for item in findings],
+            "specifications": [
+                {
+                    "snapshot_path": item["snapshot_path"],
+                    "sha256": item["sha256"],
+                }
+                for item in state["inputs"]
+                if item["role"] == "spec"
+            ],
+            "implemented_plans": [
+                {
+                    "plan_id": item["plan_id"],
+                    "status": item["status"],
+                    "snapshot_path": item["snapshot_path"],
+                    "sha256": item["sha256"],
+                }
+                for item in state["plans"]
+            ],
+            "implemented_plan_handoffs": self._artifact_summaries(
+                state, "plan_handoff"
+            ),
+            "task_ledger": state["task_ledger"],
+            "verification_receipts": self._artifact_summaries(
+                state, "verification_receipt"
+            ),
+            "invalidated_final_verification_set_digest": (
+                state["finalization"].get("verification_set_digest")
+                if isinstance(state.get("finalization"), Mapping)
+                else None
             ),
             "checkpoint_revision": state["revision"],
             "helper": _descriptor_document(helper),
@@ -760,19 +866,44 @@ class PlanRunner:
                 attempt["provider_code"] = outcome.provider_code
                 break
         if outcome.session_id is not None:
-            state["sessions"].append(
-                {
+            session = next(
+                (
+                    item
+                    for item in reversed(state["sessions"])
+                    if isinstance(item, dict)
+                    and item.get("attempt_id") == attempt_id
+                ),
+                None,
+            )
+            if session is None:
+                session = {
+                    "attempt_id": attempt_id,
                     "mode": mode,
                     "plan_index": plan_index,
                     "session_id": outcome.session_id,
-                    "health": (
-                        "invalid"
-                        if outcome.kind
-                        in {"stalled", "context_overflow", "resume_failed"}
-                        else "healthy"
-                    ),
+                    "phase": "completed",
                 }
+                state["sessions"].append(session)
+            session["phase"] = "completed"
+            session["health"] = (
+                "invalid"
+                if outcome.kind
+                in {"stalled", "context_overflow", "resume_failed"}
+                else "healthy"
             )
+            if mode == "finalization":
+                candidate_head = session.get("candidate_head")
+                declaration = (
+                    self._existing_final_set(store, candidate_head)
+                    if isinstance(candidate_head, str)
+                    else None
+                )
+                if declaration is not None:
+                    session["verification_set_digest"] = declaration
+                    state["finalization"] = {
+                        "candidate_head": candidate_head,
+                        "verification_set_digest": declaration,
+                    }
         if isinstance(outcome.result, Mapping) and isinstance(
             outcome.result.get("task_ledger"), list
         ):
@@ -781,12 +912,69 @@ class PlanRunner:
             )
         store.commit(state)
 
+    def _capture_session(
+        self,
+        store: StateStore,
+        *,
+        attempt_id: str,
+        mode: str,
+        plan_index: int | None,
+        session_id: str,
+        candidate_head: str,
+    ) -> None:
+        state = store.snapshot()
+        attempt = next(
+            (
+                item
+                for item in reversed(state["attempts"])
+                if isinstance(item, dict)
+                and item.get("attempt_id") == attempt_id
+            ),
+            None,
+        )
+        if attempt is None:
+            raise ValueError("provider attempt is unavailable at session capture")
+        existing = next(
+            (
+                item
+                for item in reversed(state["sessions"])
+                if isinstance(item, dict)
+                and item.get("attempt_id") == attempt_id
+            ),
+            None,
+        )
+        if existing is not None:
+            if existing.get("session_id") != session_id:
+                raise ValueError("provider session changed within one attempt")
+            return
+        attempt["session_id"] = session_id
+        finalization = state.get("finalization")
+        state["sessions"].append(
+            {
+                "attempt_id": attempt_id,
+                "mode": mode,
+                "plan_index": plan_index,
+                "session_id": session_id,
+                "phase": "captured",
+                "health": "healthy",
+                "candidate_head": candidate_head,
+                "verification_set_digest": (
+                    finalization.get("verification_set_digest")
+                    if mode == "finalization"
+                    and isinstance(finalization, Mapping)
+                    else None
+                ),
+            }
+        )
+        store.commit(state)
+
     def _accept_implemented(
         self,
         store: StateStore,
         workspace: GitWorkspace,
         outcome: ProviderOutcome,
         index: int,
+        attempt_id: str,
     ) -> int | None:
         result = outcome.result
         if not isinstance(result, Mapping):
@@ -801,7 +989,10 @@ class PlanRunner:
         if not isinstance(obligations, list) or obligations:
             return self._integrity_failure(store, "implementation obligations remain")
         state = store.snapshot()
-        artifact = store.put_artifact(
+        result_artifact = store.put_artifact(
+            "provider_result", dict(result)
+        )
+        handoff_artifact = store.put_artifact(
             "plan_handoff",
             {
                 "plan_index": index,
@@ -811,8 +1002,48 @@ class PlanRunner:
             },
         )
         state = store.snapshot()
-        if artifact.as_dict() not in state["artifact_refs"]:
-            state["artifact_refs"].append(artifact.as_dict())
+        for artifact in (result_artifact, handoff_artifact):
+            if artifact.as_dict() not in state["artifact_refs"]:
+                state["artifact_refs"].append(artifact.as_dict())
+        attempt = next(
+            (
+                item
+                for item in reversed(state["attempts"])
+                if isinstance(item, dict)
+                and item.get("attempt_id") == attempt_id
+            ),
+            None,
+        )
+        if attempt is None:
+            raise ValueError("implementation attempt is unavailable")
+        attempt.update(
+            {
+                "completed": True,
+                "outcome": "implemented",
+                "provider_code": outcome.provider_code,
+                "result_artifact": result_artifact.as_dict(),
+            }
+        )
+        session = next(
+            (
+                item
+                for item in reversed(state["sessions"])
+                if isinstance(item, dict)
+                and item.get("attempt_id") == attempt_id
+            ),
+            None,
+        )
+        if session is None and outcome.session_id is not None:
+            session = {
+                "attempt_id": attempt_id,
+                "mode": "implementation",
+                "plan_index": index,
+                "session_id": outcome.session_id,
+            }
+            state["sessions"].append(session)
+        if session is not None:
+            session["phase"] = "completed"
+            session["health"] = "healthy"
         state["task_ledger"] = ledger
         state["plans"][index]["status"] = "implemented"
         state["current_plan_index"] = index + 1
@@ -820,6 +1051,51 @@ class PlanRunner:
         state["failure"] = None
         store.commit(state)
         return None
+
+    def _reconcile_completed_attempt(
+        self, store: StateStore, workspace: GitWorkspace
+    ) -> None:
+        state = store.snapshot()
+        index = state["current_plan_index"]
+        if index >= len(state["plans"]):
+            return
+        plan = state["plans"][index]
+        if plan["status"] != "running":
+            return
+        attempts = state.get("attempts")
+        if not isinstance(attempts, list) or not attempts:
+            return
+        attempt = attempts[-1]
+        if (
+            not isinstance(attempt, Mapping)
+            or attempt.get("plan_index") != index
+            or attempt.get("mode") != "implementation"
+            or attempt.get("completed") is not True
+            or attempt.get("outcome") != "implemented"
+            or not isinstance(attempt.get("result_artifact"), Mapping)
+        ):
+            return
+        result = _artifact_payload(store, attempt["result_artifact"])
+        if not isinstance(result, Mapping):
+            raise ValueError("completed provider result artifact is invalid")
+        session_id = attempt.get("session_id")
+        outcome = ProviderOutcome(
+            "implemented",
+            0,
+            session_id if isinstance(session_id, str) else None,
+            result,
+            None,
+            {},
+            (),
+            "",
+        )
+        self._accept_implemented(
+            store,
+            workspace,
+            outcome,
+            index,
+            attempt["attempt_id"],
+        )
 
     @staticmethod
     def _validated_task_ledger(value: object) -> list[dict[str, object]]:
@@ -888,7 +1164,17 @@ class PlanRunner:
             if isinstance(item, Mapping)
             and item.get("kind") == "verification_receipt"
         )
-        return ProgressSnapshot(observation.tree_digest, done, receipts, ())
+        return ProgressSnapshot(
+            sha256_json(
+                {
+                    "head": observation.head,
+                    "worktree": observation.tree_digest,
+                }
+            ),
+            done,
+            receipts,
+            (),
+        )
 
     def _recover(
         self,
@@ -924,12 +1210,16 @@ class PlanRunner:
             else self._progress(state, workspace)
         )
         current = self._progress(state, workspace)
+        progress_reset = self._is_material_progress(
+            baseline, current, sequence
+        )
+        active_sequence = [] if progress_reset else sequence
         reason = outcome.provider_code or "controller_transport_failed"
         result = outcome.result if isinstance(outcome.result, Mapping) else {}
         strategy = result.get("strategy_note")
         if not isinstance(strategy, str) or not strategy.strip():
             strategy = (
-                f"controller recovery {len(sequence) + 1}: "
+                f"controller recovery {len(active_sequence) + 1}: "
                 + (
                     "start a fresh provider session"
                     if outcome.kind
@@ -949,7 +1239,7 @@ class PlanRunner:
                     else "invalid"
                 ),
                 "resume_failed": outcome.kind == "resume_failed",
-                "failure_sequence": tuple(sequence),
+                "failure_sequence": tuple(active_sequence),
                 "failure_baseline_progress": baseline,
                 "reported_done_evidence": self._reported_done_evidence(state),
                 "observed_tree_digests": tuple(
@@ -978,17 +1268,17 @@ class PlanRunner:
             state["failure"] = {
                 "reason_code": decision.reason_code,
                 "failure_signature": decision.failure_signature,
-                "failure_sequence": sequence,
+                "failure_sequence": active_sequence,
                 "strategy_digests": [
                     item["strategy_note_digest"]
-                    for item in sequence
+                    for item in active_sequence
                     if item.get("strategy_note_digest")
                 ],
             }
             store.commit(state)
             self._emit_summary(store.snapshot())
             return int(ExitCode.FAILED)
-        sequence.append(
+        active_sequence.append(
             {
                 "failure_signature": decision.failure_signature,
                 "strategy_note_digest": strategy_note_digest(strategy),
@@ -999,12 +1289,12 @@ class PlanRunner:
         state["failure"] = {
             "reason_code": reason,
             "failure_signature": decision.failure_signature,
-            "failure_sequence": sequence,
+            "failure_sequence": active_sequence,
             "baseline_progress": dataclasses.asdict(current),
             "required_strategy_change": decision.required_strategy_change,
             "next_session_action": decision.session_action,
             "strategy_digests": [
-                item["strategy_note_digest"] for item in sequence
+                item["strategy_note_digest"] for item in active_sequence
             ],
         }
         store.commit(state)
@@ -1023,6 +1313,39 @@ class PlanRunner:
             and entry["evidence_digests"]
         }
 
+    @staticmethod
+    def _is_material_progress(
+        baseline: ProgressSnapshot,
+        current: ProgressSnapshot,
+        sequence: Sequence[Mapping[str, object]],
+    ) -> bool:
+        observed_trees = {
+            baseline.git_tree_digest,
+            *(
+                item["tree_digest"]
+                for item in sequence
+                if isinstance(item.get("tree_digest"), str)
+            ),
+        }
+        return (
+            (
+                current.git_tree_digest != baseline.git_tree_digest
+                and current.git_tree_digest not in observed_trees
+            )
+            or bool(
+                set(current.reported_done_ids)
+                - set(baseline.reported_done_ids)
+            )
+            or bool(
+                set(current.successful_receipt_digests)
+                - set(baseline.successful_receipt_digests)
+            )
+            or bool(
+                set(current.resolved_finding_ids)
+                - set(baseline.resolved_finding_ids)
+            )
+        )
+
     def _finalize(
         self, store: StateStore, workspace: GitWorkspace
     ) -> int:
@@ -1032,10 +1355,22 @@ class PlanRunner:
                 state["repository"]["source_commit"]
             )
             self._require_git_contract(state, workspace)
-            existing_declaration = self._existing_final_set(
-                store, candidate.head
+            failure = state.get("failure")
+            force_fresh = (
+                isinstance(failure, Mapping)
+                and failure.get("next_session_action") == "fresh_session"
             )
-            if existing_declaration is not None:
+            existing_declaration = (
+                None
+                if force_fresh
+                else self._existing_final_set(store, candidate.head)
+            )
+            if force_fresh:
+                state["finalization"] = {
+                    "candidate_head": candidate.head,
+                    "verification_set_digest": None,
+                }
+            elif existing_declaration is not None:
                 state["finalization"] = {
                     "candidate_head": candidate.head,
                     "verification_set_digest": existing_declaration,
@@ -1069,7 +1404,9 @@ class PlanRunner:
                 observation_head=candidate.head,
                 current_plan_index=None,
                 session_id=session_id,
+                attempt_id=attempt_id,
             )
+            self._event("provider_outcome_received")
             self._checkpoint_outcome(
                 store, outcome, attempt_id, None, "finalization"
             )
@@ -1078,9 +1415,12 @@ class PlanRunner:
             ):
                 if outcome.kind == "blocked":
                     return self._block(store, outcome)
-                return self._integrity_failure(
-                    store, "finalization did not return a structured review"
+                recovery_code = self._recover_finalization(
+                    store, workspace, outcome, candidate.head
                 )
+                if recovery_code is not None:
+                    return recovery_code
+                continue
             result = outcome.result
             try:
                 self._validate_final_result(
@@ -1159,20 +1499,156 @@ class PlanRunner:
         self, state: Mapping[str, object], candidate_head: str
     ) -> str | None:
         finalization = state.get("finalization")
+        failure = state.get("failure")
         if (
             not isinstance(finalization, Mapping)
             or finalization.get("candidate_head") != candidate_head
-            or not finalization.get("verification_set_digest")
+            or (
+                isinstance(failure, Mapping)
+                and failure.get("next_session_action") == "fresh_session"
+            )
         ):
             return None
+        declaration = finalization.get("verification_set_digest")
         for session in reversed(state["sessions"]):
             if (
                 isinstance(session, Mapping)
                 and session.get("mode") == "finalization"
                 and session.get("health") == "healthy"
+                and session.get("candidate_head") == candidate_head
+                and session.get("verification_set_digest") == declaration
                 and isinstance(session.get("session_id"), str)
             ):
                 return session["session_id"]
+        return None
+
+    def _recover_finalization(
+        self,
+        store: StateStore,
+        workspace: GitWorkspace,
+        outcome: ProviderOutcome,
+        candidate_head: str,
+    ) -> int | None:
+        state = store.snapshot()
+        self._require_git_contract(state, workspace)
+        if workspace.observe().head != candidate_head:
+            return self._integrity_failure(
+                store, "finalization changed the candidate HEAD"
+            )
+        failure = state.get("failure")
+        sequence = (
+            list(failure.get("failure_sequence", []))
+            if isinstance(failure, Mapping)
+            else []
+        )
+        baseline_document = (
+            failure.get("baseline_progress")
+            if isinstance(failure, Mapping)
+            else None
+        )
+        baseline = (
+            ProgressSnapshot(
+                baseline_document["git_tree_digest"],
+                tuple(baseline_document["reported_done_ids"]),
+                tuple(baseline_document["successful_receipt_digests"]),
+                tuple(baseline_document["resolved_finding_ids"]),
+            )
+            if isinstance(baseline_document, Mapping)
+            else self._progress(state, workspace)
+        )
+        current = self._progress(state, workspace)
+        progress_reset = self._is_material_progress(
+            baseline, current, sequence
+        )
+        active_sequence = [] if progress_reset else sequence
+        reason = outcome.provider_code or "controller_transport_failed"
+        result = outcome.result if isinstance(outcome.result, Mapping) else {}
+        strategy = result.get("strategy_note")
+        if not isinstance(strategy, str) or not strategy.strip():
+            strategy = (
+                f"finalization recovery {len(active_sequence) + 1}: "
+                + (
+                    "start a fresh finalization session"
+                    if outcome.kind
+                    in {"stalled", "context_overflow", "resume_failed", "failed"}
+                    else "resume the explicit healthy finalization session"
+                )
+            )
+        decision = self._recovery.decide(
+            {
+                "controller_alive": True,
+                "input_digest": state["immutable_config"][
+                    "input_snapshot_digest"
+                ],
+                "session_id": outcome.session_id,
+                "session_health": (
+                    "healthy"
+                    if outcome.kind
+                    not in {"stalled", "context_overflow", "resume_failed"}
+                    else "invalid"
+                ),
+                "resume_failed": outcome.kind == "resume_failed",
+                "failure_sequence": tuple(active_sequence),
+                "failure_baseline_progress": baseline,
+                "reported_done_evidence": self._reported_done_evidence(state),
+                "observed_tree_digests": tuple(
+                    item.get("tree_digest")
+                    for item in sequence
+                    if isinstance(item.get("tree_digest"), str)
+                )
+                or (baseline.git_tree_digest,),
+            },
+            {
+                "reason_code": reason,
+                "provider_code": outcome.provider_code,
+                "command_identity": None,
+                "candidate_head": candidate_head,
+                "input_digest": state["immutable_config"][
+                    "input_snapshot_digest"
+                ],
+                "interruption": (
+                    "stall" if outcome.kind == "stalled" else outcome.kind
+                ),
+                "strategy_note": strategy,
+                "progress": current,
+                "reported_done_evidence": self._reported_done_evidence(state),
+            },
+        )
+        if decision.action != "recover":
+            state["status"] = "failed"
+            state["failure"] = {
+                "reason_code": decision.reason_code,
+                "failure_signature": decision.failure_signature,
+                "failure_sequence": active_sequence,
+                "strategy_digests": [
+                    item["strategy_note_digest"]
+                    for item in active_sequence
+                    if item.get("strategy_note_digest")
+                ],
+            }
+            store.commit(state)
+            self._emit_summary(store.snapshot())
+            return int(ExitCode.FAILED)
+        active_sequence.append(
+            {
+                "failure_signature": decision.failure_signature,
+                "strategy_note_digest": strategy_note_digest(strategy),
+                "tree_digest": current.git_tree_digest,
+            }
+        )
+        state["status"] = "recovering"
+        state["failure"] = {
+            "reason_code": reason,
+            "failure_signature": decision.failure_signature,
+            "failure_sequence": active_sequence,
+            "baseline_progress": dataclasses.asdict(current),
+            "required_strategy_change": decision.required_strategy_change,
+            "next_session_action": decision.session_action,
+            "strategy_digests": [
+                item["strategy_note_digest"] for item in active_sequence
+            ],
+        }
+        store.commit(state)
         return None
 
     def _validate_final_result(
@@ -1278,11 +1754,13 @@ class PlanRunner:
         outcome = self._launch(
             store,
             workspace,
-            mode="implementation",
+            mode="final_review_fix",
             observation_head=workspace.observe().head,
             current_plan_index=index,
             session_id=None,
+            attempt_id=attempt_id,
         )
+        self._event("provider_outcome_received")
         self._checkpoint_outcome(
             store, outcome, attempt_id, index, "implementation"
         )

@@ -16,7 +16,9 @@ sys.path.insert(0, str(SKILL_ROOT / "scripts"))
 from plan_runner.contracts import ExitCode  # noqa: E402
 from plan_runner.helper import helper_client  # noqa: E402
 from plan_runner.provider import ProviderOutcome  # noqa: E402
+from plan_runner.recovery import strategy_note_digest  # noqa: E402
 from plan_runner.runtime import RuntimeIdentity, RuntimeUnavailable  # noqa: E402
+from plan_runner.storage import StateStore  # noqa: E402
 from plan_runner.engine import PlanRunner, RuntimePaths  # noqa: E402
 
 
@@ -57,25 +59,38 @@ class ScriptedAdapter:
         self.owner = owner
         self.helper = helper
 
-    def launch(self, request, _lease):
+    def launch(self, request, _lease, on_session_id=None):
         packet = json.loads(request.prompt.split("\nEXECUTION_PACKET=", 1)[1])
         self.owner.packets.append(packet)
+        self.owner.requests.append(request)
         launch = len(self.owner.packets)
-        session_id = str(uuid.UUID(int=launch))
+        session_id = request.session_id or str(uuid.UUID(int=launch))
+        if on_session_id is not None:
+            on_session_id(session_id)
+        if self.owner.crash_after_session:
+            self.owner.crash_after_session = False
+            raise SimulatedCrash("session captured")
+        if self.owner.outcome_hook is not None:
+            outcome = self.owner.outcome_hook(
+                self, request, packet, session_id
+            )
+            if outcome is not None:
+                return outcome
         if packet["mode"] == "implementation":
             marker = request.worktree / f"plan-{packet['current_plan']['index']}.txt"
-            marker.write_text("implemented\n", encoding="utf-8")
-            git("add", marker.name, cwd=request.worktree)
-            git(
-                "-c",
-                "user.name=Engine Test",
-                "-c",
-                "user.email=engine@example.test",
-                "commit",
-                "-m",
-                f"implement plan {packet['current_plan']['index']}",
-                cwd=request.worktree,
-            )
+            if not marker.exists():
+                marker.write_text("implemented\n", encoding="utf-8")
+                git("add", marker.name, cwd=request.worktree)
+                git(
+                    "-c",
+                    "user.name=Engine Test",
+                    "-c",
+                    "user.email=engine@example.test",
+                    "commit",
+                    "-m",
+                    f"implement plan {packet['current_plan']['index']}",
+                    cwd=request.worktree,
+                )
             head = git("rev-parse", "HEAD", cwd=request.worktree)
             result = {
                 "status": "implemented",
@@ -89,55 +104,111 @@ class ScriptedAdapter:
             return ProviderOutcome(
                 "implemented", 0, session_id, result, None, {}, (), ""
             )
+        if packet["mode"] == "final_review_fix":
+            marker = request.worktree / "review-fix.txt"
+            marker.write_text("review fixed\n", encoding="utf-8")
+            git("add", marker.name, cwd=request.worktree)
+            git(
+                "-c",
+                "user.name=Engine Test",
+                "-c",
+                "user.email=engine@example.test",
+                "commit",
+                "-m",
+                "fix final review findings",
+                cwd=request.worktree,
+            )
+            head = git("rev-parse", "HEAD", cwd=request.worktree)
+            return ProviderOutcome(
+                "implemented",
+                0,
+                session_id,
+                {
+                    "status": "implemented",
+                    "head_commit": head,
+                    "summary": "review findings fixed",
+                    "task_ledger": packet["task_ledger"],
+                    "open_obligation_ids": [],
+                    "failure_signature": None,
+                    "strategy_note": "fix only bundled review findings",
+                },
+                None,
+                {},
+                (),
+                "",
+            )
 
         head = packet["candidate_head"]
-        final_set = {
-            "kind": "commands",
-            "candidate_head": head,
-            "commands": [
-                {
-                    "command_id": "final-smoke",
-                    "command_role": "final",
-                    "argv": [sys.executable, "-c", "print('ok')"],
-                    "cwd": ".",
-                    "input_digest": "a" * 64,
-                    "deadline_seconds": 10,
-                }
-            ],
-        }
-        envelope = {
-            "protocol_version": self.helper.protocol_version,
-            "run_id": packet["run_id"],
-            "nonce": self.helper.nonce,
-            "operation": "declare_final_set",
-            "payload": {"candidate_head": head, "final_set": final_set},
-        }
-        declaration = helper_client(
-            self.helper.socket_path, self.helper.nonce, envelope
-        )
-        digest = declaration["artifact"]["digest"]
-        envelope = {
-            "protocol_version": self.helper.protocol_version,
-            "run_id": packet["run_id"],
-            "nonce": self.helper.nonce,
-            "operation": "verify_final",
-            "payload": {
+        digest = packet.get("sealed_verification_set_digest")
+        if digest is None:
+            final_set = {
+                "kind": "commands",
                 "candidate_head": head,
-                "set_digest": digest,
-                "command_index": 0,
-            },
-        }
-        helper_client(self.helper.socket_path, self.helper.nonce, envelope)
+                "commands": [
+                    {
+                        "command_id": "final-smoke",
+                        "command_role": "final",
+                        "argv": [sys.executable, "-c", "print('ok')"],
+                        "cwd": ".",
+                        "input_digest": "a" * 64,
+                        "deadline_seconds": 10,
+                    }
+                ],
+            }
+            envelope = {
+                "protocol_version": self.helper.protocol_version,
+                "run_id": packet["run_id"],
+                "nonce": self.helper.nonce,
+                "operation": "declare_final_set",
+                "payload": {"candidate_head": head, "final_set": final_set},
+            }
+            declaration = helper_client(
+                self.helper.socket_path, self.helper.nonce, envelope
+            )
+            digest = declaration["artifact"]["digest"]
+            envelope = {
+                "protocol_version": self.helper.protocol_version,
+                "run_id": packet["run_id"],
+                "nonce": self.helper.nonce,
+                "operation": "verify_final",
+                "payload": {
+                    "candidate_head": head,
+                    "set_digest": digest,
+                    "command_index": 0,
+                },
+            }
+            helper_client(self.helper.socket_path, self.helper.nonce, envelope)
+        if self.owner.after_final_hook is not None:
+            outcome = self.owner.after_final_hook(
+                self, request, packet, session_id, digest
+            )
+            if outcome is not None:
+                return outcome
+        findings = []
+        if self.owner.review_findings_once:
+            self.owner.review_findings_once = False
+            findings = [
+                {
+                    "id": "R1",
+                    "severity": "Important",
+                    "summary": "fix final review issue",
+                    "evidence": "review evidence",
+                }
+            ]
         result = {
             "status": "reviewed",
             "review_head": head,
             "verification_set_digest": digest,
-            "open_findings": [],
+            "open_findings": findings,
             "open_obligation_ids": [],
             "no_applicable_verification_approved": False,
             "summary": "whole branch reviewed",
         }
         return ProviderOutcome("reviewed", 0, session_id, result, None, {}, (), "")
+
+
+class SimulatedCrash(BaseException):
+    pass
 
 
 class EngineTest(unittest.TestCase):
@@ -157,7 +228,13 @@ class EngineTest(unittest.TestCase):
             skill_root=SKILL_ROOT,
         )
         self.packets = []
+        self.requests = []
         self.output = []
+        self.crash_after_session = False
+        self.outcome_hook = None
+        self.review_findings_once = False
+        self.after_final_hook = None
+        self.engine_event_hook = None
 
     def tearDown(self):
         self.temporary.cleanup()
@@ -171,6 +248,7 @@ class EngineTest(unittest.TestCase):
             ),
             output=self.output.append,
             environment={"PATH": os.environ["PATH"]},
+            event_hook=self.engine_event_hook,
         )
 
     def state(self):
@@ -224,6 +302,490 @@ class EngineTest(unittest.TestCase):
             ["implementation", "implementation", "finalization"],
         )
         self.assertEqual(len({item["session_id"] for item in state["sessions"]}), 3)
+
+    def test_review_findings_use_distinct_fresh_fix_packet_then_new_final_head(self):
+        self.review_findings_once = True
+        code = self.runner().create_run(
+            specs=self.specs,
+            plans=self.plans,
+            workspace=self.source,
+            stall_seconds=30,
+            sandbox="workspace-write",
+            model="fixed-model",
+        )
+        self.assertEqual(code, ExitCode.READY)
+        fix_packets = [
+            packet
+            for packet in self.packets
+            if packet["mode"] == "final_review_fix"
+        ]
+        self.assertEqual(len(fix_packets), 1)
+        packet = fix_packets[0]
+        self.assertEqual(packet["review_findings"][0]["id"], "R1")
+        self.assertEqual(len(packet["specifications"]), 2)
+        self.assertEqual(len(packet["implemented_plans"]), 2)
+        self.assertEqual(
+            {item["status"] for item in packet["implemented_plans"]},
+            {"implemented"},
+        )
+        first_final_packet = next(
+            item for item in self.packets if item["mode"] == "finalization"
+        )
+        self.assertEqual(packet["candidate_head"], first_final_packet["candidate_head"])
+        self.assertRegex(
+            packet["invalidated_final_verification_set_digest"],
+            r"^[0-9a-f]{64}$",
+        )
+        fix_request = next(
+            request
+            for request, item in zip(self.requests, self.packets, strict=True)
+            if item["mode"] == "final_review_fix"
+        )
+        self.assertIsNone(fix_request.session_id)
+        self.assertIn(
+            "do not invent plans, tasks, or\nverification requirements",
+            fix_request.prompt,
+        )
+        for request, request_packet in zip(
+            self.requests, self.packets, strict=True
+        ):
+            if request_packet["mode"] == "finalization":
+                continue
+            lowered = request.prompt.lower()
+            self.assertIn("do not merge, push, deploy", lowered)
+        self.assertEqual(
+            {request.model for request in self.requests}, {"fixed-model"}
+        )
+        final_heads = [
+            packet["candidate_head"]
+            for packet in self.packets
+            if packet["mode"] == "finalization"
+        ]
+        self.assertEqual(len(final_heads), 2)
+        self.assertNotEqual(final_heads[0], final_heads[1])
+        state = self.state()
+        self.assertEqual(
+            state["finalization"]["candidate_head"], final_heads[-1]
+        )
+        self.assertNotEqual(
+            state["finalization"]["verification_set_digest"],
+            packet["invalidated_final_verification_set_digest"],
+        )
+
+    def test_finalization_transport_resumes_healthy_session_and_context_loss_is_fresh(self):
+        final_failures = ["transport_failed", "context_overflow"]
+
+        def fail_then_succeed(_adapter, _request, packet, session_id):
+            if packet["mode"] == "finalization" and final_failures:
+                kind = final_failures.pop(0)
+                return ProviderOutcome(
+                    kind,
+                    1,
+                    session_id,
+                    None,
+                    (
+                        "controller_transport_failed"
+                        if kind == "transport_failed"
+                        else "session_invalid"
+                    ),
+                    {},
+                    (),
+                    "",
+                )
+            return None
+
+        self.outcome_hook = fail_then_succeed
+        code = self.runner().create_run(
+            specs=self.specs,
+            plans=self.plans[:1],
+            workspace=self.source,
+            stall_seconds=30,
+            sandbox="workspace-write",
+            model=None,
+        )
+        self.assertEqual(code, ExitCode.READY)
+        final_requests = [
+            request
+            for request, packet in zip(self.requests, self.packets, strict=True)
+            if packet["mode"] == "finalization"
+        ]
+        self.assertEqual(len(final_requests), 3)
+        self.assertIsNone(final_requests[0].session_id)
+        self.assertEqual(
+            final_requests[1].session_id,
+            str(uuid.UUID(int=2)),
+        )
+        self.assertIsNone(final_requests[2].session_id)
+
+    def test_finalization_resume_is_bound_to_same_candidate_and_declaration(self):
+        interrupted = False
+
+        def interrupt_after_verification(
+            _adapter, _request, _packet, session_id, _digest
+        ):
+            nonlocal interrupted
+            if not interrupted:
+                interrupted = True
+                return ProviderOutcome(
+                    "transport_failed",
+                    1,
+                    session_id,
+                    None,
+                    "controller_transport_failed",
+                    {},
+                    (),
+                    "",
+                )
+            return None
+
+        self.after_final_hook = interrupt_after_verification
+        code = self.runner().create_run(
+            specs=self.specs,
+            plans=self.plans[:1],
+            workspace=self.source,
+            stall_seconds=30,
+            sandbox="workspace-write",
+            model=None,
+        )
+        self.assertEqual(code, ExitCode.READY)
+        finals = [
+            (request, packet)
+            for request, packet in zip(self.requests, self.packets, strict=True)
+            if packet["mode"] == "finalization"
+        ]
+        self.assertEqual(len(finals), 2)
+        self.assertEqual(finals[1][0].session_id, str(uuid.UUID(int=2)))
+        self.assertEqual(
+            finals[0][1]["candidate_head"], finals[1][1]["candidate_head"]
+        )
+        self.assertRegex(
+            finals[1][1]["sealed_verification_set_digest"],
+            r"^[0-9a-f]{64}$",
+        )
+
+    def test_finalization_stall_and_session_loss_each_force_fresh_context(self):
+        failures = ["stalled", "resume_failed"]
+
+        def fail_then_succeed(
+            _adapter, _request, packet, session_id, _digest
+        ):
+            if failures:
+                kind = failures.pop(0)
+                return ProviderOutcome(
+                    kind,
+                    None,
+                    session_id,
+                    None,
+                    (
+                        "stall_expired"
+                        if kind == "stalled"
+                        else "session_resume_failed"
+                    ),
+                    {},
+                    (),
+                    "",
+                )
+            return None
+
+        self.after_final_hook = fail_then_succeed
+        code = self.runner().create_run(
+            specs=self.specs,
+            plans=self.plans[:1],
+            workspace=self.source,
+            stall_seconds=30,
+            sandbox="workspace-write",
+            model=None,
+        )
+        self.assertEqual(code, ExitCode.READY)
+        final_requests = [
+            request
+            for request, packet in zip(self.requests, self.packets, strict=True)
+            if packet["mode"] == "finalization"
+        ]
+        self.assertEqual(len(final_requests), 3)
+        self.assertTrue(
+            all(request.session_id is None for request in final_requests)
+        )
+        final_packets = [
+            packet for packet in self.packets if packet["mode"] == "finalization"
+        ]
+        self.assertTrue(
+            all(
+                packet["sealed_verification_set_digest"] is None
+                for packet in final_packets[1:]
+            )
+        )
+        self.assertTrue(
+            all(
+                packet["required_strategy_change"]
+                for packet in final_packets[1:]
+            )
+        )
+
+    def test_session_capture_survives_controller_crash_and_resumes_explicitly(self):
+        self.crash_after_session = True
+        with self.assertRaises(SimulatedCrash):
+            self.runner().create_run(
+                specs=self.specs,
+                plans=self.plans[:1],
+                workspace=self.source,
+                stall_seconds=30,
+                sandbox="workspace-write",
+                model=None,
+            )
+        state = self.state()
+        self.assertEqual(state["plans"][0]["status"], "running")
+        self.assertEqual(state["sessions"][-1]["phase"], "captured")
+        captured = state["sessions"][-1]["session_id"]
+        code = self.runner().resume(
+            state["run_id"],
+            retry_blocked=False,
+            retry_failed=False,
+            strategy_note=None,
+        )
+        self.assertEqual(code, ExitCode.READY)
+        self.assertEqual(self.requests[-2].session_id, captured)
+
+    def test_outcome_acceptance_is_atomic_and_resume_does_not_replay_commit(self):
+        runner = self.runner()
+
+        def crash_before_accept(*_args, **_kwargs):
+            raise SimulatedCrash("accept boundary")
+
+        runner._accept_implemented = crash_before_accept
+        with self.assertRaises(SimulatedCrash):
+            runner.create_run(
+                specs=self.specs,
+                plans=self.plans[:1],
+                workspace=self.source,
+                stall_seconds=30,
+                sandbox="workspace-write",
+                model=None,
+            )
+        state = self.state()
+        self.assertEqual(state["plans"][0]["status"], "running")
+        self.assertFalse(state["attempts"][-1]["completed"])
+        committed_head = git(
+            "rev-parse", "HEAD", cwd=Path(state["repository"]["worktree"])
+        )
+        self.engine_event_hook = None
+        code = self.runner().resume(
+            state["run_id"],
+            retry_blocked=False,
+            retry_failed=False,
+            strategy_note=None,
+        )
+        self.assertEqual(code, ExitCode.READY)
+        final_state = self.state()
+        handoff = next(
+            item
+            for item in final_state["artifact_refs"]
+            if item["kind"] == "plan_handoff"
+        )
+        self.assertEqual(
+            json.loads(
+                (
+                    self.paths.state_home
+                    / state["run_id"]
+                    / handoff["relative_path"]
+                ).read_text(encoding="utf-8")
+            )["head_commit"],
+            committed_head,
+        )
+
+    def test_reconcile_completed_implemented_attempt_without_provider_replay(self):
+        self.crash_after_session = True
+        with self.assertRaises(SimulatedCrash):
+            self.runner().create_run(
+                specs=self.specs,
+                plans=self.plans[:1],
+                workspace=self.source,
+                stall_seconds=30,
+                sandbox="workspace-write",
+                model=None,
+            )
+        state = self.state()
+        worktree = Path(state["repository"]["worktree"])
+        marker = worktree / "reconciled.txt"
+        marker.write_text("implemented before controller crash\n", encoding="utf-8")
+        git("add", marker.name, cwd=worktree)
+        git(
+            "-c",
+            "user.name=Engine Test",
+            "-c",
+            "user.email=engine@example.test",
+            "commit",
+            "-m",
+            "completed provider attempt",
+            cwd=worktree,
+        )
+        head = git("rev-parse", "HEAD", cwd=worktree)
+        store = StateStore.open(self.paths.state_home / state["run_id"])
+        result = {
+            "status": "implemented",
+            "head_commit": head,
+            "summary": "completed before reconciliation",
+            "task_ledger": [
+                {
+                    "task_id": "T1",
+                    "status": "reported_done",
+                    "evidence_digests": [],
+                }
+            ],
+            "open_obligation_ids": [],
+            "failure_signature": None,
+            "strategy_note": None,
+        }
+        artifact = store.put_artifact("provider_result", result)
+        pending = store.snapshot()
+        pending["artifact_refs"].append(artifact.as_dict())
+        pending["attempts"][-1].update(
+            {
+                "completed": True,
+                "outcome": "implemented",
+                "result_artifact": artifact.as_dict(),
+            }
+        )
+        store.commit(pending)
+        prior_implementation_launches = len(self.requests)
+
+        def forbid_implementation(_adapter, _request, packet, _session_id):
+            if packet["mode"] == "implementation":
+                raise AssertionError("completed plan was replayed")
+            return None
+
+        self.outcome_hook = forbid_implementation
+        code = self.runner().resume(
+            state["run_id"],
+            retry_blocked=False,
+            retry_failed=False,
+            strategy_note=None,
+        )
+        self.assertEqual(code, ExitCode.READY)
+        implementation_launches = [
+            packet
+            for packet in self.packets[prior_implementation_launches:]
+            if packet["mode"] == "implementation"
+        ]
+        self.assertEqual(implementation_launches, [])
+        self.assertEqual(self.state()["plans"][0]["status"], "implemented")
+
+    def test_material_progress_discards_pre_progress_recovery_strategies(self):
+        failures = 0
+
+        def progressive_failures(_adapter, request, packet, session_id):
+            nonlocal failures
+            if packet["mode"] != "implementation" or failures >= 4:
+                return None
+            failures += 1
+            if failures == 2:
+                marker = request.worktree / "material-progress.txt"
+                marker.write_text("progress\n", encoding="utf-8")
+                git("add", marker.name, cwd=request.worktree)
+                git(
+                    "-c",
+                    "user.name=Engine Test",
+                    "-c",
+                    "user.email=engine@example.test",
+                    "commit",
+                    "-m",
+                    "material progress",
+                    cwd=request.worktree,
+                )
+            return ProviderOutcome(
+                "transport_failed",
+                1,
+                session_id,
+                None,
+                f"controller_transport_failed",
+                {},
+                (),
+                "",
+            )
+
+        self.outcome_hook = progressive_failures
+        code = self.runner().create_run(
+            specs=self.specs,
+            plans=self.plans[:1],
+            workspace=self.source,
+            stall_seconds=30,
+            sandbox="workspace-write",
+            model=None,
+        )
+        self.assertEqual(code, ExitCode.READY)
+        implementation_requests = [
+            request
+            for request, packet in zip(self.requests, self.packets, strict=True)
+            if packet["mode"] == "implementation"
+        ]
+        self.assertGreaterEqual(len(implementation_requests), 5)
+
+    def test_tampered_input_snapshot_is_invalid_without_provider_launch(self):
+        self.crash_after_session = True
+        with self.assertRaises(SimulatedCrash):
+            self.runner().create_run(
+                specs=self.specs,
+                plans=self.plans[:1],
+                workspace=self.source,
+                stall_seconds=30,
+                sandbox="workspace-write",
+                model=None,
+            )
+        state = self.state()
+        snapshot = Path(state["inputs"][0]["snapshot_path"])
+        snapshot.write_text("tampered\n", encoding="utf-8")
+        launch_count = len(self.requests)
+        code = self.runner().resume(
+            state["run_id"],
+            retry_blocked=False,
+            retry_failed=False,
+            strategy_note=None,
+        )
+        self.assertEqual(code, ExitCode.INVALID)
+        self.assertEqual(len(self.requests), launch_count)
+
+    def test_retry_failed_requires_a_unique_nonempty_strategy_and_starts_fresh(self):
+        self.crash_after_session = True
+        with self.assertRaises(SimulatedCrash):
+            self.runner().create_run(
+                specs=self.specs,
+                plans=self.plans[:1],
+                workspace=self.source,
+                stall_seconds=30,
+                sandbox="workspace-write",
+                model="fixed-model",
+            )
+        state = self.state()
+        store = StateStore.open(self.paths.state_home / state["run_id"])
+        failed = store.snapshot()
+        prior_note = "use a distinct transport"
+        failed["status"] = "failed"
+        failed["failure"] = {
+            "reason_code": "recovery_exhausted",
+            "failure_sequence": [],
+            "strategy_digests": [strategy_note_digest(prior_note)],
+        }
+        store.commit(failed)
+        launch_count = len(self.requests)
+        duplicate = self.runner().resume(
+            state["run_id"],
+            retry_blocked=False,
+            retry_failed=True,
+            strategy_note=f"  {prior_note}  ",
+        )
+        self.assertEqual(duplicate, ExitCode.INVALID)
+        self.assertEqual(len(self.requests), launch_count)
+        accepted = self.runner().resume(
+            state["run_id"],
+            retry_blocked=False,
+            retry_failed=True,
+            strategy_note="rebuild the affected boundary from repository evidence",
+        )
+        self.assertEqual(accepted, ExitCode.READY)
+        self.assertIsNone(self.requests[launch_count].session_id)
+        self.assertEqual(
+            {request.model for request in self.requests}, {"fixed-model"}
+        )
 
     def test_runtime_failure_blocks_before_worktree_or_provider(self):
         def unavailable():
