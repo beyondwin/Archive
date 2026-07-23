@@ -937,6 +937,12 @@ class PlanRunner:
             "task_ledger": state["task_ledger"],
             "verification_receipts": receipts,
             "checkpoint_revision": state["revision"],
+            "recovery_context": self._recovery_context(
+                state,
+                current_head=current_head,
+                current_index=current_index,
+                operator_notes=operator_notes,
+            ),
             "required_strategy_change": bool(
                 isinstance(failure, Mapping)
                 and failure.get("required_strategy_change")
@@ -1108,6 +1114,10 @@ class PlanRunner:
                 canonical_json(payload) != raw
                 or sha256_json(payload) != reference.get("digest")
                 or not isinstance(payload.get("strategy_note"), str)
+                or not isinstance(payload.get("strategy_note_digest"), str)
+                or re.fullmatch(
+                    r"[0-9a-f]{64}", payload["strategy_note_digest"]
+                ) is None
             ):
                 raise ValueError("strategy note artifact is invalid")
             notes.append(
@@ -1115,10 +1125,87 @@ class PlanRunner:
                     "digest": reference["digest"],
                     "snapshot_path": str(path),
                     "strategy_note": payload["strategy_note"],
+                    "strategy_note_digest": payload["strategy_note_digest"],
                     "failure_signature": payload.get("failure_signature"),
                 }
             )
         return notes
+
+    @staticmethod
+    def _recovery_context(
+        state: Mapping[str, object],
+        *,
+        current_head: str,
+        current_index: int,
+        operator_notes: Sequence[Mapping[str, object]],
+    ) -> dict[str, object]:
+        failure = state.get("failure")
+        if not isinstance(failure, Mapping):
+            failure = {}
+        signature = failure.get("failure_signature")
+        if (
+            not isinstance(signature, str)
+            or re.fullmatch(r"[0-9a-f]{64}", signature) is None
+        ):
+            signature = None
+        reason = failure.get("reason_code")
+        if isinstance(reason, str) and reason.strip():
+            reason = normalize_strategy_note(reason)
+            reason = reason.encode("utf-8")[:256].decode("utf-8", "ignore")
+        else:
+            reason = None
+        known_digests = (
+            {
+                digest
+                for digest in failure.get("strategy_digests", [])
+                if isinstance(digest, str)
+                and re.fullmatch(r"[0-9a-f]{64}", digest)
+            }
+            if isinstance(failure.get("strategy_digests"), list)
+            else set()
+        )
+        attempted: list[dict[str, object]] = []
+        for note in operator_notes:
+            text = note.get("strategy_note")
+            digest = note.get("strategy_note_digest")
+            if (
+                not isinstance(text, str)
+                or not isinstance(digest, str)
+                or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+            ):
+                continue
+            normalized = normalize_strategy_note(text)
+            if (
+                digest not in known_digests
+                or note.get("failure_signature") != signature
+            ):
+                continue
+            attempted.append(
+                {
+                    "failure_signature": signature,
+                    "strategy_note": normalized,
+                    "strategy_note_digest": digest,
+                }
+            )
+        return {
+            "failure_reason": reason,
+            "failure_signature": signature,
+            "attempted_strategies": attempted[-3:],
+            "required_strategy_change": bool(
+                failure.get("required_strategy_change")
+            ),
+            "next_session_action": (
+                failure.get("next_session_action")
+                if failure.get("next_session_action")
+                in {"explicit_resume", "fresh_session", "none"}
+                else None
+            ),
+            "checkpoint": {
+                "revision": state["revision"],
+                "head": current_head,
+                "plan_index": current_index,
+            },
+        }
 
     def _checkpoint_outcome(
         self,
