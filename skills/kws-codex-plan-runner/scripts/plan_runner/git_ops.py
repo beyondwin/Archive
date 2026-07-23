@@ -7,6 +7,7 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping, Sequence
+from urllib.parse import urlsplit
 
 from .contracts import require_digest, require_full_sha
 
@@ -63,16 +64,25 @@ _UNRELATED_CREDENTIAL_HINTS = (
     "TOKEN",
 )
 _OPERATOR_CONFIG_ROOTS = frozenset(("HOME", "XDG_CONFIG_HOME"))
+_GENERIC_CREDENTIAL_SUFFIXES = (
+    "_TOKEN",
+    "_SECRET",
+    "_API_KEY",
+    "_PASSWORD",
+    "_PASSWD",
+    "_PRIVATE_KEY",
+    "_SECRET_KEY",
+    "_ACCESS_KEY",
+    "_CREDENTIAL",
+    "_CREDENTIALS",
+    "_CONNECTION_STRING",
+)
 _SERVICE_CREDENTIALS = frozenset(
     (
-        "DATABASE_URL",
-        "DB_PASSWORD",
         "DOCKER_AUTH_CONFIG",
         "MONGODB_URI",
         "MYSQL_PWD",
         "PGPASSWORD",
-        "REDIS_URL",
-        "STRIPE_SECRET_KEY",
     )
 )
 
@@ -343,13 +353,15 @@ def sanitized_child_env(
             continue
         if key in _OPERATOR_CONFIG_ROOTS:
             continue
-        credential = key.endswith(("_TOKEN", "_SECRET", "_API_KEY"))
         provider_auth = key.startswith(allowed_prefixes)
+        generic_credential = key.endswith(_GENERIC_CREDENTIAL_SUFFIXES)
+        credential_url = key.endswith("_URL") and _url_contains_userinfo(str(value))
         unrelated_family_credential = key.startswith(_UNRELATED_CREDENTIAL_FAMILIES) and any(
             hint in key for hint in _UNRELATED_CREDENTIAL_HINTS
         )
         if not provider_auth and (
-            credential
+            generic_credential
+            or credential_url
             or key in _CREDENTIAL_CONFIG_PATHS
             or key in _SERVICE_CREDENTIALS
             or unrelated_family_credential
@@ -369,3 +381,11 @@ def sanitized_child_env(
     clean["GIT_CONFIG_COUNT"] = str(len(safe_remotes))
     clean["GIT_TERMINAL_PROMPT"] = "0"
     return clean
+
+
+def _url_contains_userinfo(value: str) -> bool:
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return False
+    return parsed.username is not None or parsed.password is not None

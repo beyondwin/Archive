@@ -210,6 +210,34 @@ class FailureSignatureTest(unittest.TestCase):
         self.assertEqual(strategy_note_digest(note), strategy_note_digest(alternate))
         self.assertLessEqual(len(normalized.encode("utf-8")), 4_096)
 
+    def test_strategy_notes_redact_complete_authorization_values_for_any_scheme(self):
+        note = "\n".join(
+            (
+                "Authorization: Token token-secret with metadata",
+                "Proxy-Authorization = ApiKey api-key-secret",
+                "authorization: Digest username=user,response=digest-secret",
+                "AUTHORIZATION=AWS4-HMAC-SHA256 Credential=aws-secret,SignedHeaders=host",
+                "authorization strategy uses least privilege",
+            )
+        )
+
+        normalized = normalize_strategy_note(note)
+
+        for secret in (
+            "token-secret",
+            "metadata",
+            "api-key-secret",
+            "username=user",
+            "digest-secret",
+            "Credential=aws-secret",
+            "SignedHeaders=host",
+        ):
+            self.assertNotIn(secret, normalized)
+        self.assertEqual(normalized.count("[REDACTED]"), 4)
+        self.assertIn("authorization strategy uses least privilege", normalized)
+        alternate = note.replace("token-secret with metadata", "other-token")
+        self.assertEqual(strategy_note_digest(note), strategy_note_digest(alternate))
+
 
 class RecoveryPolicyTest(unittest.TestCase):
     def setUp(self):

@@ -30,9 +30,7 @@ _AUTHORIZATION_SECRET = re.compile(
         \s*[:=]\s*
     )
     (?P<value>
-        "(?:\\.|[^"\\\r\n])*"
-        |'(?:\\.|[^'\\\r\n])*'
-        |(?:bearer|basic)\s+[^\s,;}]+
+        [^\r\n]*
     )
     """
 )
