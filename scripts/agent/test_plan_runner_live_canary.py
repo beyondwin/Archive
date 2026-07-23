@@ -112,12 +112,15 @@ class LauncherTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             capture = root / "argv.json"
-            interpreter = root / "managed-python"
+            uv_capture = root / "uv-install-dir.txt"
+            interpreter = root / "managed/uv/python/cpython-3.13-test/bin/python3.13"
+            interpreter.parent.mkdir(parents=True)
             interpreter.write_text(
                 "#!/bin/sh\n"
                 "script=$1\n"
                 "shift\n"
-                "printf '%s\\n' \"$script\" \"$@\" > \"$CANARY_ARGV_CAPTURE\"\n",
+                "printf '%s\\n' \"$script\" \"$@\" > \"$CANARY_ARGV_CAPTURE\"\n"
+                "printf '%s\\n' \"$UV_PYTHON_INSTALL_DIR\" > \"$CANARY_UV_CAPTURE\"\n",
                 encoding="utf-8",
             )
             interpreter.chmod(0o755)
@@ -146,6 +149,7 @@ class LauncherTests(unittest.TestCase):
                     "PATH": f"{root}:/usr/bin:/bin",
                     "FAKE_MANAGED_PYTHON": str(interpreter),
                     "CANARY_ARGV_CAPTURE": str(capture),
+                    "CANARY_UV_CAPTURE": str(uv_capture),
                 },
                 text=True,
                 capture_output=True,
@@ -161,6 +165,10 @@ class LauncherTests(unittest.TestCase):
                     "--mode",
                     "session",
                 ],
+            )
+            self.assertEqual(
+                uv_capture.read_text(encoding="utf-8").strip(),
+                str(root / "managed/uv/python"),
             )
 
 
@@ -467,6 +475,35 @@ class IsolationTests(unittest.TestCase):
             self.assertEqual(env["CLAUDE_CONFIG_DIR"], str(config))
             self.assertEqual(env["ANTHROPIC_API_KEY"], "env-secret")
             self.assertEqual(list(config.iterdir()), [])
+
+    def test_claude_without_isolated_env_auth_blocks_before_provider_session(self):
+        with (
+            mock.patch.object(
+                canary,
+                "isolated_provider_environment",
+                return_value={"HOME": "/private/tmp/isolated"},
+            ),
+            mock.patch.object(
+                canary,
+                "_provider_version",
+                return_value=("2.1.206 (Claude Code)", None),
+            ),
+            mock.patch.object(
+                canary, "claude_auth_available", return_value=False, create=True
+            ),
+            mock.patch.object(canary, "_create_repository") as create_repository,
+            mock.patch.object(
+                canary,
+                "_probe_claude_session",
+                return_value=("passed", None, "fresh_then_resume"),
+            ) as provider_session,
+        ):
+            result = canary.probe_session("claude")
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["reason_code"], "provider_auth_blocked")
+        self.assertEqual(result["session_action"], "not_started")
+        create_repository.assert_not_called()
+        provider_session.assert_not_called()
 
 
 class SessionAndRunnerOutcomeTests(unittest.TestCase):

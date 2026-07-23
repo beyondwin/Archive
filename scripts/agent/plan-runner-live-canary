@@ -63,5 +63,8 @@ if ! PYTHON_BIN=$(uv python find --managed-python --no-python-downloads \
   exit 3
 fi
 
+UV_PYTHON_INSTALL_DIR=$(dirname -- "$(dirname -- "$(dirname -- "$PYTHON_BIN")")")
+export UV_PYTHON_INSTALL_DIR
+
 exec "$PYTHON_BIN" "$SCRIPT_DIR/plan-runner-live-canary.py" \
   --provider "$PROVIDER" --mode "$MODE"
