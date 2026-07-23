@@ -25,6 +25,7 @@ _SESSION_INVALIDATING_REASONS = frozenset({"stall_expired", "session_invalid"})
 _SECRET = re.compile(
     r"(?i)(?:[A-Z][A-Z0-9_]*(?:TOKEN|SECRET|API_KEY)|password)=[^\s]+"
 )
+_DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _STABLE_FAILURE_FIELDS = (
     "reason_code",
     "provider_code",
@@ -150,13 +151,50 @@ def strategy_note_digest(note: object) -> str:
 
 
 def _material_progress(
-    baseline: ProgressSnapshot | None, current: ProgressSnapshot
+    baseline: ProgressSnapshot | None,
+    current: ProgressSnapshot,
+    *,
+    observed_tree_digests: object,
+    prior_reported_done_evidence: object,
+    current_reported_done_evidence: object,
 ) -> bool:
     if baseline is None:
         return False
-    return (
+    observed_trees = (
+        set(observed_tree_digests)
+        if isinstance(observed_tree_digests, Sequence)
+        and not isinstance(observed_tree_digests, (str, bytes))
+        else {baseline.git_tree_digest}
+    )
+    git_progress = (
         current.git_tree_digest != baseline.git_tree_digest
-        or bool(set(current.reported_done_ids) - set(baseline.reported_done_ids))
+        and current.git_tree_digest not in observed_trees
+    )
+    prior_evidence = (
+        prior_reported_done_evidence
+        if isinstance(prior_reported_done_evidence, Mapping)
+        else {}
+    )
+    current_evidence = (
+        current_reported_done_evidence
+        if isinstance(current_reported_done_evidence, Mapping)
+        else {}
+    )
+    prior_digests = {
+        digest for digest in prior_evidence.values() if isinstance(digest, str)
+    }
+    newly_reported = (
+        set(current.reported_done_ids) - set(baseline.reported_done_ids)
+    )
+    reported_done_progress = any(
+        isinstance((digest := current_evidence.get(task_id)), str)
+        and _DIGEST.fullmatch(digest) is not None
+        and digest not in prior_digests
+        for task_id in newly_reported
+    )
+    return (
+        git_progress
+        or reported_done_progress
         or bool(
             set(current.successful_receipt_digests)
             - set(baseline.successful_receipt_digests)
@@ -203,7 +241,17 @@ class RecoveryPolicy:
         progress_reset = (
             isinstance(current, ProgressSnapshot)
             and (baseline is None or isinstance(baseline, ProgressSnapshot))
-            and _material_progress(baseline, current)
+            and _material_progress(
+                baseline,
+                current,
+                observed_tree_digests=state.get("observed_tree_digests", ()),
+                prior_reported_done_evidence=state.get(
+                    "reported_done_evidence", {}
+                ),
+                current_reported_done_evidence=outcome.get(
+                    "reported_done_evidence", {}
+                ),
+            )
         )
         session_action = self._session_action(
             state, outcome, signature, progress_reset=progress_reset
@@ -225,18 +273,14 @@ class RecoveryPolicy:
         if not isinstance(current, ProgressSnapshot):
             raise ValueError("outcome progress is invalid")
 
-        same_failure = [] if _material_progress(baseline, current) else [
-            entry
-            for entry in sequence
-            if entry.get("failure_signature") == signature
-        ]
+        active_sequence = [] if progress_reset else sequence
         try:
             next_strategy = strategy_note_digest(outcome.get("strategy_note"))
         except ValueError:
             return self._exhausted(signature)
         prior_strategies = {
             digest
-            for entry in same_failure
+            for entry in active_sequence
             if isinstance(
                 (digest := entry.get("strategy_note_digest")),
                 str,
