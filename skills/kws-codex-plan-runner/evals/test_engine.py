@@ -1270,6 +1270,46 @@ class EngineTest(unittest.TestCase):
             json.loads(completed.stdout)["reason_code"], "invalid_invocation"
         )
 
+    def test_cli_parse_failures_use_one_bounded_contract_response(self):
+        cases = {
+            "unknown argument": ["inspect", "--run-id", "missing-run", "--bogus"],
+            "missing required argument": ["inspect"],
+            "malformed argument": [
+                "run",
+                "--spec",
+                "spec.md",
+                "--plan",
+                "plan.md",
+                "--workspace",
+                ".",
+                "--stall-seconds",
+                "not-a-number",
+            ],
+        }
+        for name, arguments in cases.items():
+            with self.subTest(name=name):
+                completed = subprocess.run(
+                    [
+                        sys.executable,
+                        str(SKILL_ROOT / "scripts" / "runner.py"),
+                        *arguments,
+                    ],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(completed.returncode, ExitCode.INVALID)
+                self.assertEqual(completed.stderr, "")
+                self.assertEqual(len(completed.stdout.splitlines()), 1)
+                self.assertLessEqual(len(completed.stdout.encode("utf-8")), 1024)
+                response = json.loads(completed.stdout)
+                self.assertEqual(
+                    set(response), {"status", "reason_code", "detail"}
+                )
+                self.assertEqual(response["status"], "failed")
+                self.assertEqual(response["reason_code"], "invalid_invocation")
+                self.assertLessEqual(len(response["detail"]), 512)
+
     def test_inspect_is_read_only_and_concise(self):
         self.runner().create_run(
             specs=self.specs,
