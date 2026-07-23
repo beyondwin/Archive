@@ -153,6 +153,24 @@ class ParityInvariantTest(unittest.TestCase):
                 broken, self.run_root, self.worktree, self.head
             )
 
+        wrong_head_set = dict(self.final_set, candidate_head="9" * 40)
+        wrong_head_ref = self.put("final_verification_set", wrong_head_set)
+        wrong_head = dict(self.state)
+        wrong_head["artifact_refs"] = [
+            wrong_head_ref,
+            self.receipt_ref,
+            self.review_ref,
+            self.handoff_ref,
+        ]
+        wrong_head["finalization"] = dict(
+            self.state["finalization"],
+            verification_set_digest=wrong_head_ref["digest"],
+        )
+        with self.assertRaisesRegex(PARITY.ParityFailure, "command set HEAD"):
+            PARITY._validate_ready_evidence(
+                wrong_head, self.run_root, self.worktree, self.head
+            )
+
     def test_receipt_reference_and_executable_identity_are_fail_closed(self) -> None:
         normalized = PARITY._normalized_receipts(
             self.state, self.run_root, self.worktree
@@ -228,6 +246,12 @@ class ParityInvariantTest(unittest.TestCase):
         )
         stalled[1]["required_strategy_change"] = False
         with self.assertRaisesRegex(PARITY.ParityFailure, "changed-strategy"):
+            PARITY._validate_recovery_evidence(
+                "stalled-fresh-strategy", stalled
+            )
+        stalled[1]["required_strategy_change"] = True
+        stalled[1]["packet_digest"] = stalled[0]["packet_digest"]
+        with self.assertRaisesRegex(PARITY.ParityFailure, "distinct packet"):
             PARITY._validate_recovery_evidence(
                 "stalled-fresh-strategy", stalled
             )
