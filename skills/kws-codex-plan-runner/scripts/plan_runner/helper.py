@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import math
 import os
 import secrets
 import socket
 import stat
+import tempfile
 import threading
 import time
 from collections.abc import Mapping
@@ -84,6 +86,8 @@ class HelperServer:
         evidence_store: EvidenceStore,
         client_argv: tuple[str, ...],
         state_store: StateStore | None = None,
+        sealed_final_set_digest: str | None = None,
+        sealed_candidate_head: str | None = None,
         io_timeout_seconds: float = _CLIENT_TIMEOUT_SECONDS,
         shutdown_timeout_seconds: float = _CLIENT_TIMEOUT_SECONDS,
     ) -> None:
@@ -94,10 +98,20 @@ class HelperServer:
             raise ValueError("worktree must be a real directory")
         if not isinstance(client_argv, tuple) or not client_argv:
             raise ValueError("client argv is invalid")
-        if any(not isinstance(item, str) or not item or "\x00" in item or not Path(item).is_absolute() for item in client_argv):
-            raise ValueError("client argv must contain literal absolute paths")
+        if any(
+            not isinstance(item, str) or not item or "\x00" in item
+            for item in client_argv
+        ) or any(not Path(item).is_absolute() for item in client_argv[:2]):
+            raise ValueError(
+                "helper executable and script must be literal absolute paths"
+            )
         if state_store is not None and state_store.snapshot().get("run_id") != run_id:
             raise ValueError("state store run ID does not match helper run ID")
+        if (sealed_final_set_digest is None) != (sealed_candidate_head is None):
+            raise ValueError("sealed finalization identity is incomplete")
+        if sealed_final_set_digest is not None:
+            require_digest(sealed_final_set_digest)
+            require_full_sha(sealed_candidate_head)
         if not isinstance(io_timeout_seconds, (int, float)) or isinstance(io_timeout_seconds, bool) or not math.isfinite(io_timeout_seconds) or io_timeout_seconds <= 0:
             raise ValueError("helper I/O timeout must be finite and positive")
         if not isinstance(shutdown_timeout_seconds, (int, float)) or isinstance(shutdown_timeout_seconds, bool) or not math.isfinite(shutdown_timeout_seconds) or shutdown_timeout_seconds <= 0:
@@ -106,7 +120,18 @@ class HelperServer:
         self._worktree = resolved
         self._evidence = evidence_store
         self._state = state_store
-        self._socket_path = resolved / _SOCKET_NAME
+        direct_socket = resolved / _SOCKET_NAME
+        self._socket_is_direct = len(os.fsencode(direct_socket)) < 100
+        self._socket_path = (
+            direct_socket
+            if self._socket_is_direct
+            else Path(tempfile.gettempdir())
+            / (
+                "kpr-"
+                + hashlib.sha256(str(resolved).encode("utf-8")).hexdigest()[:24]
+                + ".sock"
+            )
+        )
         self._descriptor = HelperDescriptor(PROTOCOL_VERSION, self._socket_path, secrets.token_hex(32), client_argv)
         self._listener: socket.socket | None = None
         self._thread: threading.Thread | None = None
@@ -114,8 +139,8 @@ class HelperServer:
         self._dispatch_lock = threading.Lock()
         self._active_lock = threading.Lock()
         self._active_command_deadline: float | None = None
-        self._final_set_digest: str | None = None
-        self._final_candidate_head: str | None = None
+        self._final_set_digest = sealed_final_set_digest
+        self._final_candidate_head = sealed_candidate_head
         self._io_timeout_seconds = float(io_timeout_seconds)
         self._shutdown_timeout_seconds = float(shutdown_timeout_seconds)
 
@@ -137,7 +162,7 @@ class HelperServer:
     def __enter__(self) -> "HelperServer":
         if self._listener is not None:
             raise RuntimeError("helper server is already running")
-        if self._socket_path.parent != self._worktree:
+        if self._socket_is_direct and self._socket_path.parent != self._worktree:
             raise ValueError("socket path must be a direct child of worktree")
         try:
             metadata = self._worktree.lstat()
