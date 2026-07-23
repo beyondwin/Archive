@@ -256,6 +256,10 @@ class ParityInvariantTest(unittest.TestCase):
                 "stalled-fresh-strategy", stalled
             )
 
+    def test_parity_stall_lease_allows_provider_startup_jitter(self) -> None:
+        self.assertGreaterEqual(PARITY.PARITY_STALL_SECONDS, 1.0)
+        self.assertLess(PARITY.PARITY_STALL_SECONDS, 2.0)
+
 
 if __name__ == "__main__":
     unittest.main()
