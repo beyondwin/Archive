@@ -3,11 +3,11 @@ from __future__ import annotations
 import hashlib
 import math
 import os
+import selectors
 import shutil
 import signal
 import stat
 import subprocess
-import threading
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -129,27 +129,6 @@ def _iso_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-class _Drain:
-    def __init__(self, stream, limit: int) -> None:
-        self.stream = stream
-        self.limit = limit
-        self.digest = hashlib.sha256()
-        self.tail = bytearray()
-        self.thread = threading.Thread(target=self._read, daemon=True)
-
-    def _read(self) -> None:
-        try:
-            while chunk := self.stream.read(65536):
-                self.digest.update(chunk)
-                if self.limit:
-                    self.tail.extend(chunk)
-                    overflow = len(self.tail) - self.limit
-                    if overflow > 0:
-                        del self.tail[:overflow]
-        finally:
-            self.stream.close()
-
-
 def _valid_inputs(
     argv: Sequence[str],
     cwd: Path,
@@ -174,44 +153,159 @@ def _valid_inputs(
         raise ValueError("command environment must contain NUL-free strings")
 
 
-def _signal_group(pgid: int, sig: signal.Signals) -> bool:
+def _retain_tail(tail: bytearray, chunk: bytes, limit: int) -> None:
+    if limit == 0:
+        tail.clear()
+        return
+    tail.extend(chunk)
+    if (excess := len(tail) - limit) > 0:
+        del tail[:excess]
+
+
+def _observe_group(pgid: int, *, timeout: float) -> dict[int, str]:
+    """Inspect one process group without a shell or user-controlled arguments."""
+    try:
+        result = subprocess.run(
+            ("/bin/ps", "-axo", "pid=,pgid=,stat="),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise RuntimeError("command process group is unverifiable") from error
+    if result.returncode != 0:
+        raise RuntimeError("command process group is unverifiable")
+    try:
+        rows = result.stdout.decode("ascii").splitlines()
+    except (AttributeError, UnicodeDecodeError) as error:
+        raise RuntimeError("command process group is unverifiable") from error
+    members: dict[int, str] = {}
+    for row in rows:
+        fields = row.split()
+        if not fields:
+            continue
+        if len(fields) != 3:
+            raise RuntimeError("command process group is unverifiable")
+        try:
+            pid, group = int(fields[0]), int(fields[1])
+        except ValueError as error:
+            raise RuntimeError("command process group is unverifiable") from error
+        if pid <= 0 or group <= 0 or not fields[2]:
+            raise RuntimeError("command process group is unverifiable")
+        if group == pgid:
+            members[pid] = fields[2]
+    return members
+
+
+def _anchored_members(
+    process: subprocess.Popen[bytes],
+    pgid: int,
+    *,
+    timeout: float = 0.25,
+) -> tuple[bool, set[int]]:
+    if process.returncode is not None:
+        raise RuntimeError("command process group lost its leader anchor")
+    members = _observe_group(pgid, timeout=timeout)
+    leader = members.get(process.pid)
+    if leader is None:
+        raise RuntimeError("command process group lost its leader anchor")
+    return leader.startswith("Z"), set(members) - {process.pid}
+
+
+def _signal_anchored(
+    process: subprocess.Popen[bytes],
+    pgid: int,
+    sig: signal.Signals,
+) -> None:
+    if process.returncode is not None:
+        raise RuntimeError("refusing to signal an unanchored process group")
     try:
         os.killpg(pgid, sig)
-        return True
-    except ProcessLookupError:
-        return False
-    except PermissionError as error:
+    except (ProcessLookupError, PermissionError) as error:
+        leader_exited, descendants = _anchored_members(process, pgid)
+        if leader_exited and not descendants:
+            return
         raise RuntimeError("command process group is unverifiable") from error
 
 
-def _settle_group(process: subprocess.Popen[bytes], *, terminate: bool) -> bool:
-    forced = False
-    if terminate:
-        _signal_group(process.pid, signal.SIGTERM)
-    until = time.monotonic() + 1.0
-    while process.poll() is None and time.monotonic() < until:
+def _wait_for_quiet_group(
+    process: subprocess.Popen[bytes],
+    pgid: int,
+    timeout: float,
+) -> bool:
+    end = time.monotonic() + timeout
+    while True:
+        remaining = end - time.monotonic()
+        leader_exited, descendants = _anchored_members(
+            process,
+            pgid,
+            timeout=max(0.1, min(0.25, max(remaining, 0.0))),
+        )
+        if leader_exited and not descendants:
+            return True
+        if time.monotonic() >= end:
+            return False
         time.sleep(0.01)
-    # A leader may have exited while descendants retained the group/pipes.
-    if process.poll() is not None:
-        _signal_group(process.pid, signal.SIGTERM)
-    time.sleep(0.02)
+
+
+def _finish_anchored_group(
+    process: subprocess.Popen[bytes],
+    pgid: int,
+    *,
+    terminate_leader: bool,
+) -> tuple[int, bool]:
+    _leader_exited, descendants = _anchored_members(process, pgid)
+    if terminate_leader or descendants:
+        _signal_anchored(process, pgid, signal.SIGTERM)
+    forced = False
+    if not _wait_for_quiet_group(process, pgid, 10.0):
+        forced = True
+        _signal_anchored(process, pgid, signal.SIGKILL)
+        if not _wait_for_quiet_group(process, pgid, 1.0):
+            raise RuntimeError("command process group survived termination")
+    exit_code = process.wait(timeout=1)
+    if _observe_group(pgid, timeout=0.25):
+        raise RuntimeError("command process group survived leader reap")
+    return exit_code, forced
+
+
+def _bounded_direct_cleanup(
+    process: subprocess.Popen[bytes],
+    pgid: int,
+    *,
+    timeout: float = 1.0,
+) -> None:
+    """Always make a bounded direct-child kill/reap attempt after group errors."""
+    if process.returncode is not None:
+        return
     try:
-        os.killpg(process.pid, 0)
-    except ProcessLookupError:
+        os.killpg(pgid, signal.SIGKILL)
+    except OSError:
         pass
-    except PermissionError as error:
-        raise RuntimeError("command process group is unverifiable") from error
-    else:
-        forced = True
-        _signal_group(process.pid, signal.SIGKILL)
-    if process.poll() is None:
-        forced = True
+    try:
+        process.kill()
+    except OSError:
+        pass
+    try:
+        process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        # The caller will fail closed; this bounded fallback must never hang.
+        return
+
+
+def _close_process_streams(process: subprocess.Popen[bytes]) -> None:
+    if process.stdout is not None:
         try:
-            process.kill()
+            process.stdout.close()
         except OSError:
             pass
-    process.wait(timeout=1)
-    return forced
+    if process.stderr is not None:
+        try:
+            process.stderr.close()
+        except OSError:
+            pass
 
 
 def run_exact(
@@ -254,32 +348,78 @@ def run_exact(
         except ProcessLookupError:
             pass
     except BaseException:
-        _settle_group(process, terminate=True)
+        _bounded_direct_cleanup(process, process.pid)
+        _close_process_streams(process)
         raise
 
     assert process.stdout is not None and process.stderr is not None
-    stdout, stderr = _Drain(process.stdout, output_limit), _Drain(process.stderr, output_limit)
-    stdout.thread.start()
-    stderr.thread.start()
+    selector = selectors.DefaultSelector()
+    selector.register(process.stdout, selectors.EVENT_READ, "stdout")
+    selector.register(process.stderr, selectors.EVENT_READ, "stderr")
+    stdout_digest = hashlib.sha256()
+    stderr_digest = hashlib.sha256()
+    stdout_tail = bytearray()
+    stderr_tail = bytearray()
     timed_out = False
-    while process.poll() is None:
-        if time.monotonic() - started >= deadline_seconds:
-            timed_out = True
-            break
-        time.sleep(0.01)
-    forced = _settle_group(process, terminate=timed_out)
-    stdout.thread.join(1)
-    stderr.thread.join(1)
-    if stdout.thread.is_alive() or stderr.thread.is_alive():
-        raise RuntimeError("command output streams did not close")
-    code = None if timed_out else process.returncode
+    finished_group = False
+    leader_exit_code: int | None = None
+    forced = False
+    try:
+        while True:
+            remaining = deadline_seconds - (time.monotonic() - started)
+            if remaining <= 0 and not timed_out:
+                timed_out = True
+                leader_exit_code, group_forced = _finish_anchored_group(
+                    process, process.pid, terminate_leader=True
+                )
+                forced |= group_forced
+                finished_group = True
+                remaining = 0
+
+            if selector.get_map():
+                for key, _mask in selector.select(min(max(remaining, 0.0), 0.05)):
+                    stream = key.fileobj
+                    chunk = os.read(stream.fileno(), 65536)
+                    if not chunk:
+                        selector.unregister(stream)
+                    elif key.data == "stdout":
+                        stdout_digest.update(chunk)
+                        _retain_tail(stdout_tail, chunk, output_limit)
+                    else:
+                        stderr_digest.update(chunk)
+                        _retain_tail(stderr_tail, chunk, output_limit)
+            elif not finished_group:
+                time.sleep(min(max(remaining, 0.0), 0.05))
+
+            if not finished_group:
+                leader_exited, _descendants = _anchored_members(
+                    process,
+                    process.pid,
+                    timeout=max(0.1, min(0.25, max(remaining, 0.0))),
+                )
+                if leader_exited:
+                    leader_exit_code, group_forced = _finish_anchored_group(
+                        process, process.pid, terminate_leader=False
+                    )
+                    forced |= group_forced
+                    finished_group = True
+            if finished_group and not selector.get_map():
+                break
+        code = None if timed_out else leader_exit_code
+    finally:
+        selector.close()
+        try:
+            if process.returncode is None:
+                _bounded_direct_cleanup(process, process.pid)
+        finally:
+            _close_process_streams(process)
     return ProcessResult(
         kind="verification_timed_out" if timed_out else ("success" if code == 0 else "failed"),
         exit_code=code,
-        stdout_tail=bytes(stdout.tail),
-        stderr_tail=bytes(stderr.tail),
-        stdout_digest=stdout.digest.hexdigest(),
-        stderr_digest=stderr.digest.hexdigest(),
+        stdout_tail=bytes(stdout_tail),
+        stderr_tail=bytes(stderr_tail),
+        stdout_digest=stdout_digest.hexdigest(),
+        stderr_digest=stderr_digest.hexdigest(),
         started_at=started_at,
         finished_at=_iso_now(),
         forced_kill=forced,
