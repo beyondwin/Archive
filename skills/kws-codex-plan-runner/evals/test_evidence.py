@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -14,6 +15,7 @@ SKILL_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SKILL_ROOT / "scripts"))
 
 from plan_runner import evidence as evidence_module  # noqa: E402
+from plan_runner import process as process_module  # noqa: E402
 from plan_runner.evidence import EvidenceStore, ExactCommand  # noqa: E402
 from plan_runner.git_ops import GitWorkspace  # noqa: E402
 from plan_runner.process import ProcessResult  # noqa: E402
@@ -113,7 +115,7 @@ class EvidenceStoreTest(unittest.TestCase):
                 "pathlib.Path(sys.argv[1]).write_text(str(child.pid)); time.sleep(5)",
                 str(child),
             ),
-            deadline_seconds=0.15,
+            deadline_seconds=1,
         )
         started = time.monotonic()
         receipt = self.evidence.execute(command, candidate_head=self.head)
@@ -123,6 +125,44 @@ class EvidenceStoreTest(unittest.TestCase):
         self.assertTrue(child.exists())
         with self.assertRaises(ProcessLookupError):
             os.kill(int(child.read_text()), 0)
+
+    def test_timeout_reaps_leader_when_zero_signal_probe_would_be_eperm(self):
+        launched = []
+        real_killpg = os.killpg
+        real_popen = subprocess.Popen
+
+        def capture_popen(*args, **kwargs):
+            process = real_popen(*args, **kwargs)
+            if kwargs.get("start_new_session"):
+                launched.append(process)
+            return process
+
+        def reject_zero_signal(pgid, sig):
+            if sig == 0:
+                raise PermissionError("Darwin zombie-only process group")
+            return real_killpg(pgid, sig)
+
+        with (
+            mock.patch.object(
+                process_module.subprocess, "Popen", side_effect=capture_popen
+            ),
+            mock.patch.object(
+                process_module.os, "killpg", side_effect=reject_zero_signal
+            ),
+        ):
+            receipt = self.evidence.execute(
+                self.command(
+                    python_command("import time; time.sleep(5)"),
+                    deadline_seconds=0.15,
+                ),
+                candidate_head=self.head,
+            )
+
+        self.assertEqual(receipt.outcome, "timed_out")
+        self.assertEqual(len(launched), 1)
+        self.assertIsNotNone(launched[0].returncode)
+        with self.assertRaises(ChildProcessError):
+            os.waitpid(launched[0].pid, os.WNOHANG)
 
     def test_deadline_survives_closed_streams_and_terminates_the_group(self):
         command = self.command(
@@ -145,10 +185,38 @@ class EvidenceStoreTest(unittest.TestCase):
             ),
             deadline_seconds=1,
         )
+        launched = []
+        signal_returncodes = []
+        real_killpg = os.killpg
+        real_popen = subprocess.Popen
+
+        def capture_popen(*args, **kwargs):
+            process = real_popen(*args, **kwargs)
+            if kwargs.get("start_new_session"):
+                launched.append(process)
+            return process
+
+        def record_signal(pgid, sig):
+            if sig in (signal.SIGTERM, signal.SIGKILL):
+                signal_returncodes.append(launched[0].returncode)
+            return real_killpg(pgid, sig)
+
         try:
-            receipt = self.evidence.execute(command, candidate_head=self.head)
+            with (
+                mock.patch.object(
+                    process_module.subprocess, "Popen", side_effect=capture_popen
+                ),
+                mock.patch.object(
+                    process_module.os, "killpg", side_effect=record_signal
+                ),
+            ):
+                receipt = self.evidence.execute(command, candidate_head=self.head)
             self.assertEqual(receipt.outcome, "success")
             self.assertTrue(child_pid.exists())
+            self.assertTrue(signal_returncodes)
+            self.assertTrue(
+                all(returncode is None for returncode in signal_returncodes)
+            )
             with self.assertRaises(ProcessLookupError):
                 os.kill(int(child_pid.read_text()), 0)
         finally:
@@ -272,24 +340,23 @@ class EvidenceStoreTest(unittest.TestCase):
 
     def test_execution_uses_the_identity_resolved_executable_once(self):
         command = self.command(python_command("print('ok')"))
-        resolved = Path(sys.executable).resolve()
+        opened = process_module.open_executable(
+            sys.executable, cwd=self.root, env=self.environment
+        )
         result = ProcessResult(
             kind="success", exit_code=0, stdout_tail=b"", stderr_tail=b"",
             stdout_digest="a" * 64, stderr_digest="b" * 64,
             started_at="start", finished_at="finish", forced_kill=False,
         )
         with (
-            mock.patch.object(
-                self.evidence,
-                "_executable_identity",
-                return_value={"path": str(resolved), "sha256": "c" * 64, "mode": 0o100755, "size": 1},
-            ) as resolve,
+            mock.patch.object(evidence_module, "open_executable", return_value=opened) as open_exact,
             mock.patch.object(evidence_module, "run_exact", return_value=result) as launch,
         ):
             self.evidence.execute(command, candidate_head=self.head)
-        resolve.assert_called_once()
-        self.assertEqual(launch.call_args.kwargs["executable_path"], resolved)
+        open_exact.assert_called_once()
+        self.assertIs(launch.call_args.kwargs["opened_executable"], opened)
         self.assertEqual(launch.call_args.args[0], command.argv)
+        self.assertEqual(opened.fd, -1)
 
     def test_redacted_invalid_utf8_tails_stay_inside_configured_byte_cap(self):
         evidence = EvidenceStore(self.state, self.workspace, self.environment, output_limit=32)
@@ -304,6 +371,52 @@ class EvidenceStoreTest(unittest.TestCase):
         self.assertLessEqual(len(payload["stdout_tail"].encode("utf-8")), 32)
         self.assertLessEqual(len(payload["stderr_tail"].encode("utf-8")), 32)
         self.assertNotIn("super-secret", payload["stdout_tail"] + payload["stderr_tail"])
+
+    def test_opened_executable_fd_runs_sealed_bytes_after_path_replacement(self):
+        executable = self.root / "sealed-python"
+        replacement = self.root / "replacement"
+        executable.write_text("#!/bin/sh\nprintf sealed\n", encoding="utf-8")
+        executable.chmod(0o700)
+        replacement.write_text("#!/bin/sh\nprintf replaced\n", encoding="utf-8")
+        replacement.chmod(0o700)
+        opened = process_module.open_executable(
+            str(executable), cwd=self.root, env=self.environment
+        )
+        snapshot = opened.launch_path
+        snapshot_directory = snapshot.parent
+        self.assertNotEqual(snapshot_directory, self.root)
+        self.assertEqual(snapshot_directory.stat().st_mode & 0o777, 0o700)
+        try:
+            os.replace(replacement, executable)
+            result = process_module.run_exact(
+                (str(executable),),
+                cwd=self.root,
+                env=self.environment,
+                deadline_seconds=2,
+                opened_executable=opened,
+            )
+            self.assertEqual(result.kind, "success")
+            self.assertEqual(result.stdout_tail, b"sealed")
+        finally:
+            descriptor = opened.fd
+            opened.close()
+        with self.assertRaises(OSError):
+            os.fstat(descriptor)
+        self.assertFalse(snapshot.exists())
+        self.assertFalse(snapshot_directory.exists())
+
+    def test_open_executable_and_group_observation_fail_closed(self):
+        with mock.patch.object(process_module.os, "open", side_effect=OSError("blocked")):
+            with self.assertRaises(ValueError):
+                process_module.open_executable(sys.executable, cwd=self.root, env=self.environment)
+        failed_ps = subprocess.CompletedProcess(
+            ("/bin/ps",), 1, stdout=b"", stderr=b"blocked"
+        )
+        with mock.patch.object(
+            process_module.subprocess, "run", return_value=failed_ps
+        ):
+            with self.assertRaises(RuntimeError):
+                process_module._observe_group(12345)
 
 
 if __name__ == "__main__":

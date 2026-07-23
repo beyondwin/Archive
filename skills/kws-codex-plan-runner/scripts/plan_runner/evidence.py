@@ -13,7 +13,7 @@ from typing import Any
 
 from .contracts import canonical_json, require_digest, require_full_sha, sha256_json
 from .git_ops import GitWorkspace, WorktreeObservation
-from .process import run_exact
+from .process import OpenedExecutable, open_executable, run_exact
 from .storage import ArtifactRef, StateStore
 
 
@@ -148,7 +148,13 @@ class EvidenceStore:
             "size": metadata.st_size,
         }
 
-    def _identity(self, command: ExactCommand, candidate_head: str, observation: WorktreeObservation) -> dict[str, object]:
+    def _identity(
+        self,
+        command: ExactCommand,
+        candidate_head: str,
+        observation: WorktreeObservation,
+        executable_identity: Mapping[str, object] | None = None,
+    ) -> dict[str, object]:
         cwd = self._cwd(command)
         return {
             "argv": list(command.argv),
@@ -156,7 +162,7 @@ class EvidenceStore:
             "command_role": command.command_role,
             "cwd": str(cwd),
             "environment_fingerprint": sha256_json(self.environment),
-            "executable_identity": self._executable_identity(command, cwd),
+            "executable_identity": dict(executable_identity) if executable_identity is not None else self._executable_identity(command, cwd),
             "input_digest": command.input_digest,
             "worktree_digest": observation.tree_digest,
         }
@@ -167,7 +173,8 @@ class EvidenceStore:
         # itself still requires the candidate to be the observed clean HEAD.
         candidate_head = require_full_sha(candidate_head)
         observation = self.workspace.observe()
-        return sha256_json(self._identity(command, candidate_head, observation))
+        with open_executable(command.argv[0], cwd=self._cwd(command), env=self.environment) as executable:
+            return sha256_json(self._identity(command, candidate_head, observation, executable.identity()))
 
     def _append_artifact(self, artifact: ArtifactRef) -> None:
         next_state = self.state.snapshot()
@@ -224,22 +231,21 @@ class EvidenceStore:
 
     def execute(self, command: ExactCommand, *, candidate_head: str) -> VerificationReceipt:
         observation = self._observation(candidate_head)
-        identity = self._identity(command, candidate_head, observation)
-        digest = sha256_json(identity)
-        reusable = self.reusable_success(digest)
-        if reusable is not None:
-            return reusable
-        executable_identity = identity["executable_identity"]
-        assert isinstance(executable_identity, dict)
-        executable_path = Path(str(executable_identity["path"]))
-        result = run_exact(
-            command.argv,
-            cwd=self._cwd(command),
-            env=self.environment,
-            deadline_seconds=command.deadline_seconds,
-            output_limit=self.output_limit,
-            executable_path=executable_path,
-        )
+        cwd = self._cwd(command)
+        with open_executable(command.argv[0], cwd=cwd, env=self.environment) as executable:
+            identity = self._identity(command, candidate_head, observation, executable.identity())
+            digest = sha256_json(identity)
+            reusable = self.reusable_success(digest)
+            if reusable is not None:
+                return reusable
+            result = run_exact(
+                command.argv,
+                cwd=cwd,
+                env=self.environment,
+                deadline_seconds=command.deadline_seconds,
+                output_limit=self.output_limit,
+                opened_executable=executable,
+            )
         outcome = {"success": "success", "failed": "failed", "verification_timed_out": "timed_out"}[result.kind]
         document = {
             "schema_version": 1,
