@@ -44,7 +44,11 @@ class LauncherTests(unittest.TestCase):
             "  --no-project --no-config --resolve-links 3.13"
         )
         self.assertIn(expected, text)
-        self.assertIn('exec "$PYTHON_BIN" "$SCRIPT_DIR/plan-runner-live-canary.py" "$@"', text)
+        self.assertIn(
+            'exec "$PYTHON_BIN" "$SCRIPT_DIR/plan-runner-live-canary.py" \\\n'
+            '  --provider "$PROVIDER" --mode "$MODE"',
+            text,
+        )
         for forbidden in ("uv run", "uv python install", "python3"):
             self.assertNotIn(forbidden, text)
         self.assertTrue(launcher.stat().st_mode & stat.S_IXUSR)
@@ -102,6 +106,62 @@ class LauncherTests(unittest.TestCase):
             },
         )
         self.assertTrue(all(item["reason_code"] == "runtime_missing" for item in values))
+
+    def test_valid_preparsed_args_reach_managed_interpreter(self):
+        launcher = SCRIPT_DIR / "plan-runner-live-canary"
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            capture = root / "argv.json"
+            interpreter = root / "managed-python"
+            interpreter.write_text(
+                "#!/bin/sh\n"
+                "script=$1\n"
+                "shift\n"
+                "printf '%s\\n' \"$script\" \"$@\" > \"$CANARY_ARGV_CAPTURE\"\n",
+                encoding="utf-8",
+            )
+            interpreter.chmod(0o755)
+            uv = root / "uv"
+            uv.write_text(
+                "#!/bin/sh\n"
+                "if [ \"$1\" = python ] && [ \"$2\" = find ]; then\n"
+                "  printf '%s\\n' \"$FAKE_MANAGED_PYTHON\"\n"
+                "  exit 0\n"
+                "fi\n"
+                "exit 1\n",
+                encoding="utf-8",
+            )
+            uv.chmod(0o755)
+            result = subprocess.run(
+                [
+                    "/bin/sh",
+                    str(launcher),
+                    "--provider",
+                    "codex",
+                    "--mode",
+                    "session",
+                ],
+                cwd="/tmp",
+                env={
+                    "PATH": f"{root}:/usr/bin:/bin",
+                    "FAKE_MANAGED_PYTHON": str(interpreter),
+                    "CANARY_ARGV_CAPTURE": str(capture),
+                },
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                capture.read_text(encoding="utf-8").splitlines(),
+                [
+                    str(SCRIPT_DIR / "plan-runner-live-canary.py"),
+                    "--provider",
+                    "codex",
+                    "--mode",
+                    "session",
+                ],
+            )
 
 
 class CommandConstructionTests(unittest.TestCase):
