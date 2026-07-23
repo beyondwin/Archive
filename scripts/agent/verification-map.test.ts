@@ -23,6 +23,11 @@ const rustFormat = command("rust-format", ["cargo", "fmt", "--check"], "native/k
 const rustTest = command("rust-test", ["cargo", "test", "--workspace"], "native/kernel");
 const waygentSkillEval = command("waygent-skill-eval", ["./evals/run.sh"], "skills/waygent");
 const codexExecutorEval = command("codex-executor-eval", ["./evals/run.sh"], "skills/kws-codex-plan-executor");
+const codexPlanRunnerEval = command(
+  "codex-plan-runner-eval",
+  ["./evals/run.sh"],
+  "skills/kws-codex-plan-runner",
+);
 const claudeExecutorOffline = command("claude-executor-offline", ["bun", "run", "agent:claude-offline"]);
 const claudeExecutorEval = command(
   "claude-executor-eval",
@@ -41,7 +46,7 @@ const closureCommands = [contract, diffCheck, check, platformDemo, scenarios, fi
 const offlineCommands = [
   contract, diffCheck, typecheck, check, platformDemo, scenarios, fixtureLab, dogfood,
   consoleTest, consoleBuild, rustFormat, rustTest, waygentSkillEval, codexExecutorEval,
-  claudeExecutorOffline, claudeExecutorEval, liveProvider,
+  codexPlanRunnerEval, claudeExecutorOffline, claudeExecutorEval, liveProvider,
 ];
 
 test.each([
@@ -54,6 +59,7 @@ test.each([
   ["native", ["native/kernel/crates/kernel-cli/src/main.rs"], ["native"], [contract, diffCheck, rustFormat, rustTest]],
   ["Waygent skill", ["skills/waygent/SKILL.md"], ["waygent-skill"], [contract, diffCheck, waygentSkillEval, check, platformDemo, scenarios]],
   ["Codex executor", ["skills/kws-codex-plan-executor/scripts/cpe.py"], ["codex-executor"], [contract, diffCheck, codexExecutorEval, check]],
+  ["Codex plan runner", ["skills/kws-codex-plan-runner/SKILL.md"], ["codex-plan-runner"], [contract, diffCheck, codexPlanRunnerEval, check]],
   ["Claude executor", ["skills/kws-claude-multi-agent-executor/scripts/kernel/kernel.py"], ["claude-executor"], [contract, diffCheck, claudeExecutorOffline, claudeExecutorEval, check]],
   ["unknown", ["unexpected/new-surface.txt"], ["full-offline"], offlineCommands],
 ] satisfies readonly [string, string[], ScopeId[], ReturnType<typeof command>[]][])(
