@@ -14,6 +14,7 @@ import { VERIFICATION_SCOPES, type VerificationScope } from "./verification-map"
 const EXECUTOR_GATES = [
   "skills/kws-codex-plan-executor/evals/run.sh",
   "skills/kws-codex-plan-runner/evals/run.sh",
+  "skills/kws-claude-plan-runner/evals/run.sh",
   "skills/kws-claude-multi-agent-executor/evals/run.sh",
 ] as const;
 
@@ -410,6 +411,16 @@ describe("checkContract", () => {
     );
     expect(EXECUTOR_GATES).toContain(
       "skills/kws-codex-plan-runner/evals/run.sh",
+    );
+  });
+
+  test("requires the Claude plan runner root, guidance, and deterministic gate", () => {
+    expect(REQUIRED_PATHS).toContain("skills/kws-claude-plan-runner");
+    expect(REQUIRED_AGENT_FILES).toContain(
+      "skills/kws-claude-plan-runner/AGENTS.md",
+    );
+    expect(EXECUTOR_GATES).toContain(
+      "skills/kws-claude-plan-runner/evals/run.sh",
     );
   });
 

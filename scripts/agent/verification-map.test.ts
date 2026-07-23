@@ -28,6 +28,15 @@ const codexPlanRunnerEval = command(
   ["./evals/run.sh"],
   "skills/kws-codex-plan-runner",
 );
+const claudePlanRunnerEval = command(
+  "claude-plan-runner-eval",
+  ["./evals/run.sh"],
+  "skills/kws-claude-plan-runner",
+);
+const planRunnerParity = command(
+  "plan-runner-parity",
+  ["./scripts/agent/check-plan-runner-parity"],
+);
 const claudeExecutorOffline = command("claude-executor-offline", ["bun", "run", "agent:claude-offline"]);
 const claudeExecutorEval = command(
   "claude-executor-eval",
@@ -46,7 +55,8 @@ const closureCommands = [contract, diffCheck, check, platformDemo, scenarios, fi
 const offlineCommands = [
   contract, diffCheck, typecheck, check, platformDemo, scenarios, fixtureLab, dogfood,
   consoleTest, consoleBuild, rustFormat, rustTest, waygentSkillEval, codexExecutorEval,
-  codexPlanRunnerEval, claudeExecutorOffline, claudeExecutorEval, liveProvider,
+  codexPlanRunnerEval, claudePlanRunnerEval, planRunnerParity,
+  claudeExecutorOffline, claudeExecutorEval, liveProvider,
 ];
 
 test.each([
@@ -59,7 +69,8 @@ test.each([
   ["native", ["native/kernel/crates/kernel-cli/src/main.rs"], ["native"], [contract, diffCheck, rustFormat, rustTest]],
   ["Waygent skill", ["skills/waygent/SKILL.md"], ["waygent-skill"], [contract, diffCheck, waygentSkillEval, check, platformDemo, scenarios]],
   ["Codex executor", ["skills/kws-codex-plan-executor/scripts/cpe.py"], ["codex-executor"], [contract, diffCheck, codexExecutorEval, check]],
-  ["Codex plan runner", ["skills/kws-codex-plan-runner/SKILL.md"], ["codex-plan-runner"], [contract, diffCheck, codexPlanRunnerEval, check]],
+  ["Codex plan runner", ["skills/kws-codex-plan-runner/SKILL.md"], ["codex-plan-runner"], [contract, diffCheck, codexPlanRunnerEval, planRunnerParity, check]],
+  ["Claude plan runner", ["skills/kws-claude-plan-runner/scripts/runner"], ["claude-plan-runner"], [contract, diffCheck, claudePlanRunnerEval, planRunnerParity, check]],
   ["Claude executor", ["skills/kws-claude-multi-agent-executor/scripts/kernel/kernel.py"], ["claude-executor"], [contract, diffCheck, claudeExecutorOffline, claudeExecutorEval, check]],
   ["unknown", ["unexpected/new-surface.txt"], ["full-offline"], offlineCommands],
 ] satisfies readonly [string, string[], ScopeId[], ReturnType<typeof command>[]][])(
