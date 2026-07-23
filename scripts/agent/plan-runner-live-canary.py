@@ -763,6 +763,31 @@ def isolated_provider_environment(
     return env
 
 
+def claude_auth_available(root: Path, env: Mapping[str, str]) -> bool:
+    if any(
+        isinstance(env.get(key), str) and bool(env[key].strip())
+        for key in (
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_AUTH_TOKEN",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+        )
+    ):
+        return True
+    status = run_bounded(
+        ["claude", "auth", "status"],
+        cwd=root,
+        timeout=20,
+        env=env,
+    )
+    if status.timed_out or status.returncode != 0:
+        return False
+    try:
+        payload = json.loads(status.stdout)
+    except (json.JSONDecodeError, UnicodeError):
+        return False
+    return isinstance(payload, Mapping) and payload.get("loggedIn") is True
+
+
 def _probe_codex_session(
     root: Path, env: Mapping[str, str]
 ) -> tuple[str, str | None, str]:
@@ -938,6 +963,19 @@ def probe_session(provider: str) -> dict[str, object]:
                 final_head=None,
                 elapsed=time.monotonic() - started,
                 reason_code=unavailable,
+            )
+        if provider == "claude" and not claude_auth_available(
+            Path(raw), provider_env
+        ):
+            return normalized_result(
+                provider=provider,
+                mode="session",
+                status="blocked",
+                provider_version=version,
+                session_action="not_started",
+                final_head=None,
+                elapsed=time.monotonic() - started,
+                reason_code="provider_auth_blocked",
             )
         try:
             _create_repository(root)
