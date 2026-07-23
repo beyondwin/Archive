@@ -385,7 +385,12 @@ def _validate_recovery_evidence(
         or not isinstance(recovered_session, str)
     ):
         raise ParityFailure("recovery session identity was not recorded")
-    _require_digest(recovered.get("packet_digest"), "recovery packet")
+    failed_packet_digest = _require_digest(
+        failed.get("packet_digest"), "failed recovery packet"
+    )
+    recovered_packet_digest = _require_digest(
+        recovered.get("packet_digest"), "recovered recovery packet"
+    )
     if expected_action == "interrupted":
         if (
             recovered.get("session_action") != "resume"
@@ -394,6 +399,10 @@ def _validate_recovery_evidence(
             raise ParityFailure("resume did not use the exact captured session ID")
         action = "resume"
     else:
+        if recovered_packet_digest == failed_packet_digest:
+            raise ParityFailure(
+                "changed strategy did not use a distinct packet digest"
+            )
         if (
             recovered.get("session_action") != "fresh"
             or recovered_session == failed_session
@@ -458,6 +467,8 @@ def _validate_ready_evidence(
         or not final_set["commands"]
     ):
         raise ParityFailure("ready run requires a nonempty final command set")
+    if final_set.get("candidate_head") != observed_head:
+        raise ParityFailure("final command set HEAD does not match the candidate")
     set_digest = set_ref["digest"]
     if finalization.get("verification_set_digest") != set_digest:
         raise ParityFailure("finalization verification set digest mismatch")
