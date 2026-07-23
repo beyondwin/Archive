@@ -589,9 +589,9 @@ broad command. Ignored remnants in the installed main checkout are handled
 only by the tested post-integration `quarantine-legacy-caches` command. Unknown
 remnants block for inspection.
 
-- [ ] **Step 6: Review and commit the source cutover**
+- [ ] **Step 6: Scope-check and commit the source cutover**
 
-Review against `code_review.md` and confirm:
+Before committing, perform a scoped self-check and confirm:
 
 - no old state or worktree mutation;
 - no process kill;
@@ -624,10 +624,12 @@ bun run agent:verify
 
 Expected: old roots are absent from tracked routing, both new runners PASS,
 parity PASS, cutover tests PASS, repository verification PASS, and no
-unresolved Critical or Important review finding. The review and every
-successful gate must refer to `CUTOVER_CANDIDATE_HEAD`. Do not create a commit
-after successful evidence. A required fix must be committed first, then this
-step runs once for the new candidate HEAD.
+unresolved Critical or Important review finding. After the gates, run the
+whole-branch review against `code_review.md` at `CUTOVER_CANDIDATE_HEAD`; the
+review and every successful gate must refer to that exact HEAD. Do not create
+a commit after successful evidence. A required fix must be committed first,
+`CUTOVER_CANDIDATE_HEAD` must be updated, and this step must run once for the
+new candidate HEAD.
 
 ## Task 5: Post-Integration Installed-Skill Cutover
 
