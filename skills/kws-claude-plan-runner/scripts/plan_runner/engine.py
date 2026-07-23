@@ -547,7 +547,10 @@ class PlanRunner:
                     Path(repository["worktree"]),
                     repository["branch"],
                 )
-                self._require_git_contract(state, workspace)
+                pending_review_fix = self._pending_review_fix(state)
+                self._require_git_contract(
+                    state, workspace, allow_dirty=pending_review_fix
+                )
                 self._reconcile_completed_attempt(store, workspace)
                 state = store.snapshot()
                 while state["current_plan_index"] < len(state["plans"]):
@@ -555,6 +558,16 @@ class PlanRunner:
                     if code is not None:
                         return code
                     state = store.snapshot()
+                if self._pending_review_fix(state):
+                    finalization = state["finalization"]
+                    code = self._recover_review_findings(
+                        store,
+                        workspace,
+                        finalization["review_findings"],
+                        initialize=False,
+                    )
+                    if code is not None:
+                        return code
                 return self._finalize(store, workspace)
         except ValueError as error:
             if "input snapshot digest" in str(error):
@@ -570,14 +583,44 @@ class PlanRunner:
             return int(ExitCode.INTERNAL)
 
     def _require_git_contract(
-        self, state: Mapping[str, object], workspace: GitWorkspace
+        self,
+        state: Mapping[str, object],
+        workspace: GitWorkspace,
+        *,
+        allow_dirty: bool = False,
     ) -> None:
         config = state["immutable_config"]
         if str(workspace._common_dir) != config.get("git_common_dir"):
             raise ValueError("Git common directory drift detected")
         if workspace.protected_refs() != config.get("protected_refs"):
             raise ValueError("protected ref mutation detected")
-        workspace.require_clean_ancestor(state["repository"]["source_commit"])
+        if not allow_dirty:
+            workspace.require_clean_ancestor(state["repository"]["source_commit"])
+            return
+        observation = workspace.require_identity()
+        _git_text(
+            workspace.worktree,
+            "merge-base",
+            "--is-ancestor",
+            state["repository"]["source_commit"],
+            observation.head,
+        )
+
+    @staticmethod
+    def _pending_review_fix(state: Mapping[str, object]) -> bool:
+        finalization = state.get("finalization")
+        findings = (
+            finalization.get("review_findings")
+            if isinstance(finalization, Mapping)
+            else None
+        )
+        return (
+            isinstance(finalization, Mapping)
+            and finalization.get("pending_mode") == "final_review_fix"
+            and _json_array(findings)
+            and bool(findings)
+            and state.get("current_plan_index") == len(state.get("plans", []))
+        )
 
     def _reconcile_controller(
         self, store: StateStore, state: dict[str, object]
@@ -1214,6 +1257,18 @@ class PlanRunner:
 
     def _pause_resumable(self, store: StateStore, attempt_id: str) -> int:
         state = store.snapshot()
+        attempt = next(
+            (
+                item
+                for item in reversed(state["attempts"])
+                if isinstance(item, Mapping)
+                and item.get("attempt_id") == attempt_id
+            ),
+            None,
+        )
+        pending_mode = (
+            attempt.get("mode") if isinstance(attempt, Mapping) else None
+        )
         session = next(
             (
                 item
@@ -1233,7 +1288,12 @@ class PlanRunner:
             "next_session_action": (
                 "explicit_resume" if session is not None else "fresh_session"
             ),
+            "pending_mode": pending_mode,
         }
+        if pending_mode == "final_review_fix":
+            finalization = dict(state.get("finalization") or {})
+            finalization["pending_mode"] = pending_mode
+            state["finalization"] = finalization
         store.commit(state)
         self._emit_summary(store.snapshot())
         return int(ExitCode.RESUMABLE)
@@ -2139,22 +2199,27 @@ class PlanRunner:
         store: StateStore,
         workspace: GitWorkspace,
         findings: Sequence[Mapping[str, object]],
+        *,
+        initialize: bool = True,
     ) -> int | None:
-        state = store.snapshot()
-        index = len(state["plans"]) - 1
-        finalization = dict(state.get("finalization") or {})
-        finalization["review_findings"] = [
-            _plain_json(item) for item in findings
-        ]
-        state["finalization"] = finalization
-        state["status"] = "recovering"
-        state["failure"] = {
-            "reason_code": "review_failed",
-            "required_strategy_change": True,
-            "next_session_action": "fresh_session",
-            "review_findings": [_plain_json(item) for item in findings],
-        }
-        store.commit(state)
+        if initialize:
+            state = store.snapshot()
+            finalization = dict(state.get("finalization") or {})
+            finalization["review_findings"] = [
+                _plain_json(item) for item in findings
+            ]
+            finalization["pending_mode"] = "final_review_fix"
+            state["finalization"] = finalization
+            state["status"] = "recovering"
+            state["failure"] = {
+                "reason_code": "review_failed",
+                "required_strategy_change": True,
+                "next_session_action": "fresh_session",
+                "pending_mode": "final_review_fix",
+                "review_findings": [_plain_json(item) for item in findings],
+            }
+            store.commit(state)
+        index = len(store.snapshot()["plans"]) - 1
         while True:
             state = store.snapshot()
             candidate_head = workspace.observe().head
