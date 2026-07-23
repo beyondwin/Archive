@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import {
   CURRENT_GUIDANCE_FILES,
   REQUIRED_AGENT_FILES,
+  REQUIRED_PATHS,
   TOOL_GUIDANCE_FILES,
 } from "./contract";
 import { checkContract, formatContractIssues } from "./check-contract";
@@ -12,6 +13,7 @@ import { VERIFICATION_SCOPES, type VerificationScope } from "./verification-map"
 
 const EXECUTOR_GATES = [
   "skills/kws-codex-plan-executor/evals/run.sh",
+  "skills/kws-codex-plan-runner/evals/run.sh",
   "skills/kws-claude-multi-agent-executor/evals/run.sh",
 ] as const;
 
@@ -399,6 +401,16 @@ describe("checkContract", () => {
       "PLANS.md",
       "code_review.md",
     ]));
+  });
+
+  test("requires the Codex plan runner root, guidance, and deterministic gate", () => {
+    expect(REQUIRED_PATHS).toContain("skills/kws-codex-plan-runner");
+    expect(REQUIRED_AGENT_FILES).toContain(
+      "skills/kws-codex-plan-runner/AGENTS.md",
+    );
+    expect(EXECUTOR_GATES).toContain(
+      "skills/kws-codex-plan-runner/evals/run.sh",
+    );
   });
 
   test("does not let a retired mention mask a later primary claim", async () => {
