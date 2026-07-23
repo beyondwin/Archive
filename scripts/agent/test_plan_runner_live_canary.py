@@ -973,6 +973,69 @@ class SessionAndRunnerOutcomeTests(unittest.TestCase):
         )
         self.assertNotIn("secret", json.dumps(evidence).lower())
 
+    def test_failure_evidence_rejects_symlink_state(self):
+        with tempfile.TemporaryDirectory() as raw:
+            home = Path(raw)
+            run_id = "plan-symlink-state"
+            state_root = home / ".codex" / "plan-runner" / run_id
+            state_root.mkdir(parents=True)
+            target = state_root / "real-state.json"
+            target.write_text(
+                json.dumps({"status": "failed"}),
+                encoding="utf-8",
+            )
+            (state_root / "state.json").symlink_to(target)
+            evidence = canary.runner_failure_evidence(home, "codex", run_id)
+        self.assertIsNone(evidence)
+
+    def test_failure_evidence_rejects_oversized_state_before_read(self):
+        with tempfile.TemporaryDirectory() as raw:
+            home = Path(raw)
+            run_id = "plan-oversized-state"
+            state_root = home / ".codex" / "plan-runner" / run_id
+            state_root.mkdir(parents=True)
+            (state_root / "state.json").write_bytes(
+                b"x" * (canary.STREAM_LIMIT + 1)
+            )
+            with mock.patch.object(
+                canary.os,
+                "read",
+                side_effect=AssertionError("oversized state must not be read"),
+            ):
+                evidence = canary.runner_failure_evidence(home, "codex", run_id)
+        self.assertIsNone(evidence)
+
+    def test_failure_evidence_rejects_path_swap_after_fd_open(self):
+        with tempfile.TemporaryDirectory() as raw:
+            home = Path(raw)
+            run_id = "plan-swapped-state"
+            state_root = home / ".codex" / "plan-runner" / run_id
+            state_root.mkdir(parents=True)
+            state_path = state_root / "state.json"
+            payload = json.dumps(
+                {
+                    "status": "failed",
+                    "failure": {"reason_code": "provider_command_failed"},
+                }
+            ).encode()
+            state_path.write_bytes(payload)
+            replaced = state_root / "opened-state.json"
+            original_read = os.read
+            swapped = False
+
+            def swap_then_read(descriptor, size):
+                nonlocal swapped
+                if not swapped:
+                    swapped = True
+                    state_path.replace(replaced)
+                    state_path.write_bytes(payload)
+                return original_read(descriptor, size)
+
+            with mock.patch.object(canary.os, "read", side_effect=swap_then_read):
+                evidence = canary.runner_failure_evidence(home, "codex", run_id)
+        self.assertTrue(swapped)
+        self.assertIsNone(evidence)
+
     def test_normalized_result_has_public_bounded_shape(self):
         result = canary.normalized_result(
             provider="codex",
