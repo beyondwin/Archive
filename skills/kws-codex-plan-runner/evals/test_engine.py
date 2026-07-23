@@ -285,7 +285,9 @@ class EngineTest(unittest.TestCase):
         with self.assertRaises(dataclasses.FrozenInstanceError):
             self.paths.state_home = self.root / "other"
 
-    def _assert_graceful_dirty_signal_checkpoint(self, signum, *, drift=False):
+    def _assert_graceful_dirty_signal_checkpoint(
+        self, signum, *, drift=False, clean_drift=False
+    ):
         home = self.root / "home"
         fake_bin = self.root / "fake-bin"
         fake_bin.mkdir()
@@ -372,7 +374,9 @@ class EngineTest(unittest.TestCase):
         with self.assertRaises(ProcessLookupError):
             os.kill(first_launch["pid"], 0)
 
-        if drift:
+        if clean_drift:
+            partial.unlink()
+        elif drift:
             partial.write_text("operator drift\n", encoding="utf-8")
         resumed = subprocess.run(
             [
@@ -388,7 +392,7 @@ class EngineTest(unittest.TestCase):
             text=True,
             timeout=20,
         )
-        if drift:
+        if drift or clean_drift:
             self.assertEqual(resumed.returncode, ExitCode.INTEGRITY, resumed.stderr)
             self.assertEqual(len(launch_log.read_text().splitlines()), 1)
             return
@@ -408,6 +412,11 @@ class EngineTest(unittest.TestCase):
 
     def test_dirty_resume_rejects_worktree_drift_before_provider_launch(self):
         self._assert_graceful_dirty_signal_checkpoint(signal.SIGINT, drift=True)
+
+    def test_dirty_resume_rejects_dirty_to_clean_drift_before_provider_launch(self):
+        self._assert_graceful_dirty_signal_checkpoint(
+            signal.SIGINT, clean_drift=True
+        )
 
     def test_multiple_specs_and_plans_are_ordered_and_finalization_is_fresh(self):
         code = self.runner().create_run(
@@ -520,6 +529,13 @@ class EngineTest(unittest.TestCase):
             state["finalization"]["verification_set_digest"],
             packet["invalidated_final_verification_set_digest"],
         )
+        context = packet["recovery_context"]
+        self.assertEqual(
+            context["scope"], {"mode": "final_review_fix", "plan_index": 1}
+        )
+        self.assertEqual(context["failure_reason"], "review_failed")
+        self.assertTrue(context["required_strategy_change"])
+        self.assertEqual(context["attempted_strategies"], [])
 
     def test_review_fix_interruption_retries_review_fix_without_normal_plan_routing(self):
         self.review_findings_once = True
@@ -787,6 +803,18 @@ class EngineTest(unittest.TestCase):
                 for packet in final_packets[1:]
             )
         )
+        self.assertEqual(
+            final_packets[0]["recovery_context"]["attempted_strategies"], []
+        )
+        for packet in final_packets[1:]:
+            context = packet["recovery_context"]
+            self.assertEqual(
+                context["scope"], {"mode": "finalization", "plan_index": None}
+            )
+            self.assertRegex(context["failure_signature"], r"^[0-9a-f]{64}$")
+            self.assertEqual(len(context["attempted_strategies"]), 1)
+            self.assertEqual(len(packet["operator_strategy_notes"]), 1)
+
 
     def test_session_capture_survives_controller_crash_and_resumes_explicitly(self):
         self.crash_after_session = True
@@ -1212,6 +1240,100 @@ class EngineTest(unittest.TestCase):
         self.assertIn("API_TOKEN=[REDACTED]", attempted[0]["strategy_note"])
         self.assertLessEqual(len(attempted[0]["strategy_note"].encode()), 4096)
         self.assertNotIn("top-secret", json.dumps(context))
+
+    def test_recovery_context_is_bounded_and_does_not_leak_to_next_plan_or_mode(self):
+        failures = 0
+        plan_one_failed = False
+
+        def fail_plan_zero(_adapter, _request, packet, session_id):
+            nonlocal failures, plan_one_failed
+            if (
+                packet["mode"] == "implementation"
+                and packet["current_plan"]["index"] == 0
+                and failures < 3
+            ):
+                failures += 1
+                return ProviderOutcome(
+                    "context_overflow",
+                    1,
+                    session_id,
+                    {"strategy_note": f"plan-zero-strategy-{failures}"},
+                    "session_invalid",
+                    {},
+                    (),
+                    "",
+                )
+            if (
+                packet["mode"] == "implementation"
+                and packet["current_plan"]["index"] == 1
+                and not plan_one_failed
+            ):
+                plan_one_failed = True
+                return ProviderOutcome(
+                    "context_overflow",
+                    1,
+                    session_id,
+                    {"strategy_note": "plan-one-strategy"},
+                    "session_invalid",
+                    {},
+                    (),
+                    "",
+                )
+            return None
+
+        self.outcome_hook = fail_plan_zero
+        self.review_findings_once = True
+        code = self.runner().create_run(
+            specs=self.specs,
+            plans=self.plans,
+            workspace=self.source,
+            stall_seconds=30,
+            sandbox="workspace-write",
+            model=None,
+        )
+        self.assertEqual(code, ExitCode.READY)
+        implementations = [
+            packet for packet in self.packets if packet["mode"] == "implementation"
+        ]
+        plan_zero = [
+            packet
+            for packet in implementations
+            if packet["current_plan"]["index"] == 0
+        ]
+        self.assertEqual(
+            [
+                len(packet["recovery_context"]["attempted_strategies"])
+                for packet in plan_zero
+            ],
+            [0, 1, 2, 3],
+        )
+        self.assertTrue(
+            all(
+                packet["recovery_context"]["scope"]
+                == {"mode": "implementation", "plan_index": 0}
+                for packet in plan_zero
+            )
+        )
+        plan_one_packets = [
+            packet
+            for packet in implementations
+            if packet["current_plan"]["index"] == 1
+        ]
+        self.assertEqual(len(plan_one_packets), 2)
+        plan_one = plan_one_packets[0]
+        finalization = next(
+            packet for packet in self.packets if packet["mode"] == "finalization"
+        )
+        review_fix = next(
+            packet for packet in self.packets if packet["mode"] == "final_review_fix"
+        )
+        for packet in (plan_one, finalization, review_fix):
+            self.assertIsNone(packet["recovery_context"]["failure_signature"])
+            self.assertEqual(packet["recovery_context"]["attempted_strategies"], [])
+            self.assertEqual(packet["operator_strategy_notes"], [])
+        self.assertFalse(plan_one["required_strategy_change"])
+        self.assertFalse(finalization["required_strategy_change"])
+        self.assertTrue(review_fix["required_strategy_change"])
 
     def test_durable_provider_unavailable_blocks_after_bounded_recovery(self):
         def always_unavailable(_adapter, _request, _packet, session_id):

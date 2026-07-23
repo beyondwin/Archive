@@ -413,6 +413,31 @@ class PlanRunner:
                 if digest in prior:
                     raise ValueError("strategy note duplicates a prior strategy")
                 normalized_note = normalize_strategy_note(strategy_note)
+                strategy_mode = (
+                    failure.get("mode")
+                    if isinstance(failure, Mapping)
+                    and failure.get("mode")
+                    in {
+                        "implementation",
+                        "finalization",
+                        "final_review_fix",
+                    }
+                    else (
+                        "implementation"
+                        if state["current_plan_index"] < len(state["plans"])
+                        else "finalization"
+                    )
+                )
+                strategy_plan_index = (
+                    failure.get("plan_index")
+                    if isinstance(failure, Mapping)
+                    and "plan_index" in failure
+                    else (
+                        state["current_plan_index"]
+                        if state["current_plan_index"] < len(state["plans"])
+                        else None
+                    )
+                )
                 audit_artifact = store.put_artifact(
                     "recovery_audit",
                     {
@@ -428,6 +453,8 @@ class PlanRunner:
                     {
                         "run_id": state["run_id"],
                         "failure_signature": failure_signature,
+                        "mode": strategy_mode,
+                        "plan_index": strategy_plan_index,
                         "strategy_note": normalized_note,
                         "strategy_note_digest": digest,
                     },
@@ -442,6 +469,8 @@ class PlanRunner:
                         if isinstance(failure, Mapping)
                         else "recovery_exhausted"
                     ),
+                    "mode": strategy_mode,
+                    "plan_index": strategy_plan_index,
                     "failure_signature": failure_signature,
                     "failure_sequence": [],
                     "operator_strategy_note": normalized_note,
@@ -597,9 +626,14 @@ class PlanRunner:
             state["repository"]["source_commit"],
             observation.head,
         )
-        if observation.clean:
-            return observation
-        self._require_sealed_partial_worktree(state, observation)
+        failure = state.get("failure")
+        sealed_partial = (
+            failure.get("partial_worktree")
+            if isinstance(failure, Mapping)
+            else None
+        )
+        if sealed_partial is not None or not observation.clean:
+            self._require_sealed_partial_worktree(state, observation)
         return observation
 
     @staticmethod
@@ -707,6 +741,8 @@ class PlanRunner:
             "strategy_note",
             {
                 "run_id": state["run_id"],
+                "mode": active.get("mode"),
+                "plan_index": active.get("plan_index"),
                 "strategy_note": strategy,
                 "failure_signature": signature,
                 "strategy_note_digest": strategy_note_digest(strategy),
@@ -731,6 +767,8 @@ class PlanRunner:
         state["status"] = "recovering"
         state["failure"] = {
             "reason_code": reason,
+            "mode": active.get("mode"),
+            "plan_index": active.get("plan_index"),
             "failure_signature": signature,
             "failure_sequence": [sequence_entry],
             "baseline_progress": baseline,
@@ -954,8 +992,17 @@ class PlanRunner:
         plan = state["plans"][current_index]
         handoffs = self._artifact_summaries(state, "plan_handoff")
         receipts = self._artifact_summaries(state, "verification_receipt")
-        failure = state.get("failure")
-        operator_notes = self._operator_strategy_notes(state)
+        mode = "implementation"
+        operator_notes = self._operator_strategy_notes(
+            state, mode=mode, plan_index=current_index
+        )
+        recovery_context = self._recovery_context(
+            state,
+            current_head=current_head,
+            current_index=current_index,
+            current_mode=mode,
+            operator_notes=operator_notes,
+        )
         return {
             "packet_version": 1,
             "mode": "implementation",
@@ -981,16 +1028,10 @@ class PlanRunner:
             "task_ledger": state["task_ledger"],
             "verification_receipts": receipts,
             "checkpoint_revision": state["revision"],
-            "recovery_context": self._recovery_context(
-                state,
-                current_head=current_head,
-                current_index=current_index,
-                operator_notes=operator_notes,
-            ),
-            "required_strategy_change": bool(
-                isinstance(failure, Mapping)
-                and failure.get("required_strategy_change")
-            ) or bool(operator_notes),
+            "recovery_context": recovery_context,
+            "required_strategy_change": recovery_context[
+                "required_strategy_change"
+            ],
             "operator_strategy_notes": operator_notes,
             "helper": _descriptor_document(helper),
             "quality_profile": "quality_first",
@@ -1004,8 +1045,17 @@ class PlanRunner:
         helper: HelperDescriptor,
     ) -> dict[str, object]:
         finalization = state.get("finalization")
-        failure = state.get("failure")
-        operator_notes = self._operator_strategy_notes(state)
+        mode = "finalization"
+        operator_notes = self._operator_strategy_notes(
+            state, mode=mode, plan_index=None
+        )
+        recovery_context = self._recovery_context(
+            state,
+            current_head=candidate_head,
+            current_index=None,
+            current_mode=mode,
+            operator_notes=operator_notes,
+        )
         return {
             "packet_version": 1,
             "mode": "finalization",
@@ -1020,10 +1070,10 @@ class PlanRunner:
                 and finalization.get("candidate_head") == candidate_head
                 else None
             ),
-            "required_strategy_change": bool(
-                isinstance(failure, Mapping)
-                and failure.get("required_strategy_change")
-            ) or bool(operator_notes),
+            "recovery_context": recovery_context,
+            "required_strategy_change": recovery_context[
+                "required_strategy_change"
+            ],
             "operator_strategy_notes": operator_notes,
             "specifications": [
                 {
@@ -1069,7 +1119,18 @@ class PlanRunner:
             findings = failure.get("review_findings")
         if not isinstance(findings, list) or not findings:
             raise ValueError("bundled review findings are unavailable")
-        operator_notes = self._operator_strategy_notes(state)
+        mode = "final_review_fix"
+        current_index = len(state["plans"]) - 1
+        operator_notes = self._operator_strategy_notes(
+            state, mode=mode, plan_index=current_index
+        )
+        recovery_context = self._recovery_context(
+            state,
+            current_head=candidate_head,
+            current_index=current_index,
+            current_mode=mode,
+            operator_notes=operator_notes,
+        )
         return {
             "packet_version": 1,
             "mode": "final_review_fix",
@@ -1109,7 +1170,10 @@ class PlanRunner:
                 else None
             ),
             "checkpoint_revision": state["revision"],
-            "required_strategy_change": True,
+            "recovery_context": recovery_context,
+            "required_strategy_change": recovery_context[
+                "required_strategy_change"
+            ],
             "operator_strategy_notes": operator_notes,
             "helper": _descriptor_document(helper),
             "quality_profile": "quality_first",
@@ -1136,11 +1200,22 @@ class PlanRunner:
     @staticmethod
     def _operator_strategy_notes(
         state: Mapping[str, object],
+        *,
+        mode: str,
+        plan_index: int | None,
     ) -> list[dict[str, object]]:
         inputs = state.get("inputs")
         references = state.get("artifact_refs")
         if not isinstance(inputs, list) or not inputs or not isinstance(references, list):
             return []
+        failure = state.get("failure")
+        if (
+            not isinstance(failure, Mapping)
+            or failure.get("mode") != mode
+            or failure.get("plan_index") != plan_index
+        ):
+            return []
+        failure_signature = failure.get("failure_signature")
         run_root = Path(inputs[0]["snapshot_path"]).parent.parent.resolve()
         notes: list[dict[str, object]] = []
         for reference in references:
@@ -1162,8 +1237,23 @@ class PlanRunner:
                 or re.fullmatch(
                     r"[0-9a-f]{64}", payload["strategy_note_digest"]
                 ) is None
+                or payload.get("mode") not in {
+                    "implementation",
+                    "finalization",
+                    "final_review_fix",
+                }
+                or (
+                    payload.get("plan_index") is not None
+                    and not isinstance(payload.get("plan_index"), int)
+                )
             ):
                 raise ValueError("strategy note artifact is invalid")
+            if (
+                payload.get("failure_signature") != failure_signature
+                or payload.get("mode") != mode
+                or payload.get("plan_index") != plan_index
+            ):
+                continue
             notes.append(
                 {
                     "digest": reference["digest"],
@@ -1171,20 +1261,27 @@ class PlanRunner:
                     "strategy_note": payload["strategy_note"],
                     "strategy_note_digest": payload["strategy_note_digest"],
                     "failure_signature": payload.get("failure_signature"),
+                    "mode": payload["mode"],
+                    "plan_index": payload["plan_index"],
                 }
             )
-        return notes
+        return notes[-3:]
 
     @staticmethod
     def _recovery_context(
         state: Mapping[str, object],
         *,
         current_head: str,
-        current_index: int,
+        current_index: int | None,
+        current_mode: str,
         operator_notes: Sequence[Mapping[str, object]],
     ) -> dict[str, object]:
         failure = state.get("failure")
-        if not isinstance(failure, Mapping):
+        if (
+            not isinstance(failure, Mapping)
+            or failure.get("mode") != current_mode
+            or failure.get("plan_index") != current_index
+        ):
             failure = {}
         signature = failure.get("failure_signature")
         if (
@@ -1232,6 +1329,7 @@ class PlanRunner:
                 }
             )
         return {
+            "scope": {"mode": current_mode, "plan_index": current_index},
             "failure_reason": reason,
             "failure_signature": signature,
             "attempted_strategies": attempted[-3:],
@@ -1446,6 +1544,8 @@ class PlanRunner:
         state["failure"] = {
             "reason_code": "controller_transport_failed",
             "detail": "controller_signal",
+            "mode": mode,
+            "plan_index": plan_index,
             "required_strategy_change": session is None,
             "next_session_action": (
                 "explicit_resume" if session is not None else "fresh_session"
@@ -1684,6 +1784,7 @@ class PlanRunner:
         outcome: ProviderOutcome,
         index: int,
         *,
+        mode: str = "implementation",
         continue_execution: bool = True,
     ) -> int | None:
         state = store.snapshot()
@@ -1769,6 +1870,8 @@ class PlanRunner:
             state["status"] = "blocked" if unavailable else "failed"
             state["failure"] = {
                 "reason_code": reason if unavailable else decision.reason_code,
+                "mode": mode,
+                "plan_index": index,
                 "failure_signature": decision.failure_signature,
                 "failure_sequence": active_sequence,
                 "strategy_digests": [
@@ -1792,6 +1895,8 @@ class PlanRunner:
             {
                 "run_id": state["run_id"],
                 "failure_signature": decision.failure_signature,
+                "mode": mode,
+                "plan_index": index,
                 "strategy_note": normalize_strategy_note(strategy),
                 "strategy_note_digest": strategy_note_digest(strategy),
             },
@@ -1801,6 +1906,8 @@ class PlanRunner:
         state["status"] = "recovering"
         state["failure"] = {
             "reason_code": reason,
+            "mode": mode,
+            "plan_index": index,
             "failure_signature": decision.failure_signature,
             "failure_sequence": active_sequence,
             "baseline_progress": dataclasses.asdict(current),
@@ -2241,6 +2348,8 @@ class PlanRunner:
             state["status"] = "blocked" if unavailable else "failed"
             state["failure"] = {
                 "reason_code": reason if unavailable else decision.reason_code,
+                "mode": "finalization",
+                "plan_index": None,
                 "failure_signature": decision.failure_signature,
                 "failure_sequence": active_sequence,
                 "strategy_digests": [
@@ -2264,6 +2373,8 @@ class PlanRunner:
             {
                 "run_id": state["run_id"],
                 "failure_signature": decision.failure_signature,
+                "mode": "finalization",
+                "plan_index": None,
                 "strategy_note": normalize_strategy_note(strategy),
                 "strategy_note_digest": strategy_note_digest(strategy),
             },
@@ -2273,6 +2384,8 @@ class PlanRunner:
         state["status"] = "recovering"
         state["failure"] = {
             "reason_code": reason,
+            "mode": "finalization",
+            "plan_index": None,
             "failure_signature": decision.failure_signature,
             "failure_sequence": active_sequence,
             "baseline_progress": dataclasses.asdict(current),
@@ -2383,6 +2496,8 @@ class PlanRunner:
             state["status"] = "recovering"
             state["failure"] = {
                 "reason_code": "review_failed",
+                "mode": "final_review_fix",
+                "plan_index": len(state["plans"]) - 1,
                 "required_strategy_change": True,
                 "next_session_action": "fresh_session",
                 "pending_mode": "final_review_fix",
@@ -2439,6 +2554,7 @@ class PlanRunner:
                     workspace,
                     outcome,
                     index,
+                    mode="final_review_fix",
                     continue_execution=False,
                 )
                 if code is not None:
