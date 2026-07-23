@@ -372,8 +372,8 @@ class EvidenceStoreTest(unittest.TestCase):
         self.assertLessEqual(len(payload["stderr_tail"].encode("utf-8")), 32)
         self.assertNotIn("super-secret", payload["stdout_tail"] + payload["stderr_tail"])
 
-    def test_opened_executable_fd_runs_sealed_bytes_after_path_replacement(self):
-        executable = self.root / "sealed-python"
+    def test_executable_path_replacement_before_launch_is_rejected(self):
+        executable = self.root / "original"
         replacement = self.root / "replacement"
         executable.write_text("#!/bin/sh\nprintf sealed\n", encoding="utf-8")
         executable.chmod(0o700)
@@ -382,28 +382,87 @@ class EvidenceStoreTest(unittest.TestCase):
         opened = process_module.open_executable(
             str(executable), cwd=self.root, env=self.environment
         )
-        snapshot = opened.launch_path
-        snapshot_directory = snapshot.parent
-        self.assertNotEqual(snapshot_directory, self.root)
-        self.assertEqual(snapshot_directory.stat().st_mode & 0o777, 0o700)
         try:
             os.replace(replacement, executable)
-            result = process_module.run_exact(
-                (str(executable),),
-                cwd=self.root,
-                env=self.environment,
-                deadline_seconds=2,
-                opened_executable=opened,
-            )
-            self.assertEqual(result.kind, "success")
-            self.assertEqual(result.stdout_tail, b"sealed")
+            with self.assertRaises(ValueError):
+                process_module.run_exact(
+                    (str(executable),),
+                    cwd=self.root,
+                    env=self.environment,
+                    deadline_seconds=2,
+                    opened_executable=opened,
+                )
         finally:
             descriptor = opened.fd
             opened.close()
         with self.assertRaises(OSError):
             os.fstat(descriptor)
-        self.assertFalse(snapshot.exists())
-        self.assertFalse(snapshot_directory.exists())
+
+    def test_executable_replacement_after_spawn_fails_closed_and_reaps(self):
+        executable = self.root / "original"
+        replacement = self.root / "replacement"
+        executable.write_text("#!/bin/sh\nsleep 5\n", encoding="utf-8")
+        executable.chmod(0o700)
+        replacement.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        replacement.chmod(0o700)
+        opened = process_module.open_executable(
+            str(executable), cwd=self.root, env=self.environment
+        )
+        real_revalidate = opened.revalidate
+        validations = 0
+
+        def replace_on_second_validation():
+            nonlocal validations
+            validations += 1
+            if validations == 2:
+                os.replace(replacement, executable)
+            return real_revalidate()
+
+        try:
+            with mock.patch.object(
+                opened, "revalidate", side_effect=replace_on_second_validation
+            ):
+                with self.assertRaises(ValueError):
+                    process_module.run_exact(
+                        (str(executable),),
+                        cwd=self.root,
+                        env=self.environment,
+                        deadline_seconds=2,
+                        opened_executable=opened,
+                    )
+        finally:
+            opened.close()
+
+    def test_original_executable_path_is_used_for_spawn(self):
+        executable = self.root / "path-sensitive"
+        executable.write_text("#!/bin/sh\nprintf ok\n", encoding="utf-8")
+        executable.chmod(0o700)
+        opened = process_module.open_executable(
+            str(executable), cwd=self.root, env=self.environment
+        )
+        real_popen = subprocess.Popen
+        launched_paths = []
+
+        def capture_popen(*args, **kwargs):
+            if kwargs.get("start_new_session"):
+                launched_paths.append(kwargs["executable"])
+            return real_popen(*args, **kwargs)
+
+        try:
+            with mock.patch.object(
+                process_module.subprocess, "Popen", side_effect=capture_popen
+            ):
+                result = process_module.run_exact(
+                    (str(executable),),
+                    cwd=self.root,
+                    env=self.environment,
+                    deadline_seconds=2,
+                    opened_executable=opened,
+                )
+        finally:
+            opened.close()
+        self.assertEqual(result.kind, "success")
+        self.assertEqual(launched_paths, [str(executable.resolve())])
 
     def test_open_executable_and_group_observation_fail_closed(self):
         with mock.patch.object(process_module.os, "open", side_effect=OSError("blocked")):
@@ -416,7 +475,54 @@ class EvidenceStoreTest(unittest.TestCase):
             process_module.subprocess, "run", return_value=failed_ps
         ):
             with self.assertRaises(RuntimeError):
-                process_module._observe_group(12345)
+                process_module._observe_group(12345, timeout=0.1)
+        with mock.patch.object(
+            process_module.subprocess,
+            "run",
+            side_effect=subprocess.TimeoutExpired(("/bin/ps",), 0.01),
+        ):
+            with self.assertRaises(RuntimeError):
+                process_module._observe_group(12345, timeout=0.01)
+
+    def test_sigkill_permission_error_still_reaps_direct_child_boundedly(self):
+        launched = []
+        real_popen = subprocess.Popen
+
+        def capture_popen(*args, **kwargs):
+            process = real_popen(*args, **kwargs)
+            if kwargs.get("start_new_session"):
+                launched.append(process)
+            return process
+
+        def fail_group_kill(_pgid, sig):
+            if sig == signal.SIGKILL:
+                raise PermissionError("blocked")
+            return None
+
+        started = time.monotonic()
+        with (
+            mock.patch.object(
+                process_module.subprocess, "Popen", side_effect=capture_popen
+            ),
+            mock.patch.object(
+                process_module.os, "killpg", side_effect=fail_group_kill
+            ),
+            mock.patch.object(
+                process_module, "_wait_for_quiet_group", return_value=False
+            ),
+        ):
+            with self.assertRaises(RuntimeError):
+                process_module.run_exact(
+                    python_command("import time; time.sleep(5)"),
+                    cwd=self.root,
+                    env=self.environment,
+                    deadline_seconds=0.1,
+                )
+        self.assertLess(time.monotonic() - started, 2)
+        self.assertEqual(len(launched), 1)
+        self.assertIsNotNone(launched[0].returncode)
+        with self.assertRaises(ChildProcessError):
+            os.waitpid(launched[0].pid, os.WNOHANG)
 
 
 if __name__ == "__main__":

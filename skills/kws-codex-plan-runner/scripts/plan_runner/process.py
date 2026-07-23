@@ -8,7 +8,6 @@ import shutil
 import signal
 import stat
 import subprocess
-import tempfile
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -33,31 +32,42 @@ class ProcessResult:
 class OpenedExecutable:
     path: Path
     fd: int
-    source_fd: int
-    launch_path: Path
-    launch_directory: Path
     sha256: str
     mode: int
     size: int
+    device: int
+    inode: int
 
     def identity(self) -> dict[str, object]:
         return {"path": str(self.path), "sha256": self.sha256, "mode": self.mode, "size": self.size}
+
+    def revalidate(self) -> None:
+        try:
+            current = os.open(
+                str(self.path), os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
+            )
+        except OSError as error:
+            raise ValueError("command executable changed") from error
+        try:
+            metadata = os.fstat(current)
+            digest = _digest_fd(current)
+        finally:
+            os.close(current)
+        observed = (
+            metadata.st_dev,
+            metadata.st_ino,
+            metadata.st_mode,
+            metadata.st_size,
+            digest,
+        )
+        expected = (self.device, self.inode, self.mode, self.size, self.sha256)
+        if observed != expected:
+            raise ValueError("command executable changed")
 
     def close(self) -> None:
         if self.fd >= 0:
             os.close(self.fd)
             self.fd = -1
-        if self.source_fd >= 0:
-            os.close(self.source_fd)
-            self.source_fd = -1
-        try:
-            self.launch_path.unlink()
-        except FileNotFoundError:
-            pass
-        try:
-            self.launch_directory.rmdir()
-        except FileNotFoundError:
-            pass
 
     def __enter__(self) -> "OpenedExecutable":
         return self
@@ -117,10 +127,22 @@ def _executable(argv0: str, cwd: Path, env: Mapping[str, str]) -> Path:
     return _validated_executable(candidate if candidate.is_absolute() else cwd / candidate)
 
 
+def _digest_fd(descriptor: int) -> str:
+    digest = hashlib.sha256()
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    while True:
+        chunk = os.read(descriptor, 1024 * 1024)
+        if not chunk:
+            break
+        digest.update(chunk)
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    return digest.hexdigest()
+
+
 def open_executable(argv0: str, *, cwd: Path, env: Mapping[str, str]) -> OpenedExecutable:
-    """Seal one source FD into a hash-verified private launch snapshot."""
-    if not hasattr(os, "O_NOFOLLOW") or not Path("/dev/fd").is_dir():
-        raise ValueError("descriptor executable launch is unsupported")
+    """Open and hash the original executable for same-UID mutation checks."""
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise ValueError("executable identity validation is unsupported")
     path = _executable(argv0, cwd, env)
     try:
         source = os.open(
@@ -132,56 +154,15 @@ def open_executable(argv0: str, *, cwd: Path, env: Mapping[str, str]) -> OpenedE
         metadata = os.fstat(source)
         if not stat.S_ISREG(metadata.st_mode) or not metadata.st_mode & 0o111:
             raise ValueError("command executable is unavailable")
-        digest = hashlib.sha256()
-        launch_directory = Path(tempfile.mkdtemp(prefix="waygent-exec-"))
-        snapshot = -1
-        snapshot_path: str | None = None
-        try:
-            launch_directory.chmod(0o700)
-            snapshot, snapshot_path = tempfile.mkstemp(
-                prefix="executable-", dir=str(launch_directory)
-            )
-            os.fchmod(snapshot, 0o700)
-            while True:
-                chunk = os.read(source, 1024 * 1024)
-                if not chunk:
-                    break
-                digest.update(chunk)
-                view = memoryview(chunk)
-                while view:
-                    written = os.write(snapshot, view)
-                    if written <= 0:
-                        raise OSError("short executable snapshot write")
-                    view = view[written:]
-            os.fsync(snapshot)
-            os.close(snapshot)
-            snapshot = -1
-            snapshot_metadata = os.stat(snapshot_path)
-            if snapshot_metadata.st_size != metadata.st_size:
-                raise ValueError("executable snapshot size mismatch")
-            return OpenedExecutable(
-                path=path,
-                fd=source,
-                source_fd=-1,
-                launch_path=Path(snapshot_path),
-                launch_directory=launch_directory,
-                sha256=digest.hexdigest(),
-                mode=metadata.st_mode,
-                size=metadata.st_size,
-            )
-        except BaseException:
-            if snapshot >= 0:
-                os.close(snapshot)
-            if snapshot_path is not None:
-                try:
-                    os.unlink(snapshot_path)
-                except FileNotFoundError:
-                    pass
-            try:
-                launch_directory.rmdir()
-            except FileNotFoundError:
-                pass
-            raise
+        return OpenedExecutable(
+            path=path,
+            fd=source,
+            sha256=_digest_fd(source),
+            mode=metadata.st_mode,
+            size=metadata.st_size,
+            device=metadata.st_dev,
+            inode=metadata.st_ino,
+        )
     except BaseException:
         os.close(source)
         raise
@@ -196,7 +177,7 @@ def _append_tail(current: bytearray, chunk: bytes, limit: int) -> None:
         del current[: len(current) - limit]
 
 
-def _observe_group(pgid: int) -> dict[int, str]:
+def _observe_group(pgid: int, *, timeout: float) -> dict[int, str]:
     """Return shell-free PID/status observations for one process group."""
     try:
         observed = subprocess.run(
@@ -205,8 +186,9 @@ def _observe_group(pgid: int) -> dict[int, str]:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             check=False,
+            timeout=timeout,
         )
-    except OSError as error:
+    except (OSError, subprocess.TimeoutExpired) as error:
         raise RuntimeError("command process group is unverifiable") from error
     if observed.returncode != 0:
         raise RuntimeError("command process group is unverifiable")
@@ -232,11 +214,16 @@ def _observe_group(pgid: int) -> dict[int, str]:
     return members
 
 
-def _anchored_group(process: subprocess.Popen[bytes], pgid: int) -> tuple[bool, set[int]]:
+def _anchored_group(
+    process: subprocess.Popen[bytes],
+    pgid: int,
+    *,
+    observation_timeout: float = 0.25,
+) -> tuple[bool, set[int]]:
     """Observe members while the unreaped leader prevents PGID/PID reuse."""
     if process.returncode is not None:
         raise RuntimeError("command process group lost its leader anchor")
-    members = _observe_group(pgid)
+    members = _observe_group(pgid, timeout=observation_timeout)
     leader_status = members.get(process.pid)
     if leader_status is None:
         raise RuntimeError("command process group lost its leader anchor")
@@ -267,7 +254,12 @@ def _wait_for_quiet_group(
 ) -> bool:
     deadline = time.monotonic() + timeout
     while True:
-        leader_exited, descendants = _anchored_group(process, pgid)
+        remaining = deadline - time.monotonic()
+        leader_exited, descendants = _anchored_group(
+            process,
+            pgid,
+            observation_timeout=max(0.1, min(0.25, max(remaining, 0))),
+        )
         if leader_exited and not descendants:
             return True
         if time.monotonic() >= deadline:
@@ -292,11 +284,34 @@ def _finish_group(
         if not _wait_for_quiet_group(process, pgid, 1):
             raise RuntimeError("command process group survived termination")
     exit_code = process.wait(timeout=1)
-    if _observe_group(pgid):
+    if _observe_group(pgid, timeout=0.25):
         # The leader has been reaped, so the numeric PGID is no longer safe to
         # signal. Fail closed if observation does not confirm disappearance.
         raise RuntimeError("command process group survived leader reap")
     return exit_code, forced
+
+
+def _bounded_direct_cleanup(
+    process: subprocess.Popen[bytes],
+    pgid: int,
+    *,
+    timeout: float = 1,
+) -> None:
+    """Best-effort group cleanup plus bounded direct-child kill and reap."""
+    if process.returncode is not None:
+        return
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except OSError:
+        pass
+    try:
+        process.kill()
+    except OSError:
+        pass
+    try:
+        process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        pass
 
 
 def run_exact(
@@ -316,25 +331,34 @@ def run_exact(
     if opened_executable is not None:
         if opened_executable.fd < 0:
             raise ValueError("opened executable is closed")
-        executable = opened_executable.launch_path
-        pass_fds = ()
+        opened_executable.revalidate()
+        executable = opened_executable.path
     else:
         executable = _executable(argv[0], cwd, env) if executable_path is None else _provided_executable(executable_path)
-        pass_fds = ()
     started_at = _now()
     started = time.monotonic()
     process = subprocess.Popen(
         list(argv), executable=str(executable), cwd=str(cwd), env=dict(env),
         stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        shell=False, start_new_session=True, pass_fds=pass_fds,
+        shell=False, start_new_session=True,
     )
     pgid = process.pid
     try:
+        if opened_executable is not None:
+            # Popen returned only after the child exec handshake completed.
+            opened_executable.revalidate()
         if os.getpgid(process.pid) != pgid:
             raise RuntimeError("command did not create an isolated process group")
     except ProcessLookupError:
         # It cannot leave a descendant group when it exited before this check.
         pass
+    except BaseException:
+        _bounded_direct_cleanup(process, pgid)
+        if process.stdout is not None:
+            process.stdout.close()
+        if process.stderr is not None:
+            process.stderr.close()
+        raise
     assert process.stdout is not None and process.stderr is not None
     selector = selectors.DefaultSelector()
     selector.register(process.stdout, selectors.EVENT_READ, "stdout")
@@ -373,7 +397,11 @@ def run_exact(
 
             if not leader_exit_handled:
                 # A completed leader is not completion of its session group.
-                leader_exited, _descendants = _anchored_group(process, pgid)
+                leader_exited, _descendants = _anchored_group(
+                    process,
+                    pgid,
+                    observation_timeout=max(0.1, min(0.25, max(remaining, 0))),
+                )
                 if leader_exited:
                     leader_exit_code, forced = _finish_group(
                         process, pgid, terminate_leader=False
@@ -393,13 +421,7 @@ def run_exact(
         selector.close()
         try:
             if process.returncode is None:
-                # The still-unreaped direct child keeps this signal immune from
-                # numeric PID/PGID reuse even when observation failed.
-                try:
-                    os.killpg(pgid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                process.wait(timeout=10)
+                _bounded_direct_cleanup(process, pgid)
         finally:
             process.stdout.close()
             process.stderr.close()
