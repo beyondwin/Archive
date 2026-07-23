@@ -281,6 +281,7 @@ class RecoveryPolicy:
         prior_strategies = {
             digest
             for entry in active_sequence
+            if entry.get("failure_signature") == signature
             if isinstance(
                 (digest := entry.get("strategy_note_digest")),
                 str,

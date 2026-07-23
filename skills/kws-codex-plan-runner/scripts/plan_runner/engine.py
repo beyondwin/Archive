@@ -334,37 +334,69 @@ class PlanRunner:
                     self._emit_summary(state)
                     return int(ExitCode.FAILED)
                 failure = state.get("failure")
+                failure_signature = (
+                    failure.get("failure_signature")
+                    if isinstance(failure, Mapping)
+                    else None
+                )
                 prior = (
                     failure.get("strategy_digests", [])
                     if isinstance(failure, Mapping)
                     else []
                 )
+                for reference in state["artifact_refs"]:
+                    if (
+                        not isinstance(reference, Mapping)
+                        or reference.get("kind") != "strategy_note"
+                    ):
+                        continue
+                    payload = _artifact_payload(store, reference)
+                    if (
+                        isinstance(payload, Mapping)
+                        and payload.get("failure_signature") == failure_signature
+                        and isinstance(payload.get("strategy_note_digest"), str)
+                    ):
+                        prior = [*prior, payload["strategy_note_digest"]]
                 digest = strategy_note_digest(strategy_note)
                 if digest in prior:
                     raise ValueError("strategy note duplicates a prior strategy")
                 normalized_note = normalize_strategy_note(strategy_note)
+                audit_artifact = store.put_artifact(
+                    "recovery_audit",
+                    {
+                        "run_id": state["run_id"],
+                        "failed_revision": state["revision"],
+                        "failure": (
+                            dict(failure) if isinstance(failure, Mapping) else None
+                        ),
+                    },
+                )
                 strategy_artifact = store.put_artifact(
                     "strategy_note",
                     {
                         "run_id": state["run_id"],
-                        "failure_signature": (
-                            failure.get("failure_signature")
-                            if isinstance(failure, Mapping)
-                            else None
-                        ),
+                        "failure_signature": failure_signature,
                         "strategy_note": normalized_note,
                         "strategy_note_digest": digest,
                     },
                 )
-                if strategy_artifact.as_dict() not in state["artifact_refs"]:
-                    state["artifact_refs"].append(strategy_artifact.as_dict())
+                for artifact in (audit_artifact, strategy_artifact):
+                    if artifact.as_dict() not in state["artifact_refs"]:
+                        state["artifact_refs"].append(artifact.as_dict())
                 state["status"] = "resumable"
                 state["failure"] = {
-                    **(dict(failure) if isinstance(failure, Mapping) else {}),
+                    "reason_code": (
+                        failure.get("reason_code")
+                        if isinstance(failure, Mapping)
+                        else "recovery_exhausted"
+                    ),
+                    "failure_signature": failure_signature,
+                    "failure_sequence": [],
                     "operator_strategy_note": normalized_note,
                     "operator_strategy_artifact": strategy_artifact.as_dict(),
+                    "recovery_audit_artifact": audit_artifact.as_dict(),
                     "required_strategy_change": True,
-                    "strategy_digests": [*prior, digest],
+                    "strategy_digests": [digest],
                     "next_session_action": "fresh_session",
                 }
                 store.commit(state)
@@ -934,13 +966,26 @@ class PlanRunner:
         plan_index: int | None,
         mode: str,
     ) -> None:
+        result_artifact = (
+            store.put_artifact("provider_result", dict(outcome.result))
+            if outcome.kind == "reviewed"
+            and isinstance(outcome.result, Mapping)
+            else None
+        )
         state = store.snapshot()
         for attempt in reversed(state["attempts"]):
             if attempt.get("attempt_id") == attempt_id:
                 attempt["completed"] = True
                 attempt["outcome"] = outcome.kind
                 attempt["provider_code"] = outcome.provider_code
+                if result_artifact is not None:
+                    attempt["result_artifact"] = result_artifact.as_dict()
                 break
+        if (
+            result_artifact is not None
+            and result_artifact.as_dict() not in state["artifact_refs"]
+        ):
+            state["artifact_refs"].append(result_artifact.as_dict())
         if outcome.session_id is not None:
             session = next(
                 (
@@ -1061,6 +1106,7 @@ class PlanRunner:
         if result.get("head_commit") != observation.head:
             return self._integrity_failure(store, "implementation HEAD mismatch")
         ledger = self._validated_task_ledger(result.get("task_ledger"))
+        self._require_all_tasks_reported_done(ledger)
         obligations = result.get("open_obligation_ids")
         if not isinstance(obligations, list) or obligations:
             return self._integrity_failure(store, "implementation obligations remain")
@@ -1207,6 +1253,13 @@ class PlanRunner:
                 }
             )
         return result
+
+    @staticmethod
+    def _require_all_tasks_reported_done(
+        ledger: Sequence[Mapping[str, object]],
+    ) -> None:
+        if any(entry.get("status") != "reported_done" for entry in ledger):
+            raise ValueError("all submitted tasks must be reported_done")
 
     def _block(self, store: StateStore, outcome: ProviderOutcome) -> int:
         result = outcome.result
@@ -1436,61 +1489,66 @@ class PlanRunner:
                 state["repository"]["source_commit"]
             )
             self._require_git_contract(state, workspace)
-            failure = state.get("failure")
-            force_fresh = (
-                isinstance(failure, Mapping)
-                and failure.get("next_session_action") == "fresh_session"
-            )
-            existing_declaration = (
-                None
-                if force_fresh
-                else self._existing_final_set(store, candidate.head)
-            )
-            if force_fresh:
+            outcome = self._completed_review_outcome(store, candidate.head)
+            if outcome is None:
+                failure = state.get("failure")
+                force_fresh = (
+                    isinstance(failure, Mapping)
+                    and failure.get("next_session_action") == "fresh_session"
+                )
+                existing_declaration = (
+                    None
+                    if force_fresh
+                    else self._existing_final_set(store, candidate.head)
+                )
+                if force_fresh:
+                    state["finalization"] = {
+                        "candidate_head": candidate.head,
+                        "verification_set_digest": None,
+                    }
+                elif existing_declaration is not None:
+                    state["finalization"] = {
+                        "candidate_head": candidate.head,
+                        "verification_set_digest": existing_declaration,
+                    }
+                session_id = self._finalization_resume_session(
+                    state, candidate.head
+                )
+                attempt_id = str(uuid.uuid4())
+                state["status"] = "running"
                 state["finalization"] = {
                     "candidate_head": candidate.head,
-                    "verification_set_digest": None,
+                    "verification_set_digest": (
+                        state["finalization"].get("verification_set_digest")
+                        if isinstance(state.get("finalization"), Mapping)
+                        and state["finalization"].get("candidate_head")
+                        == candidate.head
+                        else None
+                    ),
                 }
-            elif existing_declaration is not None:
-                state["finalization"] = {
-                    "candidate_head": candidate.head,
-                    "verification_set_digest": existing_declaration,
-                }
-            session_id = self._finalization_resume_session(state, candidate.head)
-            attempt_id = str(uuid.uuid4())
-            state["status"] = "running"
-            state["finalization"] = {
-                "candidate_head": candidate.head,
-                "verification_set_digest": (
-                    state["finalization"].get("verification_set_digest")
-                    if isinstance(state.get("finalization"), Mapping)
-                    and state["finalization"].get("candidate_head") == candidate.head
-                    else None
-                ),
-            }
-            state["attempts"].append(
-                {
-                    "attempt_id": attempt_id,
-                    "mode": "finalization",
-                    "plan_index": None,
-                    "controller_pid": os.getpid(),
-                    "completed": False,
-                }
-            )
-            store.commit(state)
-            outcome = self._launch(
-                store,
-                workspace,
-                mode="finalization",
-                observation_head=candidate.head,
-                current_plan_index=None,
-                session_id=session_id,
-                attempt_id=attempt_id,
-            )
-            self._event("provider_outcome_received")
-            self._checkpoint_outcome(
-                store, outcome, attempt_id, None, "finalization"
-            )
+                state["attempts"].append(
+                    {
+                        "attempt_id": attempt_id,
+                        "mode": "finalization",
+                        "plan_index": None,
+                        "controller_pid": os.getpid(),
+                        "completed": False,
+                    }
+                )
+                store.commit(state)
+                outcome = self._launch(
+                    store,
+                    workspace,
+                    mode="finalization",
+                    observation_head=candidate.head,
+                    current_plan_index=None,
+                    session_id=session_id,
+                    attempt_id=attempt_id,
+                )
+                self._event("provider_outcome_received")
+                self._checkpoint_outcome(
+                    store, outcome, attempt_id, None, "finalization"
+                )
             if outcome.kind != "reviewed" or not isinstance(
                 outcome.result, Mapping
             ):
@@ -1540,9 +1598,24 @@ class PlanRunner:
                 "branch_handoff",
                 {
                     "run_id": state["run_id"],
+                    "status": "ready_for_integration",
                     "branch": state["repository"]["branch"],
+                    "worktree": state["repository"]["worktree"],
                     "starting_commit": state["repository"]["source_commit"],
                     "candidate_head": candidate.head,
+                    "runner_identity": dict(state["runner_runtime"]),
+                    "provider_identity": {
+                        "provider": state["provider"],
+                        "model": state["immutable_config"]["model"],
+                    },
+                    "plan_implementations": self._plan_implementation_summaries(
+                        store, state
+                    ),
+                    "non_blocking_observations": [
+                        dict(item)
+                        for item in result["open_findings"]
+                        if item["severity"] == "Minor"
+                    ],
                     "verification_set_digest": result[
                         "verification_set_digest"
                     ],
@@ -1568,6 +1641,73 @@ class PlanRunner:
             store.commit(state)
             self._emit_summary(store.snapshot())
             return int(ExitCode.READY)
+
+    @staticmethod
+    def _completed_review_outcome(
+        store: StateStore, candidate_head: str
+    ) -> ProviderOutcome | None:
+        state = store.snapshot()
+        for attempt in reversed(state["attempts"]):
+            if (
+                not isinstance(attempt, Mapping)
+                or attempt.get("mode") != "finalization"
+                or attempt.get("completed") is not True
+                or attempt.get("outcome") != "reviewed"
+                or not isinstance(attempt.get("result_artifact"), Mapping)
+            ):
+                continue
+            result = _artifact_payload(store, attempt["result_artifact"])
+            if (
+                not isinstance(result, Mapping)
+                or result.get("review_head") != candidate_head
+            ):
+                continue
+            session_id = attempt.get("session_id")
+            return ProviderOutcome(
+                "reviewed",
+                0,
+                session_id if isinstance(session_id, str) else None,
+                result,
+                attempt.get("provider_code"),
+                {},
+                (),
+                "",
+            )
+        return None
+
+    @staticmethod
+    def _plan_implementation_summaries(
+        store: StateStore, state: Mapping[str, object]
+    ) -> list[dict[str, object]]:
+        handoffs: dict[int, tuple[Mapping[str, object], Mapping[str, object]]] = {}
+        for reference in state["artifact_refs"]:
+            if (
+                not isinstance(reference, Mapping)
+                or reference.get("kind") != "plan_handoff"
+            ):
+                continue
+            payload = _artifact_payload(store, reference)
+            index = payload.get("plan_index") if isinstance(payload, Mapping) else None
+            if isinstance(index, int) and not isinstance(index, bool):
+                handoffs[index] = (reference, payload)
+        summaries: list[dict[str, object]] = []
+        for index, plan in enumerate(state["plans"]):
+            if index not in handoffs:
+                raise ValueError("implemented plan handoff is missing")
+            reference, payload = handoffs[index]
+            summaries.append(
+                {
+                    "plan_index": index,
+                    "plan_id": plan["plan_id"],
+                    "status": plan["status"],
+                    "snapshot_path": plan["snapshot_path"],
+                    "sha256": plan["sha256"],
+                    "head_commit": payload["head_commit"],
+                    "summary": payload["summary"],
+                    "handoff": dict(reference),
+                }
+            )
+        return summaries
 
     @staticmethod
     def _existing_final_set(
@@ -1752,6 +1892,9 @@ class PlanRunner:
         candidate_head: str,
         result: Mapping[str, object],
     ) -> None:
+        state = store.snapshot()
+        ledger = self._validated_task_ledger(state["task_ledger"])
+        self._require_all_tasks_reported_done(ledger)
         if result.get("status") != "reviewed":
             raise ValueError("review status is invalid")
         if result.get("review_head") != candidate_head:
@@ -1775,7 +1918,7 @@ class PlanRunner:
                 raise ValueError("review finding is invalid")
         references = [
             item
-            for item in store.snapshot()["artifact_refs"]
+            for item in state["artifact_refs"]
             if isinstance(item, Mapping)
             and item.get("kind") == "final_verification_set"
             and item.get("digest") == digest
@@ -1814,7 +1957,7 @@ class PlanRunner:
                 )
         else:
             raise ValueError("final verification declaration is invalid")
-        self._require_git_contract(store.snapshot(), workspace)
+        self._require_git_contract(state, workspace)
         if workspace.observe().head != candidate_head:
             raise ValueError("candidate HEAD changed during finalization")
 

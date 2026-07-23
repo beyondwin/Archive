@@ -248,7 +248,7 @@ class RecoveryPolicyTest(unittest.TestCase):
                 self.assertEqual(decision.run_status, "failed")
                 self.assertEqual(decision.reason_code, "recovery_exhausted")
 
-    def test_alternating_failure_signatures_cannot_bypass_global_strategy_cap(self):
+    def test_strategy_cap_is_scoped_to_the_current_failure_signature(self):
         sequence = tuple(
             {
                 "failure_signature": canonical_failure_signature(
@@ -271,8 +271,7 @@ class RecoveryPolicyTest(unittest.TestCase):
                 strategy_note="fourth changed strategy",
             ),
         )
-        self.assertEqual(decision.run_status, "failed")
-        self.assertEqual(decision.reason_code, "recovery_exhausted")
+        self.assertEqual(decision.run_status, "recovering")
 
     def test_duplicate_strategy_note_digest_is_rejected(self):
         failure = canonical_failure_signature(outcome())
@@ -343,7 +342,7 @@ class RecoveryPolicyTest(unittest.TestCase):
         failure = canonical_failure_signature(outcome())
         exhausted = tuple(
             {
-                "failure_signature": f"{failure[:-1]}{index}",
+                "failure_signature": failure,
                 "strategy_note_digest": strategy_note_digest(f"prior-{index}"),
             }
             for index in range(3)
@@ -363,7 +362,7 @@ class RecoveryPolicyTest(unittest.TestCase):
         failure = canonical_failure_signature(outcome())
         exhausted = tuple(
             {
-                "failure_signature": f"{failure[:-1]}{index}",
+                "failure_signature": failure,
                 "strategy_note_digest": strategy_note_digest(f"prior-{index}"),
             }
             for index in range(3)
