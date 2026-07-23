@@ -129,7 +129,11 @@ class ScriptedAdapter:
                     "status": "implemented",
                     "head_commit": head,
                     "summary": "review findings fixed",
-                    "task_ledger": packet["task_ledger"],
+                    "task_ledger": (
+                        packet["task_ledger"]
+                        if self.owner.review_fix_ledger_override is None
+                        else list(self.owner.review_fix_ledger_override)
+                    ),
                     "open_obligation_ids": [],
                     "failure_signature": None,
                     "strategy_note": "fix only bundled review findings",
@@ -250,6 +254,7 @@ class EngineTest(unittest.TestCase):
         self.review_findings_once = False
         self.minor_findings_once = False
         self.implementation_ledger = []
+        self.review_fix_ledger_override = None
         self.after_final_hook = None
         self.engine_event_hook = None
 
@@ -428,6 +433,29 @@ class EngineTest(unittest.TestCase):
             ["final_review_fix", "final_review_fix", "finalization"],
         )
         self.assertNotIn("implementation", modes[first_fix:])
+
+    def test_review_fix_rejects_task_not_reported_done_before_finalization(self):
+        self.review_findings_once = True
+        self.review_fix_ledger_override = [
+            {
+                "task_id": "review-fix-unfinished",
+                "status": "running",
+                "evidence_digests": [],
+            }
+        ]
+        code = self.runner().create_run(
+            specs=self.specs,
+            plans=self.plans[:1],
+            workspace=self.source,
+            stall_seconds=30,
+            sandbox="workspace-write",
+            model=None,
+        )
+        self.assertEqual(code, ExitCode.INTEGRITY)
+        self.assertEqual(
+            sum(packet["mode"] == "finalization" for packet in self.packets),
+            1,
+        )
 
     def test_declared_helper_command_extends_provider_activity_lease(self):
         observed = False
@@ -1082,6 +1110,33 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(
             handoff["non_blocking_observations"][0]["severity"], "Minor"
         )
+        receipt_refs = [
+            item
+            for item in state["artifact_refs"]
+            if item["kind"] == "verification_receipt"
+        ]
+        self.assertEqual(handoff["verification_receipts"], receipt_refs)
+        self.assertEqual(len(handoff["verification_receipts"]), 1)
+
+    def test_implemented_schema_uses_reported_done_only_task_ledger(self):
+        schema = json.loads(
+            (
+                SKILL_ROOT / "templates" / "plan-result.schema.json"
+            ).read_text(encoding="utf-8")
+        )
+        implemented = next(
+            branch
+            for branch in schema["oneOf"]
+            if branch["properties"]["status"].get("const") == "implemented"
+        )
+        self.assertEqual(
+            implemented["properties"]["task_ledger"]["$ref"],
+            "#/$defs/implementedTaskLedger",
+        )
+        status = schema["$defs"]["implementedTaskLedger"]["items"][
+            "properties"
+        ]["status"]
+        self.assertEqual(status, {"const": "reported_done"})
 
     def test_implemented_result_rejects_any_task_not_reported_done(self):
         self.implementation_ledger = [
