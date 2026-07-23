@@ -300,6 +300,8 @@ class ClaudeProviderTest(unittest.TestCase):
             "interrupted": ("interrupted", "controller_transport_failed"),
             "resume-failed": ("resume_failed", "session_resume_failed"),
             "context-damaged": ("context_overflow", "session_invalid"),
+            "abnormal-compaction": ("abnormal_compaction", "session_invalid"),
+            "session-damaged": ("session_damage", "session_invalid"),
             "session-missing": ("session_missing", "session_invalid"),
         }
         for scenario, expected in cases.items():

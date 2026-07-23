@@ -70,6 +70,17 @@ _AUTHORITY_BLOCKERS = frozenset(
         "provider_usage_blocked",
     }
 )
+_CONTAMINATED_OUTCOMES = frozenset(
+    {
+        "abnormal_compaction",
+        "context_overflow",
+        "failed",
+        "resume_failed",
+        "session_damage",
+        "session_missing",
+        "stalled",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -550,6 +561,68 @@ class PlanRunner:
             state["status"] = "resumable"
             active["reconciled"] = "controller_not_live"
             store.commit(state)
+            return
+        if (
+            not isinstance(active, dict)
+            or active.get("completed") is not True
+            or active.get("outcome") in {"implemented", "reviewed"}
+        ):
+            return
+        outcome_kind = str(active.get("outcome") or "transport_failed")
+        reason = str(
+            active.get("provider_code") or "controller_transport_failed"
+        )
+        strategy = (
+            f"controller crash recovery after {outcome_kind}: "
+            "start a fresh provider session with a changed strategy"
+        )
+        signature = sha256_json(
+            {
+                "reason_code": reason,
+                "provider_code": active.get("provider_code"),
+                "mode": active.get("mode"),
+                "plan_index": active.get("plan_index"),
+                "input_digest": state["immutable_config"].get(
+                    "input_snapshot_digest"
+                ),
+            }
+        )
+        strategy_ref = store.put_artifact(
+            "strategy_note",
+            {
+                "run_id": state["run_id"],
+                "strategy_note": strategy,
+                "failure_signature": signature,
+                "strategy_note_digest": strategy_note_digest(strategy),
+            },
+        )
+        state = store.snapshot()
+        active = state["attempts"][-1]
+        active["reconciled"] = "completed_nonterminal"
+        if strategy_ref.as_dict() not in state["artifact_refs"]:
+            state["artifact_refs"].append(strategy_ref.as_dict())
+        baseline = active.get("baseline_progress")
+        tree_digest = (
+            baseline.get("git_tree_digest")
+            if isinstance(baseline, Mapping)
+            else None
+        )
+        sequence_entry = {
+            "failure_signature": signature,
+            "strategy_note_digest": strategy_note_digest(strategy),
+            "tree_digest": tree_digest,
+        }
+        state["status"] = "recovering"
+        state["failure"] = {
+            "reason_code": reason,
+            "failure_signature": signature,
+            "failure_sequence": [sequence_entry],
+            "baseline_progress": baseline,
+            "required_strategy_change": True,
+            "next_session_action": "fresh_session",
+            "strategy_digests": [strategy_note_digest(strategy)],
+        }
+        store.commit(state)
 
     def _execute_current_plan(
         self, store: StateStore, workspace: GitWorkspace
@@ -989,30 +1062,34 @@ class PlanRunner:
             and result_artifact.as_dict() not in state["artifact_refs"]
         ):
             state["artifact_refs"].append(result_artifact.as_dict())
-        if outcome.session_id is not None:
-            session = next(
-                (
-                    item
-                    for item in reversed(state["sessions"])
-                    if isinstance(item, dict)
-                    and item.get("attempt_id") == attempt_id
-                ),
-                None,
-            )
-            if session is None:
-                session = {
-                    "attempt_id": attempt_id,
-                    "mode": mode,
-                    "plan_index": plan_index,
-                    "session_id": outcome.session_id,
-                    "phase": "completed",
-                }
-                state["sessions"].append(session)
+        session = next(
+            (
+                item
+                for item in reversed(state["sessions"])
+                if isinstance(item, dict)
+                and item.get("attempt_id") == attempt_id
+            ),
+            None,
+        )
+        attempt = next(
+            (
+                item
+                for item in reversed(state["attempts"])
+                if isinstance(item, dict)
+                and item.get("attempt_id") == attempt_id
+            ),
+            None,
+        )
+        if session is None:
+            if attempt is not None:
+                attempt["session_missing"] = True
+        elif outcome.session_id is not None:
+            if session.get("session_id") != outcome.session_id:
+                raise ValueError("provider outcome session does not match capture")
             session["phase"] = "completed"
             session["health"] = (
                 "invalid"
-                if outcome.kind
-                in {"stalled", "context_overflow", "resume_failed"}
+                if outcome.kind in _CONTAMINATED_OUTCOMES
                 else "healthy"
             )
             if mode == "finalization":
@@ -1356,8 +1433,7 @@ class PlanRunner:
                 f"controller recovery {len(active_sequence) + 1}: "
                 + (
                     "start a fresh provider session"
-                    if outcome.kind
-                    in {"stalled", "context_overflow", "resume_failed", "failed"}
+                    if outcome.kind in _CONTAMINATED_OUTCOMES
                     else "resume the explicit healthy session"
                 )
             )
@@ -1368,8 +1444,7 @@ class PlanRunner:
                 "session_id": outcome.session_id,
                 "session_health": (
                     "healthy"
-                    if outcome.kind
-                    not in {"stalled", "context_overflow", "resume_failed"}
+                    if outcome.kind not in _CONTAMINATED_OUTCOMES
                     else "invalid"
                 ),
                 "resume_failed": outcome.kind == "resume_failed",
@@ -1420,6 +1495,17 @@ class PlanRunner:
                 "tree_digest": current.git_tree_digest,
             }
         )
+        strategy_artifact = store.put_artifact(
+            "strategy_note",
+            {
+                "run_id": state["run_id"],
+                "failure_signature": decision.failure_signature,
+                "strategy_note": normalize_strategy_note(strategy),
+                "strategy_note_digest": strategy_note_digest(strategy),
+            },
+        )
+        if strategy_artifact.as_dict() not in state["artifact_refs"]:
+            state["artifact_refs"].append(strategy_artifact.as_dict())
         state["status"] = "recovering"
         state["failure"] = {
             "reason_code": reason,
@@ -1806,8 +1892,7 @@ class PlanRunner:
                 f"finalization recovery {len(active_sequence) + 1}: "
                 + (
                     "start a fresh finalization session"
-                    if outcome.kind
-                    in {"stalled", "context_overflow", "resume_failed", "failed"}
+                    if outcome.kind in _CONTAMINATED_OUTCOMES
                     else "resume the explicit healthy finalization session"
                 )
             )
@@ -1820,8 +1905,7 @@ class PlanRunner:
                 "session_id": outcome.session_id,
                 "session_health": (
                     "healthy"
-                    if outcome.kind
-                    not in {"stalled", "context_overflow", "resume_failed"}
+                    if outcome.kind not in _CONTAMINATED_OUTCOMES
                     else "invalid"
                 ),
                 "resume_failed": outcome.kind == "resume_failed",
@@ -1874,6 +1958,17 @@ class PlanRunner:
                 "tree_digest": current.git_tree_digest,
             }
         )
+        strategy_artifact = store.put_artifact(
+            "strategy_note",
+            {
+                "run_id": state["run_id"],
+                "failure_signature": decision.failure_signature,
+                "strategy_note": normalize_strategy_note(strategy),
+                "strategy_note_digest": strategy_note_digest(strategy),
+            },
+        )
+        if strategy_artifact.as_dict() not in state["artifact_refs"]:
+            state["artifact_refs"].append(strategy_artifact.as_dict())
         state["status"] = "recovering"
         state["failure"] = {
             "reason_code": reason,

@@ -165,6 +165,12 @@ elif scenario == "resume-failed":
 elif scenario == "context-damaged":
     result(subtype="error", api_error_status="context_window_exceeded")
     raise SystemExit(1)
+elif scenario == "abnormal-compaction":
+    result(subtype="error", api_error_status="abnormal_compaction")
+    raise SystemExit(1)
+elif scenario == "session-damaged":
+    result(subtype="error", api_error_status="session_damage")
+    raise SystemExit(1)
 elif scenario == "interrupted":
     assistant()
     raise SystemExit(7)

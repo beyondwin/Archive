@@ -17,8 +17,17 @@ from plan_runner.helper import helper_client  # noqa: E402
 from plan_runner.runtime import RuntimeUnavailable, require_compatible_runtime  # noqa: E402
 
 
+class InvocationError(ValueError):
+    pass
+
+
+class ContractArgumentParser(argparse.ArgumentParser):
+    def error(self, message: str) -> None:
+        raise InvocationError(message)
+
+
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="runner")
+    parser = ContractArgumentParser(prog="runner")
     commands = parser.add_subparsers(dest="command", required=True)
     run = commands.add_parser("run")
     run.add_argument("--spec", action="append", required=True, type=Path)
@@ -90,7 +99,10 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
             return int(ExitCode.INTEGRITY)
-    arguments = _parser().parse_args(raw_arguments)
+    try:
+        arguments = _parser().parse_args(raw_arguments)
+    except InvocationError as error:
+        return _invalid(str(error))
     try:
         runtime = require_compatible_runtime()
     except RuntimeUnavailable as error:
