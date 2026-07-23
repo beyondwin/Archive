@@ -58,9 +58,10 @@ def runtime_identity() -> RuntimeIdentity:
 
 
 class ScriptedAdapter:
-    def __init__(self, owner, helper):
+    def __init__(self, owner, helper, stop_requested):
         self.owner = owner
         self.helper = helper
+        self.stop_requested = stop_requested
 
     def launch(self, request, _lease, on_session_id=None):
         self.owner.leases.append(_lease)
@@ -69,8 +70,16 @@ class ScriptedAdapter:
         self.owner.requests.append(request)
         launch = len(self.owner.packets)
         session_id = request.session_id or str(uuid.UUID(int=launch))
-        skip_capture = self.owner.skip_session_capture_once
+        skip_capture = (
+            self.owner.skip_session_capture_once
+            or (
+                packet["mode"] == "final_review_fix"
+                and self.owner.skip_review_fix_session_capture_once
+            )
+        )
         self.owner.skip_session_capture_once = False
+        if packet["mode"] == "final_review_fix":
+            self.owner.skip_review_fix_session_capture_once = False
         if on_session_id is not None and not skip_capture:
             on_session_id(session_id)
         if self.owner.crash_after_session:
@@ -112,6 +121,21 @@ class ScriptedAdapter:
             )
         if packet["mode"] == "final_review_fix":
             marker = request.worktree / "review-fix.txt"
+            if self.owner.block_review_fix_until_stop:
+                marker.write_text("partial review fix\n", encoding="utf-8")
+                deadline = time.monotonic() + 5
+                while not self.stop_requested() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                return ProviderOutcome(
+                    "controller_stopped",
+                    None,
+                    session_id,
+                    None,
+                    "controller_transport_failed",
+                    {},
+                    (),
+                    "",
+                )
             marker.write_text("review fixed\n", encoding="utf-8")
             git("add", marker.name, cwd=request.worktree)
             git(
@@ -255,6 +279,8 @@ class EngineTest(unittest.TestCase):
         self.output = []
         self.crash_after_session = False
         self.skip_session_capture_once = False
+        self.skip_review_fix_session_capture_once = False
+        self.block_review_fix_until_stop = False
         self.outcome_hook = None
         self.review_findings_once = False
         self.minor_findings_once = False
@@ -269,7 +295,9 @@ class EngineTest(unittest.TestCase):
     def runner(self, runtime_checker=runtime_identity):
         def adapter_factory(**values):
             self.adapter_values.append(values)
-            return ScriptedAdapter(self, values["helper"])
+            return ScriptedAdapter(
+                self, values["helper"], values["stop_requested"]
+            )
 
         return PlanRunner(
             self.paths,
@@ -605,6 +633,110 @@ class EngineTest(unittest.TestCase):
             ["final_review_fix", "final_review_fix", "finalization"],
         )
         self.assertNotIn("implementation", modes[first_fix:])
+
+    def test_sigint_during_review_fix_resumes_same_session_and_dirty_partial_fix(self):
+        self.review_findings_once = True
+        self.block_review_fix_until_stop = True
+        signaled = False
+
+        def signal_review_fix(_adapter, _request, packet, _session_id):
+            nonlocal signaled
+            if packet["mode"] == "final_review_fix" and not signaled:
+                signaled = True
+                threading.Timer(
+                    0.05, lambda: os.kill(os.getpid(), signal.SIGINT)
+                ).start()
+            return None
+
+        self.outcome_hook = signal_review_fix
+        code = self.runner().create_run(
+            specs=self.specs,
+            plans=self.plans[:1],
+            workspace=self.source,
+            stall_seconds=30,
+            model=None,
+        )
+        self.assertEqual(code, ExitCode.RESUMABLE)
+        paused = self.state()
+        self.assertEqual(paused["failure"]["pending_mode"], "final_review_fix")
+        self.assertEqual(
+            paused["finalization"]["pending_mode"], "final_review_fix"
+        )
+        self.assertEqual(paused["finalization"]["review_findings"][0]["id"], "R1")
+        captured = paused["sessions"][-1]["session_id"]
+        worktree = Path(paused["repository"]["worktree"])
+        self.assertTrue(git("status", "--porcelain", cwd=worktree))
+
+        self.block_review_fix_until_stop = False
+        self.outcome_hook = None
+        code = self.runner().resume(
+            paused["run_id"],
+            retry_blocked=False,
+            retry_failed=False,
+            strategy_note=None,
+        )
+        self.assertEqual(code, ExitCode.READY)
+        fix_requests = [
+            request
+            for request, packet in zip(self.requests, self.packets, strict=True)
+            if packet["mode"] == "final_review_fix"
+        ]
+        self.assertEqual(len(fix_requests), 2)
+        self.assertTrue(fix_requests[-1].resume)
+        self.assertEqual(fix_requests[-1].session_id, captured)
+        self.assertFalse(git("status", "--porcelain", cwd=worktree))
+
+    def test_review_fix_resume_uses_fresh_session_when_signal_capture_is_missing(self):
+        self.review_findings_once = True
+        self.block_review_fix_until_stop = True
+        self.skip_review_fix_session_capture_once = True
+        signaled = False
+
+        def signal_review_fix(_adapter, _request, packet, _session_id):
+            nonlocal signaled
+            if packet["mode"] == "final_review_fix" and not signaled:
+                signaled = True
+                threading.Timer(
+                    0.05, lambda: os.kill(os.getpid(), signal.SIGTERM)
+                ).start()
+            return None
+
+        self.outcome_hook = signal_review_fix
+        code = self.runner().create_run(
+            specs=self.specs,
+            plans=self.plans[:1],
+            workspace=self.source,
+            stall_seconds=30,
+            model=None,
+        )
+        self.assertEqual(code, ExitCode.RESUMABLE)
+        paused = self.state()
+        first_fix_request = next(
+            request
+            for request, packet in zip(self.requests, self.packets, strict=True)
+            if packet["mode"] == "final_review_fix"
+        )
+        self.assertEqual(paused["failure"]["next_session_action"], "fresh_session")
+
+        self.block_review_fix_until_stop = False
+        self.outcome_hook = None
+        code = self.runner().resume(
+            paused["run_id"],
+            retry_blocked=False,
+            retry_failed=False,
+            strategy_note=None,
+        )
+        self.assertEqual(code, ExitCode.READY)
+        fix_requests = [
+            request
+            for request, packet in zip(self.requests, self.packets, strict=True)
+            if packet["mode"] == "final_review_fix"
+        ]
+        self.assertEqual(len(fix_requests), 2)
+        self.assertFalse(fix_requests[-1].resume)
+        self.assertNotEqual(
+            fix_requests[-1].session_id, first_fix_request.session_id
+        )
 
     def test_review_fix_rejects_task_not_reported_done_before_finalization(self):
         self.review_findings_once = True
