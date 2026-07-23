@@ -11,7 +11,7 @@ import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .git_ops import sanitized_child_env
 from .helper import HelperDescriptor
@@ -166,7 +166,10 @@ class CodexAdapter:
         return argv
 
     def launch(
-        self, request: ProviderRequest, lease: ActivityLease
+        self,
+        request: ProviderRequest,
+        lease: ActivityLease,
+        on_session_id: Callable[[str], None] | None = None,
     ) -> ProviderOutcome:
         argv = self.build_argv(request)
         self._validate_launch_paths(request)
@@ -267,6 +270,7 @@ class CodexAdapter:
                                         usage=usage,
                                         activity_keys=activity_keys,
                                         lease=lease,
+                                        on_session_id=on_session_id,
                                     )
                             elif not leader_finished:
                                 time.sleep(self._poll_seconds)
@@ -434,6 +438,7 @@ class CodexAdapter:
         usage: dict[str, int | float],
         activity_keys: list[str],
         lease: ActivityLease,
+        on_session_id: Callable[[str], None] | None = None,
     ) -> tuple[bool, str | None, str | None]:
         while b"\n" in buffer:
             raw, remainder = buffer.split(b"\n", 1)
@@ -457,6 +462,8 @@ class CodexAdapter:
                     return True, session_id, provider_code
                 if session_id is not None and session_id != candidate:
                     return True, session_id, provider_code
+                if session_id is None and on_session_id is not None:
+                    on_session_id(candidate)
                 session_id = candidate
             elif event_type in {"turn.started", "turn.completed"}:
                 turn_id = event.get("turn_id")

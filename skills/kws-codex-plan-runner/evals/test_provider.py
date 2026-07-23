@@ -176,6 +176,16 @@ class CodexProviderTest(unittest.TestCase):
         )
         self.assertEqual(self.record()["prompt"], "execute this plan")
 
+    def test_session_callback_fires_before_later_result_validation_fails(self):
+        captured = []
+        outcome = self.adapter("invalid-output").launch(
+            self.request(),
+            RecordingLease(),
+            on_session_id=captured.append,
+        )
+        self.assertEqual(captured, [SESSION_ID])
+        self.assertEqual(outcome.kind, "failed")
+
     def test_launch_uses_explicit_resume_and_sanitized_helper_environment(self):
         outcome = self.launch(
             "explicit-resume", request=self.request(session_id=SESSION_ID)
