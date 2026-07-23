@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .contracts import require_digest, require_full_sha, sha256_json
+from .contracts import canonical_json, require_digest, require_full_sha, sha256_json
 from .git_ops import GitWorkspace, WorktreeObservation
 from .process import run_exact
 from .storage import ArtifactRef, StateStore
@@ -76,22 +76,37 @@ def _file_digest(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _redacted(value: bytes, environment: Mapping[str, str]) -> str:
+def _redacted(value: bytes, environment: Mapping[str, str], output_limit: int) -> str:
     text = value.decode("utf-8", "replace")
     text = _SECRET.sub(lambda match: match.group(0).split("=", 1)[0] + "=[REDACTED]", text)
     for key, secret in environment.items():
         if secret and re.search(r"(?i)(token|secret|api_key|password)", key):
             text = text.replace(secret, "[REDACTED]")
-    return text
+    if output_limit == 0:
+        return ""
+    encoded = text.encode("utf-8")
+    if len(encoded) <= output_limit:
+        return text
+    return encoded[-output_limit:].decode("utf-8", "ignore")
 
 
 class EvidenceStore:
-    def __init__(self, state: StateStore, workspace: GitWorkspace, environment: Mapping[str, str]) -> None:
+    def __init__(
+        self,
+        state: StateStore,
+        workspace: GitWorkspace,
+        environment: Mapping[str, str],
+        *,
+        output_limit: int = 1_048_576,
+    ) -> None:
         if any(not isinstance(key, str) or not isinstance(value, str) or _CONTROL.search(key) or "\0" in value for key, value in environment.items()):
             raise ValueError("verification environment is invalid")
         self.state = state
         self.workspace = workspace
         self.environment = dict(environment)
+        if not isinstance(output_limit, int) or isinstance(output_limit, bool) or output_limit < 0:
+            raise ValueError("output limit is invalid")
+        self.output_limit = output_limit
 
     def _observation(self, candidate_head: str) -> WorktreeObservation:
         candidate_head = require_full_sha(candidate_head)
@@ -162,11 +177,20 @@ class EvidenceStore:
             references.append(artifact.as_dict())
             self.state.commit(next_state)
 
+    def _artifact_document(self, artifact: ArtifactRef) -> dict[str, object]:
+        raw = self.state.referenced_artifact(artifact.as_dict()).read_bytes()
+        document = json.loads(raw.decode("utf-8"))
+        if (
+            not isinstance(document, dict)
+            or canonical_json(document) != raw
+            or sha256_json(document) != artifact.digest
+        ):
+            raise ValueError("artifact content digest mismatch")
+        return document
+
     def _receipt_from_artifact(self, artifact: ArtifactRef) -> VerificationReceipt | None:
         try:
-            document = json.loads(
-                self.state.referenced_artifact(artifact.as_dict()).read_text(encoding="utf-8")
-            )
+            document = self._artifact_document(artifact)
             if not isinstance(document, dict) or set(document) != {"exit_code", "identity", "identity_digest", "outcome", "process", "schema_version", "stdout_tail", "stderr_tail"}:
                 return None
             digest = document["identity_digest"]
@@ -177,6 +201,8 @@ class EvidenceStore:
                 return None
             exit_code = document["exit_code"]
             if exit_code is not None and (not isinstance(exit_code, int) or isinstance(exit_code, bool)):
+                return None
+            if outcome == "success" and exit_code != 0:
                 return None
             return VerificationReceipt(artifact, digest, outcome, exit_code, False)
         except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
@@ -203,7 +229,17 @@ class EvidenceStore:
         reusable = self.reusable_success(digest)
         if reusable is not None:
             return reusable
-        result = run_exact(command.argv, cwd=self._cwd(command), env=self.environment, deadline_seconds=command.deadline_seconds)
+        executable_identity = identity["executable_identity"]
+        assert isinstance(executable_identity, dict)
+        executable_path = Path(str(executable_identity["path"]))
+        result = run_exact(
+            command.argv,
+            cwd=self._cwd(command),
+            env=self.environment,
+            deadline_seconds=command.deadline_seconds,
+            output_limit=self.output_limit,
+            executable_path=executable_path,
+        )
         outcome = {"success": "success", "failed": "failed", "verification_timed_out": "timed_out"}[result.kind]
         document = {
             "schema_version": 1,
@@ -211,8 +247,8 @@ class EvidenceStore:
             "identity_digest": digest,
             "outcome": outcome,
             "exit_code": result.exit_code,
-            "stdout_tail": _redacted(result.stdout_tail, self.environment),
-            "stderr_tail": _redacted(result.stderr_tail, self.environment),
+            "stdout_tail": _redacted(result.stdout_tail, self.environment, self.output_limit),
+            "stderr_tail": _redacted(result.stderr_tail, self.environment, self.output_limit),
             "process": {
                 "stdout_digest": result.stdout_digest,
                 "stderr_digest": result.stderr_digest,
@@ -274,7 +310,9 @@ class EvidenceStore:
         matching = [ArtifactRef(**item) for item in references if isinstance(item, dict) and item.get("kind") == "final_verification_set" and item.get("digest") == set_digest]
         if len(matching) != 1:
             raise ValueError("final verification set is not sealed")
-        payload = json.loads(self.state.referenced_artifact(matching[0].as_dict()).read_text(encoding="utf-8"))
+        payload = self._artifact_document(matching[0])
+        if matching[0].digest != set_digest:
+            raise ValueError("final verification set digest mismatch")
         if not isinstance(payload, dict) or payload.get("kind") != "commands" or not isinstance(payload.get("commands"), list):
             raise ValueError("final verification set has no commands")
         try:
