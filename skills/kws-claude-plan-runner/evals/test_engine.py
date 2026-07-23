@@ -68,7 +68,9 @@ class ScriptedAdapter:
         self.owner.requests.append(request)
         launch = len(self.owner.packets)
         session_id = request.session_id or str(uuid.UUID(int=launch))
-        if on_session_id is not None:
+        skip_capture = self.owner.skip_session_capture_once
+        self.owner.skip_session_capture_once = False
+        if on_session_id is not None and not skip_capture:
             on_session_id(session_id)
         if self.owner.crash_after_session:
             self.owner.crash_after_session = False
@@ -251,6 +253,7 @@ class EngineTest(unittest.TestCase):
         self.adapter_values = []
         self.output = []
         self.crash_after_session = False
+        self.skip_session_capture_once = False
         self.outcome_hook = None
         self.review_findings_once = False
         self.minor_findings_once = False
@@ -714,6 +717,109 @@ class EngineTest(unittest.TestCase):
                 packet["required_strategy_change"]
                 for packet in final_packets[1:]
             )
+        )
+
+    def test_abnormal_compaction_and_session_damage_never_resume_context(self):
+        failures = ["abnormal_compaction", "session_damage"]
+
+        def contaminated(_adapter, _request, packet, session_id):
+            if packet["mode"] == "implementation" and failures:
+                kind = failures.pop(0)
+                return ProviderOutcome(
+                    kind, 1, session_id, None, "session_invalid", {}, (), ""
+                )
+            return None
+
+        self.outcome_hook = contaminated
+        code = self.runner().create_run(
+            specs=self.specs,
+            plans=self.plans[:1],
+            workspace=self.source,
+            stall_seconds=30,
+            model=None,
+        )
+        self.assertEqual(code, ExitCode.READY)
+        implementations = [
+            (request, packet)
+            for request, packet in zip(self.requests, self.packets, strict=True)
+            if packet["mode"] == "implementation"
+        ]
+        self.assertEqual(len(implementations), 3)
+        self.assertTrue(all(not request.resume for request, _ in implementations))
+        self.assertEqual(
+            len({request.session_id for request, _ in implementations}), 3
+        )
+        self.assertTrue(
+            all(
+                packet["required_strategy_change"]
+                for _, packet in implementations[1:]
+            )
+        )
+        self.assertTrue(
+            all(
+                "fresh provider session"
+                in packet["operator_strategy_notes"][-1]["strategy_note"]
+                for _, packet in implementations[1:]
+            )
+        )
+
+    def test_missing_uncaptured_session_crash_recovers_without_phantom_resume(self):
+        self.skip_session_capture_once = True
+        missing_once = True
+
+        def session_missing(_adapter, request, packet, _session_id):
+            nonlocal missing_once
+            if packet["mode"] == "implementation" and missing_once:
+                missing_once = False
+                return ProviderOutcome(
+                    "session_missing",
+                    1,
+                    request.session_id,
+                    None,
+                    "session_invalid",
+                    {},
+                    (),
+                    "",
+                )
+            return None
+
+        runner = self.runner()
+        self.outcome_hook = session_missing
+
+        def crash_after_checkpoint(*_args, **_kwargs):
+            raise SimulatedCrash("after non-implemented checkpoint")
+
+        runner._recover = crash_after_checkpoint
+        with self.assertRaises(SimulatedCrash):
+            runner.create_run(
+                specs=self.specs,
+                plans=self.plans[:1],
+                workspace=self.source,
+                stall_seconds=30,
+                model=None,
+            )
+        crashed = self.state()
+        self.assertTrue(crashed["attempts"][-1]["completed"])
+        self.assertEqual(crashed["attempts"][-1]["outcome"], "session_missing")
+        self.assertEqual(crashed["sessions"], [])
+        phantom = self.requests[0].session_id
+
+        code = self.runner().resume(
+            crashed["run_id"],
+            retry_blocked=False,
+            retry_failed=False,
+            strategy_note=None,
+        )
+        self.assertEqual(code, ExitCode.READY)
+        retry_request = self.requests[1]
+        retry_packet = self.packets[1]
+        self.assertFalse(retry_request.resume)
+        self.assertNotEqual(retry_request.session_id, phantom)
+        self.assertTrue(retry_packet["required_strategy_change"])
+        self.assertTrue(retry_packet["operator_strategy_notes"])
+        self.assertIn(
+            "fresh provider session",
+            retry_packet["operator_strategy_notes"][-1]["strategy_note"],
         )
 
     def test_session_capture_survives_controller_crash_and_resumes_explicitly(self):
@@ -1316,6 +1422,32 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(
             json.loads(completed.stdout)["reason_code"], "invalid_invocation"
         )
+
+    def test_cli_parse_failures_are_structured_contract_errors(self):
+        cases = (
+            ["resume"],
+            ["resume", "--unknown"],
+            ["run", "--workspace", str(self.source)],
+        )
+        for arguments in cases:
+            with self.subTest(arguments=arguments):
+                completed = subprocess.run(
+                    [
+                        sys.executable,
+                        str(SKILL_ROOT / "scripts" / "runner.py"),
+                        *arguments,
+                    ],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(completed.returncode, ExitCode.INVALID)
+                self.assertEqual(completed.stderr, "")
+                payload = json.loads(completed.stdout)
+                self.assertEqual(payload["status"], "failed")
+                self.assertEqual(
+                    payload["reason_code"], "invalid_invocation"
+                )
 
     def test_inspect_is_read_only_and_concise(self):
         self.runner().create_run(

@@ -68,6 +68,12 @@ _CONTEXT_CODES = frozenset(
         "prompt_too_long",
     )
 )
+_COMPACTION_CODES = frozenset(
+    ("abnormal_compaction", "compaction_corrupt", "compaction_failed")
+)
+_SESSION_DAMAGE_CODES = frozenset(
+    ("conversation_corrupt", "session_corrupt", "session_damage", "session_damaged")
+)
 _NESTING_MARKERS = frozenset(
     ("CLAUDECODE", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_ENTRYPOINT")
 )
@@ -804,6 +810,10 @@ def _classify_provider(
         return "blocked", "provider_usage_blocked"
     if codes & _CONTEXT_CODES:
         return "context_overflow", "session_invalid"
+    if codes & _COMPACTION_CODES:
+        return "abnormal_compaction", "session_invalid"
+    if codes & _SESSION_DAMAGE_CODES:
+        return "session_damage", "session_invalid"
     if codes & _SESSION_CODES:
         return (
             ("resume_failed", "session_resume_failed")
