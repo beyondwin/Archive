@@ -981,7 +981,9 @@ Expected: no unresolved Critical or Important findings.
 Assert that both provider gates, parity, repository verification, and review
 refer to `PLAN2_CANDIDATE_HEAD`, and that `git rev-parse HEAD` still equals
 that value. Do not create an evidence-only commit. After any required fix,
-commit first and rerun Steps 7-9 once for the new candidate HEAD.
+commit first, record the new candidate HEAD, and rerun the provider/parity gate
+commands in Step 7 plus Steps 8-9 once for that HEAD. Do not repeat Step 7's
+candidate-creation commit block.
 
 ## Plan 2 Completion Evidence
 

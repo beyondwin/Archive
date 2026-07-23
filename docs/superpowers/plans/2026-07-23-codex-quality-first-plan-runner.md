@@ -576,11 +576,11 @@ Add a second deterministic test that injects storage faults at two named
 stages: after the content-addressed artifact and its directory entry are
 durable but before `state.json` replacement, and immediately after atomic
 state replacement. Assert the exact injected stage, reopen the store, and
-assert that the result is either the complete previous revision or the
-complete next revision. No reopened state may reference a missing artifact,
-and artifacts not referenced by the reopened state remain ignored as orphans.
-Use an injected callable or patchable I/O boundary; do not terminate a real
-process or rely on timing.
+assert that the pre-replacement fault reopens the complete previous revision
+and the post-replacement fault reopens the complete next revision. No reopened
+state may reference a missing artifact, and artifacts not referenced by the
+reopened state remain ignored as orphans. Use an injected callable or
+patchable I/O boundary; do not terminate a real process or rely on timing.
 
 - [ ] **Step 2: Run the storage test and confirm the missing module failure**
 
@@ -1930,7 +1930,9 @@ PLAN1_CANDIDATE_HEAD="$(git rev-parse HEAD)"
 
 No tracked edit or commit may occur after successful evidence at
 `PLAN1_CANDIDATE_HEAD`. If review produces a required fix, commit the fix,
-record the new candidate HEAD, and rerun Steps 7-9 once for that new HEAD.
+record the new candidate HEAD, and rerun the deterministic-gate command below
+plus Steps 8-9 once for that new HEAD. Do not repeat the candidate-creation
+commit block.
 
 Run:
 
