@@ -180,6 +180,51 @@ class GitWorkspaceTest(unittest.TestCase):
                 run_id="run-123",
             )
 
+    def test_sanitized_environment_strips_unrelated_cloud_credentials_and_config_paths(self):
+        unrelated = {
+            "AWS_ACCESS_KEY_ID": "cloud-id",
+            "AWS_SECRET_ACCESS_KEY": "cloud-secret",
+            "AWS_PROFILE": "production",
+            "AWS_SHARED_CREDENTIALS_FILE": "/tmp/aws-credentials",
+            "AZURE_CLIENT_SECRET": "azure-secret",
+            "BITBUCKET_APP_PASSWORD": "bitbucket-password",
+            "GOOGLE_APPLICATION_CREDENTIALS": "/tmp/gcp.json",
+            "CLOUDSDK_CONFIG": "/tmp/gcloud",
+            "GITHUB_CONFIG_DIR": "/tmp/github",
+            "GITLAB_AUTH_TOKEN": "gitlab-token",
+            "OCI_CONFIG_FILE": "/tmp/oci",
+            "DOCKER_CONFIG": "/tmp/docker",
+            "KUBECONFIG": "/tmp/kubeconfig",
+            "NETRC": "/tmp/netrc",
+            "NPM_CONFIG_USERCONFIG": "/tmp/npmrc",
+            "TF_CLI_CONFIG_FILE": "/tmp/terraformrc",
+        }
+        source_env = {
+            "PATH": os.environ["PATH"],
+            "LANG": "C.UTF-8",
+            "AWS_REGION": "ap-northeast-2",
+            "GOOGLE_CLOUD_PROJECT": "example-project",
+            "OPENAI_API_KEY": "provider-secret",
+            "OPENAI_ORG_ID": "provider-org",
+            "CODEX_HOME": "/tmp/codex",
+            **unrelated,
+        }
+
+        clean = sanitized_child_env(
+            source_env,
+            provider_auth_prefixes=("OPENAI_", "CODEX_"),
+            remotes=(),
+            run_id="run-123",
+        )
+
+        self.assertTrue(unrelated.keys().isdisjoint(clean))
+        self.assertEqual(clean["OPENAI_API_KEY"], "provider-secret")
+        self.assertEqual(clean["OPENAI_ORG_ID"], "provider-org")
+        self.assertEqual(clean["CODEX_HOME"], "/tmp/codex")
+        self.assertEqual(clean["AWS_REGION"], "ap-northeast-2")
+        self.assertEqual(clean["GOOGLE_CLOUD_PROJECT"], "example-project")
+        self.assertEqual(clean["LANG"], "C.UTF-8")
+
 
 if __name__ == "__main__":
     unittest.main()

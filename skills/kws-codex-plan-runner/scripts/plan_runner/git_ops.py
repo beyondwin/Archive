@@ -13,6 +13,56 @@ from .contracts import require_digest, require_full_sha
 
 MAX_HASH_BYTES = 8 * 1024 * 1024
 
+_CREDENTIAL_CONFIG_PATHS = frozenset(
+    (
+        "AWS_CONFIG_FILE",
+        "AWS_SHARED_CREDENTIALS_FILE",
+        "AWS_WEB_IDENTITY_TOKEN_FILE",
+        "AZURE_CONFIG_DIR",
+        "CLOUDSDK_CONFIG",
+        "DOCKER_CONFIG",
+        "GCLOUD_CONFIG",
+        "GH_CONFIG_DIR",
+        "GITHUB_CONFIG_DIR",
+        "GOOGLE_APPLICATION_CREDENTIALS",
+        "KUBECONFIG",
+        "NETRC",
+        "NPM_CONFIG_USERCONFIG",
+        "OCI_CONFIG_FILE",
+        "PIP_CONFIG_FILE",
+        "TF_CLI_CONFIG_FILE",
+    )
+)
+_UNRELATED_CREDENTIAL_FAMILIES = (
+    "AWS_",
+    "AZURE_",
+    "BITBUCKET_",
+    "CLOUDSDK_",
+    "GCLOUD_",
+    "GCP_",
+    "GITHUB_",
+    "GITLAB_",
+    "GOOGLE_",
+    "OCI_",
+)
+_UNRELATED_CREDENTIAL_HINTS = (
+    "ACCESS",
+    "ACCOUNT",
+    "AUTH",
+    "CLIENT",
+    "CONFIG",
+    "CREDENTIAL",
+    "IDENTITY",
+    "KEY",
+    "PASSWORD",
+    "PAT",
+    "PROFILE",
+    "SECRET",
+    "SUBSCRIPTION",
+    "TENANT",
+    "TOKEN",
+)
+
 
 @dataclass(frozen=True)
 class WorktreeObservation:
@@ -279,7 +329,15 @@ def sanitized_child_env(
         if key == "GIT_CONFIG_COUNT" or key.startswith("GIT_CONFIG_KEY_") or key.startswith("GIT_CONFIG_VALUE_"):
             continue
         credential = key.endswith(("_TOKEN", "_SECRET", "_API_KEY"))
-        if credential and not key.startswith(allowed_prefixes):
+        provider_auth = key.startswith(allowed_prefixes)
+        unrelated_family_credential = key.startswith(_UNRELATED_CREDENTIAL_FAMILIES) and any(
+            hint in key for hint in _UNRELATED_CREDENTIAL_HINTS
+        )
+        if not provider_auth and (
+            credential
+            or key in _CREDENTIAL_CONFIG_PATHS
+            or unrelated_family_credential
+        ):
             continue
         clean[str(key)] = str(value)
     safe_remotes: list[str] = []
