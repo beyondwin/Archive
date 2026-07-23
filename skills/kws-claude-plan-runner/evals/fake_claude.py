@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 import os
+import fcntl
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -20,6 +22,221 @@ def flag_value(name: str) -> str | None:
         return sys.argv[sys.argv.index(name) + 1]
     except (ValueError, IndexError):
         return None
+
+
+def packet_from_prompt(prompt: str) -> dict[str, object]:
+    marker = "\nEXECUTION_PACKET="
+    if marker not in prompt:
+        raise ValueError("execution packet is missing")
+    packet = json.loads(prompt.split(marker, 1)[1])
+    if not isinstance(packet, dict):
+        raise ValueError("execution packet is invalid")
+    return packet
+
+
+def consume_action(path: Path) -> tuple[int, str]:
+    lock_path = path.with_suffix(path.suffix + ".lock")
+    lock_path.touch(mode=0o600, exist_ok=True)
+    with lock_path.open("r+", encoding="utf-8") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        document = json.loads(path.read_text(encoding="utf-8"))
+        if document.get("protocol_version") != 1:
+            raise ValueError("fake sequence protocol is unsupported")
+        actions = document.get("actions")
+        index = document.get("next_index")
+        if (
+            not isinstance(actions, list)
+            or not isinstance(index, int)
+            or isinstance(index, bool)
+            or not 0 <= index < len(actions)
+            or not isinstance(actions[index], str)
+        ):
+            raise ValueError("fake sequence is exhausted or invalid")
+        document["next_index"] = index + 1
+        temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+        temporary.write_text(
+            json.dumps(document, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        os.replace(temporary, path)
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+        return index, actions[index]
+
+
+def helper_call(packet: dict[str, object], operation: str, payload: object) -> dict:
+    helper = packet["helper"]
+    envelope = {
+        "protocol_version": helper["protocol_version"],
+        "run_id": packet["run_id"],
+        "nonce": helper["nonce"],
+        "operation": operation,
+        "payload": payload,
+    }
+    result = subprocess.run(
+        helper["client_argv"],
+        input=json.dumps(envelope),
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    response = json.loads(result.stdout)
+    if not isinstance(response, dict):
+        raise ValueError("helper response is invalid")
+    return response
+
+
+def generic_result(packet: dict[str, object], action: str) -> dict[str, object]:
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    if action == "blocked":
+        return {
+            "status": "blocked",
+            "head_commit": head,
+            "summary": "external authority is required",
+            "task_ledger": packet["task_ledger"],
+            "open_obligation_ids": [],
+            "failure_signature": None,
+            "strategy_note": None,
+            "blocker": {
+                "kind": "external_authority_required",
+                "detail": "provider-neutral parity blocker",
+            },
+        }
+    return {
+        "status": "implemented",
+        "head_commit": head,
+        "summary": "provider-neutral implementation",
+        "task_ledger": packet["task_ledger"],
+        "open_obligation_ids": [],
+        "failure_signature": None,
+        "strategy_note": None,
+    }
+
+
+def generic_finalization(packet: dict[str, object]) -> dict[str, object]:
+    head = packet["candidate_head"]
+    digest = packet.get("sealed_verification_set_digest")
+    if digest is None:
+        final_set = {
+            "kind": "commands",
+            "candidate_head": head,
+            "commands": [
+                {
+                    "command_id": "parity-final",
+                    "command_role": "final",
+                    "argv": ["/usr/bin/true"],
+                    "cwd": ".",
+                    "input_digest": "a" * 64,
+                    "deadline_seconds": 10,
+                }
+            ],
+        }
+        declaration = helper_call(
+            packet,
+            "declare_final_set",
+            {"candidate_head": head, "final_set": final_set},
+        )
+        digest = declaration["artifact"]["digest"]
+        helper_call(
+            packet,
+            "verify_final",
+            {
+                "candidate_head": head,
+                "set_digest": digest,
+                "command_index": 0,
+                "deadline_seconds": 10,
+            },
+        )
+    return {
+        "status": "reviewed",
+        "review_head": head,
+        "verification_set_digest": digest,
+        "open_findings": [],
+        "open_obligation_ids": [],
+        "no_applicable_verification_approved": False,
+        "summary": "provider-neutral whole-branch review",
+    }
+
+
+def generic_emit_result(session_id: str, structured: object) -> None:
+    emit(
+        {
+            "type": "result",
+            "subtype": "success",
+            "session_id": session_id,
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+            "structured_output": structured,
+        }
+    )
+
+
+def generic_main(sequence_path: Path) -> int:
+    action_index, action = consume_action(sequence_path)
+    prompt = flag_value("-p")
+    if prompt is None:
+        raise ValueError("Claude prompt is missing")
+    packet = packet_from_prompt(prompt)
+    session_id = flag_value("--resume") or flag_value("--session-id")
+    if session_id is None:
+        raise ValueError("Claude session is missing")
+    log_path = Path(os.environ["PLAN_RUNNER_FAKE_LOG"])
+    record = {
+        "action": action,
+        "action_index": action_index,
+        "argv": sys.argv[1:],
+        "cwd": os.getcwd(),
+        "mode": packet["mode"],
+        "session_action": "resume" if "--resume" in sys.argv else "fresh",
+    }
+    with log_path.open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps(record, sort_keys=True) + "\n")
+    emit({"type": "system", "subtype": "init", "session_id": session_id})
+    if action == "stalled":
+        time.sleep(2)
+        return 7
+    if action in {"interrupted", "same-failure"}:
+        return 7
+    if action == "implemented":
+        index = packet["current_plan"]["index"]
+        marker = Path(f"plan-{index}.txt")
+        marker.write_text("implemented\n", encoding="utf-8")
+        subprocess.run(["git", "add", marker.name], check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Plan Runner Parity",
+                "-c",
+                "user.email=parity@example.test",
+                "commit",
+                "-m",
+                f"implement plan {index}",
+            ],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        structured = generic_result(packet, action)
+    elif action == "blocked":
+        structured = generic_result(packet, action)
+    elif action == "finalized":
+        structured = generic_finalization(packet)
+    else:
+        raise ValueError(f"unknown provider-neutral action: {action}")
+    generic_emit_result(session_id, structured)
+    return 0
+
+
+generic_sequence = os.environ.get("PLAN_RUNNER_FAKE_SEQUENCE")
+if generic_sequence is not None:
+    raise SystemExit(generic_main(Path(generic_sequence)))
 
 
 scenario = os.environ.get("FAKE_CLAUDE_SCENARIO", "success")
