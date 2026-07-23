@@ -87,9 +87,14 @@ Task status is `pending/running/reported_done`; plan status is
 `ready_for_integration` is final success. The runner does not merge, push, or
 deploy; every successful handoff records `integration=not_observed`.
 
+`run` and `resume` exit 0 only for `ready_for_integration`.
+`inspect` exits 0 for any valid, readable run state; it reports state and does
+not assert completion. `inspect` exits 64 for an unknown run and 65 for invalid state.
+
 | Exit code | Contract |
 |---:|---|
-| 0 | Run is `ready_for_integration`. |
+| `run`/`resume`: 0 | Run is `ready_for_integration`. |
+| `inspect`: 0 | Valid state was read, regardless of lifecycle status. |
 | 2 | Controller stopped with durable externally `resumable` state. |
 | 3 | External/runtime/provider authority is `blocked`. |
 | 4 | Run failed after bounded recovery or provider failure. |

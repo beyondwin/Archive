@@ -49,8 +49,9 @@ simple interruption, with a fresh-session fallback when resume fails or context
 may be contaminated. Each new plan starts a fresh session.
 
 While the controller is alive, bounded changed-strategy recovery is automatic
-in `recovering`; `resumable` means an external invocation must restart
-the controller. Ordinary implementation defects are fixed autonomously. Only
+in `recovering`. A live controller continues the bounded recovery loop itself;
+do not invoke `resume` or `--retry-*`. `resumable` means an external invocation
+must restart the controller. Ordinary implementation defects are fixed autonomously. Only
 true external authority, provider/runtime unavailability, irreconcilable product
 requirements, exhausted changed strategies, or integrity failure stop the run.
 
@@ -74,9 +75,14 @@ separate, explicit validation and must never be inferred from offline results.
 
 ## Quick Reference
 
+`run` and `resume` exit 0 only for `ready_for_integration`.
+`inspect` exits 0 for any valid, readable run state; this is read success, not run completion.
+`inspect` exits 64 for an unknown run and 65 for invalid state.
+
 | Outcome | Meaning |
 |---|---|
-| exit 0 | `ready_for_integration` |
+| `run`/`resume` exit 0 | `ready_for_integration` |
+| `inspect` exit 0 | valid state was read, regardless of lifecycle status |
 | exit 2 | externally `resumable` |
 | exit 3 | externally `blocked` |
 | exit 4 | bounded recovery exhausted or provider failure |

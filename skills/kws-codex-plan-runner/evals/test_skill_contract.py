@@ -30,6 +30,7 @@ class SkillContractTests(unittest.TestCase):
             "durable state, Git HEAD, ledger, and receipts",
             "same-plan session resume",
             "fresh-session fallback",
+            "A live controller continues the bounded recovery loop itself",
             "`recovering`",
             "`resumable`",
             "candidate HEAD",
@@ -51,7 +52,7 @@ class SkillContractTests(unittest.TestCase):
             "./scripts/runner inspect",
             "--retry-blocked",
             "--retry-failed --strategy-note",
-            "| 0 |",
+            "`run`/`resume`: 0",
             "| 2 |",
             "| 3 |",
             "| 4 |",
@@ -63,6 +64,25 @@ class SkillContractTests(unittest.TestCase):
         ):
             with self.subTest(required=required):
                 self.assertIn(required, readme)
+
+    def test_exit_zero_is_command_specific(self) -> None:
+        for document in ("SKILL.md", "README.md"):
+            text = (SKILL_ROOT / document).read_text(encoding="utf-8")
+            with self.subTest(document=document, contract="run"):
+                self.assertIn(
+                    "`run` and `resume` exit 0 only for `ready_for_integration`",
+                    text,
+                )
+            with self.subTest(document=document, contract="inspect-success"):
+                self.assertIn(
+                    "`inspect` exits 0 for any valid, readable run state",
+                    text,
+                )
+            with self.subTest(document=document, contract="inspect-errors"):
+                self.assertIn(
+                    "`inspect` exits 64 for an unknown run and 65 for invalid state",
+                    text,
+                )
 
     def test_subtree_guidance_preserves_runtime_independence(self) -> None:
         guidance = (SKILL_ROOT / "AGENTS.md").read_text(encoding="utf-8")
