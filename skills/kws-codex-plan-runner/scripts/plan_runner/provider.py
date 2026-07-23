@@ -69,7 +69,7 @@ _RECOGNIZED_ERROR_CODES = (
     | _CONTEXT_CODES
     | _TRANSPORT_CODES
 )
-_RESULT_STATUSES = frozenset({"implemented", "blocked", "failed"})
+_RESULT_STATUSES = frozenset({"implemented", "blocked", "failed", "reviewed"})
 
 
 @dataclass(frozen=True)
