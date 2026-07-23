@@ -231,13 +231,15 @@ class CodexProviderTest(unittest.TestCase):
             "auth-blocked": "provider_auth_blocked",
             "auth-then-unknown": "provider_auth_blocked",
             "usage-blocked": "provider_usage_blocked",
-            "unavailable": "provider_unavailable",
         }
         for scenario, code in cases.items():
             with self.subTest(scenario=scenario):
                 outcome = self.launch(scenario)
                 self.assertEqual(outcome.kind, "blocked")
                 self.assertEqual(outcome.provider_code, code)
+        unavailable = self.launch("unavailable")
+        self.assertEqual(unavailable.kind, "transport_failed")
+        self.assertEqual(unavailable.provider_code, "provider_unavailable")
 
     def test_classifies_resume_transport_and_context_outcomes_for_engine(self):
         cases = {

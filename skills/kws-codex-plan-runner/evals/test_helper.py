@@ -14,6 +14,7 @@ SKILL_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SKILL_ROOT / "scripts"))
 
 from plan_runner.evidence import ExactCommand, VerificationReceipt  # noqa: E402
+from plan_runner import helper as helper_module  # noqa: E402
 from plan_runner.helper import (  # noqa: E402
     MAX_MESSAGE_BYTES,
     HelperServer,
@@ -160,16 +161,39 @@ class HelperProtocolTest(unittest.TestCase):
         self.assertEqual(head, HEAD)
         self.assertEqual(response["artifact"]["digest"], DIGEST)
 
+    def test_client_waits_through_declared_command_deadline_without_orphaning_server(self):
+        self.evidence.block = True
+        original_timeout = helper_module._CLIENT_TIMEOUT_SECONDS
+        helper_module._CLIENT_TIMEOUT_SECONDS = 0.02
+        releaser = threading.Thread(
+            target=lambda: (time.sleep(0.08), self.evidence.release.set())
+        )
+        try:
+            with self.server:
+                releaser.start()
+                response = helper_client(
+                    self.server.descriptor.socket_path,
+                    self.server.descriptor.nonce,
+                    self.envelope("verify_focused", self.focused_payload()),
+                )
+                self.assertTrue(response["ok"])
+            releaser.join(1)
+            self.assertFalse(self.server.server_thread.is_alive())
+        finally:
+            helper_module._CLIENT_TIMEOUT_SECONDS = original_timeout
+            self.evidence.release.set()
+            releaser.join(1)
+
     def test_final_set_is_sealed_once_and_final_execution_uses_its_index(self):
         declaration = {"candidate_head": HEAD, "kind": "commands", "commands": [{**self.focused_payload()["command"], "command_role": "final"}]}
         with self.server:
             first = self.raw_request(self.envelope("declare_final_set", {"candidate_head": HEAD, "final_set": declaration}))
             second = self.raw_request(self.envelope("declare_final_set", {"candidate_head": HEAD, "final_set": declaration}))
-            mismatch = self.raw_request(self.envelope("verify_final", {"candidate_head": "c" * 40, "set_digest": DIGEST, "command_index": 0}))
+            mismatch = self.raw_request(self.envelope("verify_final", {"candidate_head": "c" * 40, "set_digest": DIGEST, "command_index": 0, "deadline_seconds": 3}))
             self.assertFalse(mismatch["ok"])
             self.assertEqual(mismatch["error_code"], "candidate_head_mismatch")
             self.assertEqual(self.evidence.executed, [])
-            final = self.raw_request(self.envelope("verify_final", {"candidate_head": HEAD, "set_digest": DIGEST, "command_index": 0}))
+            final = self.raw_request(self.envelope("verify_final", {"candidate_head": HEAD, "set_digest": DIGEST, "command_index": 0, "deadline_seconds": 3}))
         self.assertTrue(first["ok"])
         self.assertFalse(second["ok"])
         self.assertEqual(second["error_code"], "final_set_sealed")
@@ -213,6 +237,7 @@ class HelperProtocolTest(unittest.TestCase):
         try:
             request = self.envelope("verify_focused", self.focused_payload())
             request["nonce"] = server.descriptor.nonce
+            request["payload"]["command"]["deadline_seconds"] = 0.05
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
                 client.connect(str(server.descriptor.socket_path))
                 client.sendall(json.dumps(request, sort_keys=True, separators=(",", ":")).encode() + b"\n")

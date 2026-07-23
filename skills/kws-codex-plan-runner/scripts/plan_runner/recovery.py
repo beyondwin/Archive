@@ -131,7 +131,7 @@ def canonical_failure_signature(facts: Mapping[str, object]) -> str:
     return sha256_json(stable)
 
 
-def _normalized_strategy_note(note: object) -> str:
+def normalize_strategy_note(note: object) -> str:
     if not isinstance(note, str):
         raise ValueError("strategy note must be a string")
     normalized = _SECRET.sub(
@@ -146,7 +146,7 @@ def _normalized_strategy_note(note: object) -> str:
 
 
 def strategy_note_digest(note: object) -> str:
-    normalized = _normalized_strategy_note(note)
+    normalized = normalize_strategy_note(note)
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
