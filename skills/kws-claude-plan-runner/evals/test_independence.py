@@ -11,6 +11,16 @@ sys.path.insert(0, str(SKILL_ROOT / "scripts"))
 
 
 class IndependentRuntimeTest(unittest.TestCase):
+    def test_public_result_schemas_match_codex_contract_bytes(self):
+        peer = REPO_ROOT / "skills" / "kws-codex-plan-runner" / "templates"
+        local = SKILL_ROOT / "templates"
+        for name in ("plan-result.schema.json", "finalization-result.schema.json"):
+            self.assertEqual(
+                (local / name).read_bytes(),
+                (peer / name).read_bytes(),
+                f"{name} semantic contract drifted",
+            )
+
     def test_runtime_imports_no_codex_runner_module(self):
         forbidden = {
             "kws-codex-plan-runner",
