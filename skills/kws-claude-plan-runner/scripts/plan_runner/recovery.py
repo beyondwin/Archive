@@ -16,8 +16,56 @@ _CONTAMINATED_REASONS = frozenset(("stall_expired", "session_invalid"))
 _STABLE_FAILURE_FIELDS = (
     "reason_code", "provider_code", "command_identity", "candidate_head", "input_digest"
 )
-_SECRET_ASSIGNMENT = re.compile(
-    r"(?i)(?:[A-Z][A-Z0-9_]*(?:TOKEN|SECRET|API_KEY)|password)=[^\s]+"
+_AUTH_HEADER_VALUE = re.compile(
+    r"""(?ix)
+    (?P<prefix>
+        (?<![A-Z0-9_.-])
+        ["']?(?:proxy-)?authorization["']?
+        \s*[:=]\s*
+    )
+    (?P<value>
+        "(?:\\.|[^"\\\r\n])*"
+        |'(?:\\.|[^'\\\r\n])*'
+        |(?:bearer|basic)\s+[^\s,;}]+
+    )
+    """
+)
+_SECRET_KEY_VALUE = re.compile(
+    r"""(?ix)
+    (?P<prefix>
+        (?<![A-Z0-9_.-])
+        ["']?
+        (?:
+            (?:[A-Z][A-Z0-9_.-]*[_-])?
+            (?:TOKEN|SECRET|API[_-]?KEY|PASSWORD|PASSWD|CREDENTIAL|
+               ACCESS[_-]?KEY|PRIVATE[_-]?KEY|SECRET[_-]?KEY)
+            |DATABASE_URL|PGPASSWORD|MYSQL_PWD
+        )
+        ["']?
+        \s*[:=]\s*
+    )
+    (?P<value>
+        "(?:\\.|[^"\\\r\n])*"
+        |'(?:\\.|[^'\\\r\n])*'
+        |[^\s,;}]+
+    )
+    """
+)
+_KNOWN_PROVIDER_SECRET = re.compile(
+    r"""(?x)
+    (?<![A-Za-z0-9_-])
+    (?:
+        sk-(?:ant|proj|svcacct)-[A-Za-z0-9_-]{12,}
+        |sk-[A-Za-z0-9_-]{20,}
+        |gh[pousr]_[A-Za-z0-9]{20,}
+        |github_pat_[A-Za-z0-9_]{20,}
+        |(?:AKIA|ASIA)[A-Z0-9]{16}
+        |AIza[A-Za-z0-9_-]{20,}
+        |xox[baprs]-[A-Za-z0-9-]{10,}
+        |(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}
+    )
+    (?![A-Za-z0-9_-])
+    """
 )
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _NOTE_LIMIT = 4096
@@ -101,13 +149,33 @@ def canonical_failure_signature(facts: Mapping[str, object]) -> str:
 def normalize_strategy_note(note: object) -> str:
     if not isinstance(note, str):
         raise ValueError("strategy note must be a string")
-    cleaned = _SECRET_ASSIGNMENT.sub(
-        lambda match: match.group(0).split("=", 1)[0] + "=[REDACTED]", note.strip()
+    cleaned = _AUTH_HEADER_VALUE.sub(
+        _mask_structured_secret,
+        note.strip(),
+    )
+    cleaned = _SECRET_KEY_VALUE.sub(
+        _mask_structured_secret,
+        cleaned,
+    )
+    cleaned = _KNOWN_PROVIDER_SECRET.sub(
+        "[REDACTED_PROVIDER_CREDENTIAL]",
+        cleaned,
     )
     cleaned = cleaned.encode("utf-8")[:_NOTE_LIMIT].decode("utf-8", "ignore")
     if not cleaned:
         raise ValueError("strategy note must be non-empty")
     return cleaned
+
+
+def _mask_structured_secret(match: re.Match[str]) -> str:
+    value = match.group("value")
+    if value.startswith('"') and value.endswith('"'):
+        replacement = '"[REDACTED]"'
+    elif value.startswith("'") and value.endswith("'"):
+        replacement = "'[REDACTED]'"
+    else:
+        replacement = "[REDACTED]"
+    return match.group("prefix") + replacement
 
 
 def strategy_note_digest(note: object) -> str:

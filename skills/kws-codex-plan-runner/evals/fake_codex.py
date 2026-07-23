@@ -46,7 +46,18 @@ def _record(
         key: value
         for key, value in os.environ.items()
         if key.startswith(("OPENAI_", "CODEX_", "GIT_CONFIG_", "KWS_PLAN_RUNNER_"))
-        or key in {"GIT_TERMINAL_PROMPT", "SSH_AUTH_SOCK", "GH_TOKEN"}
+        or key
+        in {
+            "DATABASE_URL",
+            "DOCKER_AUTH_CONFIG",
+            "GIT_TERMINAL_PROMPT",
+            "HOME",
+            "PGPASSWORD",
+            "SSH_AUTH_SOCK",
+            "STRIPE_SECRET_KEY",
+            "XDG_CONFIG_HOME",
+            "GH_TOKEN",
+        }
     }
     record = {
         "argv": argv,

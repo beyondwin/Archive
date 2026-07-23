@@ -5,6 +5,7 @@ import math
 import os
 import re
 import selectors
+import stat
 import subprocess
 import time
 import uuid
@@ -183,6 +184,12 @@ class CodexAdapter:
             remotes=self._remotes,
             run_id=self._run_id,
         )
+        isolated_home = request.output_path.parent / ".codex-child-home"
+        isolated_config = isolated_home / ".config"
+        _ensure_private_directory(isolated_home)
+        _ensure_private_directory(isolated_config)
+        env["HOME"] = str(isolated_home)
+        env["XDG_CONFIG_HOME"] = str(isolated_config)
         self._add_helper_env(env)
         request.output_path.unlink(missing_ok=True)
 
@@ -542,6 +549,20 @@ class CodexAdapter:
         ):
             return None
         return value
+
+
+def _ensure_private_directory(path: Path) -> None:
+    try:
+        path.mkdir(mode=0o700, exist_ok=True)
+        metadata = path.lstat()
+    except OSError as error:
+        raise ValueError("isolated provider home is unavailable") from error
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+        raise ValueError("isolated provider home must be a directory")
+    try:
+        path.chmod(0o700)
+    except OSError as error:
+        raise ValueError("isolated provider home permissions are unavailable") from error
 
 
 def _require_uuid(value: object) -> str:

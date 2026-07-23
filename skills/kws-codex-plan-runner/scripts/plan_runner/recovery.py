@@ -22,8 +22,56 @@ _SESSION_INVALIDATING_INTERRUPTS = frozenset(
     }
 )
 _SESSION_INVALIDATING_REASONS = frozenset({"stall_expired", "session_invalid"})
-_SECRET = re.compile(
-    r"(?i)(?:[A-Z][A-Z0-9_]*(?:TOKEN|SECRET|API_KEY)|password)=[^\s]+"
+_AUTHORIZATION_SECRET = re.compile(
+    r"""(?ix)
+    (?P<prefix>
+        (?<![A-Z0-9_.-])
+        ["']?(?:proxy-)?authorization["']?
+        \s*[:=]\s*
+    )
+    (?P<value>
+        "(?:\\.|[^"\\\r\n])*"
+        |'(?:\\.|[^'\\\r\n])*'
+        |(?:bearer|basic)\s+[^\s,;}]+
+    )
+    """
+)
+_NAMED_SECRET = re.compile(
+    r"""(?ix)
+    (?P<prefix>
+        (?<![A-Z0-9_.-])
+        ["']?
+        (?:
+            (?:[A-Z][A-Z0-9_.-]*[_-])?
+            (?:TOKEN|SECRET|API[_-]?KEY|PASSWORD|PASSWD|CREDENTIAL|
+               ACCESS[_-]?KEY|PRIVATE[_-]?KEY|SECRET[_-]?KEY)
+            |DATABASE_URL|PGPASSWORD|MYSQL_PWD
+        )
+        ["']?
+        \s*[:=]\s*
+    )
+    (?P<value>
+        "(?:\\.|[^"\\\r\n])*"
+        |'(?:\\.|[^'\\\r\n])*'
+        |[^\s,;}]+
+    )
+    """
+)
+_PROVIDER_CREDENTIAL = re.compile(
+    r"""(?x)
+    (?<![A-Za-z0-9_-])
+    (?:
+        sk-(?:ant|proj|svcacct)-[A-Za-z0-9_-]{12,}
+        |sk-[A-Za-z0-9_-]{20,}
+        |gh[pousr]_[A-Za-z0-9]{20,}
+        |github_pat_[A-Za-z0-9_]{20,}
+        |(?:AKIA|ASIA)[A-Z0-9]{16}
+        |AIza[A-Za-z0-9_-]{20,}
+        |xox[baprs]-[A-Za-z0-9-]{10,}
+        |(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}
+    )
+    (?![A-Za-z0-9_-])
+    """
 )
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _STABLE_FAILURE_FIELDS = (
@@ -134,15 +182,34 @@ def canonical_failure_signature(facts: Mapping[str, object]) -> str:
 def normalize_strategy_note(note: object) -> str:
     if not isinstance(note, str):
         raise ValueError("strategy note must be a string")
-    normalized = _SECRET.sub(
-        lambda match: match.group(0).split("=", 1)[0] + "=[REDACTED]",
+    normalized = _AUTHORIZATION_SECRET.sub(
+        _redacted_named_value,
         note.strip(),
+    )
+    normalized = _NAMED_SECRET.sub(
+        _redacted_named_value,
+        normalized,
+    )
+    normalized = _PROVIDER_CREDENTIAL.sub(
+        "[REDACTED_PROVIDER_CREDENTIAL]",
+        normalized,
     )
     encoded = normalized.encode("utf-8")[:_MAX_STRATEGY_BYTES]
     normalized = encoded.decode("utf-8", "ignore")
     if not normalized:
         raise ValueError("strategy note must be non-empty")
     return normalized
+
+
+def _redacted_named_value(match: re.Match[str]) -> str:
+    value = match.group("value")
+    if value.startswith('"') and value.endswith('"'):
+        marker = '"[REDACTED]"'
+    elif value.startswith("'") and value.endswith("'"):
+        marker = "'[REDACTED]'"
+    else:
+        marker = "[REDACTED]"
+    return match.group("prefix") + marker
 
 
 def strategy_note_digest(note: object) -> str:

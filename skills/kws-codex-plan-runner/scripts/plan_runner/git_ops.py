@@ -62,6 +62,19 @@ _UNRELATED_CREDENTIAL_HINTS = (
     "TENANT",
     "TOKEN",
 )
+_OPERATOR_CONFIG_ROOTS = frozenset(("HOME", "XDG_CONFIG_HOME"))
+_SERVICE_CREDENTIALS = frozenset(
+    (
+        "DATABASE_URL",
+        "DB_PASSWORD",
+        "DOCKER_AUTH_CONFIG",
+        "MONGODB_URI",
+        "MYSQL_PWD",
+        "PGPASSWORD",
+        "REDIS_URL",
+        "STRIPE_SECRET_KEY",
+    )
+)
 
 
 @dataclass(frozen=True)
@@ -328,6 +341,8 @@ def sanitized_child_env(
             continue
         if key == "GIT_CONFIG_COUNT" or key.startswith("GIT_CONFIG_KEY_") or key.startswith("GIT_CONFIG_VALUE_"):
             continue
+        if key in _OPERATOR_CONFIG_ROOTS:
+            continue
         credential = key.endswith(("_TOKEN", "_SECRET", "_API_KEY"))
         provider_auth = key.startswith(allowed_prefixes)
         unrelated_family_credential = key.startswith(_UNRELATED_CREDENTIAL_FAMILIES) and any(
@@ -336,6 +351,7 @@ def sanitized_child_env(
         if not provider_auth and (
             credential
             or key in _CREDENTIAL_CONFIG_PATHS
+            or key in _SERVICE_CREDENTIALS
             or unrelated_family_credential
         ):
             continue

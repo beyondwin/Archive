@@ -41,6 +41,52 @@ class RecoveryBehaviorTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             normalize_strategy_note("  ")
 
+    def test_strategy_notes_redact_structured_headers_and_provider_credentials(self):
+        provider_values = (
+            "sk-proj-" + "A" * 24,
+            "sk-ant-api03-" + "B" * 24,
+            "ghp_" + "c" * 36,
+            "AKIA" + "D" * 16,
+            "AIza" + "E" * 28,
+            "xoxb-1234567890-" + "f" * 20,
+            "sk_live_" + "g" * 24,
+        )
+        note = "\n".join(
+            (
+                "API_TOKEN = whitespace-secret",
+                '"anthropic_api_key": "json-secret"',
+                "password: yaml-secret",
+                "Authorization: Bearer bearer-secret",
+                "proxy-authorization = Basic basic-secret",
+                "provider forms " + " ".join(provider_values),
+            )
+        )
+
+        normalized = normalize_strategy_note(note)
+
+        for secret in (
+            "whitespace-secret",
+            "json-secret",
+            "yaml-secret",
+            "bearer-secret",
+            "basic-secret",
+            *provider_values,
+        ):
+            self.assertNotIn(secret, normalized)
+        self.assertGreaterEqual(normalized.count("[REDACTED]"), 5)
+        self.assertGreaterEqual(
+            normalized.count("[REDACTED_PROVIDER_CREDENTIAL]"), len(provider_values)
+        )
+        alternate = (
+            note.replace("whitespace-secret", "different-whitespace")
+            .replace("json-secret", "different-json")
+            .replace("yaml-secret", "different-yaml")
+            .replace("bearer-secret", "different-bearer")
+            .replace("basic-secret", "different-basic")
+        )
+        self.assertEqual(strategy_note_digest(note), strategy_note_digest(alternate))
+        self.assertLessEqual(len(normalized.encode("utf-8")), 4_096)
+
     def test_failure_signature_ignores_unstable_logs(self):
         base = {"reason_code": "stall_expired", "provider_code": "x", "input_digest": "i"}
         self.assertEqual(

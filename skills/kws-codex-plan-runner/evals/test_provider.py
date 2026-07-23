@@ -78,6 +78,12 @@ class CodexProviderTest(unittest.TestCase):
             "OPENAI_API_KEY": "provider-secret",
             "GH_TOKEN": "must-not-leak",
             "SSH_AUTH_SOCK": "/tmp/agent.sock",
+            "HOME": "/Users/operator",
+            "XDG_CONFIG_HOME": "/Users/operator/.config",
+            "DOCKER_AUTH_CONFIG": '{"auths":{"registry.example":"secret"}}',
+            "DATABASE_URL": "postgres://operator:secret@database/app",
+            "PGPASSWORD": "database-secret",
+            "STRIPE_SECRET_KEY": "sk_live_service_secret",
             "LANG": "C.UTF-8",
         }
         values = {
@@ -197,6 +203,18 @@ class CodexProviderTest(unittest.TestCase):
         self.assertEqual(record["env"]["OPENAI_API_KEY"], "provider-secret")
         self.assertNotIn("GH_TOKEN", record["env"])
         self.assertNotIn("SSH_AUTH_SOCK", record["env"])
+        for key in (
+            "DOCKER_AUTH_CONFIG",
+            "DATABASE_URL",
+            "PGPASSWORD",
+            "STRIPE_SECRET_KEY",
+        ):
+            self.assertNotIn(key, record["env"])
+        isolated_home = self.output.parent / ".codex-child-home"
+        self.assertEqual(record["env"]["HOME"], str(isolated_home))
+        self.assertEqual(
+            record["env"]["XDG_CONFIG_HOME"], str(isolated_home / ".config")
+        )
         self.assertEqual(record["env"]["GIT_TERMINAL_PROMPT"], "0")
         self.assertEqual(record["env"]["GIT_CONFIG_COUNT"], "1")
         self.assertEqual(

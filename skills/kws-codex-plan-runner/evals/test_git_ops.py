@@ -202,11 +202,17 @@ class GitWorkspaceTest(unittest.TestCase):
         source_env = {
             "PATH": os.environ["PATH"],
             "LANG": "C.UTF-8",
+            "HOME": "/Users/operator",
+            "XDG_CONFIG_HOME": "/Users/operator/.config",
             "AWS_REGION": "ap-northeast-2",
             "GOOGLE_CLOUD_PROJECT": "example-project",
             "OPENAI_API_KEY": "provider-secret",
             "OPENAI_ORG_ID": "provider-org",
             "CODEX_HOME": "/tmp/codex",
+            "DOCKER_AUTH_CONFIG": '{"auths":{"registry.example":"secret"}}',
+            "DATABASE_URL": "postgres://operator:secret@database/app",
+            "PGPASSWORD": "database-secret",
+            "STRIPE_SECRET_KEY": "sk_live_service_secret",
             **unrelated,
         }
 
@@ -218,6 +224,15 @@ class GitWorkspaceTest(unittest.TestCase):
         )
 
         self.assertTrue(unrelated.keys().isdisjoint(clean))
+        for key in (
+            "HOME",
+            "XDG_CONFIG_HOME",
+            "DOCKER_AUTH_CONFIG",
+            "DATABASE_URL",
+            "PGPASSWORD",
+            "STRIPE_SECRET_KEY",
+        ):
+            self.assertNotIn(key, clean)
         self.assertEqual(clean["OPENAI_API_KEY"], "provider-secret")
         self.assertEqual(clean["OPENAI_ORG_ID"], "provider-org")
         self.assertEqual(clean["CODEX_HOME"], "/tmp/codex")
