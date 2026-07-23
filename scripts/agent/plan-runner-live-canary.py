@@ -1438,7 +1438,7 @@ def _runner_environment(provider: str, home: Path) -> dict[str, str]:
 def probe_runner(provider: str) -> dict[str, object]:
     started = time.monotonic()
     with tempfile.TemporaryDirectory(prefix=f"{provider}-runner-canary-") as raw:
-        root = Path(raw)
+        root = Path(raw).resolve(strict=True)
         home = root / "operator-home"
         home.mkdir(mode=0o700)
         try:
@@ -1470,6 +1470,17 @@ def probe_runner(provider: str) -> dict[str, object]:
                 final_head=None,
                 elapsed=time.monotonic() - started,
                 reason_code=unavailable,
+            )
+        if provider == "claude" and not claude_auth_available(root, runner_env):
+            return normalized_result(
+                provider=provider,
+                mode="runner",
+                status="blocked",
+                provider_version=version,
+                session_action="not_started",
+                final_head=None,
+                elapsed=time.monotonic() - started,
+                reason_code="provider_auth_blocked",
             )
         workspace = root / "source"
         try:

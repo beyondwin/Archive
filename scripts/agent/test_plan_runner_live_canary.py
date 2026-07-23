@@ -505,6 +505,58 @@ class IsolationTests(unittest.TestCase):
         create_repository.assert_not_called()
         provider_session.assert_not_called()
 
+    def test_runner_resolves_temporary_symlink_before_workspace_creation(self):
+        with tempfile.TemporaryDirectory() as raw:
+            real = Path(raw) / "real"
+            real.mkdir()
+            alias = Path(raw) / "alias"
+            alias.symlink_to(real, target_is_directory=True)
+            expected_workspace = real.resolve(strict=True) / "source"
+            temporary = mock.MagicMock()
+            temporary.return_value.__enter__.return_value = str(alias)
+            temporary.return_value.__exit__.return_value = False
+            with (
+                mock.patch.object(canary.tempfile, "TemporaryDirectory", temporary),
+                mock.patch.object(canary, "_runner_environment", return_value={}),
+                mock.patch.object(
+                    canary,
+                    "_provider_version",
+                    return_value=("codex-cli test", None),
+                ),
+                mock.patch.object(
+                    canary,
+                    "_create_repository",
+                    side_effect=canary.CanaryError("runner_probe_failed"),
+                ) as create_repository,
+            ):
+                canary.probe_runner("codex")
+        self.assertEqual(
+            create_repository.call_args.args[0],
+            expected_workspace,
+        )
+
+    def test_claude_runner_without_isolated_auth_blocks_before_repository(self):
+        with (
+            mock.patch.object(canary, "_runner_environment", return_value={}),
+            mock.patch.object(
+                canary,
+                "_provider_version",
+                return_value=("2.1.206 (Claude Code)", None),
+            ),
+            mock.patch.object(canary, "claude_auth_available", return_value=False),
+            mock.patch.object(canary, "_create_repository") as create_repository,
+            mock.patch.object(
+                canary,
+                "run_bounded",
+                return_value=canary.CommandResult(1, "", "", False),
+            ),
+        ):
+            result = canary.probe_runner("claude")
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["reason_code"], "provider_auth_blocked")
+        self.assertEqual(result["session_action"], "not_started")
+        create_repository.assert_not_called()
+
 
 class SessionAndRunnerOutcomeTests(unittest.TestCase):
     def test_fake_session_success_requires_exact_nonce_id_and_clean_head(self):
