@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import os
 import signal
@@ -8,6 +9,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import uuid
 from pathlib import Path
@@ -62,6 +64,44 @@ class LauncherTests(unittest.TestCase):
                 self.assertIn('exec "$PYTHON_BIN" "$SCRIPT_DIR/runner.py" "$@"', text)
                 for forbidden in ("uv run", "uv python install", "python3"):
                     self.assertNotIn(forbidden, text)
+
+    def test_invalid_args_exit_64_before_missing_runtime(self):
+        launcher = SCRIPT_DIR / "plan-runner-live-canary"
+        result = subprocess.run(
+            ["/bin/sh", str(launcher), "--provider", "bogus", "--mode", "session"],
+            cwd="/tmp",
+            env={"PATH": "/usr/bin:/bin"},
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 64)
+        lines = result.stdout.splitlines()
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(json.loads(lines[0])["reason_code"], "invalid_invocation")
+
+    def test_missing_runtime_emits_one_blocked_line_per_requested_probe(self):
+        launcher = SCRIPT_DIR / "plan-runner-live-canary"
+        result = subprocess.run(
+            ["/bin/sh", str(launcher), "--provider", "all", "--mode", "all"],
+            cwd="/tmp",
+            env={"PATH": "/usr/bin:/bin"},
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 3)
+        values = [json.loads(line) for line in result.stdout.splitlines()]
+        self.assertEqual(
+            {(item["provider"], item["mode"]) for item in values},
+            {
+                ("codex", "session"),
+                ("codex", "runner"),
+                ("claude", "session"),
+                ("claude", "runner"),
+            },
+        )
+        self.assertTrue(all(item["reason_code"] == "runtime_missing" for item in values))
 
 
 class CommandConstructionTests(unittest.TestCase):
@@ -147,6 +187,74 @@ class ProcessAndParserTests(unittest.TestCase):
         )
         self.assertLessEqual(canary.TERM_GRACE_SECONDS, 2.0)
 
+    def test_controller_exception_cleans_and_reaps_process_group(self):
+        process = mock.Mock()
+        process.pid = 654
+        process.communicate.side_effect = [KeyboardInterrupt(), ("", "")]
+        process.returncode = -signal.SIGTERM
+        with (
+            mock.patch.object(canary.subprocess, "Popen", return_value=process),
+            mock.patch.object(canary.os, "killpg") as killpg,
+        ):
+            with self.assertRaises(KeyboardInterrupt):
+                canary.run_bounded(["provider"], cwd=Path("/tmp"), timeout=10)
+        killpg.assert_called_once_with(654, signal.SIGTERM)
+        self.assertEqual(process.communicate.call_count, 2)
+
+    def test_deadline_leaves_no_running_descendant_in_process_group(self):
+        child_code = (
+            "import signal,time;"
+            "signal.signal(signal.SIGTERM,signal.SIG_IGN);"
+            "time.sleep(30)"
+        )
+        leader_code = (
+            "import signal,subprocess,sys,time;"
+            f"child=subprocess.Popen([sys.executable,'-c',{child_code!r}]);"
+            "print(child.pid,flush=True);"
+            "signal.signal(signal.SIGTERM,signal.SIG_IGN);"
+            "time.sleep(30)"
+        )
+        result = canary.run_bounded(
+            [sys.executable, "-c", leader_code],
+            cwd=Path("/tmp"),
+            timeout=0.1,
+        )
+        self.assertTrue(result.timed_out)
+        descendant = int(result.stdout.splitlines()[0])
+        deadline = time.monotonic() + 2
+        state = ""
+        while time.monotonic() < deadline:
+            observed = subprocess.run(
+                ["/bin/ps", "-p", str(descendant), "-o", "stat="],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            state = observed.stdout.strip()
+            if not state or state.startswith("Z"):
+                break
+            time.sleep(0.02)
+        self.assertTrue(not state or state.startswith("Z"), state)
+
+    def test_command_installs_and_restores_sigint_sigterm_handlers(self):
+        process = mock.Mock()
+        process.pid = 777
+        process.communicate.return_value = ("", "")
+        process.returncode = 0
+        with (
+            mock.patch.object(canary.subprocess, "Popen", return_value=process),
+            mock.patch.object(canary.signal, "getsignal", return_value="old"),
+            mock.patch.object(canary.signal, "signal") as install,
+        ):
+            canary.run_bounded(["provider"], cwd=Path("/tmp"), timeout=10)
+        installed = [call.args[0] for call in install.call_args_list[:2]]
+        restored = install.call_args_list[-2:]
+        self.assertEqual(installed, [signal.SIGINT, signal.SIGTERM])
+        self.assertEqual(
+            restored,
+            [mock.call(signal.SIGINT, "old"), mock.call(signal.SIGTERM, "old")],
+        )
+
     def test_codex_parser_returns_only_bounded_normalized_fields(self):
         session_id = str(uuid.uuid4())
         raw = "\n".join(
@@ -218,6 +326,87 @@ class ProcessAndParserTests(unittest.TestCase):
         )
         self.assertEqual(outcome, ("blocked", "provider_auth_blocked"))
         self.assertNotIn(secret, json.dumps(parsed.normalized))
+
+    def test_structured_runtime_missing_is_blocked_before_stderr_fallback(self):
+        raw = json.dumps(
+            {"type": "error", "error": {"code": "runtime_missing"}}
+        ) + "\n"
+        parsed = canary.parse_codex_stream(raw)
+        outcome = canary.classify_provider_result(
+            canary.CommandResult(3, raw, "unrelated failure", False), parsed
+        )
+        self.assertEqual(outcome, ("blocked", "runtime_missing"))
+
+    def test_runner_structured_blocked_summary_wins_over_stderr(self):
+        outcome = canary.classify_runner_summary(
+            3,
+            {"status": "blocked", "reason_code": "provider_auth_blocked"},
+            "unparseable diagnostic",
+        )
+        self.assertEqual(outcome, ("blocked", "provider_auth_blocked"))
+
+    def test_runner_blocked_state_refines_structured_reason(self):
+        with tempfile.TemporaryDirectory() as raw:
+            home = Path(raw)
+            run_id = "plan-" + str(uuid.uuid4())
+            root = home / ".codex/plan-runner" / run_id
+            root.mkdir(parents=True)
+            (root / "state.json").write_text(
+                json.dumps(
+                    {
+                        "status": "blocked",
+                        "failure": {"reason_code": "provider_auth_blocked"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                canary.blocked_runner_reason(home, "codex", run_id),
+                "provider_auth_blocked",
+            )
+
+
+class IsolationTests(unittest.TestCase):
+    def test_codex_auth_is_copied_to_private_disposable_home_only(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            operator = root / "operator"
+            isolated = root / "isolated"
+            (operator / ".codex").mkdir(parents=True)
+            auth = operator / ".codex/auth.json"
+            auth.write_text('{"token":"secret"}', encoding="utf-8")
+            auth.chmod(0o600)
+            env = canary.isolated_provider_environment(
+                "codex",
+                isolated,
+                operator_home=operator,
+                source_env={"PATH": "/usr/bin:/bin", "OPENAI_API_KEY": "env-secret"},
+            )
+            copied = isolated / ".codex/auth.json"
+            self.assertEqual(env["HOME"], str(isolated))
+            self.assertEqual(env["CODEX_HOME"], str(isolated / ".codex"))
+            self.assertEqual(copied.read_text(encoding="utf-8"), '{"token":"secret"}')
+            self.assertEqual(stat.S_IMODE(copied.stat().st_mode), 0o600)
+            self.assertEqual(auth.read_text(encoding="utf-8"), '{"token":"secret"}')
+            self.assertFalse((isolated / ".codex/history.jsonl").exists())
+
+    def test_claude_uses_empty_disposable_config_and_preserves_env_auth(self):
+        with tempfile.TemporaryDirectory() as raw:
+            isolated = Path(raw) / "isolated"
+            env = canary.isolated_provider_environment(
+                "claude",
+                isolated,
+                operator_home=Path(raw) / "operator",
+                source_env={
+                    "PATH": "/usr/bin:/bin",
+                    "ANTHROPIC_API_KEY": "env-secret",
+                },
+            )
+            config = isolated / ".claude"
+            self.assertEqual(env["HOME"], str(isolated))
+            self.assertEqual(env["CLAUDE_CONFIG_DIR"], str(config))
+            self.assertEqual(env["ANTHROPIC_API_KEY"], "env-secret")
+            self.assertEqual(list(config.iterdir()), [])
 
 
 class SessionAndRunnerOutcomeTests(unittest.TestCase):
@@ -293,19 +482,248 @@ class SessionAndRunnerOutcomeTests(unittest.TestCase):
         self.assertFalse(valid)
         self.assertEqual(reason, "plan_session_not_distinct")
 
-    def test_real_receipt_shape_requires_success_at_final_head(self):
+    def _sealed_evidence(self, root: Path):
+        run_root = root / "run"
+        worktree = root / "worktree"
+        run_root.mkdir()
+        worktree.mkdir()
+        executable = root / "verify"
+        executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        executable.chmod(0o755)
+        executable = executable.resolve()
         candidate = "f" * 40
+        command = {
+            "command_id": "final-1",
+            "command_role": "final",
+            "argv": [str(executable), "--check"],
+            "cwd": ".",
+            "input_digest": "a" * 64,
+            "deadline_seconds": 30,
+        }
+        final_set = {
+            "kind": "commands",
+            "candidate_head": candidate,
+            "commands": [command],
+        }
+        identity = {
+            "argv": command["argv"],
+            "candidate_head": candidate,
+            "command_role": "final",
+            "cwd": str(worktree.resolve()),
+            "environment_fingerprint": "b" * 64,
+            "executable_identity": {
+                "path": str(executable),
+                "sha256": hashlib.sha256(executable.read_bytes()).hexdigest(),
+                "mode": executable.stat().st_mode,
+                "size": executable.stat().st_size,
+            },
+            "input_digest": command["input_digest"],
+            "worktree_digest": "c" * 64,
+        }
         receipt = {
-            "identity": {"candidate_head": candidate},
+            "schema_version": 1,
+            "identity": identity,
+            "identity_digest": hashlib.sha256(
+                json.dumps(
+                    identity, sort_keys=True, separators=(",", ":")
+                ).encode()
+            ).hexdigest(),
             "outcome": "success",
             "exit_code": 0,
+            "stdout_tail": "",
+            "stderr_tail": "",
+            "process": {},
         }
-        self.assertTrue(canary.valid_receipt_payload(receipt, candidate))
-        self.assertFalse(
-            canary.valid_receipt_payload(
-                {**receipt, "outcome": "failed"}, candidate
+        documents = {
+            "final_verification_set": final_set,
+            "verification_receipt": receipt,
+        }
+        refs = {}
+        for kind, value in documents.items():
+            raw_value = json.dumps(
+                value, sort_keys=True, separators=(",", ":")
+            ).encode()
+            digest = hashlib.sha256(raw_value).hexdigest()
+            relative = Path("artifacts") / kind / f"{digest}.json"
+            path = run_root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(raw_value)
+            refs[kind] = {
+                "kind": kind,
+                "digest": digest,
+                "relative_path": str(relative),
+            }
+        review = {
+            "status": "reviewed",
+            "candidate_head": candidate,
+            "review_head": candidate,
+            "verification_set_digest": refs["final_verification_set"]["digest"],
+            "open_findings": [],
+            "open_obligation_ids": [],
+        }
+        handoff = {
+            "status": "ready_for_integration",
+            "candidate_head": candidate,
+            "review_head": candidate,
+            "verification_set_digest": refs["final_verification_set"]["digest"],
+            "review_receipt": None,
+            "verification_receipts": [refs["verification_receipt"]],
+            "integration": "not_observed",
+        }
+        for kind, value in (
+            ("final_review_receipt", review),
+            ("branch_handoff", handoff),
+        ):
+            raw_value = json.dumps(
+                value, sort_keys=True, separators=(",", ":")
+            ).encode()
+            digest = hashlib.sha256(raw_value).hexdigest()
+            relative = Path("artifacts") / kind / f"{digest}.json"
+            path = run_root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(raw_value)
+            refs[kind] = {
+                "kind": kind,
+                "digest": digest,
+                "relative_path": str(relative),
+            }
+        handoff["review_receipt"] = refs["final_review_receipt"]
+        raw_handoff = json.dumps(
+            handoff, sort_keys=True, separators=(",", ":")
+        ).encode()
+        old_handoff = run_root / refs["branch_handoff"]["relative_path"]
+        old_handoff.unlink()
+        digest = hashlib.sha256(raw_handoff).hexdigest()
+        relative = Path("artifacts/branch_handoff") / f"{digest}.json"
+        (run_root / relative).write_bytes(raw_handoff)
+        refs["branch_handoff"] = {
+            "kind": "branch_handoff",
+            "digest": digest,
+            "relative_path": str(relative),
+        }
+        state = {
+            "artifact_refs": [
+                refs["final_verification_set"],
+                refs["verification_receipt"],
+                refs["final_review_receipt"],
+                refs["branch_handoff"],
+            ],
+            "finalization": {
+                "candidate_head": candidate,
+                "review_head": candidate,
+                "verification_set_digest": refs["final_verification_set"]["digest"],
+            },
+        }
+        return run_root, worktree, candidate, state, refs
+
+    def test_artifacts_require_exact_command_receipt_binding(self):
+        with tempfile.TemporaryDirectory() as raw:
+            run_root, worktree, candidate, state, _refs = self._sealed_evidence(
+                Path(raw)
             )
-        )
+            valid, reason = canary.validate_runner_artifacts(
+                state, run_root, worktree, candidate
+            )
+            self.assertTrue(valid, reason)
+
+    def test_artifacts_reject_duplicate_receipt_reference(self):
+        with tempfile.TemporaryDirectory() as raw:
+            run_root, worktree, candidate, state, refs = self._sealed_evidence(
+                Path(raw)
+            )
+            state["artifact_refs"].append(refs["verification_receipt"])
+            valid, reason = canary.validate_runner_artifacts(
+                state, run_root, worktree, candidate
+            )
+            self.assertFalse(valid)
+            self.assertEqual(reason, "verification_receipt_duplicate")
+
+    def test_artifacts_reject_finalization_set_digest_mismatch(self):
+        with tempfile.TemporaryDirectory() as raw:
+            run_root, worktree, candidate, state, _refs = self._sealed_evidence(
+                Path(raw)
+            )
+            state["finalization"]["verification_set_digest"] = "0" * 64
+            valid, reason = canary.validate_runner_artifacts(
+                state, run_root, worktree, candidate
+            )
+            self.assertFalse(valid)
+            self.assertEqual(reason, "verification_set_invalid")
+
+    def test_artifacts_reject_changed_executable_identity(self):
+        with tempfile.TemporaryDirectory() as raw:
+            run_root, worktree, candidate, state, refs = self._sealed_evidence(
+                Path(raw)
+            )
+            receipt = json.loads(
+                (run_root / refs["verification_receipt"]["relative_path"]).read_text()
+            )
+            Path(receipt["identity"]["executable_identity"]["path"]).write_text(
+                "#!/bin/sh\nexit 1\n", encoding="utf-8"
+            )
+            valid, reason = canary.validate_runner_artifacts(
+                state, run_root, worktree, candidate
+            )
+            self.assertFalse(valid)
+            self.assertEqual(reason, "verification_receipt_invalid")
+
+    def test_artifacts_reject_command_argv_mismatch(self):
+        with tempfile.TemporaryDirectory() as raw:
+            run_root, worktree, candidate, state, refs = self._sealed_evidence(
+                Path(raw)
+            )
+            receipt_path = run_root / refs["verification_receipt"]["relative_path"]
+            receipt = json.loads(receipt_path.read_text())
+            receipt["identity"]["argv"] = ["/bin/false"]
+            receipt["identity_digest"] = hashlib.sha256(
+                json.dumps(
+                    receipt["identity"], sort_keys=True, separators=(",", ":")
+                ).encode()
+            ).hexdigest()
+            raw_receipt = json.dumps(
+                receipt, sort_keys=True, separators=(",", ":")
+            ).encode()
+            receipt_path.unlink()
+            receipt_digest = hashlib.sha256(raw_receipt).hexdigest()
+            receipt_relative = (
+                Path("artifacts/verification_receipt")
+                / f"{receipt_digest}.json"
+            )
+            (run_root / receipt_relative).write_bytes(raw_receipt)
+            old_ref = refs["verification_receipt"]
+            new_ref = {
+                "kind": "verification_receipt",
+                "digest": receipt_digest,
+                "relative_path": str(receipt_relative),
+            }
+            state["artifact_refs"][
+                state["artifact_refs"].index(old_ref)
+            ] = new_ref
+            handoff_ref = refs["branch_handoff"]
+            handoff_path = run_root / handoff_ref["relative_path"]
+            handoff = json.loads(handoff_path.read_text())
+            handoff["verification_receipts"] = [new_ref]
+            handoff_path.unlink()
+            raw_handoff = json.dumps(
+                handoff, sort_keys=True, separators=(",", ":")
+            ).encode()
+            handoff_digest = hashlib.sha256(raw_handoff).hexdigest()
+            handoff_relative = (
+                Path("artifacts/branch_handoff") / f"{handoff_digest}.json"
+            )
+            (run_root / handoff_relative).write_bytes(raw_handoff)
+            state["artifact_refs"][
+                state["artifact_refs"].index(handoff_ref)
+            ] = {
+                "kind": "branch_handoff",
+                "digest": handoff_digest,
+                "relative_path": str(handoff_relative),
+            }
+            valid, reason = canary.validate_runner_artifacts(
+                state, run_root, worktree, candidate
+            )
+            self.assertFalse(valid)
+            self.assertEqual(reason, "verification_receipt_identity_mismatch")
 
     def test_normalized_result_has_public_bounded_shape(self):
         result = canary.normalized_result(

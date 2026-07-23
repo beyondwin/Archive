@@ -16,6 +16,7 @@ import platform
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import sysconfig
@@ -49,6 +50,16 @@ AUTH_CODES = frozenset(
         "unauthorized",
     }
 )
+BLOCKED_REASON_CODES = frozenset(
+    {
+        "provider_auth_blocked",
+        "provider_unavailable",
+        "provider_usage_blocked",
+        "runtime_incompatible",
+        "runtime_missing",
+        *AUTH_CODES,
+    }
+)
 AUTH_TEXT = re.compile(
     r"(?:not[ -]?logged[ -]?in|authentication|authenticate|unauthorized|"
     r"invalid[ _-]?(?:api[ _-]?)?key|login required|credential)",
@@ -78,6 +89,12 @@ class CanaryError(RuntimeError):
 
 class InvocationError(ValueError):
     pass
+
+
+class _SignalInterrupt(BaseException):
+    def __init__(self, signum: int) -> None:
+        super().__init__(signum)
+        self.signum = signum
 
 
 class ContractArgumentParser(argparse.ArgumentParser):
@@ -238,34 +255,65 @@ def run_bounded(
     input_text: str | None = None,
     env: Mapping[str, str] | None = None,
 ) -> CommandResult:
-    process = subprocess.Popen(
-        list(argv),
-        cwd=str(cwd),
-        env=None if env is None else dict(env),
-        stdin=subprocess.PIPE if input_text is not None else subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        shell=False,
-        start_new_session=True,
-    )
+    saved_handlers = {
+        signum: signal.getsignal(signum)
+        for signum in (signal.SIGINT, signal.SIGTERM)
+    }
+
+    def interrupt(signum: int, _frame: object) -> None:
+        raise _SignalInterrupt(signum)
+
+    for signum in saved_handlers:
+        signal.signal(signum, interrupt)
+    process: subprocess.Popen[str] | None = None
     try:
-        stdout, stderr = process.communicate(input=input_text, timeout=timeout)
-        timed_out = False
-    except subprocess.TimeoutExpired:
-        timed_out = True
-        os.killpg(process.pid, signal.SIGTERM)
+        process = subprocess.Popen(
+            list(argv),
+            cwd=str(cwd),
+            env=None if env is None else dict(env),
+            stdin=subprocess.PIPE if input_text is not None else subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            shell=False,
+            start_new_session=True,
+        )
         try:
-            stdout, stderr = process.communicate(timeout=TERM_GRACE_SECONDS)
+            stdout, stderr = process.communicate(input=input_text, timeout=timeout)
+            timed_out = False
         except subprocess.TimeoutExpired:
-            os.killpg(process.pid, signal.SIGKILL)
-            stdout, stderr = process.communicate()
+            timed_out = True
+            stdout, stderr = _terminate_and_reap(process)
+        except BaseException:
+            _terminate_and_reap(process)
+            raise
+    finally:
+        for signum, handler in saved_handlers.items():
+            signal.signal(signum, handler)
+    assert process is not None
     return CommandResult(
         process.returncode,
         (stdout or "")[-STREAM_LIMIT:],
         (stderr or "")[-STREAM_LIMIT:],
         timed_out,
     )
+
+
+def _terminate_and_reap(
+    process: subprocess.Popen[str],
+) -> tuple[str, str]:
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    try:
+        return process.communicate(timeout=TERM_GRACE_SECONDS)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        return process.communicate()
 
 
 def _json_lines(raw: str) -> tuple[list[Mapping[str, Any]], bool]:
@@ -337,14 +385,21 @@ def parse_codex_stream(raw: str) -> ParsedStream:
             None,
             {"status": "failed", "reason_code": "session_discontinuous"},
         )
-    auth = next((code for code in error_codes if code in AUTH_CODES), None)
-    if auth is not None:
+    blocked = next(
+        (code for code in error_codes if code in BLOCKED_REASON_CODES), None
+    )
+    if blocked is not None:
+        reason = (
+            "provider_auth_blocked"
+            if blocked in AUTH_CODES or blocked == "provider_auth_blocked"
+            else blocked
+        )
         return ParsedStream(
             "blocked",
-            "provider_auth_blocked",
+            reason,
             session_id,
             None,
-            {"status": "blocked", "reason_code": "provider_auth_blocked"},
+            {"status": "blocked", "reason_code": reason},
         )
     return ParsedStream(
         "ok",
@@ -408,14 +463,21 @@ def parse_claude_stream(raw: str, *, expected_session_id: str) -> ParsedStream:
             None,
             {"status": "failed", "reason_code": "session_discontinuous"},
         )
-    auth = next((code for code in error_codes if code in AUTH_CODES), None)
-    if auth is not None:
+    blocked = next(
+        (code for code in error_codes if code in BLOCKED_REASON_CODES), None
+    )
+    if blocked is not None:
+        reason = (
+            "provider_auth_blocked"
+            if blocked in AUTH_CODES or blocked == "provider_auth_blocked"
+            else blocked
+        )
         return ParsedStream(
             "blocked",
-            "provider_auth_blocked",
+            reason,
             session_id,
             None,
-            {"status": "blocked", "reason_code": "provider_auth_blocked"},
+            {"status": "blocked", "reason_code": reason},
         )
     return ParsedStream(
         "ok",
@@ -446,6 +508,63 @@ def classify_provider_result(
     if parsed.session_id is None:
         return "failed", "session_missing"
     return "passed", None
+
+
+def classify_runner_summary(
+    returncode: int | None,
+    summary: Mapping[str, Any] | None,
+    stderr: str,
+) -> tuple[str, str | None]:
+    if isinstance(summary, Mapping):
+        status = summary.get("status")
+        reason = summary.get("reason_code")
+        if status == "blocked" and isinstance(reason, str):
+            normalized = re.sub(r"[^a-z0-9]+", "_", reason.lower()).strip("_")
+            if normalized in BLOCKED_REASON_CODES:
+                return (
+                    "blocked",
+                    "provider_auth_blocked"
+                    if normalized in AUTH_CODES
+                    else normalized,
+                )
+        if status == "blocked" and reason is None and isinstance(
+            summary.get("run_id"), str
+        ):
+            return "blocked", "provider_unavailable"
+        if (
+            returncode == 0
+            and status == "ready_for_integration"
+            and isinstance(summary.get("run_id"), str)
+        ):
+            return "passed", None
+    if AUTH_TEXT.search(stderr):
+        return "blocked", "provider_auth_blocked"
+    return "failed", "runner_not_ready"
+
+
+def blocked_runner_reason(home: Path, provider: str, run_id: str) -> str | None:
+    if (
+        provider not in {"codex", "claude"}
+        or re.fullmatch(r"[a-z0-9][a-z0-9-]{0,126}", run_id) is None
+    ):
+        return None
+    path = home / f".{provider}" / "plan-runner" / run_id / "state.json"
+    try:
+        if path.stat().st_size > STREAM_LIMIT:
+            return None
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(state, Mapping) or state.get("status") != "blocked":
+        return None
+    failure = state.get("failure")
+    reason = failure.get("reason_code") if isinstance(failure, Mapping) else None
+    if not isinstance(reason, str):
+        return None
+    normalized = re.sub(r"[^a-z0-9]+", "_", reason.lower()).strip("_")
+    if normalized not in BLOCKED_REASON_CODES:
+        return None
+    return "provider_auth_blocked" if normalized in AUTH_CODES else normalized
 
 
 def validate_session_evidence(
@@ -529,11 +648,15 @@ def _create_repository(root: Path) -> str:
     return _git(root, "rev-parse", "HEAD")
 
 
-def _provider_version(provider: str, root: Path) -> tuple[str | None, str | None]:
-    executable = shutil.which(provider)
+def _provider_version(
+    provider: str, root: Path, env: Mapping[str, str]
+) -> tuple[str | None, str | None]:
+    executable = shutil.which(provider, path=env.get("PATH"))
     if executable is None:
         return None, "provider_unavailable"
-    command = run_bounded([executable, "--version"], cwd=root, timeout=20)
+    command = run_bounded(
+        [executable, "--version"], cwd=root, timeout=20, env=env
+    )
     if command.timed_out or command.returncode != 0:
         return None, "provider_unavailable"
     version = (command.stdout or command.stderr).strip()
@@ -551,7 +674,98 @@ def _read_nonce(path: Path) -> str | None:
     return nonce if isinstance(nonce, str) else None
 
 
-def _probe_codex_session(root: Path) -> tuple[str, str | None, str]:
+def _copy_private_regular(source: Path, target: Path) -> bool:
+    try:
+        metadata = source.lstat()
+    except FileNotFoundError:
+        return False
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+        or stat.S_IMODE(metadata.st_mode) & 0o022
+        or metadata.st_size > STREAM_LIMIT
+    ):
+        raise CanaryError("provider_auth_blocked")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(source, flags)
+    try:
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_dev != metadata.st_dev
+            or opened.st_ino != metadata.st_ino
+            or opened.st_size != metadata.st_size
+        ):
+            raise CanaryError("provider_auth_blocked")
+        payload = b""
+        while len(payload) <= STREAM_LIMIT:
+            chunk = os.read(descriptor, min(65_536, STREAM_LIMIT + 1 - len(payload)))
+            if not chunk:
+                break
+            payload += chunk
+        if len(payload) != metadata.st_size:
+            raise CanaryError("provider_auth_blocked")
+    finally:
+        os.close(descriptor)
+    target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    target_descriptor = os.open(
+        target,
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    try:
+        view = memoryview(payload)
+        while view:
+            written = os.write(target_descriptor, view)
+            if written <= 0:
+                raise CanaryError("provider_auth_blocked")
+            view = view[written:]
+        os.fchmod(target_descriptor, 0o600)
+    finally:
+        os.close(target_descriptor)
+    return True
+
+
+def isolated_provider_environment(
+    provider: str,
+    isolated_home: Path,
+    *,
+    operator_home: Path | None = None,
+    source_env: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    if provider not in {"codex", "claude"}:
+        raise ValueError("unknown provider")
+    operator = Path.home() if operator_home is None else operator_home
+    env = dict(os.environ if source_env is None else source_env)
+    isolated_home.mkdir(mode=0o700, parents=True, exist_ok=True)
+    isolated_home.chmod(0o700)
+    env["HOME"] = str(isolated_home)
+    for key in (
+        "CODEX_HOME",
+        "CLAUDE_CONFIG_DIR",
+        "CLAUDECODE",
+        "CLAUDE_CODE_ENTRYPOINT",
+        "CLAUDE_CODE_SESSION_ACCESS_TOKEN",
+    ):
+        env.pop(key, None)
+    if provider == "codex":
+        config = isolated_home / ".codex"
+        config.mkdir(mode=0o700)
+        _copy_private_regular(operator / ".codex/auth.json", config / "auth.json")
+        env["CODEX_HOME"] = str(config)
+    else:
+        config = isolated_home / ".claude"
+        config.mkdir(mode=0o700)
+        env["CLAUDE_CONFIG_DIR"] = str(config)
+    return env
+
+
+def _probe_codex_session(
+    root: Path, env: Mapping[str, str]
+) -> tuple[str, str | None, str]:
     schema, output = codex_probe_paths(root)
     schema.write_bytes(_canonical_json(CANARY_SCHEMA))
     head_before = _git(root, "rev-parse", "HEAD")
@@ -570,6 +784,7 @@ def _probe_codex_session(root: Path) -> tuple[str, str | None, str]:
         cwd=root,
         timeout=COMMAND_DEADLINE_SECONDS,
         input_text=prompt,
+        env=env,
     )
     parsed_first = parse_codex_stream(first.stdout)
     status, reason = classify_provider_result(first, parsed_first)
@@ -594,6 +809,7 @@ def _probe_codex_session(root: Path) -> tuple[str, str | None, str]:
         cwd=root,
         timeout=COMMAND_DEADLINE_SECONDS,
         input_text=second_prompt,
+        env=env,
     )
     parsed_second = parse_codex_stream(second.stdout)
     second_status, second_reason = classify_provider_result(second, parsed_second)
@@ -616,7 +832,9 @@ def _probe_codex_session(root: Path) -> tuple[str, str | None, str]:
     )
 
 
-def _probe_claude_session(root: Path) -> tuple[str, str | None, str]:
+def _probe_claude_session(
+    root: Path, env: Mapping[str, str]
+) -> tuple[str, str | None, str]:
     head_before = _git(root, "rev-parse", "HEAD")
     nonce = uuid.uuid4().hex
     session_id = str(uuid.uuid4())
@@ -630,6 +848,7 @@ def _probe_claude_session(root: Path) -> tuple[str, str | None, str]:
         ),
         cwd=root,
         timeout=COMMAND_DEADLINE_SECONDS,
+        env=env,
     )
     parsed_first = parse_claude_stream(
         first.stdout, expected_session_id=session_id
@@ -652,6 +871,7 @@ def _probe_claude_session(root: Path) -> tuple[str, str | None, str]:
         ),
         cwd=root,
         timeout=COMMAND_DEADLINE_SECONDS,
+        env=env,
     )
     parsed_second = parse_claude_stream(
         second.stdout, expected_session_id=session_id
@@ -685,7 +905,29 @@ def probe_session(provider: str) -> dict[str, object]:
     started = time.monotonic()
     with tempfile.TemporaryDirectory(prefix=f"{provider}-session-canary-") as raw:
         root = Path(raw) / "repository"
-        version, unavailable = _provider_version(provider, Path(raw))
+        try:
+            provider_env = isolated_provider_environment(
+                provider, Path(raw) / "provider-home"
+            )
+            version, unavailable = _provider_version(
+                provider, Path(raw), provider_env
+            )
+        except (CanaryError, OSError, ValueError) as error:
+            reason = (
+                error.reason_code
+                if isinstance(error, CanaryError)
+                else "provider_auth_blocked"
+            )
+            return normalized_result(
+                provider=provider,
+                mode="session",
+                status="blocked",
+                provider_version=None,
+                session_action="not_started",
+                final_head=None,
+                elapsed=time.monotonic() - started,
+                reason_code=reason,
+            )
         if unavailable:
             return normalized_result(
                 provider=provider,
@@ -700,9 +942,9 @@ def probe_session(provider: str) -> dict[str, object]:
         try:
             _create_repository(root)
             if provider == "codex":
-                status, reason, action = _probe_codex_session(root)
+                status, reason, action = _probe_codex_session(root, provider_env)
             else:
-                status, reason, action = _probe_claude_session(root)
+                status, reason, action = _probe_claude_session(root, provider_env)
         except (CanaryError, OSError, ValueError) as error:
             status = "failed"
             reason = (
@@ -763,22 +1005,31 @@ def _write_runner_documents(root: Path) -> tuple[list[Path], list[Path]]:
     return specs, plans
 
 
-def _artifact(run_root: Path, state: Mapping[str, Any], kind: str) -> Mapping[str, Any]:
-    refs = [
-        ref
-        for ref in state.get("artifact_refs", [])
-        if isinstance(ref, Mapping) and ref.get("kind") == kind
-    ]
-    if kind in {"verification_receipt"}:
-        raise CanaryError("artifact_cardinality_ambiguous")
-    if len(refs) != 1:
-        raise CanaryError(f"{kind}_missing")
-    ref = refs[0]
+def _artifact_from_ref(
+    run_root: Path, ref: Mapping[str, Any]
+) -> Mapping[str, Any]:
+    if set(ref) != {"kind", "digest", "relative_path"}:
+        raise CanaryError("artifact_reference_invalid")
+    kind = ref.get("kind")
     relative = ref.get("relative_path")
     digest = ref.get("digest")
-    if not isinstance(relative, str) or not isinstance(digest, str):
+    if (
+        not isinstance(kind, str)
+        or not kind
+        or not isinstance(relative, str)
+        or not isinstance(digest, str)
+        or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+    ):
         raise CanaryError("artifact_reference_invalid")
-    path = run_root / relative
+    relative_path = Path(relative)
+    expected = Path("artifacts") / kind / f"{digest}.json"
+    if (
+        relative_path != expected
+        or relative_path.is_absolute()
+        or ".." in relative_path.parts
+    ):
+        raise CanaryError("artifact_reference_invalid")
+    path = run_root / relative_path
     try:
         raw = path.read_bytes()
     except OSError as error:
@@ -786,9 +1037,29 @@ def _artifact(run_root: Path, state: Mapping[str, Any], kind: str) -> Mapping[st
     if hashlib.sha256(raw).hexdigest() != digest:
         raise CanaryError("artifact_digest_mismatch")
     value = json.loads(raw)
-    if not isinstance(value, Mapping):
+    if not isinstance(value, Mapping) or _canonical_json(value) != raw:
         raise CanaryError("artifact_invalid")
     return value
+
+
+def _references(state: Mapping[str, Any], kind: str) -> list[Mapping[str, Any]]:
+    refs = state.get("artifact_refs")
+    if not isinstance(refs, list):
+        raise CanaryError("artifact_reference_invalid")
+    return [
+        ref
+        for ref in refs
+        if isinstance(ref, Mapping) and ref.get("kind") == kind
+    ]
+
+
+def _one_artifact(
+    run_root: Path, state: Mapping[str, Any], kind: str
+) -> tuple[Mapping[str, Any], Mapping[str, Any]]:
+    refs = _references(state, kind)
+    if len(refs) != 1:
+        raise CanaryError(f"{kind}_missing")
+    return refs[0], _artifact_from_ref(run_root, refs[0])
 
 
 def validate_runner_state(
@@ -861,42 +1132,242 @@ def validate_runner_state(
     return True, None, candidate
 
 
-def _validate_runner_artifacts(
-    state: Mapping[str, Any], run_root: Path, candidate: str
+def _validated_executable_identity(value: object) -> bool:
+    if not isinstance(value, Mapping) or set(value) != {
+        "path",
+        "sha256",
+        "mode",
+        "size",
+    }:
+        return False
+    path_value = value.get("path")
+    digest = value.get("sha256")
+    mode = value.get("mode")
+    size = value.get("size")
+    if (
+        not isinstance(path_value, str)
+        or not Path(path_value).is_absolute()
+        or not isinstance(digest, str)
+        or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+        or not isinstance(mode, int)
+        or isinstance(mode, bool)
+        or not stat.S_ISREG(mode)
+        or not isinstance(size, int)
+        or isinstance(size, bool)
+        or size < 0
+    ):
+        return False
+    try:
+        executable = Path(path_value)
+        metadata = executable.stat()
+        actual_digest = hashlib.sha256(executable.read_bytes()).hexdigest()
+    except OSError:
+        return False
+    return (
+        metadata.st_mode == mode
+        and metadata.st_size == size
+        and actual_digest == digest
+        and os.access(executable, os.X_OK)
+    )
+
+
+def _validated_receipt_identity(
+    receipt: object, candidate: str
+) -> Mapping[str, Any] | None:
+    if (
+        not isinstance(receipt, Mapping)
+        or set(receipt)
+        != {
+            "schema_version",
+            "identity",
+            "identity_digest",
+            "outcome",
+            "exit_code",
+            "stdout_tail",
+            "stderr_tail",
+            "process",
+        }
+        or receipt.get("schema_version") != 1
+        or receipt.get("outcome") != "success"
+        or receipt.get("exit_code") != 0
+    ):
+        return None
+    identity = receipt.get("identity")
+    if not isinstance(identity, Mapping) or set(identity) != {
+        "argv",
+        "candidate_head",
+        "command_role",
+        "cwd",
+        "environment_fingerprint",
+        "executable_identity",
+        "input_digest",
+        "worktree_digest",
+    }:
+        return None
+    argv = identity.get("argv")
+    cwd = identity.get("cwd")
+    digests = (
+        identity.get("environment_fingerprint"),
+        identity.get("input_digest"),
+        identity.get("worktree_digest"),
+        receipt.get("identity_digest"),
+    )
+    if (
+        identity.get("candidate_head") != candidate
+        or identity.get("command_role") != "final"
+        or not isinstance(argv, list)
+        or not argv
+        or any(not isinstance(item, str) or not item for item in argv)
+        or not isinstance(cwd, str)
+        or not Path(cwd).is_absolute()
+        or any(
+            not isinstance(value, str)
+            or re.fullmatch(r"[0-9a-f]{64}", value) is None
+            for value in digests
+        )
+        or hashlib.sha256(_canonical_json(identity)).hexdigest()
+        != receipt["identity_digest"]
+        or not _validated_executable_identity(identity.get("executable_identity"))
+    ):
+        return None
+    return identity
+
+
+def validate_runner_artifacts(
+    state: Mapping[str, Any],
+    run_root: Path,
+    worktree: Path,
+    candidate: str,
 ) -> tuple[bool, str | None]:
     try:
-        final_set = _artifact(run_root, state, "final_verification_set")
-        review = _artifact(run_root, state, "final_review_receipt")
-        handoff = _artifact(run_root, state, "branch_handoff")
-        refs = [
-            ref
-            for ref in state.get("artifact_refs", [])
-            if isinstance(ref, Mapping) and ref.get("kind") == "verification_receipt"
+        set_ref, final_set = _one_artifact(
+            run_root, state, "final_verification_set"
+        )
+        review_ref, review = _one_artifact(
+            run_root, state, "final_review_receipt"
+        )
+        _handoff_ref, handoff = _one_artifact(run_root, state, "branch_handoff")
+        all_receipt_refs = _references(state, "verification_receipt")
+        all_ref_keys = [
+            (ref.get("kind"), ref.get("digest"), ref.get("relative_path"))
+            for ref in all_receipt_refs
         ]
-        commands = final_set.get("commands")
+        if len(all_ref_keys) != len(set(all_ref_keys)):
+            return False, "verification_receipt_duplicate"
+        for reference in all_receipt_refs:
+            _artifact_from_ref(run_root, reference)
+        refs = handoff.get("verification_receipts")
+        if not isinstance(refs, list) or any(
+            not isinstance(ref, Mapping) for ref in refs
+        ):
+            return False, "handoff_invalid"
+        ref_keys = [
+            (ref.get("kind"), ref.get("digest"), ref.get("relative_path"))
+            for ref in refs
+        ]
         if (
-            final_set.get("candidate_head") != candidate
+            len(ref_keys) != len(set(ref_keys))
+            or any(ref not in all_receipt_refs for ref in refs)
+        ):
+            return False, "verification_receipt_duplicate"
+        commands = final_set.get("commands")
+        finalization = state.get("finalization")
+        if (
+            final_set.get("kind") != "commands"
+            or final_set.get("candidate_head") != candidate
             or not isinstance(commands, list)
             or not commands
             or len(refs) != len(commands)
+            or not isinstance(finalization, Mapping)
+            or finalization.get("candidate_head") != candidate
+            or finalization.get("review_head") != candidate
+            or finalization.get("verification_set_digest") != set_ref.get("digest")
         ):
             return False, "verification_set_invalid"
+        command_ids: set[str] = set()
+        identities: list[Mapping[str, Any]] = []
+        identity_digests: set[str] = set()
         for ref in refs:
-            relative = ref.get("relative_path")
-            digest = ref.get("digest")
-            if not isinstance(relative, str) or not isinstance(digest, str):
+            receipt = _artifact_from_ref(run_root, ref)
+            identity = _validated_receipt_identity(receipt, candidate)
+            if identity is None:
                 return False, "verification_receipt_invalid"
-            raw = (run_root / relative).read_bytes()
-            if hashlib.sha256(raw).hexdigest() != digest:
-                return False, "verification_receipt_invalid"
-            receipt = json.loads(raw)
-            if not valid_receipt_payload(receipt, candidate):
-                return False, "verification_receipt_invalid"
+            identity_digest = receipt.get("identity_digest")
+            if identity_digest in identity_digests:
+                return False, "verification_receipt_duplicate"
+            assert isinstance(identity_digest, str)
+            identity_digests.add(identity_digest)
+            identities.append(identity)
+        unmatched = list(identities)
+        for command in commands:
+            if not isinstance(command, Mapping) or set(command) != {
+                "command_id",
+                "command_role",
+                "argv",
+                "cwd",
+                "input_digest",
+                "deadline_seconds",
+            }:
+                return False, "verification_set_invalid"
+            command_id = command.get("command_id")
+            if (
+                not isinstance(command_id, str)
+                or not command_id
+                or command_id in command_ids
+                or command.get("command_role") != "final"
+                or not isinstance(command.get("argv"), list)
+                or not command["argv"]
+                or not Path(command["argv"][0]).is_absolute()
+                or not isinstance(command.get("cwd"), str)
+                or Path(command["cwd"]).is_absolute()
+                or ".." in Path(command["cwd"]).parts
+                or not isinstance(command.get("input_digest"), str)
+                or re.fullmatch(r"[0-9a-f]{64}", command["input_digest"]) is None
+                or not isinstance(command.get("deadline_seconds"), (int, float))
+                or isinstance(command.get("deadline_seconds"), bool)
+                or command["deadline_seconds"] <= 0
+            ):
+                return False, "verification_set_invalid"
+            command_ids.add(command_id)
+            expected_cwd = str((worktree / command["cwd"]).resolve())
+            try:
+                Path(expected_cwd).relative_to(worktree.resolve())
+            except ValueError:
+                return False, "verification_set_invalid"
+            match = next(
+                (
+                    identity
+                    for identity in unmatched
+                    if identity.get("argv") == command.get("argv")
+                    and identity.get("cwd") == expected_cwd
+                    and identity.get("input_digest") == command.get("input_digest")
+                    and identity.get("candidate_head") == candidate
+                    and identity.get("command_role") == "final"
+                    and identity.get("executable_identity", {}).get("path")
+                    == str(Path(command["argv"][0]).resolve(strict=True))
+                ),
+                None,
+            )
+            if match is None:
+                return False, "verification_receipt_identity_mismatch"
+            unmatched.remove(match)
+        if unmatched:
+            return False, "verification_receipt_identity_mismatch"
+        findings = review.get("open_findings")
+        review_approved = (
+            isinstance(findings, list)
+            and all(
+                isinstance(item, Mapping)
+                and item.get("severity") not in {"Critical", "Important"}
+                for item in findings
+            )
+        )
         if (
             review.get("status") != "reviewed"
             or review.get("candidate_head") != candidate
             or review.get("review_head") != candidate
-            or review.get("open_findings") != []
+            or review.get("verification_set_digest") != set_ref.get("digest")
+            or not review_approved
             or review.get("open_obligation_ids") != []
         ):
             return False, "review_not_approved"
@@ -904,6 +1375,9 @@ def _validate_runner_artifacts(
             handoff.get("status") != "ready_for_integration"
             or handoff.get("candidate_head") != candidate
             or handoff.get("review_head") != candidate
+            or handoff.get("verification_set_digest") != set_ref.get("digest")
+            or handoff.get("review_receipt") != review_ref
+            or handoff.get("verification_receipts") != refs
             or handoff.get("integration") != "not_observed"
         ):
             return False, "handoff_invalid"
@@ -916,26 +1390,8 @@ def _validate_runner_artifacts(
     return True, None
 
 
-def valid_receipt_payload(value: object, candidate: str) -> bool:
-    if not isinstance(value, Mapping):
-        return False
-    identity = value.get("identity")
-    return (
-        isinstance(identity, Mapping)
-        and identity.get("candidate_head") == candidate
-        and value.get("outcome") == "success"
-        and value.get("exit_code") == 0
-    )
-
-
 def _runner_environment(provider: str, home: Path) -> dict[str, str]:
-    env = dict(os.environ)
-    operator_home = Path.home()
-    env["HOME"] = str(home)
-    if provider == "codex":
-        env.setdefault("CODEX_HOME", str(operator_home / ".codex"))
-    else:
-        env.setdefault("CLAUDE_CONFIG_DIR", str(operator_home / ".claude"))
+    env = isolated_provider_environment(provider, home)
     env.pop("KWS_PLAN_RUNNER_HELPER_SOCKET", None)
     env.pop("KWS_PLAN_RUNNER_HELPER_NONCE", None)
     return env
@@ -945,7 +1401,27 @@ def probe_runner(provider: str) -> dict[str, object]:
     started = time.monotonic()
     with tempfile.TemporaryDirectory(prefix=f"{provider}-runner-canary-") as raw:
         root = Path(raw)
-        version, unavailable = _provider_version(provider, root)
+        home = root / "operator-home"
+        home.mkdir(mode=0o700)
+        try:
+            runner_env = _runner_environment(provider, home)
+            version, unavailable = _provider_version(provider, root, runner_env)
+        except (CanaryError, OSError, ValueError) as error:
+            reason = (
+                error.reason_code
+                if isinstance(error, CanaryError)
+                else "provider_auth_blocked"
+            )
+            return normalized_result(
+                provider=provider,
+                mode="runner",
+                status="blocked",
+                provider_version=None,
+                session_action="not_started",
+                final_head=None,
+                elapsed=time.monotonic() - started,
+                reason_code=reason,
+            )
         if unavailable:
             return normalized_result(
                 provider=provider,
@@ -958,8 +1434,6 @@ def probe_runner(provider: str) -> dict[str, object]:
                 reason_code=unavailable,
             )
         workspace = root / "source"
-        home = root / "operator-home"
-        home.mkdir(mode=0o700)
         try:
             _create_repository(workspace)
             specs, plans = _write_runner_documents(root)
@@ -977,7 +1451,7 @@ def probe_runner(provider: str) -> dict[str, object]:
                 argv,
                 cwd=root,
                 timeout=RUNNER_DEADLINE_SECONDS,
-                env=_runner_environment(provider, home),
+                env=runner_env,
             )
             if command.timed_out:
                 raise CanaryError("runner_deadline")
@@ -989,24 +1463,34 @@ def probe_runner(provider: str) -> dict[str, object]:
                 if isinstance(value, Mapping)
             ]
             summary = summaries[-1] if summaries else None
-            if (
-                command.returncode != 0
-                or not isinstance(summary, Mapping)
-                or summary.get("status") != "ready_for_integration"
-                or not isinstance(summary.get("run_id"), str)
-            ):
-                if AUTH_TEXT.search(command.stderr):
-                    return normalized_result(
-                        provider=provider,
-                        mode="runner",
-                        status="blocked",
-                        provider_version=version,
-                        session_action="not_completed",
-                        final_head=None,
-                        elapsed=time.monotonic() - started,
-                        reason_code="provider_auth_blocked",
-                    )
-                raise CanaryError("runner_not_ready")
+            classification, classified_reason = classify_runner_summary(
+                command.returncode,
+                summary if isinstance(summary, Mapping) else None,
+                command.stderr,
+            )
+            if classification == "blocked":
+                run_id_value = (
+                    summary.get("run_id")
+                    if isinstance(summary, Mapping)
+                    else None
+                )
+                durable_reason = (
+                    blocked_runner_reason(home, provider, run_id_value)
+                    if isinstance(run_id_value, str)
+                    else None
+                )
+                return normalized_result(
+                    provider=provider,
+                    mode="runner",
+                    status="blocked",
+                    provider_version=version,
+                    session_action="not_completed",
+                    final_head=None,
+                    elapsed=time.monotonic() - started,
+                    reason_code=durable_reason or classified_reason,
+                )
+            if classification != "passed" or not isinstance(summary, Mapping):
+                raise CanaryError(classified_reason or "runner_not_ready")
             run_id = summary["run_id"]
             state_root = home / f".{provider}" / "plan-runner" / run_id
             state = json.loads((state_root / "state.json").read_text(encoding="utf-8"))
@@ -1018,7 +1502,9 @@ def probe_runner(provider: str) -> dict[str, object]:
             )
             if not valid or candidate is None:
                 raise CanaryError(reason or "runner_state_invalid")
-            valid, reason = _validate_runner_artifacts(state, state_root, candidate)
+            valid, reason = validate_runner_artifacts(
+                state, state_root, worktree, candidate
+            )
             if not valid:
                 raise CanaryError(reason or "final_evidence_invalid")
             before = hashlib.sha256((state_root / "state.json").read_bytes()).hexdigest()
@@ -1026,7 +1512,7 @@ def probe_runner(provider: str) -> dict[str, object]:
                 [str(runner), "inspect", "--run-id", run_id],
                 cwd=root,
                 timeout=60,
-                env=_runner_environment(provider, home),
+                env=runner_env,
             )
             after = hashlib.sha256((state_root / "state.json").read_bytes()).hexdigest()
             if inspect.returncode != 0 or before != after:
@@ -1124,11 +1610,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
         return 3
     results: list[Mapping[str, object]] = []
-    for provider in _requested(arguments.provider, ("codex", "claude")):
-        for mode in _requested(arguments.mode, ("session", "runner")):
-            result = probe_session(provider) if mode == "session" else probe_runner(provider)
-            results.append(result)
-            print(json.dumps(result, sort_keys=True))
+    try:
+        for provider in _requested(arguments.provider, ("codex", "claude")):
+            for mode in _requested(arguments.mode, ("session", "runner")):
+                result = (
+                    probe_session(provider)
+                    if mode == "session"
+                    else probe_runner(provider)
+                )
+                results.append(result)
+                print(json.dumps(result, sort_keys=True))
+    except _SignalInterrupt as error:
+        return 128 + error.signum
     if any(result["status"] == "failed" for result in results):
         return 4
     if any(result["status"] == "blocked" for result in results):
