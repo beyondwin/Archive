@@ -4,10 +4,12 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SKILL_ROOT / "scripts"))
 
+from plan_runner import git_ops  # noqa: E402
 from plan_runner.git_ops import GitWorkspace, sanitized_child_env  # noqa: E402
 
 
@@ -68,15 +70,34 @@ class GitWorkspaceTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "registered"):
             GitWorkspace.open(self.source, self.root / "other", self.branch)
 
-    def test_identity_detects_branch_common_directory_and_ancestry_drift(self):
+    def test_identity_detects_branch_and_actual_ancestry_drift(self):
         workspace = self.create()
         git("checkout", "-b", "other", cwd=self.worktree)
         with self.assertRaisesRegex(ValueError, "branch"):
             workspace.require_identity()
         git("checkout", self.branch, cwd=self.worktree)
-        git("reset", "--hard", "HEAD~0", cwd=self.worktree)
+        git("checkout", "--orphan", "unrelated", cwd=self.worktree)
+        git("add", "--all", cwd=self.worktree)
+        git("commit", "-m", "unrelated", cwd=self.worktree)
+        git("branch", "-f", self.branch, "HEAD", cwd=self.worktree)
+        git("checkout", self.branch, cwd=self.worktree)
         with self.assertRaisesRegex(ValueError, "ancestor"):
-            workspace.require_clean_ancestor("f" * 40)
+            workspace.require_clean_ancestor(self.start)
+
+    def test_require_identity_detects_runtime_common_directory_drift(self):
+        workspace = self.create()
+        drifted_common = self.root / "drifted-common"
+        drifted_common.mkdir()
+        with mock.patch.object(
+            git_ops,
+            "_common_directory",
+            side_effect=(workspace._common_dir, drifted_common),
+        ):
+            with self.assertRaisesRegex(ValueError, "common directory"):
+                workspace.require_identity()
+
+    def test_open_rejects_a_worktree_with_a_different_common_directory(self):
+        self.create()
         other_source = self.root / "other-source"
         init_repository(other_source)
         with self.assertRaisesRegex(ValueError, "common directory"):
@@ -149,6 +170,15 @@ class GitWorkspaceTest(unittest.TestCase):
             ["git", "push", "origin", "HEAD"], cwd=workspace.worktree, env=clean, capture_output=True, text=True
         )
         self.assertNotEqual(pushed.returncode, 0)
+
+    def test_sanitized_environment_rejects_control_characters_in_remote_names(self):
+        with self.assertRaisesRegex(ValueError, "control characters"):
+            sanitized_child_env(
+                {"PATH": os.environ["PATH"]},
+                provider_auth_prefixes=("OPENAI_", "CODEX_"),
+                remotes=("origin\nmalicious",),
+                run_id="run-123",
+            )
 
 
 if __name__ == "__main__":
