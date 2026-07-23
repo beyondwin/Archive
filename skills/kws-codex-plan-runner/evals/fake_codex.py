@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import fcntl
+import hashlib
 import subprocess
 import sys
 import time
@@ -35,6 +36,7 @@ def _record(
     *,
     action: str | None = None,
     action_index: int | None = None,
+    session_id: str | None = None,
 ) -> None:
     log_value = os.environ.get("PLAN_RUNNER_FAKE_LOG")
     if log_value is None:
@@ -54,12 +56,25 @@ def _record(
         "prompt": prompt,
     }
     if action is not None:
+        packet = _packet(prompt)
         record.update(
             {
                 "action": action,
                 "action_index": action_index,
-                "mode": _packet(prompt)["mode"],
+                "mode": packet["mode"],
+                "packet_digest": hashlib.sha256(
+                    json.dumps(
+                        packet,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                ).hexdigest(),
+                "required_strategy_change": packet.get(
+                    "required_strategy_change"
+                ),
                 "session_action": "resume" if "resume" in argv else "fresh",
+                "session_id": session_id,
             }
         )
     with log_path.open("a", encoding="utf-8") as stream:
@@ -232,17 +247,18 @@ def _generic_finalization(packet: dict[str, object]) -> dict[str, object]:
 
 def _generic_main(argv: list[str], prompt: str, sequence_path: Path) -> int:
     action_index, action = _consume_action(sequence_path)
-    _record(
-        argv,
-        prompt,
-        action=action,
-        action_index=action_index,
-    )
     packet = _packet(prompt)
     session_id = (
         argv[-2]
         if "resume" in argv
         else str(uuid.UUID(int=action_index + 1))
+    )
+    _record(
+        argv,
+        prompt,
+        action=action,
+        action_index=action_index,
+        session_id=session_id,
     )
     _emit({"type": "thread.started", "thread_id": session_id})
     if action == "stalled":
