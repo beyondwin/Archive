@@ -17,8 +17,17 @@ from plan_runner.helper import helper_client  # noqa: E402
 from plan_runner.runtime import RuntimeUnavailable, require_compatible_runtime  # noqa: E402
 
 
+class InvocationError(ValueError):
+    pass
+
+
+class ContractArgumentParser(argparse.ArgumentParser):
+    def error(self, message: str) -> None:
+        raise InvocationError(message)
+
+
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="runner")
+    parser = ContractArgumentParser(prog="runner")
     commands = parser.add_subparsers(dest="command", required=True)
     run = commands.add_parser("run")
     run.add_argument("--spec", action="append", required=True, type=Path)
@@ -64,6 +73,20 @@ def _helper() -> int:
     return 0
 
 
+def _invalid(detail: str) -> int:
+    print(
+        json.dumps(
+            {
+                "status": "failed",
+                "reason_code": "invalid_invocation",
+                "detail": detail[:512],
+            },
+            sort_keys=True,
+        )
+    )
+    return int(ExitCode.INVALID)
+
+
 def main(argv: list[str] | None = None) -> int:
     raw_arguments = list(sys.argv[1:] if argv is None else argv)
     if raw_arguments == ["_helper"]:
@@ -81,7 +104,10 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
             return int(ExitCode.INTEGRITY)
-    arguments = _parser().parse_args(raw_arguments)
+    try:
+        arguments = _parser().parse_args(raw_arguments)
+    except InvocationError as error:
+        return _invalid(str(error))
     try:
         runtime = require_compatible_runtime()
     except RuntimeUnavailable as error:
@@ -111,31 +137,11 @@ def main(argv: list[str] | None = None) -> int:
         )
     if arguments.command == "resume":
         if arguments.strategy_note is not None and not arguments.retry_failed:
-            print(
-                json.dumps(
-                    {
-                        "status": "failed",
-                        "reason_code": "invalid_invocation",
-                        "detail": "--strategy-note requires --retry-failed",
-                    },
-                    sort_keys=True,
-                )
-            )
-            return int(ExitCode.INVALID)
+            return _invalid("--strategy-note requires --retry-failed")
         if arguments.retry_failed and not (
             arguments.strategy_note and arguments.strategy_note.strip()
         ):
-            print(
-                json.dumps(
-                    {
-                        "status": "failed",
-                        "reason_code": "invalid_invocation",
-                        "detail": "--retry-failed requires --strategy-note",
-                    },
-                    sort_keys=True,
-                )
-            )
-            return int(ExitCode.INVALID)
+            return _invalid("--retry-failed requires --strategy-note")
         return runner.resume(
             arguments.run_id,
             retry_blocked=arguments.retry_blocked,
