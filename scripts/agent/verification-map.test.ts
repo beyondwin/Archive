@@ -1,5 +1,10 @@
 import { expect, test } from "bun:test";
-import { selectVerification, type CommandSpec, type ScopeId } from "./verification-map";
+import {
+  selectVerification,
+  VERIFICATION_SCOPES,
+  type CommandSpec,
+  type ScopeId,
+} from "./verification-map";
 
 const command = (id: string, argv: string[], cwd?: string, optIn?: boolean) => ({ id, argv, cwd, optIn });
 const commands = (paths: string[]) => selectVerification(paths).commands.map(toCommand);
@@ -22,7 +27,6 @@ const packageTest = (name: string) =>
 const rustFormat = command("rust-format", ["cargo", "fmt", "--check"], "native/kernel");
 const rustTest = command("rust-test", ["cargo", "test", "--workspace"], "native/kernel");
 const waygentSkillEval = command("waygent-skill-eval", ["./evals/run.sh"], "skills/waygent");
-const codexExecutorEval = command("codex-executor-eval", ["./evals/run.sh"], "skills/kws-codex-plan-executor");
 const codexPlanRunnerEval = command(
   "codex-plan-runner-eval",
   ["./evals/run.sh"],
@@ -36,6 +40,10 @@ const claudePlanRunnerEval = command(
 const planRunnerParity = command(
   "plan-runner-parity",
   ["./scripts/agent/check-plan-runner-parity"],
+);
+const planRunnerCutoverTest = command(
+  "plan-runner-cutover-test",
+  ["./scripts/agent/plan-runner-cutover", "self-test"],
 );
 const claudeExecutorOffline = command("claude-executor-offline", ["bun", "run", "agent:claude-offline"]);
 const claudeExecutorEval = command(
@@ -54,8 +62,8 @@ const liveProvider = command(
 const closureCommands = [contract, diffCheck, check, platformDemo, scenarios, fixtureLab, dogfood, liveProvider];
 const offlineCommands = [
   contract, diffCheck, typecheck, check, platformDemo, scenarios, fixtureLab, dogfood,
-  consoleTest, consoleBuild, rustFormat, rustTest, waygentSkillEval, codexExecutorEval,
-  codexPlanRunnerEval, claudePlanRunnerEval, planRunnerParity,
+  consoleTest, consoleBuild, rustFormat, rustTest, waygentSkillEval,
+  codexPlanRunnerEval, claudePlanRunnerEval, planRunnerParity, planRunnerCutoverTest,
   claudeExecutorOffline, claudeExecutorEval, liveProvider,
 ];
 
@@ -68,9 +76,8 @@ test.each([
   ["bun lock", ["bun.lock"], ["waygent-closure"], closureCommands],
   ["native", ["native/kernel/crates/kernel-cli/src/main.rs"], ["native"], [contract, diffCheck, rustFormat, rustTest]],
   ["Waygent skill", ["skills/waygent/SKILL.md"], ["waygent-skill"], [contract, diffCheck, waygentSkillEval, check, platformDemo, scenarios]],
-  ["Codex executor", ["skills/kws-codex-plan-executor/scripts/cpe.py"], ["codex-executor"], [contract, diffCheck, codexExecutorEval, check]],
-  ["Codex plan runner", ["skills/kws-codex-plan-runner/SKILL.md"], ["codex-plan-runner"], [contract, diffCheck, codexPlanRunnerEval, planRunnerParity, check]],
-  ["Claude plan runner", ["skills/kws-claude-plan-runner/scripts/runner"], ["claude-plan-runner"], [contract, diffCheck, claudePlanRunnerEval, planRunnerParity, check]],
+  ["Codex plan runner", ["skills/kws-codex-plan-runner/SKILL.md"], ["codex-plan-runner"], [contract, diffCheck, codexPlanRunnerEval, planRunnerParity, planRunnerCutoverTest, check]],
+  ["Claude plan runner", ["skills/kws-claude-plan-runner/scripts/runner"], ["claude-plan-runner"], [contract, diffCheck, claudePlanRunnerEval, planRunnerParity, planRunnerCutoverTest, check]],
   ["Claude executor", ["skills/kws-claude-multi-agent-executor/scripts/kernel/kernel.py"], ["claude-executor"], [contract, diffCheck, claudeExecutorOffline, claudeExecutorEval, check]],
   ["unknown", ["unexpected/new-surface.txt"], ["full-offline"], offlineCommands],
 ] satisfies readonly [string, string[], ScopeId[], ReturnType<typeof command>[]][])(
@@ -236,14 +243,30 @@ test("deduplicates commands by cwd and argv", () => {
   const actualCommands = commands([
     "docs/README.md",
     "native/kernel/crates/kernel-cli/src/main.rs",
-    "skills/kws-codex-plan-executor/scripts/cpe.py",
+    "skills/kws-codex-plan-runner/scripts/runner.py",
   ]);
 
   expect(actualCommands).toEqual([
-    contract, diffCheck, rustFormat, rustTest, codexExecutorEval, check,
+    contract, diffCheck, rustFormat, rustTest, codexPlanRunnerEval,
+    planRunnerParity, planRunnerCutoverTest, check,
   ]);
   expect(new Set(actualCommands.map(({ argv, cwd }) => `${cwd ?? ""}\u0000${argv.join("\u0000")}`)).size)
     .toBe(actualCommands.length);
+});
+
+test("keeps the plan-runner live canary out of every offline scope", () => {
+  for (const scope of VERIFICATION_SCOPES) {
+    expect(scope.commands.some(({ argv }) =>
+      argv.some((part) => part.includes("plan-runner-live-canary"))
+    )).toBeFalse();
+  }
+});
+
+test("does not route either retired sequential executor", () => {
+  const serialized = JSON.stringify(VERIFICATION_SCOPES);
+  expect(serialized).not.toContain("kws-codex-plan-executor");
+  expect(serialized).not.toContain("kws-claude-plan-executor");
+  expect(VERIFICATION_SCOPES.map(({ id }) => id)).not.toContain("codex-executor");
 });
 
 test("reports unknown and Markdown paths alongside conservative selection", () => {

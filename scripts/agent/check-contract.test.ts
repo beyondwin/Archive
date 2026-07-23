@@ -12,7 +12,6 @@ import { checkContract, formatContractIssues } from "./check-contract";
 import { VERIFICATION_SCOPES, type VerificationScope } from "./verification-map";
 
 const EXECUTOR_GATES = [
-  "skills/kws-codex-plan-executor/evals/run.sh",
   "skills/kws-codex-plan-runner/evals/run.sh",
   "skills/kws-claude-plan-runner/evals/run.sh",
   "skills/kws-claude-multi-agent-executor/evals/run.sh",
@@ -422,6 +421,27 @@ describe("checkContract", () => {
     expect(EXECUTOR_GATES).toContain(
       "skills/kws-claude-plan-runner/evals/run.sh",
     );
+  });
+
+  test("routes only the new sequential runners while retaining the Claude multi-agent executor", () => {
+    expect(REQUIRED_PATHS).toEqual(expect.arrayContaining([
+      "skills/kws-codex-plan-runner",
+      "skills/kws-claude-plan-runner",
+      "skills/kws-claude-multi-agent-executor",
+    ]));
+    expect(REQUIRED_AGENT_FILES).toEqual(expect.arrayContaining([
+      "skills/kws-codex-plan-runner/AGENTS.md",
+      "skills/kws-claude-plan-runner/AGENTS.md",
+      "skills/kws-claude-multi-agent-executor/AGENTS.md",
+    ]));
+    for (const legacy of [
+      "skills/kws-codex-plan-executor",
+      "skills/kws-claude-plan-executor",
+    ]) {
+      expect(REQUIRED_PATHS).not.toContain(legacy);
+      expect(REQUIRED_AGENT_FILES).not.toContain(`${legacy}/AGENTS.md`);
+      expect(EXECUTOR_GATES).not.toContain(`${legacy}/evals/run.sh`);
+    }
   });
 
   test("does not let a retired mention mask a later primary claim", async () => {

@@ -1,6 +1,6 @@
 export type ScopeId =
   | "docs" | "console" | "app" | "package" | "waygent-closure"
-  | "native" | "waygent-skill" | "codex-executor"
+  | "native" | "waygent-skill"
   | "codex-plan-runner" | "claude-plan-runner"
   | "claude-executor" | "full-offline";
 
@@ -46,7 +46,6 @@ const CONSOLE_BUILD: CommandSpec = { id: "console-build", argv: ["bun", "run", "
 const RUST_FORMAT: CommandSpec = { id: "rust-format", argv: ["cargo", "fmt", "--check"], cwd: "native/kernel" };
 const RUST_TEST: CommandSpec = { id: "rust-test", argv: ["cargo", "test", "--workspace"], cwd: "native/kernel" };
 const WAYGENT_SKILL_EVAL: CommandSpec = { id: "waygent-skill-eval", argv: ["./evals/run.sh"], cwd: "skills/waygent" };
-const CODEX_EXECUTOR_EVAL: CommandSpec = { id: "codex-executor-eval", argv: ["./evals/run.sh"], cwd: "skills/kws-codex-plan-executor" };
 const CODEX_PLAN_RUNNER_EVAL: CommandSpec = {
   id: "codex-plan-runner-eval",
   argv: ["./evals/run.sh"],
@@ -60,6 +59,10 @@ const CLAUDE_PLAN_RUNNER_EVAL: CommandSpec = {
 const PLAN_RUNNER_PARITY: CommandSpec = {
   id: "plan-runner-parity",
   argv: ["./scripts/agent/check-plan-runner-parity"],
+};
+const PLAN_RUNNER_CUTOVER_TEST: CommandSpec = {
+  id: "plan-runner-cutover-test",
+  argv: ["./scripts/agent/plan-runner-cutover", "self-test"],
 };
 const CLAUDE_EXECUTOR_OFFLINE: CommandSpec = {
   id: "claude-executor-offline",
@@ -80,8 +83,8 @@ const LIVE_PROVIDER_SMOKE: CommandSpec = {
 const OFFLINE_COMMANDS = [
   CONTRACT, DIFF_CHECK, TYPECHECK, CHECK, PLATFORM_DEMO, SCENARIOS, FIXTURE_LAB, DOGFOOD,
   CONSOLE_TEST, CONSOLE_BUILD, RUST_FORMAT, RUST_TEST, WAYGENT_SKILL_EVAL,
-  CODEX_EXECUTOR_EVAL, CODEX_PLAN_RUNNER_EVAL, CLAUDE_PLAN_RUNNER_EVAL,
-  PLAN_RUNNER_PARITY, CLAUDE_EXECUTOR_OFFLINE,
+  CODEX_PLAN_RUNNER_EVAL, CLAUDE_PLAN_RUNNER_EVAL,
+  PLAN_RUNNER_PARITY, PLAN_RUNNER_CUTOVER_TEST, CLAUDE_EXECUTOR_OFFLINE,
   CLAUDE_EXECUTOR_EVAL, LIVE_PROVIDER_SMOKE,
 ] as const;
 
@@ -101,9 +104,8 @@ export const VERIFICATION_SCOPES: readonly VerificationScope[] = [
   { id: "waygent-closure", matchers: ["packages/", "bun.lock"], commands: [CONTRACT, DIFF_CHECK, CHECK, PLATFORM_DEMO, SCENARIOS, FIXTURE_LAB, DOGFOOD, LIVE_PROVIDER_SMOKE], allowOverlapWith: ["package"] },
   { id: "native", matchers: ["native/kernel/"], commands: [CONTRACT, DIFF_CHECK, RUST_FORMAT, RUST_TEST] },
   { id: "waygent-skill", matchers: ["skills/waygent/"], commands: [CONTRACT, DIFF_CHECK, WAYGENT_SKILL_EVAL, CHECK, PLATFORM_DEMO, SCENARIOS] },
-  { id: "codex-executor", matchers: ["skills/kws-codex-plan-executor/"], commands: [CONTRACT, DIFF_CHECK, CODEX_EXECUTOR_EVAL, CHECK] },
-  { id: "codex-plan-runner", matchers: ["skills/kws-codex-plan-runner/"], commands: [CONTRACT, DIFF_CHECK, CODEX_PLAN_RUNNER_EVAL, PLAN_RUNNER_PARITY, CHECK] },
-  { id: "claude-plan-runner", matchers: ["skills/kws-claude-plan-runner/"], commands: [CONTRACT, DIFF_CHECK, CLAUDE_PLAN_RUNNER_EVAL, PLAN_RUNNER_PARITY, CHECK] },
+  { id: "codex-plan-runner", matchers: ["skills/kws-codex-plan-runner/"], commands: [CONTRACT, DIFF_CHECK, CODEX_PLAN_RUNNER_EVAL, PLAN_RUNNER_PARITY, PLAN_RUNNER_CUTOVER_TEST, CHECK] },
+  { id: "claude-plan-runner", matchers: ["skills/kws-claude-plan-runner/"], commands: [CONTRACT, DIFF_CHECK, CLAUDE_PLAN_RUNNER_EVAL, PLAN_RUNNER_PARITY, PLAN_RUNNER_CUTOVER_TEST, CHECK] },
   { id: "claude-executor", matchers: ["skills/kws-claude-multi-agent-executor/"], commands: [CONTRACT, DIFF_CHECK, CLAUDE_EXECUTOR_OFFLINE, CLAUDE_EXECUTOR_EVAL, CHECK] },
   { id: "full-offline", matchers: ["*"], commands: OFFLINE_COMMANDS },
 ];

@@ -58,8 +58,10 @@ not automatically as authoritative `main`. Identify the nearest applicable
 - Lens storage/projection: `packages/lens-store/`, `packages/lens-projectors/`
 - Product surfaces: `apps/cli/`, `apps/api/`, `apps/console/`
 - Waygent workflow contract: `skills/waygent/`
-- Sequential Codex plan execution: `skills/kws-codex-plan-executor/`
-- Claude executor: `skills/kws-claude-multi-agent-executor/`
+- Sequential Codex plan execution: `skills/kws-codex-plan-runner/`
+- Sequential Claude plan execution: `skills/kws-claude-plan-runner/`
+- Specialized Claude multi-agent execution:
+  `skills/kws-claude-multi-agent-executor/`
 
 Filesystem JSON and JSONL artifacts are the source of truth. SQLite indexes are
 rebuildable caches when present. Active Waygent events use `platform.*`,

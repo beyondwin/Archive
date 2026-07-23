@@ -3,7 +3,7 @@ export const REQUIRED_PATHS = [
   "packages/orchestrator", "packages/runway-control",
   "packages/provider-adapters", "packages/lens-store",
   "packages/lens-projectors", "native/kernel", "skills/waygent",
-  "skills/kws-codex-plan-executor", "skills/kws-codex-plan-runner",
+  "skills/kws-codex-plan-runner",
   "skills/kws-claude-plan-runner", "skills/kws-claude-multi-agent-executor",
 ] as const;
 
@@ -12,7 +12,6 @@ export const ROOT_GUIDANCE_FILES = ["AGENTS.md"] as const;
 export const SUBTREE_GUIDANCE_FILES = [
   "apps/AGENTS.md", "packages/AGENTS.md",
   "native/kernel/AGENTS.md", "skills/AGENTS.md",
-  "skills/kws-codex-plan-executor/AGENTS.md",
   "skills/kws-codex-plan-runner/AGENTS.md",
   "skills/kws-claude-plan-runner/AGENTS.md",
   "skills/kws-claude-multi-agent-executor/AGENTS.md",
