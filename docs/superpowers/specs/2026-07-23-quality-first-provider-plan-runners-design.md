@@ -104,6 +104,9 @@ remove:
     logs, path safety, and truthful handoff reporting.
 12. Replace the legacy skills without affecting runs that are active during
     development.
+13. Run both implementations on a preinstalled, uv-managed, normal-GIL
+    CPython `>=3.13,<3.14` without depending on the system Python or downloading
+    an interpreter during `run` or `resume`.
 
 ## 4. Non-Goals
 
@@ -124,6 +127,8 @@ The new runners do not:
 - automatically kill or migrate legacy runs during cutover;
 - provide hostile same-user process isolation;
 - replace Waygent scheduling, kernel isolation, or platform orchestration;
+- rewrite the runners in Bun or TypeScript;
+- install or upgrade Python during an active run or resume;
 - change `kws-claude-multi-agent-executor`, which is outside this two-runner
   replacement scope.
 
@@ -242,7 +247,9 @@ Only the following may become `blocked`:
 - irreconcilable product requirements where repository evidence cannot select
   one safe interpretation;
 - provider authentication, quota, or rate-limit conditions that cannot be
-  recovered locally.
+  recovered locally;
+- missing or incompatible required runner runtime discovered before worktree or
+  provider mutation.
 
 The child session never waits on an interactive user question. It returns a
 structured blocker when one of these authority boundaries is reached.
@@ -252,7 +259,7 @@ structured blocker when one of these authority boundaries is reached.
 Both skills expose the same common CLI shape:
 
 ```bash
-python3 scripts/runner.py run \
+./scripts/runner run \
   --spec /absolute/spec-a.md \
   [--spec /absolute/spec-b.md ...] \
   --plan /absolute/plan-a.md \
@@ -261,16 +268,65 @@ python3 scripts/runner.py run \
   [--stall-seconds 3600] \
   [--model MODEL]
 
-python3 scripts/runner.py resume --run-id RUN_ID
-python3 scripts/runner.py resume --run-id RUN_ID --retry-blocked
-python3 scripts/runner.py resume --run-id RUN_ID \
+./scripts/runner resume --run-id RUN_ID
+./scripts/runner resume --run-id RUN_ID --retry-blocked
+./scripts/runner resume --run-id RUN_ID \
   --retry-failed --strategy-note "new evidence or materially different strategy"
-python3 scripts/runner.py inspect --run-id RUN_ID
+./scripts/runner inspect --run-id RUN_ID
 ```
 
 Codex additionally accepts an immutable run-creation `--sandbox` option. Its
 default is `workspace-write`. Claude records its fixed permission mode and deny
 rules in the run state.
+
+The public executable is a self-locating POSIX launcher. It resolves its own
+physical skill directory rather than the caller's current working directory,
+then performs this no-download lookup:
+
+```bash
+uv python find \
+  --managed-python \
+  --no-python-downloads \
+  --no-project \
+  --no-config \
+  --resolve-links \
+  3.13
+```
+
+The launcher executes the returned interpreter with the absolute
+`scripts/runner.py` path and the original arguments. It does not use
+`uv run`: the repository is intentionally not a uv project, and the launcher
+does not need project discovery or its warning surface.
+
+Both runners require:
+
+- `uv` on `PATH`;
+- an already installed, uv-managed CPython `>=3.13,<3.14`;
+- the normal GIL build, not the free-threaded variant;
+- standard-library-only Python production code.
+
+The implementation and cutover workflow prepares the runtime explicitly with
+`uv python install 3.13` before any live run. `run`, `resume`, and `inspect`
+never download or install Python. The launcher emits a stable
+`blocked: runtime_missing` result when `uv` or the managed interpreter cannot
+be found. Once Python starts, preflight rejects an incompatible
+implementation, minor version, or free-threaded build as
+`blocked: runtime_incompatible`.
+
+Before creating a worktree, launching a provider, or otherwise mutating run
+state beyond the initial blocked record, preflight records the runner runtime's
+exact patch version, resolved executable path, architecture, GIL mode, and
+`uv` version. This runner-runtime identity is distinct from the environment
+identity sealed for target-project verification commands; a target command
+may intentionally use a different interpreter or toolchain.
+
+At design finalization, the implementation host was prepared and verified with
+`uv 0.11.28`, normal-GIL CPython `3.13.14`, architecture `arm64`, and canonical
+interpreter path
+`/Users/kws/.local/share/uv/python/cpython-3.13.14-macos-aarch64-none/bin/python3.13`.
+The system `/usr/bin/python3` remains `3.9.6` and is not used or modified. These
+patch, path, and architecture values are current-host evidence, not portable
+hardcoded requirements beyond the common version and GIL contract.
 
 Input rules:
 
@@ -343,6 +399,8 @@ Each provider has an independent state format version `1`. Provider-private
 fields may differ, but both formats contain these common facts:
 
 - run ID, provider, runner version, and provider CLI version;
+- runner-runtime identity: uv version, CPython implementation and patch
+  version, resolved executable, architecture, and GIL mode;
 - source repository, starting branch, and starting commit;
 - worktree and Git common-directory identity;
 - ordered spec and plan snapshots with SHA-256 digests;
@@ -854,7 +912,11 @@ the final candidate-HEAD gate.
 
 ## 21. Testing Strategy
 
-Each skill is a Python 3.9+ standard-library implementation with its own:
+Each skill is a CPython `>=3.13,<3.14` standard-library implementation launched
+through its own self-locating executable and a preinstalled uv-managed
+interpreter. Its tests prove that no active command attempts a Python download
+and that runtime identity is recorded separately from target verification
+environment identity. Each skill has its own:
 
 - unit tests;
 - fake-provider adapter;
@@ -912,6 +974,10 @@ Required deterministic scenarios include:
 - concurrency locking and process-group cleanup;
 - path traversal, unsafe ownership, and symlink replacement attacks;
 - provider stream truncation and malformed final envelopes;
+- missing `uv`, missing managed Python, incompatible CPython, and free-threaded
+  runtime rejection before worktree or provider mutation;
+- self-locating launcher behavior from unrelated current directories;
+- runner-runtime and target-verification environment identity separation;
 - final completion parity between the two providers.
 
 Validation proceeds in this order:
@@ -1065,4 +1131,10 @@ The implementation is acceptable when:
 19. legacy removal and installed-skill cutover occur only after zero live
     legacy processes and zero non-abandoned continuable legacy states are
     confirmed;
-20. no legacy compatibility or migration code is introduced.
+20. no legacy compatibility or migration code is introduced;
+21. both public launchers use the preinstalled uv-managed normal-GIL CPython
+    `>=3.13,<3.14`, never fall back to the system Python, and never download an
+    interpreter during `run`, `resume`, or `inspect`;
+22. runtime preflight records exact runner identity before worktree or provider
+    mutation and does not conflate it with target verification environment
+    identity.
