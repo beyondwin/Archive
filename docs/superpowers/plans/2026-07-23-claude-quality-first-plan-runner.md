@@ -223,9 +223,10 @@ Run:
 
 Expected: FAIL when importing `plan_runner.contracts`.
 
-- [ ] **Step 3: Add independent copies of the validated provider-neutral modules**
+- [ ] **Step 3: Implement the validated provider-neutral interfaces independently**
 
-Using `apply_patch`, add provider-private copies of these Plan 1 files:
+Using `apply_patch`, implement provider-private Claude modules with the same
+public interfaces and semantic invariants as these Plan 1 files:
 
 ```text
 skills/kws-codex-plan-runner/scripts/plan_runner/__init__.py
@@ -241,7 +242,10 @@ skills/kws-codex-plan-runner/templates/final-verification-set.schema.json
 ```
 
 The destination is the same relative path under
-`skills/kws-claude-plan-runner/`. Make these exact provider-specific changes:
+`skills/kws-claude-plan-runner/`. Read the validated Codex behavior as a
+contract, but do not mechanically copy or retain verbatim production logic.
+Choose clear Claude-private structure and naming while preserving the
+versioned semantic outcomes. Apply these exact provider-specific values:
 
 ```python
 provider = "claude"
@@ -252,9 +256,10 @@ provider_auth_prefixes = ("ANTHROPIC_",)
 Do not retain a Codex state path, branch prefix, prompt, executable name,
 sandbox option, or authentication prefix anywhere in the Claude runtime.
 
-- [ ] **Step 4: Add provider-private copies of the focused neutral tests**
+- [ ] **Step 4: Add provider-private behavior tests**
 
-Using `apply_patch`, add Claude-path copies of Plan 1:
+Using `apply_patch`, add Claude-path tests that exercise the same public
+invariants as Plan 1 without mechanically duplicating its test bodies:
 
 ```text
 evals/test_contracts.py
@@ -266,10 +271,12 @@ evals/test_recovery.py
 evals/test_runtime.py
 ```
 
-Change expected provider identity to `claude`, branch prefix to
-`claude-plan/`, and preserved authentication variables to `ANTHROPIC_*`.
-Retain every crash, symlink, receipt, deadline, lease, recovery, managed
-runtime, and runner-versus-target-environment identity assertion.
+Use provider identity `claude`, branch prefix `claude-plan/`, and preserved
+authentication variables `ANTHROPIC_*`. Cover every crash-window ordering,
+symlink, receipt, deadline, lease, recovery, managed-runtime, and
+runner-versus-target-environment identity invariant with Claude-private test
+arrangement and assertions. The root parity harness, not source duplication,
+is the provider-neutral drift guard.
 
 - [ ] **Step 5: Run the foundation tests**
 
@@ -289,7 +296,7 @@ PYTHON_313="$(uv python find --managed-python --no-python-downloads \
   skills/kws-claude-plan-runner/evals/test_recovery.py -v
 ```
 
-Expected: all copied contract and durability tests PASS.
+Expected: all independently implemented contract and durability tests PASS.
 
 - [ ] **Step 6: Commit the independent Claude foundation**
 
@@ -552,8 +559,10 @@ schema changes must therefore be deliberate in both skills.
 
 - [ ] **Step 4: Implement the Claude engine from the fixed provider-neutral interface**
 
-Using `apply_patch`, add an independent copy of the validated Plan 1 engine and
-CLI logic, then make only these provider changes:
+Using `apply_patch`, implement the validated Plan 1 engine and CLI interfaces
+inside the Claude skill without importing Codex code or mechanically copying
+its implementation. Preserve the common state-machine semantics and use these
+provider values:
 
 ```python
 provider_name = "claude"
@@ -909,13 +918,33 @@ Expected: PASS.
 
 - [ ] **Step 7: Run provider and parity gates**
 
+Before the complete gates, create the candidate commit containing every
+tracked Plan 2 change:
+
+```bash
+git add skills/kws-claude-plan-runner \
+  scripts/agent/check-plan-runner-parity \
+  scripts/agent/check-plan-runner-parity.py \
+  scripts/agent/fixtures/plan-runner-parity-v1.json \
+  scripts/agent/contract.ts \
+  scripts/agent/check-contract.test.ts \
+  scripts/agent/verification-map.ts \
+  scripts/agent/verification-map.test.ts
+git commit -m "feat: add Claude quality-first plan runner"
+PLAN2_CANDIDATE_HEAD="$(git rev-parse HEAD)"
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+```
+
+No tracked edit or commit may occur after successful evidence at
+`PLAN2_CANDIDATE_HEAD`. A required review fix creates a new candidate commit
+and invalidates prior final evidence.
+
 Run:
 
 ```bash
-cd skills/kws-codex-plan-runner && ./evals/run.sh
-cd /Users/kws/source/private/Archive/skills/kws-claude-plan-runner && ./evals/run.sh
-cd /Users/kws/source/private/Archive && \
-  ./scripts/agent/check-plan-runner-parity
+(cd "$REPO_ROOT/skills/kws-codex-plan-runner" && ./evals/run.sh)
+(cd "$REPO_ROOT/skills/kws-claude-plan-runner" && ./evals/run.sh)
+(cd "$REPO_ROOT" && ./scripts/agent/check-plan-runner-parity)
 ```
 
 Expected: Codex PASS, Claude PASS, parity PASS.
@@ -947,16 +976,12 @@ Review against `code_review.md` and verify:
 
 Expected: no unresolved Critical or Important findings.
 
-- [ ] **Step 10: Commit the Claude release and parity routing**
+- [ ] **Step 10: Seal the Plan 2 candidate evidence**
 
-```bash
-git add skills/kws-claude-plan-runner \
-  scripts/agent/contract.ts \
-  scripts/agent/check-contract.test.ts \
-  scripts/agent/verification-map.ts \
-  scripts/agent/verification-map.test.ts
-git commit -m "feat: add Claude quality-first plan runner"
-```
+Assert that both provider gates, parity, repository verification, and review
+refer to `PLAN2_CANDIDATE_HEAD`, and that `git rev-parse HEAD` still equals
+that value. Do not create an evidence-only commit. After any required fix,
+commit first and rerun Steps 7-9 once for the new candidate HEAD.
 
 ## Plan 2 Completion Evidence
 
@@ -965,19 +990,15 @@ Before starting cutover work:
 ```bash
 git status --short
 git log -1 --oneline
-cd skills/kws-codex-plan-runner && ./evals/run.sh
-cd /Users/kws/source/private/Archive/skills/kws-claude-plan-runner && ./evals/run.sh
-cd /Users/kws/source/private/Archive && \
-  ./scripts/agent/check-plan-runner-parity
-bun run agent:verify
+test "$(git rev-parse HEAD)" = "$PLAN2_CANDIDATE_HEAD"
 ```
 
 Required result:
 
 - clean feature worktree;
-- both provider deterministic gates PASS;
-- parity PASS;
-- repository gate PASS;
+- the recorded provider deterministic gates PASS at the current HEAD;
+- the recorded parity gate PASS at the same current HEAD;
+- the recorded repository gate PASS at the same current HEAD;
 - no real provider canary claimed yet;
 - every legacy source, installed symlink, runtime state, and live process remains
   unchanged.
