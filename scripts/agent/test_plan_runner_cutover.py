@@ -366,6 +366,61 @@ class ReportTests(CutoverFixture):
         report["repository"]["head"] = "0" * 40
         self.assertFalse(cutover.validate_report_digest(report))
 
+    def test_self_consistent_structurally_malformed_reports_are_rejected(self):
+        original = self.audit()
+        malformed_reports: list[dict[str, object]] = []
+        missing_repository = json.loads(json.dumps(original))
+        del missing_repository["repository"]
+        malformed_reports.append(missing_repository)
+        wrong_repository = json.loads(json.dumps(original))
+        wrong_repository["repository"] = []
+        malformed_reports.append(wrong_repository)
+        missing_runtime_field = json.loads(json.dumps(original))
+        del missing_runtime_field["runtime"]["python_executable"]
+        malformed_reports.append(missing_runtime_field)
+        invalid_source_fact = json.loads(json.dumps(original))
+        invalid_source_fact["sources"] = [{"path": "relative", "kind": "directory"}]
+        malformed_reports.append(invalid_source_fact)
+        invalid_state = json.loads(json.dumps(original))
+        invalid_state["states"] = [{"provider": "codex"}]
+        malformed_reports.append(invalid_state)
+        invalid_blockers = json.loads(json.dumps(original))
+        invalid_blockers["blocker_codes"] = "none"
+        malformed_reports.append(invalid_blockers)
+        for index, malformed in enumerate(malformed_reports):
+            with self.subTest(index=index):
+                path = self.root / f"malformed-report-{index}.json"
+                write_json(path, cutover.seal_report(malformed))
+                with self.assertRaisesRegex(
+                    cutover.CutoverError, "^report_integrity$"
+                ):
+                    cutover.read_report(path)
+
+    def test_malformed_report_cli_exits_65_without_traceback(self):
+        malformed = self.audit()
+        malformed["repository"] = []
+        path = self.root / "malformed-cli-report.json"
+        write_json(path, cutover.seal_report(malformed))
+        command = subprocess.run(
+            [
+                str(SCRIPT_DIR / "plan-runner-cutover"),
+                "apply",
+                "--repo",
+                str(self.repo),
+                "--audit-report",
+                str(path),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(65, command.returncode)
+        self.assertEqual("", command.stderr)
+        self.assertEqual(
+            {"reason_code": "report_integrity", "status": "blocked"},
+            json.loads(command.stdout),
+        )
+
 
 class ApplyTests(CutoverFixture):
     def setUp(self) -> None:
@@ -504,6 +559,74 @@ class ApplyTests(CutoverFixture):
         self.assertFalse(destination.exists())
         self.assertFalse(destination.is_symlink())
         self.assertFalse(any(destination.parent.glob(f".{destination.name}.*.tmp")))
+
+    def test_atomic_install_never_replaces_raced_regular_destination(self):
+        destination = self.home / ".codex" / "skills" / "kws-codex-plan-runner"
+        destination.parent.mkdir(parents=True)
+        target = self.repo / "skills" / "kws-codex-plan-runner"
+
+        def create_regular(_temporary: Path, raced_destination: Path) -> None:
+            raced_destination.write_text("operator data", encoding="utf-8")
+
+        with self.assertRaisesRegex(
+            cutover.CutoverError, "^legacy_link_integrity$"
+        ):
+            cutover.atomic_symlink(
+                target, destination, before_rename=create_regular
+            )
+        self.assertTrue(destination.is_file())
+        self.assertFalse(destination.is_symlink())
+        self.assertEqual("operator data", destination.read_text(encoding="utf-8"))
+
+    def test_narrow_unlink_never_removes_raced_regular_or_directory(self):
+        for replacement in ("regular", "directory"):
+            with self.subTest(replacement=replacement):
+                parent = self.home / replacement
+                parent.mkdir()
+                target = self.repo / "skills" / "kws-codex-plan-executor"
+                link = parent / "kws-codex-plan-executor"
+                link.symlink_to(target)
+                expected = cutover._lstat_fact(link)
+
+                def swap() -> None:
+                    link.unlink()
+                    if replacement == "regular":
+                        link.write_text("operator data", encoding="utf-8")
+                    else:
+                        link.mkdir()
+
+                with self.assertRaisesRegex(
+                    cutover.CutoverError, "^legacy_link_integrity$"
+                ):
+                    cutover.unlink_exact_symlink(
+                        link,
+                        expected,
+                        expected_target=str(target),
+                        before_unlink=swap,
+                    )
+                if replacement == "regular":
+                    self.assertTrue(link.is_file())
+                    self.assertEqual(
+                        "operator data", link.read_text(encoding="utf-8")
+                    )
+                else:
+                    self.assertTrue(link.is_dir())
+
+    def test_narrow_unlink_maps_filesystem_errors_to_integrity_failure(self):
+        parent = self.home / "permission-error"
+        parent.mkdir()
+        target = self.repo / "skills" / "kws-codex-plan-executor"
+        link = parent / "kws-codex-plan-executor"
+        link.symlink_to(target)
+        expected = cutover._lstat_fact(link)
+        with mock.patch.object(cutover.os, "stat", side_effect=PermissionError):
+            with self.assertRaisesRegex(
+                cutover.CutoverError, "^legacy_link_integrity$"
+            ):
+                cutover.unlink_exact_symlink(
+                    link, expected, expected_target=str(target)
+                )
+        self.assertTrue(link.is_symlink())
 
 
 class QuarantineTests(ApplyTests):
