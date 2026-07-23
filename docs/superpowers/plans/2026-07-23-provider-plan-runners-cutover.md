@@ -503,6 +503,14 @@ git commit -m "docs: route sequential plans to provider runners"
 - Remove: `skills/kws-codex-plan-executor/`
 - Remove: `skills/kws-claude-plan-executor/`
 
+The implementation, deterministic tests, canary harness, and read-only audit
+can complete while legacy work is active. If the audit reports a live legacy
+process or any non-abandoned continuable state, record
+`cutover_pending_legacy_runs` and defer source deletion and installed-link
+changes. Do not weaken or bypass the zero gate, and do not treat external
+legacy activity as an implementation defect. Resume Steps 5-7 only after a
+fresh zero audit.
+
 - [ ] **Step 1: Prepare and record the managed runtime**
 
 This is the only stage allowed to prepare Python:
@@ -524,12 +532,10 @@ audit evidence. Do not modify `/usr/bin/python3`.
 - [ ] **Step 2: Run deterministic gates at the candidate HEAD**
 
 ```bash
-cd /Users/kws/source/private/Archive/skills/kws-codex-plan-runner && \
-  ./evals/run.sh
-cd /Users/kws/source/private/Archive/skills/kws-claude-plan-runner && \
-  ./evals/run.sh
-cd /Users/kws/source/private/Archive && \
-  ./scripts/agent/check-plan-runner-parity
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+(cd "$REPO_ROOT/skills/kws-codex-plan-runner" && ./evals/run.sh)
+(cd "$REPO_ROOT/skills/kws-claude-plan-runner" && ./evals/run.sh)
+(cd "$REPO_ROOT" && ./scripts/agent/check-plan-runner-parity)
 ./scripts/agent/plan-runner-cutover self-test
 bun run agent:verify
 ```
@@ -539,7 +545,7 @@ Expected: every offline gate PASS.
 - [ ] **Step 3: Run real installed-CLI canaries**
 
 ```bash
-cd /Users/kws/source/private/Archive
+cd "$(git rev-parse --show-toplevel)"
 ./scripts/agent/plan-runner-live-canary \
   --provider all --mode all
 ```
@@ -555,7 +561,7 @@ Use a temporary report outside Git:
 ```bash
 CUTOVER_AUDIT="$(mktemp "${TMPDIR:-/tmp}/plan-runner-cutover.XXXXXX.json")"
 ./scripts/agent/plan-runner-cutover audit \
-  --repo /Users/kws/source/private/Archive \
+  --repo "$(git rev-parse --show-toplevel)" \
   --output "$CUTOVER_AUDIT"
 ```
 
@@ -583,25 +589,7 @@ broad command. Ignored remnants in the installed main checkout are handled
 only by the tested post-integration `quarantine-legacy-caches` command. Unknown
 remnants block for inspection.
 
-- [ ] **Step 6: Re-run the final candidate-HEAD gates**
-
-```bash
-git diff --check
-bun test scripts/agent/check-contract.test.ts \
-  scripts/agent/verification-map.test.ts
-./scripts/agent/plan-runner-cutover self-test
-cd skills/kws-codex-plan-runner && ./evals/run.sh
-cd /Users/kws/source/private/Archive/skills/kws-claude-plan-runner && \
-  ./evals/run.sh
-cd /Users/kws/source/private/Archive && \
-  ./scripts/agent/check-plan-runner-parity
-bun run agent:verify
-```
-
-Expected: old roots are absent from tracked routing, both new runners PASS,
-parity PASS, cutover tests PASS, and repository verification PASS.
-
-- [ ] **Step 7: Review and commit the source cutover**
+- [ ] **Step 6: Review and commit the source cutover**
 
 Review against `code_review.md` and confirm:
 
@@ -617,22 +605,43 @@ Review against `code_review.md` and confirm:
 git add -A -- skills/kws-codex-plan-executor \
   skills/kws-claude-plan-executor
 git commit -m "refactor: remove superseded plan executors"
-git status --short --branch --untracked-files=all
+CUTOVER_CANDIDATE_HEAD="$(git rev-parse HEAD)"
+REPO_ROOT="$(git rev-parse --show-toplevel)"
 ```
 
-Expected: clean feature worktree and no unresolved Critical or Important review
-finding.
+- [ ] **Step 7: Run and seal the final candidate-HEAD gates**
+
+```bash
+git diff --check
+bun test scripts/agent/check-contract.test.ts \
+  scripts/agent/verification-map.test.ts
+./scripts/agent/plan-runner-cutover self-test
+(cd "$REPO_ROOT/skills/kws-codex-plan-runner" && ./evals/run.sh)
+(cd "$REPO_ROOT/skills/kws-claude-plan-runner" && ./evals/run.sh)
+(cd "$REPO_ROOT" && ./scripts/agent/check-plan-runner-parity)
+bun run agent:verify
+```
+
+Expected: old roots are absent from tracked routing, both new runners PASS,
+parity PASS, cutover tests PASS, repository verification PASS, and no
+unresolved Critical or Important review finding. The review and every
+successful gate must refer to `CUTOVER_CANDIDATE_HEAD`. Do not create a commit
+after successful evidence. A required fix must be committed first, then this
+step runs once for the new candidate HEAD.
 
 ## Task 5: Post-Integration Installed-Skill Cutover
 
 This task is intentionally performed only after the implementation branch is
-integrated into local `main`. It is not executed from a feature worktree whose
-legacy source deletion has not reached the installed source checkout.
+integrated into local `main` and a fresh audit has no legacy blockers. It is
+not executed from a feature worktree whose legacy source deletion has not
+reached the installed source checkout. If Task 4 was deferred for active
+legacy work, this task remains deferred as well.
 
 - [ ] **Step 1: Verify integrated main and quarantine exact ignored caches**
 
 ```bash
-cd /Users/kws/source/private/Archive
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
 test "$(git branch --show-current)" = "main"
 git status --short --branch --untracked-files=all
 git rev-parse HEAD
@@ -642,10 +651,10 @@ test -z "$(git ls-files skills/kws-codex-plan-executor)"
 test -z "$(git ls-files skills/kws-claude-plan-executor)"
 CACHE_AUDIT="$(mktemp "${TMPDIR:-/tmp}/plan-runner-cache-audit.XXXXXX.json")"
 ./scripts/agent/plan-runner-cutover audit \
-  --repo /Users/kws/source/private/Archive \
+  --repo "$REPO_ROOT" \
   --output "$CACHE_AUDIT"
 ./scripts/agent/plan-runner-cutover quarantine-legacy-caches \
-  --repo /Users/kws/source/private/Archive \
+  --repo "$REPO_ROOT" \
   --audit-report "$CACHE_AUDIT"
 test ! -e skills/kws-codex-plan-executor
 test ! -e skills/kws-claude-plan-executor
@@ -664,7 +673,7 @@ file to both the audit and quarantine commands.
   --provider all --mode all
 CUTOVER_AUDIT="$(mktemp "${TMPDIR:-/tmp}/plan-runner-cutover.XXXXXX.json")"
 ./scripts/agent/plan-runner-cutover audit \
-  --repo /Users/kws/source/private/Archive \
+  --repo "$REPO_ROOT" \
   --output "$CUTOVER_AUDIT"
 ```
 
@@ -674,7 +683,7 @@ Expected: live PASS and zero blockers at the exact integrated main HEAD.
 
 ```bash
 ./scripts/agent/plan-runner-cutover apply \
-  --repo /Users/kws/source/private/Archive \
+  --repo "$REPO_ROOT" \
   --audit-report "$CUTOVER_AUDIT"
 ```
 
@@ -699,8 +708,8 @@ test ! -e ~/.claude/skills/kws-claude-plan-executor && \
 ```
 
 Require the two `readlink` results to equal the two exact source paths under
-`/Users/kws/source/private/Archive/skills/`. Confirm the Claude multi-agent
-executor link and source are unchanged.
+`$REPO_ROOT/skills/`. Confirm the Claude multi-agent executor link and source
+are unchanged.
 
 - [ ] **Step 5: Record final handoff**
 

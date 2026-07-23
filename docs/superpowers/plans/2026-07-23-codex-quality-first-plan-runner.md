@@ -572,6 +572,16 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
+Add a second deterministic test that injects storage faults at two named
+stages: after the content-addressed artifact and its directory entry are
+durable but before `state.json` replacement, and immediately after atomic
+state replacement. Assert the exact injected stage, reopen the store, and
+assert that the result is either the complete previous revision or the
+complete next revision. No reopened state may reference a missing artifact,
+and artifacts not referenced by the reopened state remain ignored as orphans.
+Use an injected callable or patchable I/O boundary; do not terminate a real
+process or rely on timing.
+
 - [ ] **Step 2: Run the storage test and confirm the missing module failure**
 
 Run:
@@ -692,7 +702,10 @@ Run:
   skills/kws-codex-plan-runner/evals/test_storage.py -v
 ```
 
-Expected: 4 tests PASS.
+Expected: all storage tests PASS, including both injected crash-window
+orderings. The test must assert the exact fault stage reached and the reopened
+revision/reference set; merely asserting that an exception occurred is not
+sufficient.
 
 - [ ] **Step 7: Commit durable storage**
 
@@ -1175,6 +1188,10 @@ Cover:
 - repeated event keys, raw token deltas, repeated warnings, repeated output
   digests, and helper heartbeat do not refresh it;
 - a command deadline covers provider inactivity only until its own deadline;
+- a fake clock may advance more than one hour during a silent verification
+  command without expiring the provider lease before that command's explicit
+  deadline; process existence and heartbeat still do not extend the deadline,
+  and the lease expires exactly when the simulated deadline is reached;
 - controller alive plus child failure yields `recovering`, never `resumable`;
 - controller absent yields `resumable`;
 - healthy simple interruption chooses explicit-session resume;
@@ -1898,6 +1915,23 @@ Expected: PASS.
 
 - [ ] **Step 7: Run the complete Codex runner deterministic gate once**
 
+Before this gate, create the candidate commit that contains every tracked
+Plan 1 change:
+
+```bash
+git add skills/kws-codex-plan-runner \
+  scripts/agent/contract.ts \
+  scripts/agent/check-contract.test.ts \
+  scripts/agent/verification-map.ts \
+  scripts/agent/verification-map.test.ts
+git commit -m "feat: add Codex quality-first plan runner"
+PLAN1_CANDIDATE_HEAD="$(git rev-parse HEAD)"
+```
+
+No tracked edit or commit may occur after successful evidence at
+`PLAN1_CANDIDATE_HEAD`. If review produces a required fix, commit the fix,
+record the new candidate HEAD, and rerun Steps 7-9 once for that new HEAD.
+
 Run:
 
 ```bash
@@ -1934,16 +1968,11 @@ Review against `code_review.md`, focusing on:
 
 Expected: no unresolved Critical or Important findings.
 
-- [ ] **Step 10: Commit the Codex skill release surface**
+- [ ] **Step 10: Seal the Plan 1 candidate evidence**
 
-```bash
-git add skills/kws-codex-plan-runner \
-  scripts/agent/contract.ts \
-  scripts/agent/check-contract.test.ts \
-  scripts/agent/verification-map.ts \
-  scripts/agent/verification-map.test.ts
-git commit -m "feat: add Codex quality-first plan runner"
-```
+Assert that the deterministic gate, repository verification, and review all
+refer to `PLAN1_CANDIDATE_HEAD`, and that `git rev-parse HEAD` still equals
+that value. Do not create an evidence-only commit.
 
 ## Plan 1 Completion Evidence
 
@@ -1952,14 +1981,13 @@ Before starting the Claude plan:
 ```bash
 git status --short
 git log -1 --oneline
-cd skills/kws-codex-plan-runner && ./evals/run.sh
-cd /Users/kws/source/private/Archive && bun run agent:verify
+test "$(git rev-parse HEAD)" = "$PLAN1_CANDIDATE_HEAD"
 ```
 
 Required result:
 
 - clean feature worktree;
-- Codex runner deterministic gate PASS;
-- repository gate PASS;
+- the recorded Codex runner deterministic gate PASS at the current HEAD;
+- the recorded repository gate PASS at the same current HEAD;
 - no real provider canary claimed yet;
 - legacy CPE/CLPE source, symlinks, state, and processes unchanged.
