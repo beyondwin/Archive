@@ -881,7 +881,7 @@ def _safe_output_parent(path: Path) -> Path:
 
 
 def write_audit_report(path: Path, report: Mapping[str, Any]) -> None:
-    if not validate_report_digest(report):
+    if not validate_report_digest(report) or not validate_report_structure(report):
         raise CutoverError("report_integrity")
     parent = _safe_output_parent(path)
     payload = canonical_json(report) + b"\n"
@@ -914,6 +914,228 @@ def write_audit_report(path: Path, report: Mapping[str, Any]) -> None:
             pass
 
 
+def _plain_int(value: object, *, minimum: int = 0) -> bool:
+    return (
+        isinstance(value, int)
+        and not isinstance(value, bool)
+        and value >= minimum
+    )
+
+
+def _absolute_path_string(value: object) -> bool:
+    return isinstance(value, str) and bool(value) and Path(value).is_absolute()
+
+
+def _unique_strings(
+    value: object,
+    *,
+    absolute: bool = False,
+    allowed: set[str] | frozenset[str] | None = None,
+) -> bool:
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        return False
+    if len(value) != len(set(value)):
+        return False
+    if absolute and any(not _absolute_path_string(item) for item in value):
+        return False
+    return allowed is None or all(item in allowed for item in value)
+
+
+def _valid_lstat_fact(value: object) -> bool:
+    if not isinstance(value, Mapping):
+        return False
+    kind = value.get("kind")
+    base = {"path", "kind", "target"}
+    if kind in {"absent", "unreadable"}:
+        return (
+            set(value) == base
+            and _absolute_path_string(value.get("path"))
+            and value.get("target") is None
+        )
+    present = base | {"owner_uid", "mode", "device", "inode"}
+    if kind in {"directory", "regular"}:
+        present |= {"resolved_path"}
+    if set(value) != present or not _absolute_path_string(value.get("path")):
+        return False
+    if not all(
+        _plain_int(value.get(field))
+        for field in ("owner_uid", "mode", "device", "inode")
+    ):
+        return False
+    if kind == "symlink":
+        return isinstance(value.get("target"), str)
+    if kind in {"directory", "regular"}:
+        return value.get("target") is None and _absolute_path_string(
+            value.get("resolved_path")
+        )
+    return kind == "other" and value.get("target") is None
+
+
+def _valid_process_fact(value: object) -> bool:
+    if not isinstance(value, Mapping) or set(value) != {
+        "pid",
+        "ppid",
+        "pgid",
+        "providers",
+        "match_codes",
+        "command_sha256",
+        "command_bytes",
+        "cwd",
+    }:
+        return False
+    cwd = value.get("cwd")
+    return (
+        _plain_int(value.get("pid"), minimum=1)
+        and _plain_int(value.get("ppid"))
+        and _plain_int(value.get("pgid"))
+        and _unique_strings(
+            value.get("providers"), allowed={"codex", "claude"}
+        )
+        and bool(value.get("providers"))
+        and _unique_strings(value.get("match_codes"))
+        and bool(value.get("match_codes"))
+        and isinstance(value.get("command_sha256"), str)
+        and DIGEST.fullmatch(value["command_sha256"]) is not None
+        and _plain_int(value.get("command_bytes"), minimum=1)
+        and value["command_bytes"] <= MAX_COMMAND_BYTES
+        and (cwd is None or _absolute_path_string(cwd))
+    )
+
+
+def _valid_state_fact(value: object) -> bool:
+    if not isinstance(value, Mapping) or set(value) != {
+        "provider",
+        "run_id",
+        "path",
+        "status",
+        "resumable",
+        "sha256",
+        "classification",
+    }:
+        return False
+    status = value.get("status")
+    resumable = value.get("resumable")
+    digest = value.get("sha256")
+    classification = value.get("classification")
+    if (
+        value.get("provider") not in {"codex", "claude"}
+        or not isinstance(value.get("run_id"), str)
+        or RUN_ID.fullmatch(value["run_id"]) is None
+        or not _absolute_path_string(value.get("path"))
+        or (status is not None and not isinstance(status, str))
+        or (resumable is not None and not isinstance(resumable, bool))
+        or (
+            digest is not None
+            and (
+                not isinstance(digest, str)
+                or DIGEST.fullmatch(digest) is None
+            )
+        )
+        or classification
+        not in {"terminal", "continuable", "abandoned", "malformed", "unsafe"}
+    ):
+        return False
+    if classification in {"terminal", "continuable", "abandoned"}:
+        return isinstance(status, str) and digest is not None
+    if classification == "malformed":
+        return digest is not None
+    return digest is None
+
+
+def _valid_abandonment_fact(value: object) -> bool:
+    return (
+        isinstance(value, Mapping)
+        and set(value)
+        == {"provider", "run_id", "state_sha256", "reason_sha256"}
+        and value.get("provider") in {"codex", "claude"}
+        and isinstance(value.get("run_id"), str)
+        and RUN_ID.fullmatch(value["run_id"]) is not None
+        and isinstance(value.get("state_sha256"), str)
+        and DIGEST.fullmatch(value["state_sha256"]) is not None
+        and isinstance(value.get("reason_sha256"), str)
+        and DIGEST.fullmatch(value["reason_sha256"]) is not None
+    )
+
+
+def validate_report_structure(report: object) -> bool:
+    if not isinstance(report, Mapping) or set(report) != {
+        "schema_version",
+        "audit_timestamp",
+        "repository",
+        "runtime",
+        "home",
+        "legacy_source_roots",
+        "installed_link_paths",
+        "sources",
+        "links",
+        "processes",
+        "states",
+        "accepted_abandonments",
+        "blocker_codes",
+        "report_sha256",
+    }:
+        return False
+    repository = report.get("repository")
+    runtime = report.get("runtime")
+    if (
+        report.get("schema_version") != SCHEMA_VERSION
+        or not isinstance(report.get("audit_timestamp"), str)
+        or re.fullmatch(
+            r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z",
+            report["audit_timestamp"],
+        )
+        is None
+        or not isinstance(repository, Mapping)
+        or set(repository) != {"path", "head", "branch"}
+        or not _absolute_path_string(repository.get("path"))
+        or not isinstance(repository.get("head"), str)
+        or re.fullmatch(r"[0-9a-f]{40,64}", repository["head"]) is None
+        or not isinstance(repository.get("branch"), str)
+        or not isinstance(runtime, Mapping)
+        or set(runtime)
+        != {
+            "uv_version",
+            "python_version",
+            "python_executable",
+            "architecture",
+            "gil_disabled",
+        }
+        or any(
+            not isinstance(runtime.get(field), str) or not runtime[field]
+            for field in ("uv_version", "python_version", "architecture")
+        )
+        or not _absolute_path_string(runtime.get("python_executable"))
+        or not isinstance(runtime.get("gil_disabled"), bool)
+        or not _absolute_path_string(report.get("home"))
+        or not _unique_strings(report.get("legacy_source_roots"), absolute=True)
+        or not _unique_strings(report.get("installed_link_paths"), absolute=True)
+    ):
+        return False
+    list_validators = (
+        ("sources", _valid_lstat_fact),
+        ("links", _valid_lstat_fact),
+        ("processes", _valid_process_fact),
+        ("states", _valid_state_fact),
+        ("accepted_abandonments", _valid_abandonment_fact),
+    )
+    for key, validator in list_validators:
+        values = report.get(key)
+        if not isinstance(values, list) or any(not validator(value) for value in values):
+            return False
+    blocker_codes = report.get("blocker_codes")
+    allowed_blockers = set(INTEGRITY_BLOCKERS) | {
+        "abandonment_live_process",
+        "legacy_nonterminal_state",
+        "legacy_process_active",
+    }
+    return (
+        _unique_strings(blocker_codes, allowed=allowed_blockers)
+        and blocker_codes == sorted(blocker_codes)
+        and isinstance(report.get("report_sha256"), str)
+        and DIGEST.fullmatch(report["report_sha256"]) is not None
+    )
+
+
 def read_report(path: Path) -> dict[str, Any]:
     try:
         payload, _metadata = _safe_owned_regular(path, MAX_OUTPUT_BYTES)
@@ -923,6 +1145,7 @@ def read_report(path: Path) -> dict[str, Any]:
     if (
         not isinstance(report, dict)
         or report.get("schema_version") != SCHEMA_VERSION
+        or not validate_report_structure(report)
         or not validate_report_digest(report)
     ):
         raise CutoverError("report_integrity")
@@ -991,8 +1214,9 @@ def _validate_cutover_sources(repo: Path) -> None:
         raise CutoverError("source_integrity")
 
 
-def _prevalidate_links(repo: Path, home: Path) -> None:
+def _prevalidate_links(repo: Path, home: Path) -> dict[str, dict[str, object]]:
     links = _link_paths(home)
+    removals: dict[str, dict[str, object]] = {}
     for provider in ("codex", "claude"):
         skill_home = home / f".{provider}" / "skills"
         _require_owned_directory(skill_home)
@@ -1007,6 +1231,7 @@ def _prevalidate_links(repo: Path, home: Path) -> None:
                 or fact.get("target") != str(repo / "skills" / name)
             ):
                 raise CutoverError("legacy_link_integrity")
+            removals[str(path)] = fact
     for provider, name in (
         ("codex", NEW_NAMES[0]),
         ("claude", NEW_NAMES[1]),
@@ -1021,6 +1246,30 @@ def _prevalidate_links(repo: Path, home: Path) -> None:
             or fact.get("target") != str(repo / "skills" / name)
         ):
             raise CutoverError("legacy_link_integrity")
+    return removals
+
+
+def _open_safe_directory(path: Path) -> int:
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(
+        os, "O_NOFOLLOW", 0
+    )
+    try:
+        lexical = path.lstat()
+        descriptor = os.open(path, flags)
+    except OSError as error:
+        raise CutoverError("legacy_link_integrity") from error
+    opened = os.fstat(descriptor)
+    if (
+        not stat.S_ISDIR(lexical.st_mode)
+        or not stat.S_ISDIR(opened.st_mode)
+        or (lexical.st_dev, lexical.st_ino)
+        != (opened.st_dev, opened.st_ino)
+        or opened.st_uid != os.getuid()
+        or stat.S_IMODE(opened.st_mode) & 0o022
+    ):
+        os.close(descriptor)
+        raise CutoverError("legacy_link_integrity")
+    return descriptor
 
 
 def atomic_symlink(
@@ -1029,24 +1278,86 @@ def atomic_symlink(
     *,
     before_rename: Callable[[Path, Path], None] | None = None,
 ) -> None:
-    temporary = destination.parent / f".{destination.name}.{uuid.uuid4().hex}.tmp"
-    os.symlink(str(target), temporary)
+    if destination.name in {"", ".", ".."} or os.sep in destination.name:
+        raise CutoverError("legacy_link_integrity")
+    temporary_name = f".{destination.name}.{uuid.uuid4().hex}.tmp"
+    directory = _open_safe_directory(destination.parent)
     try:
-        metadata = temporary.lstat()
+        os.symlink(str(target), temporary_name, dir_fd=directory)
+        metadata = os.stat(
+            temporary_name, dir_fd=directory, follow_symlinks=False
+        )
         if (
             not stat.S_ISLNK(metadata.st_mode)
             or metadata.st_uid != os.getuid()
-            or os.readlink(temporary) != str(target)
+            or os.readlink(temporary_name, dir_fd=directory) != str(target)
         ):
             raise CutoverError("legacy_link_integrity")
         if before_rename is not None:
-            before_rename(temporary, destination)
-        os.replace(temporary, destination)
+            before_rename(destination.parent / temporary_name, destination)
+        parent_now = destination.parent.lstat()
+        opened = os.fstat(directory)
+        if (parent_now.st_dev, parent_now.st_ino) != (
+            opened.st_dev,
+            opened.st_ino,
+        ):
+            raise CutoverError("legacy_link_integrity")
+        try:
+            # symlink creation is atomic and fails with EEXIST. Unlike replace,
+            # it can never overwrite a raced regular file or directory.
+            os.symlink(str(target), destination.name, dir_fd=directory)
+        except FileExistsError as error:
+            raise CutoverError("legacy_link_integrity") from error
+        installed = os.stat(
+            destination.name, dir_fd=directory, follow_symlinks=False
+        )
+        if (
+            not stat.S_ISLNK(installed.st_mode)
+            or installed.st_uid != os.getuid()
+            or os.readlink(destination.name, dir_fd=directory) != str(target)
+        ):
+            raise CutoverError("legacy_link_integrity")
+        os.fsync(directory)
+    except OSError as error:
+        raise CutoverError("legacy_link_integrity") from error
     finally:
         try:
-            temporary.unlink()
+            os.unlink(temporary_name, dir_fd=directory)
         except FileNotFoundError:
             pass
+        finally:
+            os.close(directory)
+
+
+def unlink_exact_symlink(
+    path: Path,
+    expected: Mapping[str, object],
+    *,
+    expected_target: str,
+    before_unlink: Callable[[], None] | None = None,
+) -> None:
+    if path.name in {"", ".", ".."} or os.sep in path.name:
+        raise CutoverError("legacy_link_integrity")
+    if before_unlink is not None:
+        before_unlink()
+    directory = _open_safe_directory(path.parent)
+    try:
+        metadata = os.stat(path.name, dir_fd=directory, follow_symlinks=False)
+        if (
+            not stat.S_ISLNK(metadata.st_mode)
+            or metadata.st_uid != os.getuid()
+            or metadata.st_dev != expected.get("device")
+            or metadata.st_ino != expected.get("inode")
+            or stat.S_IMODE(metadata.st_mode) != expected.get("mode")
+            or os.readlink(path.name, dir_fd=directory) != expected_target
+        ):
+            raise CutoverError("legacy_link_integrity")
+        os.unlink(path.name, dir_fd=directory)
+        os.fsync(directory)
+    except OSError as error:
+        raise CutoverError("legacy_link_integrity") from error
+    finally:
+        os.close(directory)
 
 
 def apply_cutover(
@@ -1073,7 +1384,7 @@ def apply_cutover(
         runtime_identity=runtime_identity,
     )
     _validate_cutover_sources(repository)
-    _prevalidate_links(repository, operator_home)
+    removal_identities = _prevalidate_links(repository, operator_home)
     links = _link_paths(operator_home)
     additions = (
         ("codex", NEW_NAMES[0]),
@@ -1084,12 +1395,23 @@ def apply_cutover(
         fact = _lstat_fact(destination)
         if fact["kind"] == "absent":
             atomic_symlink(repository / "skills" / name, destination)
+        elif (
+            fact["kind"] != "symlink"
+            or fact.get("owner_uid") != os.getuid()
+            or fact.get("target") != str(repository / "skills" / name)
+        ):
+            raise CutoverError("legacy_link_integrity")
     removed: list[str] = []
     for provider in ("codex", "claude"):
         for name in LEGACY_NAMES:
             path = links[f"{provider}:{name}"]
-            if _lstat_fact(path)["kind"] == "symlink":
-                path.unlink()
+            expected = removal_identities.get(str(path))
+            if expected is not None:
+                unlink_exact_symlink(
+                    path,
+                    expected,
+                    expected_target=str(repository / "skills" / name),
+                )
                 removed.append(str(path))
     return {
         "status": "applied",
