@@ -46,10 +46,19 @@ record = {
         for key in (
             "ANTHROPIC_API_KEY",
             "GH_TOKEN",
+            "GITHUB_PAT",
+            "BITBUCKET_APP_PASSWORD",
             "SSH_AUTH_SOCK",
             "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY",
+            "AWS_SHARED_CREDENTIALS_FILE",
+            "AWS_PROFILE",
             "GOOGLE_APPLICATION_CREDENTIALS",
+            "CLOUDSDK_CONFIG",
+            "AZURE_CONFIG_DIR",
+            "DOCKER_CONFIG",
+            "KUBECONFIG",
+            "NETRC",
         )
         if key in os.environ
     },
@@ -179,9 +188,20 @@ elif scenario == "malformed":
 elif scenario == "oversized":
     print("{" + '"value":"' + "x" * 70_000 + '"}', flush=True)
 elif scenario == "stderr-secret":
-    sys.stderr.write("x" * 1_100_000)
+    sys.stderr.write("x" * 1_100_000 + "\n")
     sys.stderr.write("ANTHROPIC_API_KEY=super-secret password=hunter2\n")
     sys.stderr.flush()
+    result(structured={"status": "implemented"})
+elif scenario in {"stderr-boundary-key", "stderr-boundary-equals"}:
+    assignment = (
+        b"password=middle-secret\n"
+        if scenario == "stderr-boundary-key"
+        else b"password=equals-secret\n"
+    )
+    cut = 4 if scenario == "stderr-boundary-key" else len(b"password")
+    suffix = b"x" * (1_048_576 - (len(assignment) - cut))
+    sys.stderr.buffer.write(b"padding\n" + assignment + suffix)
+    sys.stderr.buffer.flush()
     result(structured={"status": "implemented"})
 else:
     raise SystemExit(f"unknown fake scenario: {scenario}")

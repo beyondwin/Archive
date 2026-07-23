@@ -11,6 +11,7 @@ import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 from .git_ops import sanitized_child_env
@@ -27,6 +28,7 @@ from .recovery import ActivityLease
 MAX_JSONL_LINE_BYTES = 65_536
 MAX_RETAINED_BYTES = 1_048_576
 MAX_RESULT_STRING_BYTES = 4_096
+MAX_RAW_STDERR_LINE_BYTES = 65_536
 _MAX_USAGE_FIELDS = 32
 _MAX_USAGE_VALUE = 2**63 - 1
 _RESULT_STATUSES = frozenset(("implemented", "blocked", "failed", "reviewed"))
@@ -82,6 +84,54 @@ _UNRELATED_CREDENTIALS = frozenset(
         "GOOGLE_OAUTH_ACCESS_TOKEN",
     )
 )
+_CREDENTIAL_PATHS = frozenset(
+    (
+        "AWS_CONFIG_FILE",
+        "AWS_SHARED_CREDENTIALS_FILE",
+        "AWS_WEB_IDENTITY_TOKEN_FILE",
+        "AZURE_CONFIG_DIR",
+        "CLOUDSDK_CONFIG",
+        "DOCKER_CONFIG",
+        "GCLOUD_CONFIG",
+        "GH_CONFIG_DIR",
+        "GITHUB_CONFIG_DIR",
+        "KUBECONFIG",
+        "NETRC",
+        "NPM_CONFIG_USERCONFIG",
+        "OCI_CONFIG_FILE",
+        "PIP_CONFIG_FILE",
+        "TF_CLI_CONFIG_FILE",
+    )
+)
+_CREDENTIAL_FAMILIES = (
+    "AWS_",
+    "AZURE_",
+    "BITBUCKET_",
+    "CLOUDSDK_",
+    "GCLOUD_",
+    "GCP_",
+    "GITHUB_",
+    "GITLAB_",
+    "GOOGLE_",
+    "OCI_",
+)
+_CREDENTIAL_HINTS = (
+    "ACCESS",
+    "ACCOUNT",
+    "AUTH",
+    "CLIENT",
+    "CONFIG",
+    "CREDENTIAL",
+    "IDENTITY",
+    "KEY",
+    "PASSWORD",
+    "PAT",
+    "PROFILE",
+    "SECRET",
+    "SUBSCRIPTION",
+    "TENANT",
+    "TOKEN",
+)
 _SECRET = re.compile(
     r"(?i)\b((?:[A-Z][A-Z0-9_]*(?:TOKEN|SECRET|API_KEY)|password)\s*=)\s*[^\s]+"
 )
@@ -112,10 +162,35 @@ def _canonical_uuid(value: object) -> str:
     return value
 
 
+def _freeze_json(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        frozen: dict[str, Any] = {}
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise ValueError("JSON object keys must be strings")
+            frozen[key] = _freeze_json(item)
+        return MappingProxyType(frozen)
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_json(item) for item in value)
+    if value is None or isinstance(value, (str, bool, int, float)):
+        if isinstance(value, float) and not math.isfinite(value):
+            raise ValueError("JSON numbers must be finite")
+        return value
+    raise ValueError("value must contain only JSON types")
+
+
+def _plain_json(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {key: _plain_json(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_plain_json(item) for item in value]
+    return value
+
+
 def _inline_schema(value: Mapping[str, Any]) -> str:
     try:
         return json.dumps(
-            value,
+            _plain_json(value),
             ensure_ascii=False,
             allow_nan=False,
             sort_keys=True,
@@ -148,6 +223,7 @@ class ProviderRequest:
         if not isinstance(self.output_schema, Mapping):
             raise ValueError("output_schema must be a JSON object")
         _inline_schema(self.output_schema)
+        object.__setattr__(self, "output_schema", _freeze_json(self.output_schema))
         if self.model is not None and (
             not isinstance(self.model, str)
             or not self.model
@@ -170,6 +246,16 @@ class ProviderOutcome:
     activity_keys: tuple[str, ...]
     stderr_tail: str
 
+    def __post_init__(self) -> None:
+        if self.result is not None:
+            if not isinstance(self.result, Mapping):
+                raise ValueError("provider result must be a mapping")
+            object.__setattr__(self, "result", _freeze_json(self.result))
+        if not isinstance(self.usage, Mapping):
+            raise ValueError("provider usage must be a mapping")
+        object.__setattr__(self, "usage", _freeze_json(self.usage))
+        object.__setattr__(self, "activity_keys", tuple(self.activity_keys))
+
 
 class _StreamState:
     def __init__(self) -> None:
@@ -187,7 +273,6 @@ class ClaudeAdapter:
         self,
         *,
         source_env: Mapping[str, str] | None = None,
-        provider_auth_prefixes: Sequence[str] = ("ANTHROPIC_",),
         remotes: Sequence[str] = (),
         run_id: str = "claude-plan-runner",
         helper: HelperDescriptor | None = None,
@@ -200,13 +285,7 @@ class ClaudeAdapter:
             or poll_seconds <= 0
         ):
             raise ValueError("poll_seconds must be finite and positive")
-        if any(
-            not isinstance(prefix, str) or not prefix
-            for prefix in provider_auth_prefixes
-        ):
-            raise ValueError("provider auth prefixes must be non-empty strings")
         self._source_env = dict(os.environ if source_env is None else source_env)
-        self._provider_auth_prefixes = tuple(provider_auth_prefixes)
         self._remotes = tuple(remotes)
         self._run_id = run_id
         self._helper = helper
@@ -248,7 +327,7 @@ class ClaudeAdapter:
         env = self._child_env()
         state = _StreamState()
         stdout_buffer = bytearray()
-        stderr_tail = bytearray()
+        stderr_tail = _RedactedStderrTail()
         malformed = False
         stalled = False
         return_code: int | None = None
@@ -302,9 +381,7 @@ class ClaudeAdapter:
                                     if not chunk:
                                         selector.unregister(stream)
                                     elif key.data == "stderr":
-                                        _append_tail(
-                                            stderr_tail, chunk, MAX_RETAINED_BYTES
-                                        )
+                                        stderr_tail.feed(chunk)
                                     else:
                                         stdout_buffer.extend(chunk)
                                         malformed = not self._consume_stdout(
@@ -442,12 +519,15 @@ class ClaudeAdapter:
     def _child_env(self) -> dict[str, str]:
         env = sanitized_child_env(
             self._source_env,
-            provider_auth_prefixes=self._provider_auth_prefixes,
+            provider_auth_prefixes=("ANTHROPIC_",),
             remotes=self._remotes,
             run_id=self._run_id,
         )
         for key in _NESTING_MARKERS | _UNRELATED_CREDENTIALS:
             env.pop(key, None)
+        for key in tuple(env):
+            if _is_unrelated_credential(key):
+                env.pop(key, None)
         if self._helper is not None:
             descriptor = self._helper
             env["KWS_PLAN_RUNNER_HELPER_PROTOCOL_VERSION"] = str(
@@ -612,7 +692,7 @@ class ClaudeAdapter:
         return_code: int | None,
         state: _StreamState,
         request: ProviderRequest,
-        stderr_tail: bytearray,
+        stderr_tail: _RedactedStderrTail,
         *,
         provider_code: str,
     ) -> ProviderOutcome:
@@ -634,13 +714,67 @@ def _append_tail(target: bytearray, chunk: bytes, limit: int) -> None:
         del target[: len(target) - limit]
 
 
-def _scrub(raw: bytes | bytearray) -> str:
-    text = bytes(raw).decode("utf-8", "replace")
-    scrubbed = _SECRET.sub(lambda match: match.group(1) + "[REDACTED]", text)
-    encoded = scrubbed.encode("utf-8")
-    if len(encoded) > MAX_RETAINED_BYTES:
-        encoded = encoded[-MAX_RETAINED_BYTES:]
-    return encoded.decode("utf-8", "ignore")
+def _scrub(raw: _RedactedStderrTail) -> str:
+    return raw.text()
+
+
+class _RedactedStderrTail:
+    """Bound raw stderr by line, redact complete lines, then bound retained text."""
+
+    def __init__(self) -> None:
+        self._pending = bytearray()
+        self._tail = bytearray()
+        self._discard_line = False
+        self._finished = False
+
+    def feed(self, chunk: bytes) -> None:
+        if self._finished:
+            raise RuntimeError("stderr capture is already finished")
+        offset = 0
+        while offset < len(chunk):
+            newline = chunk.find(b"\n", offset)
+            end = len(chunk) if newline < 0 else newline
+            segment = chunk[offset:end]
+            if not self._discard_line:
+                if len(self._pending) + len(segment) > MAX_RAW_STDERR_LINE_BYTES:
+                    self._pending.clear()
+                    self._discard_line = True
+                else:
+                    self._pending.extend(segment)
+            if newline < 0:
+                break
+            self._finish_line(newline=True)
+            offset = newline + 1
+
+    def text(self) -> str:
+        if not self._finished:
+            self._finish_line(newline=False)
+            self._finished = True
+        return bytes(self._tail).decode("utf-8", "ignore")
+
+    def _finish_line(self, *, newline: bool) -> None:
+        if self._discard_line:
+            sanitized = b"[REDACTED_OVERSIZE_STDERR_LINE]"
+        else:
+            text = bytes(self._pending).decode("utf-8", "replace")
+            sanitized = _SECRET.sub(
+                lambda match: match.group(1) + "[REDACTED]", text
+            ).encode("utf-8")
+        if newline:
+            sanitized += b"\n"
+        _append_tail(self._tail, sanitized, MAX_RETAINED_BYTES)
+        self._pending.clear()
+        self._discard_line = False
+
+
+def _is_unrelated_credential(key: str) -> bool:
+    if key.startswith("ANTHROPIC_"):
+        return False
+    if key in _CREDENTIAL_PATHS:
+        return True
+    return key.startswith(_CREDENTIAL_FAMILIES) and any(
+        hint in key for hint in _CREDENTIAL_HINTS
+    )
 
 
 def _normalize_code(value: str) -> str:
