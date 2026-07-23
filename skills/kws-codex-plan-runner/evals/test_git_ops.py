@@ -240,6 +240,41 @@ class GitWorkspaceTest(unittest.TestCase):
         self.assertEqual(clean["GOOGLE_CLOUD_PROJECT"], "example-project")
         self.assertEqual(clean["LANG"], "C.UTF-8")
 
+    def test_sanitized_environment_strips_generic_credentials_without_overmatching_keys_or_urls(self):
+        credentials = {
+            "DATABASE_PASSWORD": "database-secret",
+            "POSTGRES_PASSWORD": "postgres-secret",
+            "SMTP_PASSWORD": "smtp-secret",
+            "LEGACY_PASSWD": "legacy-secret",
+            "JWT_PRIVATE_KEY": "private-key",
+            "STRIPE_SECRET_KEY": "stripe-secret",
+            "SERVICE_ACCESS_KEY": "service-key",
+            "DEPLOY_CREDENTIAL": "deploy-credential",
+            "BUILD_CREDENTIALS": "build-credentials",
+            "AZURE_STORAGE_CONNECTION_STRING": "azure-connection",
+            "PRIVATE_DATABASE_URL": "postgres://operator:secret@database/app",
+        }
+        benign = {
+            "CACHE_KEY": "cache-v1",
+            "SORT_KEY": "created_at",
+            "PUBLIC_URL": "https://example.test/app",
+            "DATABASE_URL": "postgres://database/app",
+            "AWS_REGION": "ap-northeast-2",
+            "OPENAI_SERVICE_PASSWORD": "provider-auth",
+            "CODEX_CONNECTION_STRING": "provider-config",
+        }
+
+        clean = sanitized_child_env(
+            {**credentials, **benign},
+            provider_auth_prefixes=("OPENAI_", "CODEX_"),
+            remotes=(),
+            run_id="run-123",
+        )
+
+        self.assertTrue(credentials.keys().isdisjoint(clean))
+        for key, value in benign.items():
+            self.assertEqual(clean[key], value)
+
 
 if __name__ == "__main__":
     unittest.main()
