@@ -7,13 +7,16 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SKILL_ROOT / "scripts"))
 
+from plan_runner import evidence as evidence_module  # noqa: E402
 from plan_runner.evidence import EvidenceStore, ExactCommand  # noqa: E402
 from plan_runner.git_ops import GitWorkspace  # noqa: E402
+from plan_runner.process import ProcessResult  # noqa: E402
 from plan_runner.storage import StateStore  # noqa: E402
 
 
@@ -121,6 +124,40 @@ class EvidenceStoreTest(unittest.TestCase):
         with self.assertRaises(ProcessLookupError):
             os.kill(int(child.read_text()), 0)
 
+    def test_deadline_survives_closed_streams_and_terminates_the_group(self):
+        command = self.command(
+            python_command("import os, time; os.close(1); os.close(2); time.sleep(5)"),
+            deadline_seconds=0.15,
+        )
+        started = time.monotonic()
+        receipt = self.evidence.execute(command, candidate_head=self.head)
+        self.assertLess(time.monotonic() - started, 1.5)
+        self.assertEqual(receipt.outcome, "timed_out")
+
+    def test_normal_leader_exit_reaps_same_group_child_after_streams_close(self):
+        child_pid = self.root / "orphan.pid"
+        command = self.command(
+            python_command(
+                "import os, pathlib, subprocess, sys; "
+                "child=subprocess.Popen([sys.executable, '-c', 'import os,time; os.close(1); os.close(2); time.sleep(5)']); "
+                "pathlib.Path(sys.argv[1]).write_text(str(child.pid)); os.close(1); os.close(2)",
+                str(child_pid),
+            ),
+            deadline_seconds=1,
+        )
+        try:
+            receipt = self.evidence.execute(command, candidate_head=self.head)
+            self.assertEqual(receipt.outcome, "success")
+            self.assertTrue(child_pid.exists())
+            with self.assertRaises(ProcessLookupError):
+                os.kill(int(child_pid.read_text()), 0)
+        finally:
+            if child_pid.exists():
+                try:
+                    os.kill(int(child_pid.read_text()), 9)
+                except ProcessLookupError:
+                    pass
+
     def test_only_success_is_reused_and_every_identity_input_matters(self):
         counter = self.root / "counter"
         counter.write_text("0", encoding="utf-8")
@@ -200,6 +237,9 @@ class EvidenceStoreTest(unittest.TestCase):
             self.head,
         )
         self.assertTrue(self.state.referenced_artifact(no_applicable.as_dict()).exists())
+        (self.state.root / artifact.relative_path).write_text('{"tampered":true}', encoding="utf-8")
+        with self.assertRaises(ValueError):
+            self.evidence.load_final_command(artifact.digest, 0)
 
     def test_receipts_are_durable_before_state_reference_and_liveness_is_not_progress(self):
         receipt = self.evidence.execute(self.command(python_command("print('ok')")), candidate_head=self.head)
@@ -208,6 +248,62 @@ class EvidenceStoreTest(unittest.TestCase):
         self.assertIn(receipt.artifact.as_dict(), state["artifact_refs"])
         self.assertIsNone(self.evidence.record_liveness({"pid": 123, "at": "now"}))
         self.assertNotIn("material_progress", self.state.snapshot())
+
+    def test_receipt_reuse_rejects_tampering_and_nonzero_success_exit(self):
+        first = self.evidence.execute(self.command(python_command("print('ok')")), candidate_head=self.head)
+        forged = {
+            "schema_version": 1,
+            "identity": {"forged": True},
+            "identity_digest": "f" * 64,
+            "outcome": "success",
+            "exit_code": 7,
+            "stdout_tail": "",
+            "stderr_tail": "",
+            "process": {},
+        }
+        forged["identity_digest"] = evidence_module.sha256_json(forged["identity"])
+        artifact = self.state.put_artifact("verification_receipt", forged)
+        self.evidence._append_artifact(artifact)
+        self.assertIsNone(self.evidence.reusable_success(forged["identity_digest"]))
+
+        receipt_path = self.state.root / first.artifact.relative_path
+        receipt_path.write_text('{"tampered":true}', encoding="utf-8")
+        self.assertIsNone(self.evidence.reusable_success(first.identity_digest))
+
+    def test_execution_uses_the_identity_resolved_executable_once(self):
+        command = self.command(python_command("print('ok')"))
+        resolved = Path(sys.executable).resolve()
+        result = ProcessResult(
+            kind="success", exit_code=0, stdout_tail=b"", stderr_tail=b"",
+            stdout_digest="a" * 64, stderr_digest="b" * 64,
+            started_at="start", finished_at="finish", forced_kill=False,
+        )
+        with (
+            mock.patch.object(
+                self.evidence,
+                "_executable_identity",
+                return_value={"path": str(resolved), "sha256": "c" * 64, "mode": 0o100755, "size": 1},
+            ) as resolve,
+            mock.patch.object(evidence_module, "run_exact", return_value=result) as launch,
+        ):
+            self.evidence.execute(command, candidate_head=self.head)
+        resolve.assert_called_once()
+        self.assertEqual(launch.call_args.kwargs["executable_path"], resolved)
+        self.assertEqual(launch.call_args.args[0], command.argv)
+
+    def test_redacted_invalid_utf8_tails_stay_inside_configured_byte_cap(self):
+        evidence = EvidenceStore(self.state, self.workspace, self.environment, output_limit=32)
+        command = self.command(
+            python_command(
+                "import os; os.write(1, b'x' * 128 + b' SECRET_TOKEN=super-secret' + b'\\xff' * 7); "
+                "os.write(2, b'x' * 128 + b' SECRET_TOKEN=super-secret' + b'\\xff' * 7)"
+            )
+        )
+        receipt = evidence.execute(command, candidate_head=self.head)
+        payload = json.loads(self.state.referenced_artifact(receipt.artifact.as_dict()).read_text())
+        self.assertLessEqual(len(payload["stdout_tail"].encode("utf-8")), 32)
+        self.assertLessEqual(len(payload["stderr_tail"].encode("utf-8")), 32)
+        self.assertNotIn("super-secret", payload["stdout_tail"] + payload["stderr_tail"])
 
 
 if __name__ == "__main__":
