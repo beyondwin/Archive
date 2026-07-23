@@ -1,7 +1,8 @@
 export type ScopeId =
   | "docs" | "console" | "app" | "package" | "waygent-closure"
   | "native" | "waygent-skill" | "codex-executor"
-  | "codex-plan-runner" | "claude-executor" | "full-offline";
+  | "codex-plan-runner" | "claude-plan-runner"
+  | "claude-executor" | "full-offline";
 
 export interface CommandSpec {
   id: string;
@@ -51,6 +52,15 @@ const CODEX_PLAN_RUNNER_EVAL: CommandSpec = {
   argv: ["./evals/run.sh"],
   cwd: "skills/kws-codex-plan-runner",
 };
+const CLAUDE_PLAN_RUNNER_EVAL: CommandSpec = {
+  id: "claude-plan-runner-eval",
+  argv: ["./evals/run.sh"],
+  cwd: "skills/kws-claude-plan-runner",
+};
+const PLAN_RUNNER_PARITY: CommandSpec = {
+  id: "plan-runner-parity",
+  argv: ["./scripts/agent/check-plan-runner-parity"],
+};
 const CLAUDE_EXECUTOR_OFFLINE: CommandSpec = {
   id: "claude-executor-offline",
   argv: ["bun", "run", "agent:claude-offline"],
@@ -70,7 +80,8 @@ const LIVE_PROVIDER_SMOKE: CommandSpec = {
 const OFFLINE_COMMANDS = [
   CONTRACT, DIFF_CHECK, TYPECHECK, CHECK, PLATFORM_DEMO, SCENARIOS, FIXTURE_LAB, DOGFOOD,
   CONSOLE_TEST, CONSOLE_BUILD, RUST_FORMAT, RUST_TEST, WAYGENT_SKILL_EVAL,
-  CODEX_EXECUTOR_EVAL, CODEX_PLAN_RUNNER_EVAL, CLAUDE_EXECUTOR_OFFLINE,
+  CODEX_EXECUTOR_EVAL, CODEX_PLAN_RUNNER_EVAL, CLAUDE_PLAN_RUNNER_EVAL,
+  PLAN_RUNNER_PARITY, CLAUDE_EXECUTOR_OFFLINE,
   CLAUDE_EXECUTOR_EVAL, LIVE_PROVIDER_SMOKE,
 ] as const;
 
@@ -91,7 +102,8 @@ export const VERIFICATION_SCOPES: readonly VerificationScope[] = [
   { id: "native", matchers: ["native/kernel/"], commands: [CONTRACT, DIFF_CHECK, RUST_FORMAT, RUST_TEST] },
   { id: "waygent-skill", matchers: ["skills/waygent/"], commands: [CONTRACT, DIFF_CHECK, WAYGENT_SKILL_EVAL, CHECK, PLATFORM_DEMO, SCENARIOS] },
   { id: "codex-executor", matchers: ["skills/kws-codex-plan-executor/"], commands: [CONTRACT, DIFF_CHECK, CODEX_EXECUTOR_EVAL, CHECK] },
-  { id: "codex-plan-runner", matchers: ["skills/kws-codex-plan-runner/"], commands: [CONTRACT, DIFF_CHECK, CODEX_PLAN_RUNNER_EVAL, CHECK] },
+  { id: "codex-plan-runner", matchers: ["skills/kws-codex-plan-runner/"], commands: [CONTRACT, DIFF_CHECK, CODEX_PLAN_RUNNER_EVAL, PLAN_RUNNER_PARITY, CHECK] },
+  { id: "claude-plan-runner", matchers: ["skills/kws-claude-plan-runner/"], commands: [CONTRACT, DIFF_CHECK, CLAUDE_PLAN_RUNNER_EVAL, PLAN_RUNNER_PARITY, CHECK] },
   { id: "claude-executor", matchers: ["skills/kws-claude-multi-agent-executor/"], commands: [CONTRACT, DIFF_CHECK, CLAUDE_EXECUTOR_OFFLINE, CLAUDE_EXECUTOR_EVAL, CHECK] },
   { id: "full-offline", matchers: ["*"], commands: OFFLINE_COMMANDS },
 ];
