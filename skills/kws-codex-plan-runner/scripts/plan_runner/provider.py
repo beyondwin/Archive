@@ -522,9 +522,10 @@ def _require_uuid(value: object) -> str:
         parsed = uuid.UUID(value)
     except (ValueError, AttributeError) as error:
         raise ValueError("session ID must be a UUID") from error
-    if str(parsed) != value.lower():
+    canonical = str(parsed)
+    if canonical != value:
         raise ValueError("session ID must be a canonical UUID")
-    return value
+    return canonical
 
 
 def _append_tail(target: bytearray, chunk: bytes, limit: int) -> None:

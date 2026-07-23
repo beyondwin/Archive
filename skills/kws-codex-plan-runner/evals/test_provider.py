@@ -129,12 +129,34 @@ class CodexProviderTest(unittest.TestCase):
 
     def test_builds_resume_argv_with_exec_flags_before_explicit_session(self):
         argv = self.adapter().build_argv(self.request(session_id=SESSION_ID, model=None))
-        self.assertEqual(argv[-3:], ["resume", SESSION_ID, "-"])
-        self.assertEqual(argv[:2], ["codex", "exec"])
-        self.assertLess(argv.index("--json"), argv.index("resume"))
+        self.assertEqual(
+            argv,
+            [
+                "codex",
+                "exec",
+                "--ignore-user-config",
+                "--json",
+                "--output-schema",
+                str(self.schema),
+                "--output-last-message",
+                str(self.output),
+                "--cd",
+                str(self.worktree),
+                "--sandbox",
+                "danger-full-access",
+                "--add-dir",
+                str(self.common),
+                "resume",
+                SESSION_ID,
+                "-",
+            ],
+        )
         self.assertNotIn("--last", argv)
+        self.assertNotIn("--ephemeral", argv)
         with self.assertRaisesRegex(ValueError, "UUID"):
             self.adapter().build_argv(self.request(session_id="not-a-session"))
+        with self.assertRaisesRegex(ValueError, "canonical UUID"):
+            self.adapter().build_argv(self.request(session_id=SESSION_ID.upper()))
 
     def test_launch_captures_explicit_session_and_structured_result(self):
         lease = RecordingLease()
