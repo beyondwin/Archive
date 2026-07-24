@@ -13,6 +13,13 @@ from plan_runner import git_ops  # noqa: E402
 from plan_runner.git_ops import GitWorkspace, sanitized_child_env  # noqa: E402
 
 
+def sealed_identity(name: str = "Runner Test", email: str = "runner@example.test"):
+    identity_type = getattr(git_ops, "GitIdentity", None)
+    if identity_type is None:
+        raise AssertionError("GitIdentity contract is missing")
+    return identity_type(name=name, email=email)
+
+
 def git(*arguments: str, cwd: Path, env=None) -> subprocess.CompletedProcess[bytes]:
     return subprocess.run(
         ["git", *arguments],
@@ -53,6 +60,158 @@ class GitWorkspaceTest(unittest.TestCase):
 
     def create(self):
         return GitWorkspace.create(self.source, self.worktree, self.branch)
+
+    def test_configured_identity_is_bounded_and_required(self):
+        configured_git_identity = getattr(git_ops, "configured_git_identity", None)
+        self.assertIsNotNone(configured_git_identity, "configured_git_identity contract is missing")
+        isolated_home = self.root / "isolated-home"
+        isolated_home.mkdir()
+        with mock.patch.dict(
+            os.environ,
+            {"HOME": str(isolated_home), "GIT_CONFIG_NOSYSTEM": "1"},
+        ):
+            self.assertEqual(
+                configured_git_identity(self.source),
+                sealed_identity(),
+            )
+            git("config", "--unset", "user.email", cwd=self.source)
+            with self.assertRaisesRegex(RuntimeError, "configured Git identity"):
+                configured_git_identity(self.source)
+
+    def test_git_identity_round_trips_exactly_and_rejects_unbounded_or_unsafe_values(self):
+        identity = sealed_identity("Sealed Name", "sealed@example.test")
+        self.assertEqual(identity.as_dict(), {"name": "Sealed Name", "email": "sealed@example.test"})
+        self.assertEqual(type(identity).from_mapping(identity.as_dict()), identity)
+        invalid_values = (
+            {"name": " Sealed Name", "email": "sealed@example.test"},
+            {"name": "Sealed\nName", "email": "sealed@example.test"},
+            {"name": "Sealed Name", "email": "sealed@example.test\x7f"},
+            {"name": "x" * 1025, "email": "sealed@example.test"},
+            {"name": "Sealed Name", "email": "sealed@example.test", "extra": "value"},
+        )
+        for value in invalid_values:
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, "invalid .*Git identity"):
+                    type(identity).from_mapping(value)
+
+    def test_child_environment_injects_only_sealed_identity(self):
+        env = sanitized_child_env(
+            {
+                "PATH": "/usr/bin",
+                "HOME": "/Users/operator",
+                "GIT_AUTHOR_NAME": "Ambient",
+                "GIT_AUTHOR_EMAIL": "ambient@example.test",
+                "GIT_COMMITTER_NAME": "Ambient",
+                "GIT_COMMITTER_EMAIL": "ambient@example.test",
+                "GIT_CONFIG_COUNT": "99",
+                "GIT_CONFIG_KEY_0": "commit.gpgSign",
+                "GIT_CONFIG_VALUE_0": "true",
+            },
+            provider_auth_prefixes=("OPENAI_",),
+            remotes=("origin",),
+            run_id="run-1",
+            git_identity=sealed_identity("Sealed Name", "sealed@example.test"),
+        )
+        self.assertNotIn("HOME", env)
+        self.assertEqual(env["GIT_AUTHOR_NAME"], "Sealed Name")
+        self.assertEqual(env["GIT_AUTHOR_EMAIL"], "sealed@example.test")
+        self.assertEqual(env["GIT_COMMITTER_NAME"], "Sealed Name")
+        self.assertEqual(env["GIT_COMMITTER_EMAIL"], "sealed@example.test")
+        self.assertEqual(env["GIT_TERMINAL_PROMPT"], "0")
+        self.assertEqual(env["GCM_INTERACTIVE"], "Never")
+        self.assertEqual(env["GIT_CONFIG_COUNT"], "5")
+        self.assertEqual(
+            [
+                (env[f"GIT_CONFIG_KEY_{index}"], env[f"GIT_CONFIG_VALUE_{index}"])
+                for index in range(5)
+            ],
+            [
+                ("user.name", "Sealed Name"),
+                ("user.email", "sealed@example.test"),
+                ("user.useConfigOnly", "true"),
+                ("commit.gpgSign", "false"),
+                ("remote.origin.pushurl", "disabled://plan-runner/run-1/origin"),
+            ],
+        )
+
+    def test_child_environment_suppresses_repository_signing_and_seals_commit_identity(self):
+        workspace = self.create()
+        git("config", "commit.gpgSign", "true", cwd=workspace.worktree)
+        git("config", "gpg.program", "/bin/false", cwd=workspace.worktree)
+        env = sanitized_child_env(
+            {"PATH": os.environ["PATH"]},
+            provider_auth_prefixes=("OPENAI_", "CODEX_"),
+            remotes=(),
+            run_id="run-123",
+            git_identity=sealed_identity("Sealed Name", "sealed@example.test"),
+        )
+        git("commit", "--allow-empty", "-m", "sealed", cwd=workspace.worktree, env=env)
+        identity_fields = git(
+            "show",
+            "-s",
+            "--format=%an%x00%ae%x00%cn%x00%ce",
+            "HEAD",
+            cwd=workspace.worktree,
+        ).stdout.rstrip(b"\n").split(b"\0")
+        self.assertEqual(
+            identity_fields,
+            [b"Sealed Name", b"sealed@example.test", b"Sealed Name", b"sealed@example.test"],
+        )
+        git_ops.validate_commit_identities(
+            workspace.worktree,
+            self.start,
+            git("rev-parse", "HEAD", cwd=workspace.worktree).stdout.decode().strip(),
+            sealed_identity("Sealed Name", "sealed@example.test"),
+        )
+
+    def test_candidate_commit_identity_must_match_sealed_identity(self):
+        workspace = self.create()
+        git(
+            "-c",
+            "user.name=Wrong",
+            "-c",
+            "user.email=wrong@example.test",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "wrong",
+            cwd=workspace.worktree,
+        )
+        env = sanitized_child_env(
+            {"PATH": os.environ["PATH"]},
+            provider_auth_prefixes=("OPENAI_", "CODEX_"),
+            remotes=(),
+            run_id="run-123",
+            git_identity=sealed_identity(),
+        )
+        git("commit", "--allow-empty", "-m", "sealed", cwd=workspace.worktree, env=env)
+        validate_commit_identities = getattr(git_ops, "validate_commit_identities", None)
+        self.assertIsNotNone(validate_commit_identities, "validate_commit_identities contract is missing")
+        with self.assertRaisesRegex(RuntimeError, "commit identity mismatch"):
+            validate_commit_identities(
+                workspace.worktree,
+                self.start,
+                git("rev-parse", "HEAD", cwd=workspace.worktree).stdout.decode().strip(),
+                sealed_identity(),
+            )
+
+    def test_candidate_commit_identity_validation_rejects_malformed_git_output(self):
+        validate_commit_identities = getattr(git_ops, "validate_commit_identities", None)
+        self.assertIsNotNone(validate_commit_identities, "validate_commit_identities contract is missing")
+        result = subprocess.CompletedProcess(
+            args=["git"],
+            returncode=0,
+            stdout=b"malformed",
+            stderr=b"",
+        )
+        with mock.patch.object(git_ops, "_git", return_value=result):
+            with self.assertRaisesRegex(RuntimeError, "malformed commit identity"):
+                validate_commit_identities(
+                    self.source,
+                    self.start,
+                    self.start,
+                    sealed_identity(),
+                )
 
     def test_create_rejects_dirty_source(self):
         (self.source / "dirty.txt").write_text("dirty\n", encoding="utf-8")
@@ -155,15 +314,16 @@ class GitWorkspaceTest(unittest.TestCase):
             provider_auth_prefixes=("OPENAI_", "CODEX_"),
             remotes=("origin",),
             run_id="run-123",
+            git_identity=sealed_identity(),
         )
         for key in ("SSH_AUTH_SOCK", "SSH_ASKPASS", "GIT_ASKPASS", "GH_TOKEN", "GITHUB_TOKEN", "OTHER_TOKEN", "OTHER_SECRET", "OTHER_API_KEY"):
             self.assertNotIn(key, clean)
         self.assertEqual(clean["OPENAI_API_KEY"], "preserve")
         self.assertEqual(clean["CODEX_TOKEN"], "preserve")
         self.assertEqual(clean["GIT_TERMINAL_PROMPT"], "0")
-        self.assertEqual(clean["GIT_CONFIG_COUNT"], "1")
-        self.assertEqual(clean["GIT_CONFIG_KEY_0"], "remote.origin.pushurl")
-        self.assertEqual(clean["GIT_CONFIG_VALUE_0"], "disabled://plan-runner/run-123/origin")
+        self.assertEqual(clean["GIT_CONFIG_COUNT"], "5")
+        self.assertEqual(clean["GIT_CONFIG_KEY_4"], "remote.origin.pushurl")
+        self.assertEqual(clean["GIT_CONFIG_VALUE_4"], "disabled://plan-runner/run-123/origin")
         configured_remote = git("remote", "get-url", "origin", cwd=workspace.worktree).stdout.decode().strip()
         self.assertEqual(configured_remote, str(remote))
         pushed = subprocess.run(
@@ -178,6 +338,7 @@ class GitWorkspaceTest(unittest.TestCase):
                 provider_auth_prefixes=("OPENAI_", "CODEX_"),
                 remotes=("origin\nmalicious",),
                 run_id="run-123",
+                git_identity=sealed_identity(),
             )
 
     def test_sanitized_environment_strips_unrelated_cloud_credentials_and_config_paths(self):
@@ -221,6 +382,7 @@ class GitWorkspaceTest(unittest.TestCase):
             provider_auth_prefixes=("OPENAI_", "CODEX_"),
             remotes=(),
             run_id="run-123",
+            git_identity=sealed_identity(),
         )
 
         self.assertTrue(unrelated.keys().isdisjoint(clean))
@@ -269,6 +431,7 @@ class GitWorkspaceTest(unittest.TestCase):
             provider_auth_prefixes=("OPENAI_", "CODEX_"),
             remotes=(),
             run_id="run-123",
+            git_identity=sealed_identity(),
         )
 
         self.assertTrue(credentials.keys().isdisjoint(clean))
