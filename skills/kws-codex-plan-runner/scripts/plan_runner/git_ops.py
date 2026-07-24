@@ -427,7 +427,11 @@ def sanitized_child_env(
     for key, value in source_env.items():
         if key in {"SSH_AUTH_SOCK", "SSH_ASKPASS", "GIT_ASKPASS", "GIT_SSH", "GIT_SSH_COMMAND"}:
             continue
-        if key == "GIT_CONFIG_COUNT" or key.startswith("GIT_CONFIG_KEY_") or key.startswith("GIT_CONFIG_VALUE_"):
+        if (
+            key in {"GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS"}
+            or key.startswith("GIT_CONFIG_KEY_")
+            or key.startswith("GIT_CONFIG_VALUE_")
+        ):
             continue
         if key in _OPERATOR_CONFIG_ROOTS:
             continue
