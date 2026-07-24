@@ -73,10 +73,12 @@ _AUTHORITY_BLOCKERS = frozenset(
         "external_state_unavailable",
         "irreconcilable_requirements",
         "permission_required",
+        "host_permission_blocked",
         "provider_auth_blocked",
         "provider_capability_blocked",
         "provider_unavailable",
         "provider_usage_blocked",
+        "sandbox_capability_blocked",
     }
 )
 _SEALED_PROVIDER_OUTCOMES = frozenset(
@@ -89,6 +91,8 @@ _SEALED_PROVIDER_OUTCOMES = frozenset(
         ("resume_failed", "session_resume_failed"),
         ("context_overflow", "session_invalid"),
         ("stalled", "stall_expired"),
+        ("blocked", "host_permission_blocked"),
+        ("blocked", "sandbox_capability_blocked"),
     }
 )
 _ROOT_AUTHORITY_BLOCKERS = _AUTHORITY_BLOCKERS - {"provider_unavailable"}
