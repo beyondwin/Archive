@@ -1251,3 +1251,13 @@ redirect controller or provider operations.
 The same focused suite now covers author-only and committer-only mismatches
 independently. Both remain integrity failures; successful configured-identity
 coverage does not stand in for either asymmetric case.
+
+## Whole-review round 2 correction (2026-07-25)
+
+Controller Git isolation is now split by purpose. Repository inspection and
+provider Git continue to suppress global/system configuration and remove every
+injected `GIT_CONFIG_*` value. Only `configured_git_identity` uses the real
+HOME-based Git configuration after those injected overrides are removed. An
+isolated-HOME regression with identity only in `.gitconfig` proves
+`create_run` seals the intended identity, while the provider still receives
+only the sealed identity overlay and remote guards.

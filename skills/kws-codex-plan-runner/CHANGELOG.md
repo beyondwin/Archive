@@ -29,6 +29,16 @@
 - Verifies the Superpowers v6.2.0 public `sdd-workspace`, `task-brief`, and
   `review-package` helper interfaces without depending on private workspace
   layout.
+- Makes resume profile transitions atomic with failed-retry strategy acceptance:
+  rejected notes and artifact failures leave state refs and the effective
+  profile unchanged.
+- Separates controller identity lookup from isolated controller/provider Git:
+  identity may come from the real HOME global config after injected
+  `GIT_CONFIG_*` removal, while all other Git operations retain config
+  suppression.
+- Disables new `unsealed-provider-partial` adoption because PID/PGID polling
+  cannot completely prove the absence of a detached `setsid()` descendant.
+  Evidence is preserved and the compatibility command fails closed.
 
 ## 1.0.0 - 2026-07-23
 

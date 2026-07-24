@@ -1422,3 +1422,23 @@ Focused provider regressions prove the process callback is persisted during
 the attempt, not only after provider exit. Storage rejects malformed process
 evidence, and engine regressions cover missing historical evidence, a live
 group, and a quiescent group.
+
+## Whole-review round 2 correction (2026-07-25)
+
+**Current status:** new `unsealed-provider-partial` adoption is disabled.
+
+The earlier quiescence addendum was necessary but not sufficient. A provider
+child can call `setsid()`, leave the recorded process group, outlive its parent,
+and become unobservable through the recorded parent ancestry. Once reparented,
+portable same-host PID/PGID polling cannot prove that no such descendant
+exists. Treating an empty original group and dead recorded PIDs as complete
+proof would be unsafe.
+
+A real-process regression launches that exact detached-child shape. It
+reproduces the former false quiescence and now receives exit `65` with no state,
+artifact-ref, or worktree adoption while the child is demonstrably live.
+Because no complete proof is available within the lightweight standard-library
+boundary, there is currently no condition under which a new historical partial
+is adopted. The compatibility repair kind remains parseable, preserves
+evidence, and fails closed; already sealed historical adopted-partial audit
+records remain readable and integrity-checked.

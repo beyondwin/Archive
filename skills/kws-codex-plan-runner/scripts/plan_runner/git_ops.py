@@ -162,7 +162,7 @@ class WorktreeObservation:
         require_digest(self.tree_digest)
 
 
-def _trusted_git_env(source: Mapping[str, str] | None = None) -> dict[str, str]:
+def _sanitized_git_env(source: Mapping[str, str] | None = None) -> dict[str, str]:
     clean = dict(os.environ if source is None else source)
     for key in (
         *_GIT_ENV_INJECTION_KEYS,
@@ -174,17 +174,32 @@ def _trusted_git_env(source: Mapping[str, str] | None = None) -> dict[str, str]:
     for key in tuple(clean):
         if key.startswith("GIT_CONFIG_KEY_") or key.startswith("GIT_CONFIG_VALUE_"):
             clean.pop(key, None)
+    return clean
+
+
+def _trusted_git_env(source: Mapping[str, str] | None = None) -> dict[str, str]:
+    clean = _sanitized_git_env(source)
     clean["GIT_CONFIG_GLOBAL"] = os.devnull
     clean["GIT_CONFIG_NOSYSTEM"] = "1"
     return clean
 
 
-def _git(cwd: Path, arguments: Sequence[str], *, env: Mapping[str, str] | None = None) -> subprocess.CompletedProcess[bytes]:
+def _git(
+    cwd: Path,
+    arguments: Sequence[str],
+    *,
+    env: Mapping[str, str] | None = None,
+    read_user_config: bool = False,
+) -> subprocess.CompletedProcess[bytes]:
     try:
         return subprocess.run(
             ["git", *arguments],
             cwd=str(cwd),
-            env=_trusted_git_env(env),
+            env=(
+                _sanitized_git_env(env)
+                if read_user_config
+                else _trusted_git_env(env)
+            ),
             check=False,
             capture_output=True,
             text=False,
@@ -254,11 +269,11 @@ def protected_refs(path: Path, assigned_branch: str) -> dict[str, str]:
 def configured_git_identity(path: Path) -> GitIdentity:
     try:
         name = _output(
-            _git(path, ("config", "--get", "user.name")),
+            _git(path, ("config", "--get", "user.name"), read_user_config=True),
             "Git user.name",
         ).decode().rstrip("\n")
         email = _output(
-            _git(path, ("config", "--get", "user.email")),
+            _git(path, ("config", "--get", "user.email"), read_user_config=True),
             "Git user.email",
         ).decode().rstrip("\n")
         return GitIdentity(name=name, email=email)

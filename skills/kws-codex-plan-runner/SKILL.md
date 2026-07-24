@@ -48,6 +48,9 @@ directory:
   --strategy-note "verified provider partial"
 ```
 
+`unsealed-provider-partial` is compatibility-only and currently fails closed;
+do not recommend it as an actionable repair.
+
 Repeat `--spec` and `--plan` in order. Do not merge, rewrite, or positionally pair
 specs and plans. Specs are immutable common context; plans
 execute sequentially in one worktree and branch. Every provider packet identifies
@@ -63,8 +66,9 @@ information: `--retry-failed --strategy-note "changed strategy"`.
 durable `resumable` checkpoint. If an interrupted implementation left
 uncommitted work, that exact bounded Git worktree identity is sealed; resume
 accepts it only while unchanged and rejects any drift as an integrity failure.
-Historical partial repair also proves the recorded process group and descendant
-PIDs are quiescent before adopting that sealed tree.
+Historical partial evidence is preserved but not adopted. PID/PGID and recorded
+descendant quiescence cannot prove that no child escaped with `setsid()` before
+observation, so the runner leaves the state and tree unchanged.
 
 ## Superpowers and Codex Boundary
 
@@ -112,6 +116,8 @@ Only `refs/codex/turn-diffs/captures/` and
 `refs/codex/turn-diffs/checkpoints/` are volatile. Recovery never exempts
 unknown or product refs and exposes only the revision-guarded
 `volatile-codex-turn-refs` and `unsealed-provider-partial` repairs.
+Only volatile-ref repair can currently change state; unsealed partial repair is
+recognized for compatibility but disabled pending a complete descendant proof.
 Legacy state remains readable without reinterpretation while its ref
 observation matches. Recognized volatile-only drift must first be converted
 into the exact reported revision-guarded repair evidence.
