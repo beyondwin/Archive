@@ -72,12 +72,29 @@ _RECOGNIZED_ERROR_CODES = (
     | _TRANSPORT_CODES
 )
 _RESULT_STATUSES = frozenset({"implemented", "blocked", "failed", "reviewed"})
-_AUTH_ENV_SUFFIXES = ("_API_KEY", "_ACCESS_TOKEN", "_AUTH_TOKEN")
+_SUPPORTED_ENV_AUTH_NAMES = frozenset({"OPENAI_API_KEY"})
+_MAX_AUTH_FILE_BYTES = 1_048_576
+_MAX_ERROR_MESSAGE_CHARS = 4_096
+_AUTH_MESSAGE = re.compile(
+    r"(?i)(?:"
+    r"\b401\b|"
+    r"\bunauthorized\b|"
+    r"\bauthentication failed\b|"
+    r"\binvalid(?:[ _-]+)api(?:[ _-]+)key\b|"
+    r"\btoken expired\b|"
+    r"\bnot logged in\b|"
+    r"\blogin required\b"
+    r")"
+)
 _REQUIRED_SDD_PATHS = (
     Path("skills/subagent-driven-development/SKILL.md"),
     Path("skills/subagent-driven-development/scripts/sdd-workspace"),
     Path("skills/subagent-driven-development/scripts/task-brief"),
     Path("skills/subagent-driven-development/scripts/review-package"),
+    Path("skills/subagent-driven-development/implementer-prompt.md"),
+    Path("skills/subagent-driven-development/task-reviewer-prompt.md"),
+    Path("skills/subagent-driven-development/re-review-prompt.md"),
+    Path("skills/requesting-code-review/code-reviewer.md"),
 )
 
 
@@ -601,6 +618,32 @@ class CodexAdapter:
                 if event_type == "turn.completed":
                     root_turn_completed = True
                     _merge_usage(usage, event.get("usage"))
+            elif event_type == "turn.failed":
+                turn_id = event.get("turn_id")
+                if turn_id is not None and (
+                    not isinstance(turn_id, str) or not turn_id
+                ):
+                    return StreamSummary(
+                        session_id,
+                        provider_code,
+                        root_turn_completed,
+                        "provider_stream_malformed",
+                    )
+                key = (
+                    f"{event_type}:{turn_id}"
+                    if isinstance(turn_id, str)
+                    else event_type
+                )
+                if lease.observe_provider_event(
+                    "lifecycle_advanced", key, time.monotonic()
+                ):
+                    activity_keys.append(f"lifecycle_advanced:{key}")
+                code = _event_provider_code(event)
+                if code is not None and (
+                    provider_code is None
+                    or provider_code not in _RECOGNIZED_ERROR_CODES
+                ):
+                    provider_code = code
             elif event_type in {"item.started", "item.completed"}:
                 item = event.get("item")
                 item_id = item.get("id") if isinstance(item, Mapping) else None
@@ -619,14 +662,12 @@ class CodexAdapter:
                 if lease.observe_provider_event(kind, item_id, time.monotonic()):
                     activity_keys.append(f"{kind}:{item_id}")
             elif event_type == "error":
-                error = event.get("error")
-                code = error.get("code") if isinstance(error, Mapping) else None
-                if isinstance(code, str) and code:
-                    if (
-                        provider_code is None
-                        or provider_code not in _RECOGNIZED_ERROR_CODES
-                    ):
-                        provider_code = code
+                code = _event_provider_code(event)
+                if code is not None and (
+                    provider_code is None
+                    or provider_code not in _RECOGNIZED_ERROR_CODES
+                ):
+                    provider_code = code
         stream_error = (
             "provider_stream_oversized"
             if len(buffer) > MAX_JSONL_LINE_BYTES
@@ -677,11 +718,13 @@ def _ensure_private_directory(path: Path) -> None:
 def _has_environment_auth(
     environment: Mapping[str, str], prefixes: Sequence[str]
 ) -> bool:
-    allowed_prefixes = tuple(prefixes)
+    allowed_names = {
+        name
+        for name in _SUPPORTED_ENV_AUTH_NAMES
+        if name.startswith(tuple(prefixes))
+    }
     return any(
-        isinstance(key, str)
-        and key.startswith(allowed_prefixes)
-        and key.endswith(_AUTH_ENV_SUFFIXES)
+        key in allowed_names
         and isinstance(value, str)
         and bool(value.strip())
         for key, value in environment.items()
@@ -701,6 +744,32 @@ def _readable_nonempty_regular(path: Path) -> bool:
     )
 
 
+def _file_auth_available(path: Path) -> bool:
+    try:
+        metadata = path.lstat()
+        if (
+            stat.S_ISLNK(metadata.st_mode)
+            or not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_size <= 0
+            or metadata.st_size > _MAX_AUTH_FILE_BYTES
+            or not os.access(path, os.R_OK)
+        ):
+            return False
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    if not isinstance(value, Mapping):
+        return False
+    api_key = value.get("OPENAI_API_KEY")
+    if isinstance(api_key, str) and bool(api_key.strip()):
+        return True
+    tokens = value.get("tokens")
+    if not isinstance(tokens, Mapping):
+        return False
+    access_token = tokens.get("access_token")
+    return isinstance(access_token, str) and bool(access_token.strip())
+
+
 def _capability_preflight(
     codex_home: Path,
     environment: Mapping[str, str],
@@ -710,7 +779,7 @@ def _capability_preflight(
     environment_auth = _has_environment_auth(
         environment, provider_auth_prefixes
     )
-    file_auth = _readable_nonempty_regular(codex_home / "auth.json")
+    file_auth = _file_auth_available(codex_home / "auth.json")
     if not environment_auth and not file_auth:
         return "provider_auth_blocked"
     try:
@@ -723,6 +792,20 @@ def _capability_preflight(
     ):
         return "provider_capability_blocked"
     return None
+
+
+def _event_provider_code(event: Mapping[str, Any]) -> str | None:
+    error = event.get("error")
+    code = error.get("code") if isinstance(error, Mapping) else None
+    if isinstance(code, str) and code:
+        return code
+    message = event.get("message")
+    if not isinstance(message, str) and isinstance(error, Mapping):
+        message = error.get("message")
+    if not isinstance(message, str):
+        return None
+    bounded = message[:_MAX_ERROR_MESSAGE_CHARS]
+    return "authentication_failed" if _AUTH_MESSAGE.search(bounded) else None
 
 
 def _blocked_preflight(provider_code: str) -> ProviderOutcome:
