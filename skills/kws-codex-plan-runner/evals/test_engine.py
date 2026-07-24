@@ -825,6 +825,206 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(len(list(self.paths.state_home.iterdir())), 1)
         self.assertEqual(len(list(self.paths.worktree_home.iterdir())), 1)
 
+    def admission_record_path(self, state):
+        lock_home = self.paths.state_home.with_name(
+            f".{self.paths.state_home.name}-intent-locks"
+        )
+        return lock_home / (
+            state["immutable_config"]["execution_intent_digest"] + ".json"
+        )
+
+    def test_recomputed_envelope_substitution_cannot_hide_original_intent(self):
+        initial = self.create_paused_run()
+        run_root = self.paths.state_home / initial["run_id"]
+        envelope_path = run_root / "intent.json"
+        envelope = json.loads(envelope_path.read_text(encoding="utf-8"))
+        envelope["execution_intent_digest"] = "b" * 64
+        envelope["envelope_digest"] = storage_module._intent_envelope_digest(
+            envelope
+        )
+        envelope_path.write_bytes(storage_module.canonical_json(envelope))
+        self.output.clear()
+
+        with (
+            mock.patch("plan_runner.engine._run_id") as allocate_id,
+            mock.patch.object(StateStore, "create") as create_state,
+            mock.patch.object(GitWorkspace, "create") as create_worktree,
+        ):
+            code = self.runner().create_run(
+                specs=self.specs,
+                plans=self.plans[:1],
+                workspace=self.source,
+                stall_seconds=30,
+                sandbox="danger-full-access",
+                model="different-model",
+            )
+
+        self.assertEqual(code, ExitCode.INTEGRITY)
+        response = self.matching_response()
+        self.assertEqual(response["reason"], "matching_run_unproven")
+        self.assertEqual(response["run_id"], initial["run_id"])
+        allocate_id.assert_not_called()
+        create_state.assert_not_called()
+        create_worktree.assert_not_called()
+        self.assertFalse(self.adapter_values)
+
+    def assert_matching_admission_record_fails_closed(self, mutate):
+        initial = self.create_paused_run()
+        record_path = self.admission_record_path(initial)
+        mutate(record_path)
+        self.output.clear()
+
+        with (
+            mock.patch("plan_runner.engine._run_id") as allocate_id,
+            mock.patch.object(StateStore, "create") as create_state,
+            mock.patch.object(GitWorkspace, "create") as create_worktree,
+        ):
+            code = self.runner().create_run(
+                specs=self.specs,
+                plans=self.plans[:1],
+                workspace=self.source,
+                stall_seconds=30,
+                sandbox="danger-full-access",
+                model="different-model",
+            )
+
+        self.assertEqual(code, ExitCode.INTEGRITY)
+        response = self.matching_response()
+        self.assertEqual(response["reason"], "matching_run_unproven")
+        self.assertEqual(response["run_id"], initial["run_id"])
+        allocate_id.assert_not_called()
+        create_state.assert_not_called()
+        create_worktree.assert_not_called()
+        self.assertFalse(self.adapter_values)
+
+    def test_missing_digest_keyed_admission_record_fails_closed(self):
+        self.assert_matching_admission_record_fails_closed(
+            lambda path: path.unlink(missing_ok=True)
+        )
+
+    def test_tampered_digest_keyed_admission_record_fails_closed(self):
+        def substitute(path):
+            record = json.loads(path.read_text(encoding="utf-8"))
+            record["execution_intent_digest"] = "b" * 64
+            record["record_digest"] = storage_module._admission_record_digest(
+                record
+            )
+            path.write_bytes(storage_module.canonical_json(record))
+
+        self.assert_matching_admission_record_fails_closed(
+            substitute
+        )
+
+    def test_admission_record_pointing_to_missing_state_fails_closed(self):
+        self.output.clear()
+        with mock.patch.object(
+            StateStore, "create", side_effect=OSError("simulated state crash")
+        ):
+            first_code = self.runner().create_run(
+                specs=self.specs,
+                plans=self.plans[:1],
+                workspace=self.source,
+                stall_seconds=30,
+                sandbox="workspace-write",
+                model=None,
+            )
+        self.assertEqual(first_code, ExitCode.INTEGRITY)
+        lock_home = self.paths.state_home.with_name(
+            f".{self.paths.state_home.name}-intent-locks"
+        )
+        records = list(lock_home.glob("*.json"))
+        self.assertEqual(len(records), 1)
+        self.output.clear()
+
+        with (
+            mock.patch("plan_runner.engine._run_id") as allocate_id,
+            mock.patch.object(StateStore, "create") as create_state,
+            mock.patch.object(GitWorkspace, "create") as create_worktree,
+        ):
+            second_code = self.runner().create_run(
+                specs=self.specs,
+                plans=self.plans[:1],
+                workspace=self.source,
+                stall_seconds=30,
+                sandbox="workspace-write",
+                model=None,
+            )
+
+        self.assertEqual(second_code, ExitCode.INTEGRITY)
+        response = self.matching_response()
+        self.assertEqual(response["reason"], "matching_run_unproven")
+        allocate_id.assert_not_called()
+        create_state.assert_not_called()
+        create_worktree.assert_not_called()
+        self.assertFalse(self.paths.worktree_home.exists())
+        self.assertFalse(self.adapter_values)
+
+    def test_unrelated_oversized_legacy_state_does_not_match_arbitrary_intent(self):
+        legacy_id = "legacy-12345678-1234-4234-8234-123456789abc"
+        store = StateStore.create(
+            root=self.paths.state_home / legacy_id,
+            provider="codex",
+            run_id=legacy_id,
+            source_repository=self.source,
+            source_commit=self.starting_head,
+            worktree=self.root / "legacy-worktree",
+            branch=f"codex-plan/{legacy_id}",
+            specs=self.specs,
+            plans=self.plans[:1],
+            immutable_config={
+                "git_identity": {
+                    "name": "Engine Test",
+                    "email": "engine@example.test",
+                }
+            },
+            runner_runtime=dataclasses.asdict(runtime_identity()),
+        )
+        legacy = store.snapshot()
+        legacy["failure"] = {"detail": "x" * (2 * 1024 * 1024 + 4096)}
+        store.commit(legacy)
+
+        with mock.patch.object(
+            PlanRunner, "_execute", return_value=int(ExitCode.RESUMABLE)
+        ):
+            code = self.runner().create_run(
+                specs=self.specs,
+                plans=self.plans[:1],
+                workspace=self.source,
+                stall_seconds=30,
+                sandbox="workspace-write",
+                model=None,
+            )
+
+        self.assertEqual(code, ExitCode.RESUMABLE)
+        self.assertEqual(len(list(self.paths.state_home.iterdir())), 2)
+        self.assertEqual(len(list(self.paths.worktree_home.iterdir())), 1)
+
+    def test_unrelated_oversized_invalid_root_does_not_match_arbitrary_intent(self):
+        invalid_root = (
+            self.paths.state_home
+            / "invalid-12345678-1234-4234-8234-123456789abc"
+        )
+        invalid_root.mkdir(mode=0o700, parents=True)
+        (invalid_root / "state.json").write_bytes(
+            b"x" * (2 * 1024 * 1024 + 4096)
+        )
+
+        with mock.patch.object(
+            PlanRunner, "_execute", return_value=int(ExitCode.RESUMABLE)
+        ):
+            code = self.runner().create_run(
+                specs=self.specs,
+                plans=self.plans[:1],
+                workspace=self.source,
+                stall_seconds=30,
+                sandbox="workspace-write",
+                model=None,
+            )
+
+        self.assertEqual(code, ExitCode.RESUMABLE)
+        self.assertEqual(len(list(self.paths.state_home.iterdir())), 2)
+        self.assertEqual(len(list(self.paths.worktree_home.iterdir())), 1)
+
     def assert_matching_intent_evidence_fails_closed(self, mutate):
         initial = self.create_paused_run()
         run_root = self.paths.state_home / initial["run_id"]
