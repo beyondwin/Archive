@@ -45,6 +45,13 @@ launch/resume, checkpoint-before-result handling, and final Git/verification
 evidence. It does not reconstruct subagent state or implement a second task
 orchestration model.
 
+The wrapper is also a strategic recovery shell around external boundaries.
+Normal execution stays on the unmodified Superpowers path. Only after an
+observed provider, host, permission, transport, Git, or verification failure
+does the wrapper preserve evidence, choose a materially different safe
+strategy, and resume the same goal. It does not turn every possible failure
+into a new framework or ask for routine approval between recoverable steps.
+
 ## 2. Confirmed Inputs
 
 The design treats these incident reports as immutable problem statements:
@@ -170,6 +177,7 @@ The runner may:
 - allocate and validate one worktree and branch;
 - launch or resume the root Codex session;
 - seal the exact Git observation before interpreting the root result;
+- select a bounded new root-level strategy after an external boundary failure;
 - execute declared verification and record the final candidate HEAD.
 
 The runner does not:
@@ -178,12 +186,56 @@ The runner does not:
 - duplicate the SDD ledger as a second task database;
 - infer plan completion from collaboration events;
 - retry unchanged permission or provider failures;
+- replace Superpowers' implementer, TDD, review, or ledger policies with its
+  own recovery state machine;
 - build a general workflow, repair, or run-family subsystem.
 
-The two plans execute sequentially in one direct-SDD worktree. Their durable
-ledger identifiers are namespaced as `core-N` and `recovery-N`, so Task 1 in
-one plan cannot be mistaken for Task 1 in the other. Future-plan paths are not
-included in a task brief before their turn.
+The two plans execute sequentially in one direct-SDD worktree. Superpowers
+v6.2.0 gives each plan its own
+`.superpowers/sdd/<plan-basename>/` workspace, so Task 1 in one plan cannot be
+mistaken for Task 1 in the other. Future-plan paths are not included in a task
+brief before their turn.
+
+### 5.4 Superpowers v6.2.0 compatibility
+
+The execution baseline is
+[Superpowers v6.2.0](https://github.com/obra/superpowers/releases/tag/v6.2.0).
+The wrapper consumes its public workflow instead of copying its internals into
+runner state:
+
+- resolve the plan workspace with `scripts/sdd-workspace PLAN_FILE`;
+- create task briefs with `scripts/task-brief PLAN_FILE N [OUTFILE]`;
+- create full and fix-range packages with
+  `scripts/review-package PLAN_FILE BASE HEAD [OUTFILE]`;
+- resume the original implementer for fix rounds 1 through 3;
+- use a fresh, more capable implementer for rounds 4 and 5;
+- use the scoped `re-review-prompt.md` after every fix round;
+- stop at the five-round circuit breaker and adjudicate remaining findings;
+- delete only that plan's SDD workspace after its final review and canonical
+  evidence are clean.
+
+The current local installation can preserve script contents while losing their
+executable mode. The direct-SDD controller therefore invokes these helpers
+through `/bin/bash` and supplies explicit brief and review-package output
+paths. This avoids an internal direct call to a non-executable sibling helper
+without chmod, rewriting the global skill, or weakening host permissions.
+
+Compatibility is capability-based, not a permanent equality check on the
+`6.2.0` version string. The disposable canary exercises the public helper
+signatures, plan-scoped workspace, one task, one review package, and workspace
+cleanup. A later compatible release may proceed; an incompatible interface
+blocks with the exact missing capability before Archive edits instead of
+silently falling back to the old flat ledger.
+
+The v6.2.0 testing guidance is `writing-good-tests.md`. Runtime regressions
+must assert behavior and failure cause rather than source-string presence or a
+change-detector proxy. Exact text assertions remain appropriate only for the
+runner's deliberately versioned public contract vocabulary.
+
+The runner does not parse the v6.2.0 ledger or depend on its directory layout
+for product correctness. The plan-scoped workspace is execution scratch;
+runner state observes only the root result, Git state, and declared evidence.
+This keeps a later Superpowers update from becoming a runner state migration.
 
 ## 6. Component Boundaries
 
@@ -321,18 +373,24 @@ result. A malformed or oversized event is bounded and classified as a provider
 stream failure. It does not erase an already sealed post-provider checkpoint
 and does not count as successful progress.
 
-## 9. Authentication Contract
+## 9. Codex Home, Authentication, and Superpowers Contract
 
-The runner checks authentication before the provider can edit the worktree.
+The runner resolves the effective Codex home before replacing `HOME` and makes
+that existing home available to the child through `CODEX_HOME`. This preserves
+both installed authentication and the Superpowers skills that the runner is
+wrapping. It does not copy, mirror, or maintain a second skill installation.
+
+`--ignore-user-config` and `--ignore-rules` keep operator config and repository
+rules from changing autonomous execution behavior. Existing credential
+scrubbing and disabled Git push URLs remain in force. Auth contents, skill
+contents, transcripts, and session history are not copied into runner state or
+printed.
 
 Approved environment-token authentication continues to use the existing
-allowlist. Installed file-backed Codex authentication is supported by copying
-only the minimum required regular auth file into the private run-specific
-Codex home with mode `0600`.
-
-The runner does not copy the operator's full `.codex` directory. Auth contents
-are not printed or written to state. A missing or unusable auth source becomes
-`provider_auth_blocked` before provider work.
+allowlist. A missing effective Codex home, unavailable authentication, or
+missing required Superpowers workflow becomes `provider_auth_blocked` or
+`provider_capability_blocked` before Archive implementation work. The
+disposable canary proves the actual v6.2.0 SDD workflow is discoverable.
 
 ## 10. Non-Interactive Full-Access Contract
 
@@ -520,19 +578,33 @@ invent a checkpoint or create another equivalent run.
 
 ## 15. Unexpected-Error Policy
 
-Unexpected errors use a small decision table:
+Unexpected errors use a small two-step policy.
 
-| Observed state | Best action |
+First, preserve the latest Git and provider checkpoint before interpreting the
+failure. Second, classify both the observed state and the failed boundary, then
+change exactly one relevant strategy dimension:
+
+| Observed state and boundary | Best next strategy |
 | --- | --- |
-| Exact clean or committed checkpoint | Retry with one changed strategy |
-| Exact safe dirty checkpoint | Fresh session reviews the complete diff |
-| External auth, tool, or permission blocker | Block with the precise next action |
+| Exact clean or committed checkpoint plus root transport loss | Resume the same root session once; if the same boundary repeats, start a fresh root with the checkpoint and failure evidence |
+| Exact safe dirty checkpoint plus malformed result, provider crash, or lost session | Start a fresh root that reviews the complete diff and continues the same goal |
+| Verification command unavailable or environment-specific | Use an already declared equivalent verification route when one exists; otherwise preserve evidence and report the exact missing capability |
+| External auth, tool, TCC, Keychain, or host permission blocker | Preserve the checkpoint and block only when new external authority or a host-state change is actually required |
 | Known repairable historical state | Require the matching explicit repair kind |
 | Unknown identity, ref, path, digest, or state drift | Preserve evidence and fail closed |
 
-The controller may continue bounded recovery while it is alive. It does not ask
-the user “should I continue,” repeat an unchanged strategy, or turn an
-unclassified error into a trusted state.
+The strategy history is bounded and records the failure evidence, changed
+dimension, and return condition. The controller never repeats the same failed
+strategy unchanged. It continues autonomously through safe resume, fresh-root
+review, or an equivalent declared verification route, and returns to the
+normal Superpowers path as soon as the external boundary is healthy.
+
+This recovery shell observes only root lifecycle, Git checkpoints, and declared
+evidence. It does not inspect the SDD ledger to invent new task status, replace
+Superpowers' v6.2.0 fix-loop policy, or create a second implementer scheduler.
+It stops only when external authority is needed or a load-bearing identity,
+ref, path, digest, state, correctness, or acceptance invariant cannot be
+established safely.
 
 ## 16. Subagent-Driven Implementation Contract
 
@@ -541,17 +613,18 @@ Both implementation plans are executed directly with
 
 For each plan task, the root controller:
 
-1. extracts one task brief with a namespaced `core-N` or `recovery-N`
-   ledger identity;
-2. dispatches one fresh implementer;
-3. requires TDD RED then GREEN;
-4. requires focused tests, a task commit, and self-review;
-5. writes the implementer report to a file;
-6. creates a full task diff package from the recorded base commit;
-7. dispatches a separate task reviewer;
-8. fixes and re-reviews every Critical or Important finding;
-9. records completion in the SDD progress ledger;
-10. moves to the next task only after both spec and quality approval.
+1. resolves the v6.2.0 plan-scoped SDD workspace and its plan-identified
+   ledger;
+2. extracts one task brief;
+3. dispatches one fresh implementer;
+4. requires TDD RED then GREEN;
+5. requires focused tests, a task commit, and self-review;
+6. writes the implementer report to a file;
+7. creates a full task diff package from the recorded base commit;
+8. dispatches a separate task reviewer;
+9. uses the v6.2.0 bounded fix and scoped re-review loop;
+10. records completion in the plan-scoped SDD ledger;
+11. moves to the next task only after both spec and quality approval.
 
 Implementation agents are not run in parallel.
 
@@ -669,17 +742,27 @@ The implementation explicitly reviews these bounded blind spots:
 - `--ignore-user-config` does not imply `--ignore-rules`;
 - resume and fresh sessions must receive identical non-interactive flags;
 - Codex CLI flags may drift after `0.144.1`;
-- isolated HOME can hide file-backed authentication and Git identity;
+- replacing `HOME` can hide file-backed authentication and installed
+  Superpowers unless the effective `CODEX_HOME` is preserved;
+- a Superpowers upgrade can change plan-workspace and review-package
+  interfaces even when runner code is unchanged;
+- an over-eager wrapper can fight Superpowers by treating its normal task,
+  fix, or cleanup lifecycle as a runner failure;
+- a recovery loop can appear autonomous while merely repeating the same failed
+  strategy; every retry therefore records the one changed dimension;
 - repository-local signing can cause an interactive pinentry;
 - collaboration output can exceed one JSONL line limit;
-- two ordered plans can reuse the same human task number unless the SDD ledger
-  identity is namespaced;
+- stale flat `.superpowers/sdd/progress.md` files must not override v6.2.0
+  plan-scoped ledgers;
 - a permission error after an edit needs a checkpoint before recovery;
 - Desktop volatile refs can change during ordinary observation;
 - opening the Git common directory increases the importance of protected-ref
   validation;
 - macOS TCC and Keychain prompts cannot be accepted by an autonomous CLI;
 - SDD brief, report, ledger, and review-package paths must remain writable;
+- installed helper executable bits may be missing even when script contents are
+  valid, so orchestration must use the documented shell fallback and explicit
+  output paths rather than changing the global skill;
 - a nested live canary must use a disposable repository;
 - older run state cannot be made trustworthy merely by installing new code.
 
@@ -706,6 +789,13 @@ The remediation is complete when:
 - product and unknown ref mutation still fails closed;
 - an equivalent run is refused with an exact recommended action;
 - the two narrow repair kinds accept only their proven states;
+- the installed Superpowers workflow satisfies the v6.2.0 plan-scoped
+  workspace, plan-aware review-package, scoped re-review, and five-round
+  circuit-breaker contract;
+- recoverable external-boundary failures preserve evidence, change strategy,
+  and resume the same goal without adding routine user approval checkpoints;
+- the runner returns to the normal Superpowers path after recovery and never
+  treats the SDD ledger as product recovery state;
 - every implementation task has SDD implementer and independent review
   evidence;
 - all Critical and Important review findings are fixed and re-reviewed;
