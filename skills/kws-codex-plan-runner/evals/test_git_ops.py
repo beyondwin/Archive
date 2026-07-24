@@ -189,6 +189,41 @@ class GitWorkspaceTest(unittest.TestCase):
             workspace = self.create()
             self.assertEqual(workspace.observe().head, self.start)
 
+    def test_controller_user_config_is_enabled_only_for_identity_lookup(self):
+        isolated_home = self.root / "identity-home"
+        isolated_home.mkdir()
+        (isolated_home / ".gitconfig").write_text(
+            "[user]\n"
+            "\tname = Global Identity\n"
+            "\temail = global@example.test\n",
+            encoding="utf-8",
+        )
+        injected = self.root / "injected.gitconfig"
+        injected.write_text(
+            "[user]\n"
+            "\tname = Injected Identity\n"
+            "\temail = injected@example.test\n",
+            encoding="utf-8",
+        )
+        source = {
+            "HOME": str(isolated_home),
+            "GIT_CONFIG_GLOBAL": str(injected),
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "user.name",
+            "GIT_CONFIG_VALUE_0": "Injected Inline Identity",
+        }
+
+        trusted = git_ops._trusted_git_env(source)
+        identity = git_ops._sanitized_git_env(source)
+
+        self.assertEqual(trusted["GIT_CONFIG_GLOBAL"], os.devnull)
+        self.assertEqual(trusted["GIT_CONFIG_NOSYSTEM"], "1")
+        self.assertNotIn("GIT_CONFIG_GLOBAL", identity)
+        self.assertNotIn("GIT_CONFIG_COUNT", identity)
+        self.assertNotIn("GIT_CONFIG_KEY_0", identity)
+        self.assertNotIn("GIT_CONFIG_VALUE_0", identity)
+        self.assertEqual(identity["HOME"], str(isolated_home))
+
     def test_candidate_identity_rejects_author_only_and_committer_only_drift(self):
         workspace = self.create()
         cases = (

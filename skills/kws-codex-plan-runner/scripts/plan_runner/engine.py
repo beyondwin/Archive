@@ -548,9 +548,12 @@ class PlanRunner:
             workspace = self._open_repair_workspace(state)
         except (TypeError, ValueError):
             return None
-        partial = self._eligible_partial_repair(state, workspace)
-        if partial is not None:
-            return ("unsealed-provider-partial", partial)
+        try:
+            dirty = not workspace.observe().clean
+        except (TypeError, ValueError):
+            return None
+        if self._unsealed_partial_attempt_id(state, dirty=dirty) is not None:
+            return None
         try:
             self._repair_evidence(
                 state,
@@ -562,9 +565,14 @@ class PlanRunner:
         except (TypeError, ValueError):
             return None
 
-    def _eligible_partial_repair(
-        self, state: Mapping[str, object], workspace: GitWorkspace
+    @staticmethod
+    def _unsealed_partial_attempt_id(
+        state: Mapping[str, object],
+        *,
+        dirty: bool,
     ) -> str | None:
+        if not dirty:
+            return None
         attempts = state.get("attempts")
         if not isinstance(attempts, list):
             return None
@@ -576,16 +584,11 @@ class PlanRunner:
             )
             if not isinstance(attempt_id, str) or not attempt_id:
                 continue
-            try:
-                self._repair_evidence(
-                    state,
-                    workspace,
-                    repair_kind="unsealed-provider-partial",
-                    attempt_id=attempt_id,
-                )
+            if (
+                attempt.get("completed") is False
+                and attempt.get("mode") in {"implementation", "final_review_fix"}
+            ):
                 return attempt_id
-            except (TypeError, ValueError):
-                continue
         return None
 
     @staticmethod
@@ -663,8 +666,17 @@ class PlanRunner:
             store = StateStore.open(run_root)
             state = store.snapshot()
             status = state["status"]
+            failed_retry_strategy = None
+            if status == "failed" and retry_failed:
+                failed_retry_strategy = self._validate_failed_retry_strategy(
+                    store,
+                    state,
+                    strategy_note,
+                )
+            profile_artifact = None
+            profile_reference = None
             if profile_requested:
-                self._transition_execution_profile(
+                profile_artifact = self._prepare_execution_profile_transition(
                     store,
                     state,
                     retry_blocked=retry_blocked,
@@ -673,8 +685,7 @@ class PlanRunner:
                     sandbox=sandbox,
                     model=model,
                 )
-                state = store.snapshot()
-                status = state["status"]
+                profile_reference = profile_artifact.as_dict()
             if status == "ready_for_integration":
                 self._emit_summary(state)
                 return int(ExitCode.READY)
@@ -691,28 +702,9 @@ class PlanRunner:
                     if isinstance(failure, Mapping)
                     else None
                 )
-                prior = (
-                    failure.get("strategy_digests", [])
-                    if isinstance(failure, Mapping)
-                    else []
-                )
-                for reference in state["artifact_refs"]:
-                    if (
-                        not isinstance(reference, Mapping)
-                        or reference.get("kind") != "strategy_note"
-                    ):
-                        continue
-                    payload = _artifact_payload(store, reference)
-                    if (
-                        isinstance(payload, Mapping)
-                        and payload.get("failure_signature") == failure_signature
-                        and isinstance(payload.get("strategy_note_digest"), str)
-                    ):
-                        prior = [*prior, payload["strategy_note_digest"]]
-                digest = strategy_note_digest(strategy_note)
-                if digest in prior:
-                    raise ValueError("strategy note duplicates a prior strategy")
-                normalized_note = normalize_strategy_note(strategy_note)
+                if failed_retry_strategy is None:
+                    raise ValueError("failed retry strategy was not validated")
+                normalized_note, digest = failed_retry_strategy
                 strategy_mode = (
                     failure.get("mode")
                     if isinstance(failure, Mapping)
@@ -759,7 +751,10 @@ class PlanRunner:
                         "strategy_note_digest": digest,
                     },
                 )
-                for artifact in (audit_artifact, strategy_artifact):
+                artifacts = [audit_artifact, strategy_artifact]
+                if profile_artifact is not None:
+                    artifacts.append(profile_artifact)
+                for artifact in artifacts:
                     if artifact.as_dict() not in state["artifact_refs"]:
                         state["artifact_refs"].append(artifact.as_dict())
                 state["status"] = "resumable"
@@ -780,6 +775,11 @@ class PlanRunner:
                     "required_strategy_change": True,
                     "strategy_digests": [digest],
                     "next_session_action": "fresh_session",
+                    **(
+                        {"execution_profile_artifact": profile_reference}
+                        if profile_reference is not None
+                        else {}
+                    ),
                 }
                 store.commit(state)
             elif retry_failed:
@@ -788,12 +788,22 @@ class PlanRunner:
                 failure = state.get("failure")
                 state["status"] = "resumable"
                 if (
+                    profile_reference is not None
+                    and profile_reference not in state["artifact_refs"]
+                ):
+                    state["artifact_refs"].append(profile_reference)
+                if (
                     isinstance(failure, Mapping)
                     and failure.get("reason_code") in _PERMISSION_BLOCKERS
                 ):
                     state["failure"] = {
                         **failure,
                         "next_session_action": "fresh_session",
+                        **(
+                            {"execution_profile_artifact": profile_reference}
+                            if profile_reference is not None
+                            else {}
+                        ),
                     }
                 store.commit(state)
             elif retry_blocked:
@@ -824,6 +834,42 @@ class PlanRunner:
         except Exception as error:
             self._emit_error("internal_error", error)
             return int(ExitCode.INTERNAL)
+
+    @staticmethod
+    def _validate_failed_retry_strategy(
+        store: StateStore,
+        state: Mapping[str, object],
+        strategy_note: object,
+    ) -> tuple[str, str]:
+        failure = state.get("failure")
+        failure_signature = (
+            failure.get("failure_signature")
+            if isinstance(failure, Mapping)
+            else None
+        )
+        prior = (
+            list(failure.get("strategy_digests", []))
+            if isinstance(failure, Mapping)
+            else []
+        )
+        for reference in state["artifact_refs"]:
+            if (
+                not isinstance(reference, Mapping)
+                or reference.get("kind") != "strategy_note"
+            ):
+                continue
+            payload = _artifact_payload(store, reference)
+            if (
+                isinstance(payload, Mapping)
+                and payload.get("failure_signature") == failure_signature
+                and isinstance(payload.get("strategy_note_digest"), str)
+            ):
+                prior.append(payload["strategy_note_digest"])
+        normalized_note = normalize_strategy_note(strategy_note)
+        digest = strategy_note_digest(normalized_note)
+        if digest in prior:
+            raise ValueError("strategy note duplicates a prior strategy")
+        return normalized_note, digest
 
     @staticmethod
     def _effective_execution_profile(
@@ -883,7 +929,7 @@ class PlanRunner:
             current = dict(target)
         return current
 
-    def _transition_execution_profile(
+    def _prepare_execution_profile_transition(
         self,
         store: StateStore,
         state: Mapping[str, object],
@@ -893,7 +939,7 @@ class PlanRunner:
         strategy_note: str | None,
         sandbox: str | None,
         model: str | None,
-    ) -> None:
+    ) -> ArtifactRef:
         if not isinstance(strategy_note, str) or not strategy_note.strip():
             raise ValueError("execution profile change requires a nonempty strategy note")
         normalized_note = normalize_strategy_note(strategy_note)
@@ -934,7 +980,7 @@ class PlanRunner:
                 raise ValueError("execution profile change is not approved for this failure")
         else:
             raise ValueError("execution profile change requires blocked or failed retry")
-        artifact = store.put_artifact(
+        return store.put_artifact(
             "execution_profile_transition",
             {
                 "contract_version": 1,
@@ -946,17 +992,6 @@ class PlanRunner:
                 "strategy_note_digest": strategy_note_digest(normalized_note),
             },
         )
-        next_state = store.snapshot()
-        if artifact.as_dict() not in next_state["artifact_refs"]:
-            next_state["artifact_refs"].append(artifact.as_dict())
-        existing_failure = next_state.get("failure")
-        if isinstance(existing_failure, Mapping):
-            next_state["failure"] = {
-                **existing_failure,
-                "execution_profile_artifact": artifact.as_dict(),
-                "next_session_action": "fresh_session",
-            }
-        store.commit(next_state)
 
     def inspect(self, run_id: str) -> int:
         try:
@@ -1279,10 +1314,16 @@ class PlanRunner:
 
         observation_payload = dataclasses.asdict(observation)
         if repair_kind == "volatile-codex-turn-refs":
-            if self._eligible_partial_repair(state, workspace) is not None:
+            if (
+                self._unsealed_partial_attempt_id(
+                    state,
+                    dirty=not observation.clean,
+                )
+                is not None
+            ):
                 raise ValueError(
                     "overlapping partial repair proof failed: "
-                    "eligible dirty partial must be repaired first"
+                    "unsealed dirty partial cannot be repaired safely"
                 )
             if "volatile_ref_policy_version" in config:
                 raise ValueError("historical volatile policy proof failed")
@@ -1313,6 +1354,26 @@ class PlanRunner:
             raise ValueError("attempt proof failed") from error
         if attempt.get("completed") is not False:
             raise ValueError("incomplete attempt proof failed")
+        mode = attempt.get("mode")
+        if mode not in {"implementation", "final_review_fix"}:
+            raise ValueError("attempt mode proof failed")
+        current_index = state["current_plan_index"]
+        if (
+            mode == "implementation"
+            and (
+                current_index >= len(state["plans"])
+                or state["plans"][current_index].get("status") != "running"
+                or attempt.get("plan_index") != current_index
+            )
+        ) or (
+            mode == "final_review_fix"
+            and (
+                current_index != len(state["plans"])
+                or attempt.get("plan_index") != len(state["plans"]) - 1
+                or any(plan.get("status") != "implemented" for plan in state["plans"])
+            )
+        ):
+            raise ValueError("attempt mode proof failed")
         process_fields = (
             "controller_pid",
             "helper_pid",
@@ -1337,39 +1398,10 @@ class PlanRunner:
             raise ValueError("live process proof failed") from error
         if not quiescent:
             raise ValueError("live process proof failed")
-        mode = attempt.get("mode")
-        if mode not in {"implementation", "final_review_fix"}:
-            raise ValueError("attempt mode proof failed")
-        current_index = state["current_plan_index"]
-        if (
-            mode == "implementation"
-            and (
-                current_index >= len(state["plans"])
-                or state["plans"][current_index].get("status") != "running"
-                or attempt.get("plan_index") != current_index
-            )
-        ) or (
-            mode == "final_review_fix"
-            and (
-                current_index != len(state["plans"])
-                or attempt.get("plan_index") != len(state["plans"]) - 1
-                or any(plan.get("status") != "implemented" for plan in state["plans"])
-            )
-        ):
-            raise ValueError("attempt mode proof failed")
-        return {
-            "audit": {
-                "attempt_id": attempt_id,
-                "mode": mode,
-                "plan_index": attempt.get("plan_index"),
-                "recorded_stable_refs": stable_before,
-                "current_stable_refs": stable_after,
-                "adopted_observation": observation_payload,
-                "discarded_semantic_claims": True,
-            },
-            "observation": observation_payload,
-            "mode": mode,
-        }
+        raise ValueError(
+            "detached descendant proof is unavailable; "
+            "unsealed provider partial repair is disabled"
+        )
 
     def _require_runtime(self) -> RuntimeIdentity:
         if self._runtime_checker is None:

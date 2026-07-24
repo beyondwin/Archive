@@ -845,3 +845,17 @@ gaps while retaining the deliberately small same-run model:
 Focused regressions include a two-plan case that deliberately resets or drops
 plan 1 before reporting plan 2, same-run full-access/model transition and
 tamper cases, and overlapping partial-plus-volatile repair ordering.
+
+## Whole-review round 2 correction (2026-07-25)
+
+Execution-profile transition and failed-retry acceptance now share one state
+commit. Duplicate strategy notes are rejected before transition preparation;
+the transition, recovery audit, and strategy-note artifacts are prepared before
+the failed or blocked state is committed. A rejected note or artifact failure
+therefore leaves state bytes, revision, artifact refs, and the effective
+profile unchanged. Blocked transitions use the same single-commit path and have
+no later rejection step.
+
+Unsealed dirty partials are no longer advertised as actionable repair evidence.
+They cause equivalent-run admission to recommend preserving evidence and
+stopping, including when volatile-ref drift overlaps.

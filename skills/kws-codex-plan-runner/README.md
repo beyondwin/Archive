@@ -61,6 +61,10 @@ Run from this directory. Inputs may live anywhere, but paths should be absolute.
   --strategy-note "verified provider partial"
 ```
 
+`unsealed-provider-partial` remains a recognized compatibility surface, but
+new adoption is currently disabled and fails closed. Same-host PID/PGID polling
+cannot prove that no descendant escaped with `setsid()` before observation.
+
 `--spec` and `--plan` are repeatable and preserve CLI order. Every input is
 snapshotted with its absolute path and digest. Specs form immutable common
 context; plans run sequentially in one isolated worktree/branch with no positional pairing
@@ -106,9 +110,10 @@ implementation may resume an uncommitted partial tree only when its HEAD,
 branch, porcelain digest, and bounded content digest exactly match the sealed
 checkpoint; arbitrary dirty state or later drift fails closed without launching
 another provider.
-Historical partial repair additionally requires proof that the recorded
-process group and descendant PIDs are quiescent. Missing or live process
-evidence fails closed.
+Historical partial evidence is preserved but not adopted. Recorded process
+group and descendant PID quiescence is necessary but not sufficient because it
+cannot prove the absence of an unrecorded detached descendant. The runner does
+not recommend this repair and leaves the run unchanged.
 
 While the controller remains alive, provider loss, session loss, and stall
 outcomes enter a bounded automatic `recovering` loop; the user is not asked to
@@ -148,8 +153,9 @@ uses `matching_run_exists`, names the existing branch/worktree, and recommends:
 Only `refs/codex/turn-diffs/captures/` and
 `refs/codex/turn-diffs/checkpoints/` are treated as volatile. Product and
 unknown refs remain protected. Historical recovery is limited to the two exact
-repair kinds shown above; repair never launches a provider, mutates Git, resets,
-rebases, merges, pushes, or deploys.
+repair kinds shown above; only volatile-ref repair can currently change a run.
+Partial repair preserves evidence and fails closed. Repair never launches a
+provider, mutates Git, resets, rebases, merges, pushes, or deploys.
 Legacy state without a volatile-ref policy remains readable only while the
 protected observation still matches. A recognized volatile-only drift is
 reported with its current observation and exact revision-guarded repair action;
