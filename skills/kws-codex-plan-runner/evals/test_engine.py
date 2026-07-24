@@ -440,7 +440,15 @@ class EngineTest(unittest.TestCase):
         self.assertIsNotNone(state_path, "dirty provider session was not captured")
         process.send_signal(signum)
         stdout, stderr = process.communicate(timeout=10)
-        self.assertEqual(process.returncode, ExitCode.RESUMABLE, stderr)
+        self.assertEqual(
+            process.returncode,
+            ExitCode.RESUMABLE,
+            [
+                stdout,
+                stderr,
+                json.loads(state_path.read_text(encoding="utf-8")).get("failure"),
+            ],
+        )
         self.assertEqual(stderr, "")
         self.assertEqual(json.loads(stdout.splitlines()[-1])["status"], "resumable")
         checkpoint = json.loads(state_path.read_text(encoding="utf-8"))
@@ -479,7 +487,15 @@ class EngineTest(unittest.TestCase):
             self.assertEqual(resumed.returncode, ExitCode.INTEGRITY, resumed.stderr)
             self.assertEqual(len(launch_log.read_text().splitlines()), 1)
             return
-        self.assertEqual(resumed.returncode, ExitCode.READY, resumed.stderr)
+        self.assertEqual(
+            resumed.returncode,
+            ExitCode.READY,
+            [
+                resumed.stdout,
+                resumed.stderr,
+                json.loads(state_path.read_text(encoding="utf-8")).get("failure"),
+            ],
+        )
         launches = [
             json.loads(line)
             for line in launch_log.read_text(encoding="utf-8").splitlines()
@@ -689,6 +705,8 @@ class EngineTest(unittest.TestCase):
             if packet["mode"] != "implementation" or observed:
                 return None
             observed = True
+            started = self.root / "silent-focused.started"
+            release = self.root / "silent-focused.release"
             envelope = {
                 "protocol_version": adapter.helper.protocol_version,
                 "run_id": packet["run_id"],
@@ -699,10 +717,22 @@ class EngineTest(unittest.TestCase):
                     "command": {
                         "command_id": "silent-focused",
                         "command_role": "focused",
-                        "argv": [sys.executable, "-c", "import time; time.sleep(0.15)"],
+                        "argv": [
+                            sys.executable,
+                            "-c",
+                            (
+                                "import pathlib, sys, time; "
+                                "started = pathlib.Path(sys.argv[1]); "
+                                "release = pathlib.Path(sys.argv[2]); "
+                                "started.write_text('started', encoding='utf-8'); "
+                                "exec(\"while not release.exists():\\n time.sleep(0.005)\")"
+                            ),
+                            str(started),
+                            str(release),
+                        ],
                         "cwd": ".",
                         "input_digest": "b" * 64,
-                        "deadline_seconds": 1,
+                        "deadline_seconds": 5,
                     },
                 },
             }
@@ -720,9 +750,21 @@ class EngineTest(unittest.TestCase):
 
             thread = threading.Thread(target=invoke)
             thread.start()
-            time.sleep(0.08)
-            self.assertFalse(self.leases[-1].expired(time.monotonic()))
-            thread.join(2)
+            try:
+                started_deadline = time.monotonic() + 2
+                while (
+                    not started.exists()
+                    and thread.is_alive()
+                    and time.monotonic() < started_deadline
+                ):
+                    time.sleep(0.005)
+                self.assertTrue(started.exists())
+                time.sleep(0.06)
+                self.assertTrue(thread.is_alive())
+                self.assertFalse(self.leases[-1].expired(time.monotonic()))
+            finally:
+                release.write_text("release\n", encoding="utf-8")
+                thread.join(2)
             self.assertEqual(errors, [])
             return None
 

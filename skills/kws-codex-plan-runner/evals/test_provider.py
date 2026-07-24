@@ -6,10 +6,12 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SKILL_ROOT / "scripts"))
 
+from plan_runner import provider as provider_module  # noqa: E402
 from plan_runner.helper import HelperDescriptor  # noqa: E402
 from plan_runner.provider import CodexAdapter, ProviderRequest  # noqa: E402
 from plan_runner.recovery import ActivityLease  # noqa: E402
@@ -254,6 +256,30 @@ class CodexProviderTest(unittest.TestCase):
         self.assertEqual(outcome.kind, "implemented")
         self.assertTrue(all(accepted for _kind, _key, accepted in lease.observed))
         self.assertEqual(len(lease.observed), 4)
+
+    def test_process_group_observation_allows_bounded_ps_startup_jitter(self):
+        observation_timeouts = []
+        anchored_group = provider_module._anchored_group
+
+        def record_observation(process, pgid, *, observation_timeout=0.25):
+            observation_timeouts.append(observation_timeout)
+            return anchored_group(
+                process,
+                pgid,
+                observation_timeout=observation_timeout,
+            )
+
+        with mock.patch.object(
+            provider_module,
+            "_anchored_group",
+            side_effect=record_observation,
+        ):
+            outcome = self.launch("initial")
+
+        self.assertEqual(outcome.kind, "implemented")
+        self.assertTrue(observation_timeouts)
+        self.assertGreaterEqual(min(observation_timeouts), 0.25)
+        self.assertLessEqual(max(observation_timeouts), 0.25)
 
     def test_token_deltas_and_repeated_logs_do_not_prevent_stall(self):
         started = time.monotonic()

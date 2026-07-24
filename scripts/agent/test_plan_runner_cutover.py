@@ -46,7 +46,7 @@ class CutoverFixture(unittest.TestCase):
         self.home = self.root / "home"
         self.repo.mkdir()
         self.home.mkdir()
-        subprocess.run(["git", "init", "-q"], cwd=self.repo, check=True)
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=self.repo, check=True)
         subprocess.run(
             ["git", "config", "user.name", "Cutover Test"], cwd=self.repo, check=True
         )

@@ -42,7 +42,7 @@ PROVIDERS = {
     },
 }
 OUTPUT_LIMIT = 4_096
-PARITY_STALL_SECONDS = 1.0
+PARITY_STALL_SECONDS = 1.5
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 GIT_HEAD = re.compile(r"^[0-9a-f]{40}(?:[0-9a-f]{24})?$")
 GIT_ENV = {
