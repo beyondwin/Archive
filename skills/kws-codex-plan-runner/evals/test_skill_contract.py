@@ -18,8 +18,8 @@ class SkillContractTests(unittest.TestCase):
             "durable recovery and fail-closed ready-for-integration evidence.",
             skill,
         )
-        self.assertIn('version: "1.0.0"', skill)
-        self.assertIn('updated_at: "2026-07-23"', skill)
+        self.assertIn('version: "1.1.0"', skill)
+        self.assertIn('updated_at: "2026-07-25"', skill)
 
     def test_skill_closes_the_baseline_pressure_failures(self) -> None:
         skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
@@ -108,6 +108,64 @@ class SkillContractTests(unittest.TestCase):
         self.assertIn("## 1.0.0 - 2026-07-23", changelog)
         self.assertIn("greenfield", changelog.lower())
         self.assertIn("does not claim compatibility with legacy run state", changelog)
+
+    def test_public_contract_documents_the_thin_superpowers_boundary(self) -> None:
+        documents = {
+            name: (SKILL_ROOT / name).read_text(encoding="utf-8")
+            for name in ("SKILL.md", "README.md", "CHANGELOG.md")
+        }
+        combined = "\n".join(documents.values())
+
+        for required in (
+            "subagent-driven-development",
+            "thin wrapper",
+            "Superpowers v6.2.0",
+            "strategic recovery shell",
+            "danger-full-access",
+            'approval_policy="never"',
+            "--ignore-rules",
+            "matching_run_exists",
+            "volatile-codex-turn-refs",
+            "unsealed-provider-partial",
+            "bun run agent:verify -- --base",
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, combined)
+
+        for document in ("SKILL.md", "README.md"):
+            text = " ".join(documents[document].split())
+            with self.subTest(document=document, ownership="superpowers"):
+                self.assertIn(
+                    "Superpowers owns task decomposition, SDD dispatch, TDD, task review, "
+                    "and its ledger",
+                    text,
+                )
+            with self.subTest(document=document, ownership="runner"):
+                self.assertIn(
+                    "does not mirror individual subagent state",
+                    text,
+                )
+            with self.subTest(document=document, ownership="workspace"):
+                self.assertIn(
+                    "does not parse or migrate those internals",
+                    text,
+                )
+
+    def test_readme_documents_exact_repair_and_admission_actions(self) -> None:
+        readme = (SKILL_ROOT / "README.md").read_text(encoding="utf-8")
+
+        for required in (
+            "./scripts/runner repair --run-id",
+            "--expected-revision",
+            "--repair-kind volatile-codex-turn-refs",
+            "--repair-kind unsealed-provider-partial",
+            "refs/codex/turn-diffs/captures/",
+            "refs/codex/turn-diffs/checkpoints/",
+            "host_permission_blocked",
+            "effective `CODEX_HOME`",
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, readme)
 
 
 if __name__ == "__main__":

@@ -19,6 +19,10 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = REPO_ROOT / "scripts/agent/fixtures/plan-runner-parity-v1.json"
 CONTRACT = REPO_ROOT / "scripts/agent/fixtures/plan-runner-contract-v1.json"
+CODEX_PUBLIC_DOCS = tuple(
+    REPO_ROOT / "skills/kws-codex-plan-runner" / name
+    for name in ("SKILL.md", "README.md", "CHANGELOG.md")
+)
 PROVIDERS = {
     "codex": {
         "runner": REPO_ROOT / "skills/kws-codex-plan-runner/scripts/runner",
@@ -125,7 +129,6 @@ def validate_runtime_vocabularies(contract: Mapping[str, Any]) -> None:
         "RUN_STATUSES": set(contract["run_statuses"]),
         "PLAN_STATUSES": set(contract["plan_statuses"]),
         "TASK_STATUSES": set(contract["task_statuses"]),
-        "FAILURE_TAXONOMY": set(contract["failure_taxonomy"]),
     }
     exit_names = {
         "ready": "READY",
@@ -145,6 +148,12 @@ def validate_runtime_vocabularies(contract: Mapping[str, Any]) -> None:
         for name, vocabulary in expected.items():
             if set(getattr(module, name)) != vocabulary:
                 raise ParityFailure(f"{provider}: {name} drift")
+        failure_vocabulary = set(contract["failure_taxonomy"])
+        failure_vocabulary.update(
+            contract["provider_failure_taxonomy_extensions"].get(provider, [])
+        )
+        if set(module.FAILURE_TAXONOMY) != failure_vocabulary:
+            raise ParityFailure(f"{provider}: FAILURE_TAXONOMY drift")
         if dict(module.RUNNER_RUNTIME_CONTRACT) != contract["runner_runtime"]:
             raise ParityFailure(f"{provider}: runner runtime drift")
         actual_exits = {
@@ -155,25 +164,46 @@ def validate_runtime_vocabularies(contract: Mapping[str, Any]) -> None:
             raise ParityFailure(f"{provider}: exit code drift")
 
 
+def validate_codex_public_contract(contract: Mapping[str, Any]) -> None:
+    expected_policy = {
+        "version": 1,
+        "prefixes": [
+            "refs/codex/turn-diffs/captures/",
+            "refs/codex/turn-diffs/checkpoints/",
+        ],
+    }
+    if contract.get("volatile_ref_policy") != expected_policy:
+        raise ParityFailure("codex: volatile ref policy drift")
+
+    documents = [path.read_text(encoding="utf-8") for path in CODEX_PUBLIC_DOCS]
+    combined = "\n".join(documents)
+    required = (
+        "subagent-driven-development",
+        "thin wrapper",
+        "Superpowers v6.2.0",
+        "strategic recovery shell",
+        "danger-full-access",
+        'approval_policy="never"',
+        "--ignore-rules",
+        "matching_run_exists",
+        "volatile-codex-turn-refs",
+        "unsealed-provider-partial",
+        "bun run agent:verify -- --base",
+    )
+    missing = [value for value in required if value not in combined]
+    if missing:
+        raise ParityFailure(f"codex: public contract vocabulary drift: {missing}")
+
+
 def _init_source(root: Path, env: Mapping[str, str]) -> Path:
     source = root / "source"
     source.mkdir(parents=True)
     _checked_git(source, ("init", "-b", "main"), env)
+    _checked_git(source, ("config", "user.name", "Plan Runner Parity"), env)
+    _checked_git(source, ("config", "user.email", "parity@example.test"), env)
     (source / "README.md").write_text("parity source\n", encoding="utf-8")
     _checked_git(source, ("add", "README.md"), env)
-    _checked_git(
-        source,
-        (
-            "-c",
-            "user.name=Plan Runner Parity",
-            "-c",
-            "user.email=parity@example.test",
-            "commit",
-            "-m",
-            "parity source",
-        ),
-        env,
-    )
+    _checked_git(source, ("commit", "-m", "parity source"), env)
     return source
 
 
@@ -331,7 +361,7 @@ def _validate_receipt(
     return (
         {
             "argv": argv,
-            "candidate_head": candidate_head,
+            "candidate_head": "<git-head>",
             "command_role": "final",
             "cwd": relative_cwd or ".",
             "environment_fingerprint": "<sha256>",
@@ -393,12 +423,20 @@ def _validate_recovery_evidence(
         recovered.get("packet_digest"), "recovered recovery packet"
     )
     if expected_action == "interrupted":
-        if (
-            recovered.get("session_action") != "resume"
-            or recovered_session != failed_session
+        session_action = recovered.get("session_action")
+        if session_action == "resume" and recovered_session == failed_session:
+            action = "recovered"
+        elif (
+            session_action == "fresh"
+            and recovered_session != failed_session
+            and recovered.get("required_strategy_change") is True
         ):
-            raise ParityFailure("resume did not use the exact captured session ID")
-        action = "resume"
+            action = "recovered"
+        else:
+            raise ParityFailure(
+                "interrupted recovery used neither the exact healthy session "
+                "nor an evidence-backed fresh strategy"
+            )
     else:
         if recovered_packet_digest == failed_packet_digest:
             raise ParityFailure(
@@ -636,7 +674,13 @@ def run_provider(
     env["PATH"] = os.pathsep.join((str(binary), env.get("PATH", "")))
     sequence_path = root / "sequence.json"
     log_path = root / "fake.jsonl"
-    _write_sequence(sequence_path, scenario["fake_sequence"])
+    provider_sequences = scenario.get("provider_fake_sequences", {})
+    actions = (
+        provider_sequences.get(provider, scenario["fake_sequence"])
+        if isinstance(provider_sequences, Mapping)
+        else scenario["fake_sequence"]
+    )
+    _write_sequence(sequence_path, actions)
     env["PLAN_RUNNER_FAKE_SEQUENCE"] = str(sequence_path)
     env["PLAN_RUNNER_FAKE_LOG"] = str(log_path)
     env["FAKE_CODEX_LOG"] = str(log_path)
@@ -701,16 +745,17 @@ def run_provider(
     ]:
         raise ParityFailure(f"{provider}/{scenario['id']}: plan order drift")
     sequence_state = _load_json(sequence_path)
-    if sequence_state.get("next_index") != len(scenario["fake_sequence"]):
+    if sequence_state.get("next_index") != len(actions):
         raise ParityFailure(
-            f"{provider}/{scenario['id']}: fake sequence was not fully consumed"
+            f"{provider}/{scenario['id']}: fake sequence was not fully consumed "
+            f"({sequence_state.get('next_index')}/{len(actions)})"
         )
     return _normalize(
         exit_code=result.returncode,
         state=state,
         run_root=run_root,
         log_path=log_path,
-        actions=scenario["fake_sequence"],
+        actions=actions,
         env=env,
     )
 
@@ -722,6 +767,7 @@ def main() -> int:
         if fixture.get("fixture_version") != 1:
             raise ParityFailure("unsupported parity fixture version")
         validate_runtime_vocabularies(contract)
+        validate_codex_public_contract(contract)
         failures = 0
         temporary_parent = Path(tempfile.gettempdir()).resolve()
         with tempfile.TemporaryDirectory(

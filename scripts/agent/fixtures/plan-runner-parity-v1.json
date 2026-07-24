@@ -27,6 +27,9 @@
     {
       "id": "healthy-resume",
       "fake_sequence": ["interrupted", "implemented", "implemented", "finalized"],
+      "provider_fake_sequences": {
+        "codex": ["interrupted", "resume-dirty-implemented", "implemented", "finalized"]
+      },
       "expected_status": "ready_for_integration",
       "expected_plan_statuses": ["implemented", "implemented"],
       "expected_task_statuses": [],
@@ -36,7 +39,7 @@
       "expected_review_outcome": "approved",
       "expected_review_approved": true,
       "expected_integration": "not_observed",
-      "expected_session_action": "resume",
+      "expected_session_action": "recovered",
       "expected_exit": 0
     },
     {
