@@ -700,6 +700,11 @@ class PlanRunner:
             attempt_id=attempt_id,
         )
         self._event("provider_outcome_received")
+        if outcome.kind in {"implemented", "blocked", "failed"}:
+            try:
+                self._validated_plan_result(outcome.result)
+            except ValueError as error:
+                return self._integrity_failure(store, str(error))
         if outcome.kind == "implemented":
             return self._accept_implemented(
                 store, workspace, outcome, index, attempt_id
@@ -1582,11 +1587,13 @@ class PlanRunner:
                 or task_id in seen
                 or status not in TASK_STATUSES
                 or not isinstance(evidence, list)
+                or len(evidence) > 256
                 or any(
                     not isinstance(item, str)
                     or re.fullmatch(r"[0-9a-f]{64}", item) is None
                     for item in evidence
                 )
+                or len(set(evidence)) != len(evidence)
             ):
                 raise ValueError("task ledger entry is invalid")
             seen.add(task_id)
@@ -1598,6 +1605,86 @@ class PlanRunner:
                 }
             )
         return result
+
+    @classmethod
+    def _validated_plan_result(
+        cls, value: object
+    ) -> list[dict[str, object]]:
+        if not isinstance(value, Mapping) or set(value) != {
+            "status",
+            "head_commit",
+            "summary",
+            "task_ledger",
+            "open_obligation_ids",
+            "failure_signature",
+            "strategy_note",
+            "blocker",
+        }:
+            raise ValueError("plan result shape is invalid")
+        status = value.get("status")
+        summary = value.get("summary")
+        head = value.get("head_commit")
+        obligations = value.get("open_obligation_ids")
+        signature = value.get("failure_signature")
+        strategy = value.get("strategy_note")
+        blocker = value.get("blocker")
+        if (
+            status not in {"implemented", "blocked", "failed"}
+            or not isinstance(head, str)
+            or re.fullmatch(r"[0-9a-f]{40}([0-9a-f]{24})?", head) is None
+            or not isinstance(summary, str)
+            or not summary.strip()
+            or len(summary) > 4096
+            or not isinstance(obligations, list)
+            or len(obligations) > 1024
+            or any(
+                not isinstance(item, str)
+                or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", item)
+                is None
+                for item in obligations
+            )
+            or len(set(obligations)) != len(obligations)
+            or (
+                strategy is not None
+                and (
+                    not isinstance(strategy, str)
+                    or not strategy.strip()
+                    or len(strategy) > 4096
+                )
+            )
+        ):
+            raise ValueError("plan result contract is invalid")
+        ledger = cls._validated_task_ledger(value.get("task_ledger"))
+        if status == "implemented":
+            if signature is not None or blocker is not None or obligations:
+                raise ValueError("implemented result contract is invalid")
+            cls._require_all_tasks_reported_done(ledger)
+        elif status == "blocked":
+            if (
+                not isinstance(blocker, Mapping)
+                or set(blocker) != {"kind", "detail"}
+                or blocker.get("kind") not in _AUTHORITY_BLOCKERS
+                or not isinstance(blocker.get("detail"), str)
+                or not str(blocker["detail"]).strip()
+                or len(str(blocker["detail"])) > 2048
+                or (
+                    signature is not None
+                    and (
+                        not isinstance(signature, str)
+                        or re.fullmatch(r"[0-9a-f]{64}", signature) is None
+                    )
+                )
+            ):
+                raise ValueError("blocked result contract is invalid")
+        elif (
+            blocker is not None
+            or not isinstance(signature, str)
+            or re.fullmatch(r"[0-9a-f]{64}", signature) is None
+            or not isinstance(strategy, str)
+            or not strategy.strip()
+        ):
+            raise ValueError("failed result contract is invalid")
+        return ledger
 
     @staticmethod
     def _require_all_tasks_reported_done(
@@ -2294,18 +2381,40 @@ class PlanRunner:
             raise ValueError("verification set digest is invalid")
         findings = result.get("open_findings")
         obligations = result.get("open_obligation_ids")
-        if not isinstance(findings, list) or not isinstance(obligations, list):
+        summary = result.get("summary")
+        if (
+            not isinstance(findings, list)
+            or not isinstance(obligations, list)
+            or not isinstance(summary, str)
+            or not summary.strip()
+            or len(summary) > 4096
+        ):
             raise ValueError("review findings or obligations are invalid")
         if obligations:
             raise ValueError("final obligations remain open")
+        finding_ids: set[str] = set()
         for finding in findings:
             if (
                 not isinstance(finding, Mapping)
                 or set(finding) != {"id", "severity", "summary", "evidence"}
                 or finding.get("severity")
                 not in {"Critical", "Important", "Minor"}
+                or not isinstance(finding.get("id"), str)
+                or re.fullmatch(
+                    r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}",
+                    str(finding["id"]),
+                )
+                is None
+                or finding["id"] in finding_ids
+                or not isinstance(finding.get("summary"), str)
+                or not str(finding["summary"]).strip()
+                or len(str(finding["summary"])) > 2048
+                or not isinstance(finding.get("evidence"), str)
+                or not str(finding["evidence"]).strip()
+                or len(str(finding["evidence"])) > 4096
             ):
                 raise ValueError("review finding is invalid")
+            finding_ids.add(str(finding["id"]))
         references = [
             item
             for item in state["artifact_refs"]
@@ -2413,6 +2522,11 @@ class PlanRunner:
                     index,
                     "final_review_fix",
                 )
+            if outcome.kind in {"implemented", "blocked", "failed"}:
+                try:
+                    self._validated_plan_result(outcome.result)
+                except ValueError as error:
+                    return self._integrity_failure(store, str(error))
             self._checkpoint_outcome(
                 store, outcome, attempt_id, index, "final_review_fix"
             )

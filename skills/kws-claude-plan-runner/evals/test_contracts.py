@@ -1,3 +1,4 @@
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -15,6 +16,19 @@ from plan_runner.contracts import (  # noqa: E402
 
 
 class ContractPrimitivesTest(unittest.TestCase):
+    def test_provider_output_schemas_declare_items_for_every_array(self):
+        for path in sorted((SKILL_ROOT / "templates").glob("*.schema.json")):
+            document = json.loads(path.read_text(encoding="utf-8"))
+            pending = [document]
+            while pending:
+                value = pending.pop()
+                if isinstance(value, dict):
+                    if value.get("type") == "array":
+                        self.assertIn("items", value, str(path))
+                    pending.extend(value.values())
+                elif isinstance(value, list):
+                    pending.extend(value)
+
     def test_json_digest_is_canonical_and_unicode_preserving(self):
         left = {"한글": [2, 1], "a": True}
         right = {"a": True, "한글": [2, 1]}

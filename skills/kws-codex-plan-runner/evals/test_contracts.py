@@ -24,6 +24,60 @@ from plan_runner.contracts import (  # noqa: E402
 
 
 class ContractVocabularyTest(unittest.TestCase):
+    def test_codex_output_schemas_use_supported_structured_output_subset(self):
+        unsupported = {
+            "allOf",
+            "dependentRequired",
+            "dependentSchemas",
+            "else",
+            "if",
+            "maxLength",
+            "minLength",
+            "not",
+            "oneOf",
+            "patternProperties",
+            "then",
+            "uniqueItems",
+        }
+        for name in ("plan-result.schema.json", "finalization-result.schema.json"):
+            path = SKILL_ROOT / "templates" / name
+            document = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(document.get("type"), "object", str(path))
+            self.assertNotIn("anyOf", document, str(path))
+            pending = [document]
+            while pending:
+                value = pending.pop()
+                if isinstance(value, dict):
+                    self.assertFalse(
+                        unsupported.intersection(value),
+                        f"{path}: {sorted(unsupported.intersection(value))}",
+                    )
+                    if value.get("type") == "object":
+                        properties = value.get("properties")
+                        if isinstance(properties, dict):
+                            self.assertEqual(
+                                set(value.get("required", [])),
+                                set(properties),
+                                str(path),
+                            )
+                            self.assertIs(value.get("additionalProperties"), False)
+                    pending.extend(value.values())
+                elif isinstance(value, list):
+                    pending.extend(value)
+
+    def test_provider_output_schemas_declare_items_for_every_array(self):
+        for path in sorted((SKILL_ROOT / "templates").glob("*.schema.json")):
+            document = json.loads(path.read_text(encoding="utf-8"))
+            pending = [document]
+            while pending:
+                value = pending.pop()
+                if isinstance(value, dict):
+                    if value.get("type") == "array":
+                        self.assertIn("items", value, str(path))
+                    pending.extend(value.values())
+                elif isinstance(value, list):
+                    pending.extend(value)
+
     def test_runtime_matches_versioned_test_contract(self):
         fixture = json.loads(
             (REPO_ROOT / "scripts/agent/fixtures/plan-runner-contract-v1.json")

@@ -504,6 +504,14 @@ The provider's final structured JSON is a claim, not proof. The runner compares
 it with Git, state, receipts, review evidence, and the current plan ledger
 before accepting anything.
 
+The Codex adapter's API-facing schema stays within the Structured Outputs
+subset supported by the installed provider contract: a required root object,
+required object properties, and no unsupported conditional or uniqueness
+keywords. Status-dependent invariants, non-empty and bounded strings, and
+collection uniqueness remain fail-closed runner checks. This projection does
+not weaken the public result contract; it separates provider syntax
+compatibility from controller-owned semantic validation.
+
 Provider streams are normalized into a small event vocabulary such as
 `activity`, `session`, `tool`, `result`, and `error`. Raw transcripts are not
 duplicated into state. Bounded diagnostic tails are retained only after secret
@@ -1033,6 +1041,13 @@ changes. Process absence alone is insufficient because a resumable run may
 intentionally have no live process. The new implementation does not mutate old
 state to manufacture terminal status. Explicit abandonment is recorded in the
 cutover audit while the original state remains forensic evidence.
+
+The Codex state root is shared with historical pre-CPE orchestrators. The audit
+therefore treats only the legacy CPE-owned `cpe-<16 lowercase hex>` namespace as
+CPE state. Other direct children remain untouched as forensic data and neither
+block nor satisfy the CPE zero-state gate. The CLPE root is dedicated, so all
+of its direct run directories remain in scope. A malformed or unsafe entry
+inside either recognized legacy namespace still fails closed.
 
 If any live process or non-abandoned continuable legacy state remains, the
 implementation may be complete but cutover is reported as
