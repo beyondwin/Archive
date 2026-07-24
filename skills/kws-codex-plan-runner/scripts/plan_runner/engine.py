@@ -753,7 +753,6 @@ class PlanRunner:
                     attempt_id,
                     outcome,
                     checkpoint=checkpoint,
-                    safe=checkpoint.get("clean") is False,
                 )
                 if decision["action"] == "block":
                     return self._integrity_failure(store, str(error))
@@ -1376,9 +1375,11 @@ class PlanRunner:
         attempt["provider_code"] = outcome.provider_code
         attempt["session_id"] = outcome.session_id
         attempt["post_provider_worktree"] = payload
-        if not observation.clean:
-            if mode not in {"implementation", "final_review_fix"}:
-                raise ValueError("provider modified worktree in non-mutating mode")
+        forbidden_mutation = (
+            not observation.clean
+            and mode not in {"implementation", "final_review_fix"}
+        )
+        if not observation.clean and not forbidden_mutation:
             failure = (
                 dict(state["failure"])
                 if isinstance(state.get("failure"), Mapping)
@@ -1403,6 +1404,8 @@ class PlanRunner:
                 failure.pop(name, None)
             state["failure"] = failure
         store.commit(state)
+        if forbidden_mutation:
+            raise ValueError("provider modified worktree in non-mutating mode")
         return payload
 
     @staticmethod
@@ -2863,7 +2866,6 @@ class PlanRunner:
                         attempt_id,
                         outcome,
                         checkpoint=checkpoint,
-                        safe=checkpoint.get("clean") is False,
                     )
                     if decision["action"] == "block":
                         return self._integrity_failure(store, str(error))
