@@ -1028,6 +1028,15 @@ class StateStore:
     def put_repair_artifact(
         self, *, expected_revision: int, payload: object
     ) -> ArtifactRef:
+        artifact, _created = self.prepare_repair_artifact(
+            expected_revision=expected_revision,
+            payload=payload,
+        )
+        return artifact
+
+    def prepare_repair_artifact(
+        self, *, expected_revision: int, payload: object
+    ) -> tuple[ArtifactRef, bool]:
         current = self._state.get("revision")
         if (
             type(expected_revision) is not int
@@ -1046,7 +1055,51 @@ class StateStore:
             or disk_state["state_digest"] != self._state["state_digest"]
         ):
             raise ValueError("stale expected revision")
-        return self.put_artifact("repair_audit", payload)
+        digest = sha256_json(payload)
+        path = self.root / "artifacts" / "repair_audit" / f"{digest}.json"
+        preexisting = path.exists() or path.is_symlink()
+        return self.put_artifact("repair_audit", payload), not preexisting
+
+    def rollback_repair_artifact(
+        self, artifact: ArtifactRef, *, created: bool
+    ) -> None:
+        if not created:
+            return
+        checked, path = _safe_artifact_reference(
+            self.root,
+            artifact.as_dict(),
+            require_file=False,
+        )
+        if checked != artifact:
+            raise ValueError("repair artifact rollback reference mismatch")
+        if not path.exists():
+            return
+        try:
+            disk_state = json.loads(self.state_path.read_text(encoding="utf-8"))
+            disk_state = _validate_state(self.root, disk_state)
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            return
+        reference = artifact.as_dict()
+        if (
+            reference in self._state.get("artifact_refs", [])
+            or reference in disk_state.get("artifact_refs", [])
+        ):
+            return
+        path.unlink()
+        directory = os.open(str(path.parent), os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+        try:
+            path.parent.rmdir()
+        except OSError:
+            return
+        directory = os.open(str(path.parent.parent), os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
 
     def commit(self, next_state: Mapping[str, object]) -> dict[str, object]:
         _require_private_directory(self.root)
