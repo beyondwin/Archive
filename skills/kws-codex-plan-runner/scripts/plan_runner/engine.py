@@ -29,6 +29,7 @@ from .git_ops import (
 )
 from .helper import HelperDescriptor, HelperServer
 from .provider import CodexAdapter, ProviderOutcome, ProviderRequest
+from .process import process_group_is_quiescent
 from .recovery import (
     ActivityLease,
     normalize_strategy_note,
@@ -1150,16 +1151,29 @@ class PlanRunner:
             raise ValueError("attempt proof failed") from error
         if attempt.get("completed") is not False:
             raise ValueError("incomplete attempt proof failed")
-        for pid_name in ("controller_pid", "provider_pid", "helper_pid"):
-            pid = attempt.get(pid_name)
-            if type(pid) is not int or pid <= 0:
-                continue
-            try:
-                os.kill(pid, 0)
-            except ProcessLookupError:
-                continue
-            except PermissionError as error:
-                raise ValueError("live process proof failed") from error
+        process_fields = (
+            "controller_pid",
+            "helper_pid",
+            "provider_pid",
+            "provider_pgid",
+            "descendant_pids",
+        )
+        if any(name not in attempt for name in process_fields):
+            raise ValueError("provider process group evidence is missing")
+        recorded_pids = [
+            attempt["controller_pid"],
+            attempt["helper_pid"],
+            attempt["provider_pid"],
+            *attempt["descendant_pids"],
+        ]
+        try:
+            quiescent = process_group_is_quiescent(
+                attempt["provider_pgid"],
+                recorded_pids,
+            )
+        except (OSError, RuntimeError, TypeError, ValueError) as error:
+            raise ValueError("live process proof failed") from error
+        if not quiescent:
             raise ValueError("live process proof failed")
         mode = attempt.get("mode")
         if mode not in {"implementation", "final_review_fix"}:
@@ -1488,6 +1502,7 @@ class PlanRunner:
                 "mode": "implementation",
                 "plan_index": index,
                 "controller_pid": os.getpid(),
+                "helper_pid": os.getpid(),
                 "completed": False,
                 "baseline_progress": dataclasses.asdict(
                     self._progress(state, workspace)
@@ -1687,6 +1702,11 @@ class PlanRunner:
                         plan_index=current_plan_index,
                         session_id=captured,
                         candidate_head=observation_head,
+                    ),
+                    on_process_observation=lambda observed: self._capture_process(
+                        store,
+                        attempt_id=attempt_id,
+                        observation=observed,
                     ),
                 )
             finally:
@@ -2377,6 +2397,62 @@ class PlanRunner:
             state["task_ledger"] = self._validated_task_ledger(
                 outcome.result["task_ledger"]
             )
+        store.commit(state)
+
+    @staticmethod
+    def _capture_process(
+        store: StateStore,
+        *,
+        attempt_id: str,
+        observation: Mapping[str, object],
+    ) -> None:
+        expected = {"provider_pid", "provider_pgid", "descendant_pids"}
+        if not isinstance(observation, Mapping) or set(observation) != expected:
+            raise ValueError("provider process observation is invalid")
+        provider_pid = observation["provider_pid"]
+        provider_pgid = observation["provider_pgid"]
+        descendants = observation["descendant_pids"]
+        if (
+            type(provider_pid) is not int
+            or provider_pid <= 0
+            or type(provider_pgid) is not int
+            or provider_pgid <= 0
+            or not isinstance(descendants, list)
+            or any(type(pid) is not int or pid <= 0 for pid in descendants)
+            or len(descendants) != len(set(descendants))
+            or provider_pid in descendants
+        ):
+            raise ValueError("provider process observation is invalid")
+        state = store.snapshot()
+        attempt = next(
+            (
+                item
+                for item in reversed(state["attempts"])
+                if isinstance(item, dict)
+                and item.get("attempt_id") == attempt_id
+            ),
+            None,
+        )
+        if attempt is None:
+            raise ValueError("provider attempt is unavailable at process capture")
+        changed = False
+        for name, value in (
+            ("provider_pid", provider_pid),
+            ("provider_pgid", provider_pgid),
+        ):
+            existing = attempt.get(name)
+            if existing is not None and existing != value:
+                raise ValueError("provider process identity changed within one attempt")
+            changed = changed or existing != value
+            attempt[name] = value
+        recorded = attempt.get("descendant_pids", [])
+        if not isinstance(recorded, list):
+            raise ValueError("provider descendant evidence is invalid")
+        combined = sorted({*recorded, *descendants})
+        changed = changed or attempt.get("descendant_pids") != combined
+        if not changed:
+            return
+        attempt["descendant_pids"] = combined
         store.commit(state)
 
     def _capture_session(
@@ -3075,6 +3151,7 @@ class PlanRunner:
                         "mode": "finalization",
                         "plan_index": None,
                         "controller_pid": os.getpid(),
+                        "helper_pid": os.getpid(),
                         "completed": False,
                     }
                 )
@@ -3672,6 +3749,7 @@ class PlanRunner:
                     "mode": "final_review_fix",
                     "plan_index": index,
                     "controller_pid": os.getpid(),
+                    "helper_pid": os.getpid(),
                     "completed": False,
                     "review_recovery": True,
                     "baseline_progress": dataclasses.asdict(

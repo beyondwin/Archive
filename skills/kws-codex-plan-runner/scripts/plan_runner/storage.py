@@ -778,6 +778,29 @@ def _validate_state(
     for attempt in state["attempts"]:
         if not isinstance(attempt, dict):
             raise ValueError("provider attempt is invalid")
+        process_names = {"provider_pid", "provider_pgid", "descendant_pids"}
+        present_process_names = process_names.intersection(attempt)
+        if present_process_names and present_process_names != process_names:
+            raise ValueError("provider process evidence is incomplete")
+        if present_process_names:
+            provider_pid = attempt["provider_pid"]
+            provider_pgid = attempt["provider_pgid"]
+            descendants = attempt["descendant_pids"]
+            if (
+                type(provider_pid) is not int
+                or provider_pid <= 0
+                or type(provider_pgid) is not int
+                or provider_pgid <= 0
+                or not isinstance(descendants, list)
+                or any(type(pid) is not int or pid <= 0 for pid in descendants)
+                or descendants != sorted(set(descendants))
+                or provider_pid in descendants
+            ):
+                raise ValueError("provider process evidence is invalid")
+        for name in ("controller_pid", "helper_pid"):
+            pid = attempt.get(name)
+            if pid is not None and (type(pid) is not int or pid <= 0):
+                raise ValueError("controller process evidence is invalid")
         checkpoint = attempt.get("post_provider_worktree")
         if checkpoint is not None:
             _validate_worktree_observation(checkpoint)

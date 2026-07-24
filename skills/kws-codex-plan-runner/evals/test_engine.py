@@ -111,6 +111,14 @@ class ScriptedAdapter:
         session_id = request.session_id or str(uuid.UUID(int=launch))
         if on_session_id is not None:
             on_session_id(session_id)
+        if on_process_observation is not None:
+            on_process_observation(
+                {
+                    "provider_pid": 900001,
+                    "provider_pgid": 900001,
+                    "descendant_pids": [],
+                }
+            )
         if self.owner.crash_after_session:
             self.owner.crash_after_session = False
             raise SimulatedCrash("session captured")
@@ -502,6 +510,7 @@ class EngineTest(unittest.TestCase):
         attempt_id="attempt-partial",
         mode="implementation",
         completed=False,
+        process_evidence=True,
     ):
         state = self.create_paused_run()
         worktree = Path(state["repository"]["worktree"])
@@ -510,16 +519,25 @@ class EngineTest(unittest.TestCase):
         def historical_failure(candidate):
             candidate["status"] = "failed"
             candidate["plans"][0]["status"] = "running"
-            candidate["attempts"].append(
-                {
-                    "attempt_id": attempt_id,
-                    "mode": mode,
-                    "plan_index": 0,
-                    "completed": completed,
-                    "result_artifact": {"untrusted": True},
-                    "result_validated": True,
-                }
-            )
+            attempt = {
+                "attempt_id": attempt_id,
+                "mode": mode,
+                "plan_index": 0,
+                "completed": completed,
+                "result_artifact": {"untrusted": True},
+                "result_validated": True,
+            }
+            if process_evidence:
+                attempt.update(
+                    {
+                        "controller_pid": 900001,
+                        "helper_pid": 900001,
+                        "provider_pid": 900002,
+                        "provider_pgid": 900002,
+                        "descendant_pids": [900003],
+                    }
+                )
+            candidate["attempts"].append(attempt)
             candidate["failure"] = {
                 "reason_code": "state_integrity_failed",
                 "detail": "historical unsealed provider partial",
@@ -2568,6 +2586,10 @@ class EngineTest(unittest.TestCase):
             ["implementation", "implementation", "finalization"],
         )
         self.assertEqual(len({item["session_id"] for item in state["sessions"]}), 3)
+        for attempt in state["attempts"]:
+            self.assertEqual(attempt["provider_pid"], 900001)
+            self.assertEqual(attempt["provider_pgid"], 900001)
+            self.assertEqual(attempt["descendant_pids"], [])
 
     def test_later_plan_cannot_drop_prior_plan_handoff_commit(self):
         first_handoff = None
@@ -3977,6 +3999,43 @@ class EngineTest(unittest.TestCase):
             )
         self.assertEqual(resumed, ExitCode.RESUMABLE)
         execute_current.assert_called_once()
+
+    def test_partial_repair_requires_complete_process_quiescence_evidence(self):
+        state = self.make_partial_repair_state(process_evidence=False)
+
+        code = self.runner().repair(
+            state["run_id"],
+            expected_revision=state["revision"],
+            repair_kind="unsealed-provider-partial",
+            strategy_note="adopt only after process proof",
+            attempt_id="attempt-partial",
+        )
+
+        self.assertEqual(code, ExitCode.INTEGRITY)
+        self.assertIn(
+            "process group evidence",
+            json.loads(self.output[-1])["detail"],
+        )
+
+    def test_partial_repair_rejects_orphan_provider_group(self):
+        state = self.make_partial_repair_state()
+
+        with mock.patch.object(
+            engine_module,
+            "process_group_is_quiescent",
+            return_value=False,
+            create=True,
+        ):
+            code = self.runner().repair(
+                state["run_id"],
+                expected_revision=state["revision"],
+                repair_kind="unsealed-provider-partial",
+                strategy_note="reject orphan provider",
+                attempt_id="attempt-partial",
+            )
+
+        self.assertEqual(code, ExitCode.INTEGRITY)
+        self.assertIn("live process proof", json.loads(self.output[-1])["detail"])
 
     def test_overlapping_repair_evidence_prefers_partial_and_rejects_volatile(self):
         state = self.make_overlapping_repair_state()
