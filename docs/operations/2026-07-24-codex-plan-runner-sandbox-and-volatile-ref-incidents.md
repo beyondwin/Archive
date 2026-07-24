@@ -543,3 +543,44 @@ This report is intentionally narrow:
   incorrect Git author/committer identity in the isolated provider home.
 
 The defects can compose, but each requires its own fix and regression coverage.
+
+## Remediation closeout (2026-07-25)
+
+**Status:** resolved within the explicitly authorized full-access and narrow-ref
+policy.
+
+The original observations and proposed alternatives above remain forensic
+evidence. The selected implementation is defined by the
+[approved remediation design](../superpowers/specs/2026-07-24-codex-plan-runner-incident-remediation-design.md),
+the [core-correctness plan](../superpowers/plans/2026-07-24-codex-plan-runner-core-correctness.md),
+and the [permission/recovery plan](../superpowers/plans/2026-07-24-codex-plan-runner-permission-recovery.md).
+The implementation range is inclusive from `3c93a09e` through `c3a30f61`.
+
+Focused regressions prove that full-access execution uses
+`approval_policy="never"` and `--ignore-rules`, workspace-write helper denial
+fails before product edits, host permission failures remain distinct, only the
+two confirmed `refs/codex/turn-diffs/` namespaces are volatile, unknown or
+product refs remain protected, policy versions are sealed, and the narrow
+volatile repair rejects every broader delta. Coverage lives in
+`evals/test_provider.py`, `evals/test_git_ops.py`, `evals/test_engine.py`, and
+`evals/test_contracts.py`.
+
+The real candidate canary ran with `danger-full-access`, approval policy
+`never`, and the effective installed `CODEX_HOME`. It completed implementation,
+helper verification, and structured finalization with zero approval requests,
+kept the candidate clean, and reached `ready_for_integration` at
+`1773ba770e2b69d975675762cd3b466592a30dd6`. Archive product refs did not change
+during the canary, and no merge, push, or deploy occurred.
+
+The canonical final deterministic gate is:
+
+```bash
+bun run agent:verify -- --base "$MERGE_BASE" --head "$CANDIDATE_HEAD"
+```
+
+The deliberate residual boundary is that `workspace-write` is not promised to
+carry the parent-owned helper transport on every host. The runner never
+silently escalates it: autonomous mutation uses explicitly authorized
+`danger-full-access`, while workspace-write capability failure stops before
+product edits. Volatile treatment remains limited to literal capture and
+checkpoint prefixes; no other `refs/codex/*` namespace is ignored.

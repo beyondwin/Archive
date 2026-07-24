@@ -785,3 +785,41 @@ Related trigger reports:
 Fixing only the trigger defects reduces failures but does not close this
 incident. The runner still needs admission control, same-run repair, explicit
 successor lineage, and progress-preserving evidence rules.
+
+## Remediation closeout (2026-07-25)
+
+**Status:** resolved for equivalent-run refusal and the two approved same-run
+repair shapes; the broader successor system proposed above was deliberately not
+adopted.
+
+The original forensic record remains the incident input. The final scope is
+defined by the [approved remediation design](../superpowers/specs/2026-07-24-codex-plan-runner-incident-remediation-design.md),
+the [core-correctness plan](../superpowers/plans/2026-07-24-codex-plan-runner-core-correctness.md),
+and the [permission/recovery plan](../superpowers/plans/2026-07-24-codex-plan-runner-permission-recovery.md).
+The implementation range is inclusive from `3c93a09e` through `c3a30f61`.
+
+Focused regressions cover serialized equivalent-intent admission, refusal of
+failed or ready matching runs, exact recommended actions, tampered or missing
+admission evidence, atomic provider-outcome acceptance without commit replay,
+and CAS-bound repair evidence in `evals/test_engine.py`,
+`evals/test_storage.py`, and the repository Codex/Claude parity scenarios.
+
+The disposable candidate canary used one run ID, one plan, one SDD subagent,
+and one implementation commit. After a bounded finalization compatibility
+repair, the same preserved run resumed rather than creating another run and
+reached `ready_for_integration` at
+`1773ba770e2b69d975675762cd3b466592a30dd6`. Its structured final review had no
+findings or open obligations.
+
+The canonical final deterministic gate is:
+
+```bash
+bun run agent:verify -- --base "$MERGE_BASE" --head "$CANDIDATE_HEAD"
+```
+
+The deliberate lightweight boundary supersedes the report's proposed general
+successor graph, run-family UI, receipt-reuse optimizer, and corresponding
+successor canary. The supported recovery surface is equivalent-run refusal,
+ordinary same-run resume/retry, and only
+`volatile-codex-turn-refs` or `unsealed-provider-partial` repair when every
+load-bearing proof matches.
