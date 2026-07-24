@@ -340,6 +340,49 @@ class GitWorkspaceTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "protected ref"):
             workspace.require_clean_ancestor(self.start)
 
+    def test_only_two_confirmed_turn_diff_namespaces_are_volatile(self):
+        is_volatile_ref = getattr(git_ops, "is_volatile_ref", None)
+        self.assertIsNotNone(is_volatile_ref, "is_volatile_ref contract is missing")
+        self.assertTrue(is_volatile_ref("refs/codex/turn-diffs/captures/abc"))
+        self.assertTrue(is_volatile_ref("refs/codex/turn-diffs/checkpoints/abc"))
+        self.assertFalse(is_volatile_ref("refs/codex/other/abc"))
+        self.assertFalse(is_volatile_ref("refs/codex/turn-diffs/captures"))
+        self.assertFalse(is_volatile_ref("refs/codex/turn-diffs/captures-unknown/abc"))
+        self.assertFalse(is_volatile_ref("refs/codex/turn-diffs/checkpoints"))
+        self.assertFalse(is_volatile_ref("refs/codex/turn-diffs/checkpoints-unknown/abc"))
+        self.assertFalse(is_volatile_ref("refs/heads/main"))
+        self.assertFalse(is_volatile_ref("refs/tags/v1"))
+
+    def test_unknown_codex_ref_is_not_volatile(self):
+        is_volatile_ref = getattr(git_ops, "is_volatile_ref", None)
+        self.assertIsNotNone(is_volatile_ref, "is_volatile_ref contract is missing")
+        self.assertFalse(is_volatile_ref("refs/codex/other/abc"))
+
+    def test_protected_refs_ignore_volatile_churn_but_keep_unknown_and_product_refs(self):
+        workspace = self.create()
+        git(
+            "update-ref",
+            "refs/codex/turn-diffs/captures/abc",
+            self.start,
+            cwd=self.worktree,
+        )
+        git(
+            "update-ref",
+            "refs/codex/turn-diffs/checkpoints/abc",
+            self.start,
+            cwd=self.worktree,
+        )
+        workspace.require_clean_ancestor(self.start)
+
+        git("update-ref", "refs/codex/other/abc", self.start, cwd=self.worktree)
+        with self.assertRaisesRegex(ValueError, "protected ref"):
+            workspace.require_clean_ancestor(self.start)
+
+        git("update-ref", "-d", "refs/codex/other/abc", cwd=self.worktree)
+        git("update-ref", "refs/tags/product-test", self.start, cwd=self.worktree)
+        with self.assertRaisesRegex(ValueError, "protected ref"):
+            workspace.require_clean_ancestor(self.start)
+
     def test_sanitized_environment_scrubs_credentials_and_blocks_push_without_remote_write(self):
         remote = self.root / "remote.git"
         subprocess.run(["git", "init", "--bare", str(remote)], check=True, capture_output=True)

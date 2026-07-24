@@ -16,6 +16,7 @@ from unittest import mock
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SKILL_ROOT / "scripts"))
 
+from plan_runner import storage as storage_module  # noqa: E402
 from plan_runner.contracts import ExitCode  # noqa: E402
 from plan_runner.git_ops import GitIdentity, GitWorkspace  # noqa: E402
 from plan_runner.helper import helper_client  # noqa: E402
@@ -797,6 +798,121 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(failure["reason_code"], "state_integrity_failed")
         self.assertEqual(failure["next_strategy"], "block")
         self.assertNotIn("partial_worktree", failure)
+
+    def test_volatile_churn_does_not_break_resume_or_acceptance(self):
+        mutated = False
+
+        def churn_turn_diff_refs(_adapter, request, packet, _session_id):
+            nonlocal mutated
+            if packet["mode"] != "implementation" or mutated:
+                return None
+            mutated = True
+            head = git("rev-parse", "HEAD", cwd=request.worktree)
+            git(
+                "update-ref",
+                "refs/codex/turn-diffs/checkpoints/acceptance",
+                head,
+                cwd=request.worktree,
+            )
+            return None
+
+        self.crash_after_session = True
+        self.outcome_hook = churn_turn_diff_refs
+        with self.assertRaises(SimulatedCrash):
+            self.runner().create_run(
+                specs=self.specs,
+                plans=self.plans[:1],
+                workspace=self.source,
+                stall_seconds=30,
+                sandbox="workspace-write",
+                model=None,
+            )
+        state = self.state()
+        worktree = Path(state["repository"]["worktree"])
+        git(
+            "update-ref",
+            "refs/codex/turn-diffs/captures/resume",
+            git("rev-parse", "HEAD", cwd=worktree),
+            cwd=worktree,
+        )
+
+        code = self.runner().resume(
+            state["run_id"],
+            retry_blocked=False,
+            retry_failed=False,
+            strategy_note=None,
+        )
+
+        self.assertEqual(code, ExitCode.READY, [self.output, self.state().get("failure")])
+        state = self.state()
+        self.assertEqual(
+            state["immutable_config"].get("volatile_ref_policy_version"),
+            1,
+        )
+
+    def test_unknown_codex_ref_and_product_ref_mutation_still_fail_closed(self):
+        for index, refname in enumerate(
+            ("refs/codex/other/abc", "refs/tags/product-test")
+        ):
+            if index:
+                self.tearDown()
+                self.setUp()
+            with self.subTest(refname=refname):
+                def mutate_protected_ref(_adapter, request, packet, _session_id):
+                    if packet["mode"] == "implementation":
+                        git(
+                            "update-ref",
+                            refname,
+                            git("rev-parse", "HEAD", cwd=request.worktree),
+                            cwd=request.worktree,
+                        )
+                    return None
+
+                self.outcome_hook = mutate_protected_ref
+                code = self.runner().create_run(
+                    specs=self.specs,
+                    plans=self.plans[:1],
+                    workspace=self.source,
+                    stall_seconds=30,
+                    sandbox="workspace-write",
+                    model=None,
+                )
+
+                self.assertEqual(code, ExitCode.INTEGRITY)
+                failure = self.state()["failure"]
+                self.assertEqual(failure["reason_code"], "state_integrity_failed")
+                self.assertEqual(failure["next_strategy"], "block")
+
+    def test_legacy_ref_snapshot_without_policy_version_remains_readable(self):
+        self.crash_after_session = True
+        with self.assertRaises(SimulatedCrash):
+            self.runner().create_run(
+                specs=self.specs,
+                plans=self.plans[:1],
+                workspace=self.source,
+                stall_seconds=30,
+                sandbox="workspace-write",
+                model=None,
+            )
+        state = self.state()
+        state["immutable_config"].pop("volatile_ref_policy_version")
+        state["immutable_config"]["protected_refs"][
+            "refs/codex/turn-diffs/captures/legacy"
+        ] = state["repository"]["source_commit"]
+        state["state_digest"] = storage_module._state_digest(state)
+        state_path = (
+            self.paths.state_home / state["run_id"] / "state.json"
+        )
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+
+        code = self.runner().resume(
+            state["run_id"],
+            retry_blocked=False,
+            retry_failed=False,
+            strategy_note=None,
+        )
+
+        self.assertEqual(code, ExitCode.READY, [self.output, self.state().get("failure")])
 
     def test_clean_transport_loss_resumes_root_once_then_changes_strategy(self):
         failures = 0
