@@ -13,7 +13,7 @@
     "summary"
   ],
   "properties": {
-    "status": {"const": "reviewed"},
+    "status": {"enum": ["reviewed"]},
     "review_head": {"type": "string", "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"},
     "verification_set_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "open_findings": {

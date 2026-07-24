@@ -36,6 +36,7 @@ class ContractVocabularyTest(unittest.TestCase):
     def test_codex_output_schemas_use_supported_structured_output_subset(self):
         unsupported = {
             "allOf",
+            "const",
             "dependentRequired",
             "dependentSchemas",
             "else",
