@@ -589,6 +589,71 @@ class CodexProviderTest(unittest.TestCase):
             before,
         )
 
+    def test_missing_or_unexecutable_cli_is_provider_unavailable(self):
+        cases = {}
+        missing_environment = self.environment("initial")
+        missing_environment["PATH"] = str(self.root / "missing-bin")
+        cases["missing"] = missing_environment
+
+        unexecutable_bin = self.root / "unexecutable-bin"
+        unexecutable_bin.mkdir()
+        unexecutable = unexecutable_bin / "codex"
+        unexecutable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        unexecutable.chmod(0o600)
+        unexecutable_environment = self.environment("initial")
+        unexecutable_environment["PATH"] = str(unexecutable_bin)
+        cases["unexecutable"] = unexecutable_environment
+
+        for label, environment in cases.items():
+            with self.subTest(label=label):
+                outcome = self.adapter(source_env=environment).launch(
+                    self.request(), RecordingLease()
+                )
+                self.assertEqual(outcome.kind, "transport_failed")
+                self.assertEqual(outcome.provider_code, "provider_unavailable")
+                self.assertFalse(self.log.exists())
+
+    def test_version_and_nonparse_probe_failures_are_transport_outcomes(self):
+        cases = (
+            (
+                "version",
+                "FAKE_CODEX_VERSION_FAILURE",
+                "provider_unavailable",
+            ),
+            (
+                "probe",
+                "FAKE_CODEX_PROBE_TRANSPORT_FAILURE",
+                "controller_transport_failed",
+            ),
+            (
+                "unrelated-parse",
+                "FAKE_CODEX_UNRELATED_PARSE_FAILURE",
+                "controller_transport_failed",
+            ),
+        )
+        for label, environment_key, provider_code in cases:
+            with self.subTest(label=label):
+                isolated_bin = self.root / f"{label}-failure-bin"
+                isolated_bin.mkdir()
+                executable = isolated_bin / "codex"
+                executable.write_bytes(
+                    (SKILL_ROOT / "evals" / "fake_codex.py").read_bytes()
+                )
+                executable.chmod(executable.stat().st_mode | stat.S_IXUSR)
+                environment = self.environment("initial")
+                environment["PATH"] = (
+                    f"{isolated_bin}{os.pathsep}{os.environ['PATH']}"
+                )
+                environment[environment_key] = "1"
+
+                outcome = self.adapter(source_env=environment).launch(
+                    self.request(), RecordingLease()
+                )
+
+                self.assertEqual(outcome.kind, "transport_failed")
+                self.assertEqual(outcome.provider_code, provider_code)
+                self.assertFalse(self.log.exists())
+
     def test_workspace_write_helper_denial_is_sandbox_capability_blocked(self):
         outcome = self.launch(
             "sandbox-helper-eperm",

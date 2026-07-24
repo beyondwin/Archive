@@ -405,12 +405,24 @@ def _generic_main(argv: list[str], prompt: str, sequence_path: Path) -> int:
 def main() -> int:
     argv = sys.argv[1:]
     if argv == ["--version"]:
+        if os.environ.get("FAKE_CODEX_VERSION_FAILURE") == "1":
+            sys.stderr.write("provider runtime unavailable\n")
+            return 70
         print("fake-codex 1.0")
         return 0
     if "--help" in argv:
         rejected = os.environ.get("FAKE_CODEX_REJECT_REQUIRED_FLAG")
         if rejected is not None and rejected in argv:
             sys.stderr.write(f"unsupported flag: {rejected}\n")
+            return 2
+        if os.environ.get("FAKE_CODEX_PROBE_TRANSPORT_FAILURE") == "1":
+            sys.stderr.write("probe transport failed\n")
+            return 70
+        if os.environ.get("FAKE_CODEX_UNRELATED_PARSE_FAILURE") == "1":
+            sys.stderr.write(
+                "unexpected argument '--unrelated'\n"
+                "Usage: codex exec --ignore-rules --strict-config\n"
+            )
             return 2
         print("fake codex exec help")
         return 0
