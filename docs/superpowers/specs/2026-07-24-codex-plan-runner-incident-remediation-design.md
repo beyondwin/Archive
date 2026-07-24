@@ -10,19 +10,40 @@ The remediation has two ordered implementation plans:
 1. core commit and provider-result correctness;
 2. permission-free operation and bounded recovery.
 
-The plans run through `kws-codex-plan-runner` in one isolated worktree and
-branch. Every implementation task uses `subagent-driven-development`: one fresh
-implementer, one independent task review, required fix and re-review loops, and
-one final whole-branch review.
+The remediation is implemented directly through `subagent-driven-development`
+in one isolated worktree and branch. The current `kws-codex-plan-runner` does
+not orchestrate its own fixes. The candidate launcher is exercised only as the
+system under test in one disposable live canary after the deterministic fixes
+are complete. Every implementation task uses one fresh implementer, one
+independent task review, required fix and re-review loops, and one final
+whole-branch review.
 
-The remediation run explicitly uses `danger-full-access`. It also makes the
-non-interactive Codex child ignore repository execpolicy prompts and sets the
-approval policy to `never`. This is necessary because the current
-`.codex/rules/archive.rules` intentionally prompts for every Git command, even
-when the sandbox is `danger-full-access`.
+The candidate live canary explicitly uses `danger-full-access`. The updated
+runner also makes its non-interactive Codex child ignore repository execpolicy
+prompts and sets the approval policy to `never`. This is necessary because the
+current `.codex/rules/archive.rules` intentionally prompts for every Git
+command, even when the sandbox is `danger-full-access`.
 
 The runner still does not merge, push, deploy, rewrite history, or silently
 trust an unexplained dirty worktree.
+
+### 1.1 Why direct SDD works while the runner can fail
+
+Direct `subagent-driven-development` has one control plane. The root Codex
+session already owns collaboration events, authentication, Git identity,
+task reports, and the SDD ledger.
+
+The runner adds a second control plane around that workflow: another
+`codex exec`, an isolated home, a sanitized environment, a linked worktree, a
+JSONL parser, a helper transport, durable state, and recovery decisions. The
+confirmed incidents occur at those added boundaries, not inside SDD itself.
+
+The fix therefore keeps the wrapper thin. Superpowers continues to own task
+decomposition, TDD, subagent dispatch, task review, and the SDD ledger. The
+runner owns only immutable inputs, one assigned worktree, root-session
+launch/resume, checkpoint-before-result handling, and final Git/verification
+evidence. It does not reconstruct subagent state or implement a second task
+orchestration model.
 
 ## 2. Confirmed Inputs
 
@@ -70,9 +91,9 @@ review checks this explicitly rather than editing unrelated guides
 preemptively.
 
 The exact final candidate HEAD and canonical deterministic result live in the
-runner's immutable handoff and verification receipts. A tracked incident report
-cannot safely embed evidence produced after its own commit without changing the
-candidate HEAD and invalidating that evidence.
+direct SDD handoff and canonical verification output. A tracked incident report
+cannot safely embed evidence produced after its own commit without changing
+the candidate HEAD and invalidating that evidence.
 
 ## 3. Goals
 
@@ -141,8 +162,28 @@ Plan 2 covers:
 - state-specific recommended actions;
 - documentation, changelog, live canary, and final evidence.
 
-The plans execute sequentially in one runner worktree. Future-plan paths are
-not exposed to the provider packet before their turn.
+### 5.3 Thin-wrapper boundary
+
+The runner may:
+
+- snapshot ordered specs and plans;
+- allocate and validate one worktree and branch;
+- launch or resume the root Codex session;
+- seal the exact Git observation before interpreting the root result;
+- execute declared verification and record the final candidate HEAD.
+
+The runner does not:
+
+- dispatch, schedule, or mirror individual SDD subagents;
+- duplicate the SDD ledger as a second task database;
+- infer plan completion from collaboration events;
+- retry unchanged permission or provider failures;
+- build a general workflow, repair, or run-family subsystem.
+
+The two plans execute sequentially in one direct-SDD worktree. Their durable
+ledger identifiers are namespaced as `core-N` and `recovery-N`, so Task 1 in
+one plan cannot be mistaken for Task 1 in the other. Future-plan paths are not
+included in a task brief before their turn.
 
 ## 6. Component Boundaries
 
@@ -295,7 +336,7 @@ are not printed or written to state. A missing or unusable auth source becomes
 
 ## 10. Non-Interactive Full-Access Contract
 
-The remediation plans explicitly invoke the runner with:
+The disposable candidate canary explicitly invokes the runner with:
 
 ```text
 --sandbox danger-full-access
@@ -350,34 +391,24 @@ fails before provider edits with `sandbox_capability_blocked` and recommends an
 explicit `danger-full-access` run. The remediation does not silently escalate
 an explicitly requested `workspace-write` run.
 
-### 10.1 Current-controller bootstrap
+### 10.1 Direct implementation control plane
 
-The currently installed controller does not yet add `--ignore-rules` or
-`approval_policy="never"` to its child argv. It also does not natively inject
-the configured Git identity or provision file-backed authentication. The
-remediation plans therefore require a bounded bootstrap environment before the
-first runner invocation.
+The currently installed controller cannot hot-reload provider changes made
+inside its own worktree. This remediation therefore does not wrap its
+implementation in the old controller and does not create a PATH shim,
+bootstrap Codex home, or parallel bootstrap state.
 
-The bootstrap:
+The current root session runs the two plans directly through
+`subagent-driven-development`. Only after the native identity, authentication,
+argv, checkpoint, and root-result fixes pass focused tests does one disposable
+canary invoke the candidate launcher. This removes the circular dependency
+where the broken controller must provide the capabilities required to fix
+itself.
 
-- resolves the real Codex executable before changing `PATH`;
-- creates a private run-local `codex` shim that adds `--ignore-rules`,
-  `--strict-config`, and `-c approval_policy="never"` to `codex exec`;
-- passes all non-`exec` invocations through unchanged;
-- captures the source repository's effective Git identity and exports the four
-  author and committer variables for the old sanitizer;
-- provisions a run-private `CODEX_HOME` containing only the minimum auth file;
-- preserves the same shim, identity, and auth environment for every external
-  `resume` invocation;
-- validates the shim, authentication, Git commit ability, and non-interactive
-  behavior in a disposable repository before creating the real run.
-
-The bootstrap is a private runtime artifact, not a tracked product change. It
-exists only because the old controller cannot hot-reload the fixes it is
-implementing. The candidate live canary must run the updated launcher without
-the shim and prove that the native implementation supplies the same contract.
-
-If the bootstrap preflight fails, the remediation run is not created.
+This execution choice does not remove the product requirements in Sections 7,
+9, and 10. The updated runner must still supply the minimal identity,
+authentication, and non-interactive environment when it later launches a root
+Codex session.
 
 ## 11. Permission-Failure Decision
 
@@ -505,12 +536,13 @@ unclassified error into a trusted state.
 
 ## 16. Subagent-Driven Implementation Contract
 
-Both implementation plans explicitly require
+Both implementation plans are executed directly with
 `subagent-driven-development`.
 
-For each plan task, the root provider:
+For each plan task, the root controller:
 
-1. extracts one task brief;
+1. extracts one task brief with a namespaced `core-N` or `recovery-N`
+   ledger identity;
 2. dispatches one fresh implementer;
 3. requires TDD RED then GREEN;
 4. requires focused tests, a task commit, and self-review;
@@ -527,12 +559,15 @@ Mechanical one- or two-file tasks use `gpt-5.6-terra`. Integration, recovery,
 security-sensitive work, task reviews of non-trivial diffs, and the final
 whole-branch review use `gpt-5.6-sol`.
 
-The root provider coordinates and answers subagent context questions. It does
-not implement task code itself. Long briefs, reports, and diffs are handed off
-as files so collaboration events do not overwhelm the provider JSONL stream.
+The root controller coordinates and answers subagent context questions. It
+does not implement task code itself. Long briefs, reports, and diffs are handed
+off as files. The candidate runner treats collaboration events only as bounded
+activity signals; they are not mirrored into runner task state and cannot
+replace the root result.
 
-The SDD ledger is a recovery aid. Runner state, Git commits, task evidence, and
-receipts remain the authority for final completion.
+The SDD ledger is a recovery aid. Git commits, file-backed task reports,
+focused test output, review verdicts, and the final direct-SDD handoff remain
+the authority for this implementation.
 
 ## 17. Verification Strategy
 
@@ -568,22 +603,21 @@ The order at final candidate HEAD is:
 2. one broad whole-branch review;
 3. fix any review findings and rerun affected focused tests;
 4. run the disposable real-Codex canary against the updated launcher without
-   the current-controller bootstrap shim;
+   using the runner as the implementation controller;
 5. update contract documentation and the four incident reports;
-6. start the runner's fresh finalization session;
-7. declare and execute this canonical command through the parent helper:
+6. execute this canonical command directly from the SDD worktree:
 
    ```text
    bun run agent:verify -- --base <merge-base> --head <candidate-head>
    ```
 
-`agent:verify` selects the Codex Plan Runner deterministic eval for this change.
-It also supplies the repository diff check selected for this scope. Therefore
-the plan does not invoke `git diff --check` or `./evals/run.sh` separately. The full
+`agent:verify` selects the Codex Plan Runner deterministic eval for this change
+and supplies the repository diff check selected for this scope. Therefore the
+plan does not invoke `git diff --check` or `./evals/run.sh` separately. The full
 runner eval runs exactly once at the HEAD that becomes the final candidate. If
-the independent finalization review changes that HEAD, the old receipts are
-invalidated and the final gate runs again on the replacement candidate; it is
-still executed once for the final candidate HEAD.
+the independent final review or a canary repair changes that HEAD, the old
+evidence is invalidated and the final gate runs once at the replacement
+candidate.
 
 ### 17.3 Live Codex canary
 
@@ -600,7 +634,10 @@ gate. It uses:
 
 The canary must not use the Archive source worktree as its product target. It
 does not merge, push, or deploy. It invokes the candidate launcher directly and
-does not use the old-controller PATH shim.
+does not use the old controller to implement or repair Archive. The canary uses
+one minimal Superpowers task; it is not a second full implementation run or a
+differential workflow harness. A failure returns to the single affected focused
+TDD task and review loop rather than creating another equivalent run.
 
 The reported historical run is inspected read-only. If it satisfies a narrow
 repair contract, the final report prints the exact repair command. Actual repair
@@ -617,7 +654,7 @@ final gate, the implementation:
 - links each incident report to the final design, implementation plans, and
   implementation commit range;
 - records the live-canary outcome and the canonical final command whose exact
-  result will be held in the runner handoff;
+  result will be held in the direct SDD handoff;
 - records deliberate residual boundaries without rewriting the original
   forensic evidence;
 - reviews the remaining `docs/operations/` files and updates only those whose
@@ -635,6 +672,8 @@ The implementation explicitly reviews these bounded blind spots:
 - isolated HOME can hide file-backed authentication and Git identity;
 - repository-local signing can cause an interactive pinentry;
 - collaboration output can exceed one JSONL line limit;
+- two ordered plans can reuse the same human task number unless the SDD ledger
+  identity is namespaced;
 - a permission error after an edit needs a checkpoint before recovery;
 - Desktop volatile refs can change during ordinary observation;
 - opening the Git common directory increases the importance of protected-ref
@@ -642,9 +681,7 @@ The implementation explicitly reviews these bounded blind spots:
 - macOS TCC and Keychain prompts cannot be accepted by an autonomous CLI;
 - SDD brief, report, ledger, and review-package paths must remain writable;
 - a nested live canary must use a disposable repository;
-- older run state cannot be made trustworthy merely by installing new code;
-- the old controller needs the same durable bootstrap environment for every
-  external resume until the remediation run completes.
+- older run state cannot be made trustworthy merely by installing new code.
 
 The response to a newly discovered blind spot follows Section 15. The runner
 does not pre-build a subsystem for every hypothetical failure.
@@ -678,7 +715,7 @@ The remediation is complete when:
 - `SKILL.md`, `README.md`, and `CHANGELOG.md` match the implemented contract;
 - all four incident reports record their candidate resolution, live-canary
   result, implementation range, and final verification command;
-- the runner handoff records the exact final candidate HEAD and canonical
+- the direct SDD handoff records the exact final candidate HEAD and canonical
   deterministic evidence;
 - no unrelated `docs/operations/` guide is changed without a concrete contract
   impact;
