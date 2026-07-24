@@ -199,7 +199,7 @@ class CodexAdapter:
         usage: dict[str, int | float] = {}
         session_id: str | None = None
         provider_code: str | None = None
-        malformed = False
+        stream_failure: str | None = None
         stalled = False
         controller_stopped = False
         stderr_tail = bytearray()
@@ -255,7 +255,7 @@ class CodexAdapter:
                                 leader_finished = True
                             if (
                                 not leader_finished
-                                and not malformed
+                                and stream_failure is None
                                 and lease.expired(time.monotonic())
                             ):
                                 stalled = True
@@ -279,12 +279,12 @@ class CodexAdapter:
                                         continue
                                     stdout_buffer.extend(chunk)
                                     (
-                                        malformed,
+                                        stream_failure,
                                         session_id,
                                         provider_code,
                                     ) = self._consume_stdout(
                                         stdout_buffer,
-                                        malformed=malformed,
+                                        stream_failure=stream_failure,
                                         session_id=session_id,
                                         provider_code=provider_code,
                                         usage=usage,
@@ -295,7 +295,7 @@ class CodexAdapter:
                             elif not leader_finished:
                                 time.sleep(self._poll_seconds)
 
-                            if malformed and not leader_finished:
+                            if stream_failure is not None and not leader_finished:
                                 return_code, _forced = _finish_group(
                                     process, pgid, terminate_leader=True
                                 )
@@ -335,8 +335,8 @@ class CodexAdapter:
                 stderr_tail=_scrub(stderr_tail),
             )
 
-        if stdout_buffer:
-            malformed = True
+        if stdout_buffer and stream_failure is None:
+            stream_failure = "provider_stream_malformed"
         stderr = _scrub(stderr_tail)
         if controller_stopped:
             return ProviderOutcome(
@@ -360,13 +360,13 @@ class CodexAdapter:
                 tuple(activity_keys),
                 stderr,
             )
-        if malformed:
+        if stream_failure is not None:
             return ProviderOutcome(
                 "failed",
                 return_code,
                 session_id or request.session_id,
                 None,
-                "controller_transport_failed",
+                stream_failure,
                 dict(usage),
                 tuple(activity_keys),
                 stderr,
@@ -404,7 +404,7 @@ class CodexAdapter:
                 return_code,
                 session_id,
                 None,
-                "controller_transport_failed",
+                "provider_stream_malformed",
                 dict(usage),
                 tuple(activity_keys),
                 stderr,
@@ -416,7 +416,7 @@ class CodexAdapter:
                 return_code,
                 session_id,
                 None,
-                "controller_transport_failed",
+                "provider_result_invalid",
                 dict(usage),
                 tuple(activity_keys),
                 stderr,
@@ -460,36 +460,38 @@ class CodexAdapter:
         self,
         buffer: bytearray,
         *,
-        malformed: bool,
+        stream_failure: str | None,
         session_id: str | None,
         provider_code: str | None,
         usage: dict[str, int | float],
         activity_keys: list[str],
         lease: ActivityLease,
         on_session_id: Callable[[str], None] | None = None,
-    ) -> tuple[bool, str | None, str | None]:
+    ) -> tuple[str | None, str | None, str | None]:
         while b"\n" in buffer:
             raw, remainder = buffer.split(b"\n", 1)
             buffer[:] = remainder
-            if len(raw) > MAX_JSONL_LINE_BYTES or not raw:
-                return True, session_id, provider_code
+            if len(raw) > MAX_JSONL_LINE_BYTES:
+                return "provider_stream_oversized", session_id, provider_code
+            if not raw:
+                return "provider_stream_malformed", session_id, provider_code
             try:
                 event = json.loads(raw)
             except (UnicodeDecodeError, json.JSONDecodeError):
-                return True, session_id, provider_code
+                return "provider_stream_malformed", session_id, provider_code
             if not isinstance(event, Mapping) or not isinstance(
                 event.get("type"), str
             ):
-                return True, session_id, provider_code
+                return "provider_stream_malformed", session_id, provider_code
             event_type = event["type"]
             if event_type == "thread.started":
                 candidate = event.get("thread_id")
                 try:
                     candidate = _require_uuid(candidate)
                 except ValueError:
-                    return True, session_id, provider_code
+                    return "provider_stream_malformed", session_id, provider_code
                 if session_id is not None and session_id != candidate:
-                    return True, session_id, provider_code
+                    return "provider_stream_malformed", session_id, provider_code
                 if session_id is None and on_session_id is not None:
                     on_session_id(candidate)
                 session_id = candidate
@@ -498,7 +500,7 @@ class CodexAdapter:
                 if turn_id is not None and (
                     not isinstance(turn_id, str) or not turn_id
                 ):
-                    return True, session_id, provider_code
+                    return "provider_stream_malformed", session_id, provider_code
                 key = (
                     f"{event_type}:{turn_id}"
                     if isinstance(turn_id, str)
@@ -532,8 +534,8 @@ class CodexAdapter:
                     ):
                         provider_code = code
         if len(buffer) > MAX_JSONL_LINE_BYTES:
-            malformed = True
-        return malformed, session_id, provider_code
+            stream_failure = "provider_stream_oversized"
+        return stream_failure, session_id, provider_code
 
     @staticmethod
     def _read_result(output_path: Path) -> dict[str, Any] | None:

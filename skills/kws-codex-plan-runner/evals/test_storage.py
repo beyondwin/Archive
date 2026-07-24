@@ -291,6 +291,49 @@ class StateStoreTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Git identity"):
             StateStore.open(store.root)
 
+    def test_provider_checkpoint_requires_exact_worktree_observation(self):
+        store = self.create_store(self.root / "provider-checkpoint")
+        checkpoint = {
+            "head": "a" * 40,
+            "branch": "codex-plan/plan-a-12345678-1234-4234-8234-123456789abc",
+            "porcelain_digest": "b" * 64,
+            "tree_digest": "c" * 64,
+            "clean": False,
+        }
+        state = store.snapshot()
+        state["attempts"].append(
+            {
+                "attempt_id": str(__import__("uuid").uuid4()),
+                "mode": "implementation",
+                "plan_index": 0,
+                "completed": True,
+                "outcome": "failed",
+                "post_provider_worktree": checkpoint,
+                "next_strategy": "fresh_root_full_diff",
+                "previous_failed_strategy": None,
+            }
+        )
+        state["failure"] = {
+            "reason_code": "provider_result_invalid",
+            "partial_worktree": checkpoint,
+            "partial_attempt_id": state["attempts"][-1]["attempt_id"],
+            "partial_mode": "implementation",
+            "next_strategy": "fresh_root_full_diff",
+        }
+        store.commit(state)
+        self.assertEqual(
+            StateStore.open(store.root).snapshot()["failure"]["partial_worktree"],
+            checkpoint,
+        )
+
+        invalid = store.snapshot()
+        invalid["attempts"][-1]["post_provider_worktree"] = {
+            **checkpoint,
+            "alternate_digest": "d" * 64,
+        }
+        with self.assertRaisesRegex(ValueError, "worktree observation"):
+            store.commit(invalid)
+
     def test_rejects_stale_revision_and_unsafe_or_missing_artifact_reference(self):
         first = self.create_store()
         stale = StateStore.open(first.root)

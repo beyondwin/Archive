@@ -341,11 +341,13 @@ git commit -m "fix(plan-runner): enforce immutable commit identity"
 
 - Modify: `skills/kws-codex-plan-runner/scripts/plan_runner/contracts.py`
 - Modify: `skills/kws-codex-plan-runner/scripts/plan_runner/engine.py`
+- Modify: `skills/kws-codex-plan-runner/scripts/plan_runner/provider.py`
 - Modify: `skills/kws-codex-plan-runner/scripts/plan_runner/storage.py`
 - Modify: `scripts/agent/fixtures/plan-runner-contract-v1.json`
 - Modify: `skills/kws-codex-plan-runner/evals/fake_codex.py`
 - Modify: `skills/kws-codex-plan-runner/evals/test_contracts.py`
 - Modify: `skills/kws-codex-plan-runner/evals/test_engine.py`
+- Modify: `skills/kws-codex-plan-runner/evals/test_provider.py`
 - Modify: `skills/kws-codex-plan-runner/evals/test_storage.py`
 
 **Interfaces:**
@@ -391,6 +393,7 @@ and must prove that resume starts a fresh session from that exact observation ra
 ```bash
 "$PYTHON_313" skills/kws-codex-plan-runner/evals/test_contracts.py -v
 "$PYTHON_313" skills/kws-codex-plan-runner/evals/test_storage.py -v
+"$PYTHON_313" skills/kws-codex-plan-runner/evals/test_provider.py -v
 "$PYTHON_313" skills/kws-codex-plan-runner/evals/test_engine.py -v
 ```
 
@@ -420,7 +423,7 @@ def _checkpoint_provider_attempt(
         attempt["provider_code"] = outcome.provider_code
         attempt["session_id"] = outcome.session_id
         attempt["post_provider_worktree"] = payload
-        if observation.dirty:
+        if not observation.clean:
             state["failure"] = {
                 **(state.get("failure") or {}),
                 "partial_worktree": payload,
@@ -456,6 +459,7 @@ the normal Superpowers path.
 ```bash
 "$PYTHON_313" skills/kws-codex-plan-runner/evals/test_contracts.py -v
 "$PYTHON_313" skills/kws-codex-plan-runner/evals/test_storage.py -v
+"$PYTHON_313" skills/kws-codex-plan-runner/evals/test_provider.py -v
 "$PYTHON_313" skills/kws-codex-plan-runner/evals/test_engine.py -v
 ```
 
@@ -468,11 +472,13 @@ Confirm that “checkpointed” never means “trusted”: semantic completion s
 ```bash
 git add skills/kws-codex-plan-runner/scripts/plan_runner/contracts.py \
   skills/kws-codex-plan-runner/scripts/plan_runner/engine.py \
+  skills/kws-codex-plan-runner/scripts/plan_runner/provider.py \
   skills/kws-codex-plan-runner/scripts/plan_runner/storage.py \
   scripts/agent/fixtures/plan-runner-contract-v1.json \
   skills/kws-codex-plan-runner/evals/fake_codex.py \
   skills/kws-codex-plan-runner/evals/test_contracts.py \
   skills/kws-codex-plan-runner/evals/test_engine.py \
+  skills/kws-codex-plan-runner/evals/test_provider.py \
   skills/kws-codex-plan-runner/evals/test_storage.py
 git commit -m "fix(plan-runner): checkpoint provider mutations first"
 ```

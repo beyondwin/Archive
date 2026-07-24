@@ -78,6 +78,24 @@ _AUTHORITY_BLOCKERS = frozenset(
         "provider_usage_blocked",
     }
 )
+_SEALED_PROVIDER_FAILURES = frozenset(
+    {
+        "provider_result_invalid",
+        "provider_stream_malformed",
+        "provider_stream_oversized",
+    }
+)
+_ROOT_AUTHORITY_BLOCKERS = _AUTHORITY_BLOCKERS - {"provider_unavailable"}
+_ROOT_TRANSPORT_FAILURES = frozenset(
+    {"controller_transport_failed", "provider_unavailable"}
+)
+_CHECKPOINT_FAILURE_FIELDS = (
+    "partial_worktree",
+    "partial_attempt_id",
+    "partial_mode",
+    "next_strategy",
+    "previous_failed_strategy",
+)
 
 
 @dataclass(frozen=True)
@@ -449,6 +467,7 @@ class PlanRunner:
                         state["artifact_refs"].append(artifact.as_dict())
                 state["status"] = "resumable"
                 state["failure"] = {
+                    **self._checkpoint_failure_fields(failure),
                     "reason_code": (
                         failure.get("reason_code")
                         if isinstance(failure, Mapping)
@@ -620,10 +639,6 @@ class PlanRunner:
             else None
         )
         expected_keys = {
-            "version",
-            "attempt_id",
-            "mode",
-            "plan_index",
             "head",
             "branch",
             "porcelain_digest",
@@ -635,9 +650,11 @@ class PlanRunner:
         identity = dataclasses.asdict(observation)
         if any(sealed.get(key) != value for key, value in identity.items()):
             raise ValueError("sealed partial worktree identity drift detected")
-        if sealed.get("version") != 1 or sealed.get("clean") is not False:
+        if sealed.get("clean") is not False:
             raise ValueError("sealed partial worktree checkpoint is invalid")
-        if sealed.get("mode") not in {"implementation", "final_review_fix"}:
+        attempt_id = failure.get("partial_attempt_id")
+        mode = failure.get("partial_mode")
+        if mode not in {"implementation", "final_review_fix"}:
             raise ValueError("dirty worktree mode is not resumable")
         attempts = state.get("attempts")
         attempt = next(
@@ -645,15 +662,18 @@ class PlanRunner:
                 item
                 for item in reversed(attempts)
                 if isinstance(item, Mapping)
-                and item.get("attempt_id") == sealed.get("attempt_id")
+                and item.get("attempt_id") == attempt_id
             ),
             None,
         ) if isinstance(attempts, list) else None
         if (
             not isinstance(attempt, Mapping)
-            or attempt.get("mode") != sealed.get("mode")
-            or attempt.get("plan_index") != sealed.get("plan_index")
-            or attempt.get("outcome") != "controller_stopped"
+            or attempt.get("mode") != mode
+            or attempt.get("post_provider_worktree") != sealed
+            or (
+                attempt.get("outcome") != "controller_stopped"
+                and attempt.get("provider_code") not in _SEALED_PROVIDER_FAILURES
+            )
         ):
             raise ValueError("sealed partial worktree attempt is invalid")
 
@@ -708,20 +728,58 @@ class PlanRunner:
             attempt_id=attempt_id,
         )
         self._event("provider_outcome_received")
-        if outcome.kind in {"implemented", "blocked", "failed"}:
+        checkpoint = self._checkpoint_provider_attempt(
+            store,
+            workspace,
+            attempt_id=attempt_id,
+            outcome=outcome,
+            mode="implementation",
+        )
+        if (
+            outcome.kind in {"implemented", "blocked", "failed"}
+            and outcome.result is not None
+        ):
             try:
                 self._validated_plan_result(outcome.result)
             except ValueError as error:
-                return self._integrity_failure(store, str(error))
+                outcome = dataclasses.replace(
+                    outcome,
+                    kind="failed",
+                    result=None,
+                    provider_code="provider_result_invalid",
+                )
+                decision = self._record_root_strategy(
+                    store,
+                    attempt_id,
+                    outcome,
+                    checkpoint=checkpoint,
+                    safe=checkpoint.get("clean") is False,
+                )
+                if decision["action"] == "block":
+                    return self._integrity_failure(store, str(error))
+                self._checkpoint_outcome(
+                    store, outcome, attempt_id, index, "implementation"
+                )
+                return self._recover(store, workspace, outcome, index)
         if outcome.kind == "implemented":
             return self._accept_implemented(
                 store, workspace, outcome, index, attempt_id
             )
         if outcome.kind == "controller_stopped":
+            self._record_root_strategy(
+                store, attempt_id, outcome, checkpoint=checkpoint
+            )
             return self._pause_resumable(
-                store, workspace, outcome, attempt_id, index, "implementation"
+                store,
+                outcome,
+                attempt_id,
+                index,
+                "implementation",
             )
         self._checkpoint_outcome(store, outcome, attempt_id, index, "implementation")
+        self._record_root_strategy(
+            store, attempt_id, outcome, checkpoint=checkpoint
+        )
         if outcome.kind == "blocked":
             return self._block(store, outcome)
         return self._recover(store, workspace, outcome, index)
@@ -1225,6 +1283,26 @@ class PlanRunner:
                     "strategy_note_digest": digest,
                 }
             )
+        checkpoint: dict[str, object] = {
+            "revision": state["revision"],
+            "head": current_head,
+            "plan_index": current_index,
+        }
+        attempts = state.get("attempts")
+        if isinstance(attempts, list):
+            prior_checkpoint = next(
+                (
+                    item.get("post_provider_worktree")
+                    for item in reversed(attempts)
+                    if isinstance(item, Mapping)
+                    and item.get("mode") == current_mode
+                    and item.get("plan_index") == current_index
+                    and isinstance(item.get("post_provider_worktree"), Mapping)
+                ),
+                None,
+            )
+            if isinstance(prior_checkpoint, Mapping):
+                checkpoint["post_provider_worktree"] = dict(prior_checkpoint)
         return {
             "scope": {"mode": current_mode, "plan_index": current_index},
             "failure_reason": reason,
@@ -1239,11 +1317,194 @@ class PlanRunner:
                 in {"explicit_resume", "fresh_session", "none"}
                 else None
             ),
-            "checkpoint": {
-                "revision": state["revision"],
-                "head": current_head,
-                "plan_index": current_index,
-            },
+            "next_strategy": (
+                failure.get("next_strategy")
+                if failure.get("next_strategy")
+                in {"resume_root", "fresh_root_full_diff", "block"}
+                else None
+            ),
+            "checkpoint": checkpoint,
+        }
+
+    @staticmethod
+    def _require_attempt(
+        state: Mapping[str, object], attempt_id: str
+    ) -> dict[str, object]:
+        attempts = state.get("attempts")
+        if not isinstance(attempts, list):
+            raise ValueError("provider attempts are unavailable")
+        attempt = next(
+            (
+                item
+                for item in reversed(attempts)
+                if isinstance(item, dict)
+                and item.get("attempt_id") == attempt_id
+            ),
+            None,
+        )
+        if attempt is None:
+            raise ValueError("provider attempt is unavailable")
+        return attempt
+
+    def _checkpoint_provider_attempt(
+        self,
+        store: StateStore,
+        workspace: GitWorkspace,
+        *,
+        attempt_id: str,
+        outcome: ProviderOutcome,
+        mode: str,
+    ) -> dict[str, object]:
+        state = store.snapshot()
+        config = state["immutable_config"]
+        if str(workspace._common_dir) != config.get("git_common_dir"):
+            raise ValueError("Git common directory drift detected")
+        if workspace.protected_refs() != config.get("protected_refs"):
+            raise ValueError("protected ref mutation detected")
+        observation = workspace.require_identity()
+        _git_text(
+            workspace.worktree,
+            "merge-base",
+            "--is-ancestor",
+            state["repository"]["source_commit"],
+            observation.head,
+        )
+        payload = dataclasses.asdict(observation)
+        attempt = self._require_attempt(state, attempt_id)
+        attempt["completed"] = True
+        attempt["outcome"] = outcome.kind
+        attempt["provider_code"] = outcome.provider_code
+        attempt["session_id"] = outcome.session_id
+        attempt["post_provider_worktree"] = payload
+        if not observation.clean:
+            if mode not in {"implementation", "final_review_fix"}:
+                raise ValueError("provider modified worktree in non-mutating mode")
+            failure = (
+                dict(state["failure"])
+                if isinstance(state.get("failure"), Mapping)
+                else {}
+            )
+            failure.update(
+                {
+                    "partial_worktree": payload,
+                    "partial_attempt_id": attempt_id,
+                    "partial_mode": mode,
+                    "next_session_action": "fresh_session",
+                }
+            )
+            state["failure"] = failure
+        elif isinstance(state.get("failure"), Mapping):
+            failure = dict(state["failure"])
+            for name in (
+                "partial_worktree",
+                "partial_attempt_id",
+                "partial_mode",
+            ):
+                failure.pop(name, None)
+            state["failure"] = failure
+        store.commit(state)
+        return payload
+
+    @staticmethod
+    def _select_root_strategy(
+        *,
+        clean: bool,
+        session_id: str | None,
+        reason_code: str,
+        previous_failed_strategy: str | None,
+        safe: bool,
+    ) -> dict[str, str]:
+        rules = (
+            (
+                "block",
+                not safe or reason_code in _ROOT_AUTHORITY_BLOCKERS,
+            ),
+            (
+                "resume_root",
+                clean
+                and isinstance(session_id, str)
+                and reason_code in _ROOT_TRANSPORT_FAILURES
+                and previous_failed_strategy != "resume_root",
+            ),
+        )
+        for action, matches in rules:
+            if matches:
+                return {"action": action, "reason_code": reason_code}
+        return {"action": "fresh_root_full_diff", "reason_code": reason_code}
+
+    def _record_root_strategy(
+        self,
+        store: StateStore,
+        attempt_id: str,
+        outcome: ProviderOutcome,
+        *,
+        checkpoint: Mapping[str, object],
+        safe: bool = True,
+    ) -> dict[str, str]:
+        state = store.snapshot()
+        attempt = self._require_attempt(state, attempt_id)
+        previous = next(
+            (
+                item.get("next_strategy")
+                for item in reversed(state["attempts"])
+                if isinstance(item, Mapping)
+                and item is not attempt
+                and item.get("mode") == attempt.get("mode")
+                and item.get("plan_index") == attempt.get("plan_index")
+                and item.get("next_strategy")
+                in {"resume_root", "fresh_root_full_diff", "block"}
+            ),
+            None,
+        )
+        reason = outcome.provider_code or "controller_transport_failed"
+        decision = self._select_root_strategy(
+            clean=checkpoint.get("clean") is True,
+            session_id=outcome.session_id,
+            reason_code=reason,
+            previous_failed_strategy=(
+                previous if isinstance(previous, str) else None
+            ),
+            safe=safe,
+        )
+        attempt["outcome"] = outcome.kind
+        attempt["provider_code"] = reason
+        attempt["next_strategy"] = decision["action"]
+        attempt["previous_failed_strategy"] = previous
+        failure = (
+            dict(state["failure"])
+            if isinstance(state.get("failure"), Mapping)
+            else {}
+        )
+        failure.update(
+            {
+                "reason_code": reason,
+                "mode": attempt.get("mode"),
+                "plan_index": attempt.get("plan_index"),
+                "next_strategy": decision["action"],
+                "previous_failed_strategy": previous,
+                "next_session_action": (
+                    "explicit_resume"
+                    if decision["action"] == "resume_root"
+                    else "fresh_session"
+                    if decision["action"] == "fresh_root_full_diff"
+                    else "none"
+                ),
+            }
+        )
+        state["failure"] = failure
+        store.commit(state)
+        return decision
+
+    @staticmethod
+    def _checkpoint_failure_fields(
+        failure: object,
+    ) -> dict[str, object]:
+        if not isinstance(failure, Mapping):
+            return {}
+        return {
+            name: failure[name]
+            for name in _CHECKPOINT_FAILURE_FIELDS
+            if name in failure
         }
 
     def _checkpoint_outcome(
@@ -1380,27 +1641,13 @@ class PlanRunner:
     def _pause_resumable(
         self,
         store: StateStore,
-        workspace: GitWorkspace,
         outcome: ProviderOutcome,
         attempt_id: str,
         plan_index: int | None,
         mode: str,
     ) -> int:
         state = store.snapshot()
-        attempt = next(
-            (
-                item
-                for item in reversed(state["attempts"])
-                if isinstance(item, dict)
-                and item.get("attempt_id") == attempt_id
-            ),
-            None,
-        )
-        if attempt is None:
-            raise ValueError("provider attempt is unavailable at signal checkpoint")
-        attempt["completed"] = True
-        attempt["outcome"] = "controller_stopped"
-        attempt["provider_code"] = outcome.provider_code
+        attempt = self._require_attempt(state, attempt_id)
         session = next(
             (
                 item
@@ -1417,31 +1664,28 @@ class PlanRunner:
                 raise ValueError("provider outcome session does not match capture")
             session["phase"] = "completed"
             session["health"] = "healthy"
-        observation = workspace.require_identity()
-        partial = None
-        if not observation.clean:
-            if mode not in {"implementation", "final_review_fix"}:
-                raise ValueError("provider modified worktree in non-mutating mode")
-            partial = {
-                "version": 1,
-                "attempt_id": attempt_id,
+        checkpoint = attempt.get("post_provider_worktree")
+        if not isinstance(checkpoint, Mapping):
+            raise ValueError("provider signal checkpoint is unavailable")
+        failure = (
+            dict(state["failure"])
+            if isinstance(state.get("failure"), Mapping)
+            else {}
+        )
+        state["status"] = "resumable"
+        failure.update(
+            {
+                "reason_code": "controller_transport_failed",
+                "detail": "controller_signal",
                 "mode": mode,
                 "plan_index": plan_index,
-                **dataclasses.asdict(observation),
+                "required_strategy_change": (
+                    failure.get("next_strategy") != "resume_root"
+                ),
+                "pending_mode": mode,
             }
-        state["status"] = "resumable"
-        state["failure"] = {
-            "reason_code": "controller_transport_failed",
-            "detail": "controller_signal",
-            "mode": mode,
-            "plan_index": plan_index,
-            "required_strategy_change": session is None,
-            "next_session_action": (
-                "explicit_resume" if session is not None else "fresh_session"
-            ),
-            "pending_mode": mode,
-            "partial_worktree": partial,
-        }
+        )
+        state["failure"] = failure
         if mode == "final_review_fix":
             finalization = dict(state.get("finalization") or {})
             finalization["pending_mode"] = mode
@@ -1723,10 +1967,14 @@ class PlanRunner:
         if reason not in _AUTHORITY_BLOCKERS:
             return self._integrity_failure(store, "unapproved blocker kind")
         state = store.snapshot()
+        preserved = self._checkpoint_failure_fields(state.get("failure"))
         state["status"] = "blocked"
         state["failure"] = {
+            **preserved,
             "reason_code": reason,
             "blocker": dict(blocker) if isinstance(blocker, Mapping) else None,
+            "next_strategy": "block",
+            "next_session_action": "none",
         }
         store.commit(state)
         self._emit_summary(store.snapshot())
@@ -1771,6 +2019,7 @@ class PlanRunner:
     ) -> int | None:
         state = store.snapshot()
         failure = state.get("failure")
+        checkpoint_fields = self._checkpoint_failure_fields(failure)
         sequence = (
             list(failure.get("failure_sequence", []))
             if isinstance(failure, Mapping)
@@ -1853,6 +2102,7 @@ class PlanRunner:
             unavailable = reason == "provider_unavailable"
             state["status"] = "blocked" if unavailable else "failed"
             state["failure"] = {
+                **checkpoint_fields,
                 "reason_code": reason if unavailable else decision.reason_code,
                 "mode": mode,
                 "plan_index": index,
@@ -1889,6 +2139,7 @@ class PlanRunner:
             state["artifact_refs"].append(strategy_artifact.as_dict())
         state["status"] = "recovering"
         state["failure"] = {
+            **checkpoint_fields,
             "reason_code": reason,
             "mode": mode,
             "plan_index": index,
@@ -1896,7 +2147,14 @@ class PlanRunner:
             "failure_sequence": active_sequence,
             "baseline_progress": dataclasses.asdict(current),
             "required_strategy_change": decision.required_strategy_change,
-            "next_session_action": decision.session_action,
+            "next_session_action": (
+                "explicit_resume"
+                if checkpoint_fields.get("next_strategy") == "resume_root"
+                else "fresh_session"
+                if checkpoint_fields.get("next_strategy")
+                == "fresh_root_full_diff"
+                else decision.session_action
+            ),
             "strategy_digests": [
                 item["strategy_note_digest"] for item in active_sequence
             ],
@@ -2029,10 +2287,19 @@ class PlanRunner:
                     attempt_id=attempt_id,
                 )
                 self._event("provider_outcome_received")
+                checkpoint = self._checkpoint_provider_attempt(
+                    store,
+                    workspace,
+                    attempt_id=attempt_id,
+                    outcome=outcome,
+                    mode="finalization",
+                )
                 if outcome.kind == "controller_stopped":
+                    self._record_root_strategy(
+                        store, attempt_id, outcome, checkpoint=checkpoint
+                    )
                     return self._pause_resumable(
                         store,
-                        workspace,
                         outcome,
                         attempt_id,
                         None,
@@ -2041,6 +2308,10 @@ class PlanRunner:
                 self._checkpoint_outcome(
                     store, outcome, attempt_id, None, "finalization"
                 )
+                if outcome.kind != "reviewed":
+                    self._record_root_strategy(
+                        store, attempt_id, outcome, checkpoint=checkpoint
+                    )
             if outcome.kind != "reviewed" or not isinstance(
                 outcome.result, Mapping
             ):
@@ -2262,6 +2533,7 @@ class PlanRunner:
                 store, "finalization changed the candidate HEAD"
             )
         failure = state.get("failure")
+        checkpoint_fields = self._checkpoint_failure_fields(failure)
         sequence = (
             list(failure.get("failure_sequence", []))
             if isinstance(failure, Mapping)
@@ -2344,6 +2616,7 @@ class PlanRunner:
             unavailable = reason == "provider_unavailable"
             state["status"] = "blocked" if unavailable else "failed"
             state["failure"] = {
+                **checkpoint_fields,
                 "reason_code": reason if unavailable else decision.reason_code,
                 "mode": "finalization",
                 "plan_index": None,
@@ -2380,6 +2653,7 @@ class PlanRunner:
             state["artifact_refs"].append(strategy_artifact.as_dict())
         state["status"] = "recovering"
         state["failure"] = {
+            **checkpoint_fields,
             "reason_code": reason,
             "mode": "finalization",
             "plan_index": None,
@@ -2387,7 +2661,14 @@ class PlanRunner:
             "failure_sequence": active_sequence,
             "baseline_progress": dataclasses.asdict(current),
             "required_strategy_change": decision.required_strategy_change,
-            "next_session_action": decision.session_action,
+            "next_session_action": (
+                "explicit_resume"
+                if checkpoint_fields.get("next_strategy") == "resume_root"
+                else "fresh_session"
+                if checkpoint_fields.get("next_strategy")
+                == "fresh_root_full_diff"
+                else decision.session_action
+            ),
             "strategy_digests": [
                 item["strategy_note_digest"] for item in active_sequence
             ],
@@ -2546,23 +2827,71 @@ class PlanRunner:
                 attempt_id=attempt_id,
             )
             self._event("provider_outcome_received")
+            checkpoint = self._checkpoint_provider_attempt(
+                store,
+                workspace,
+                attempt_id=attempt_id,
+                outcome=outcome,
+                mode="final_review_fix",
+            )
             if outcome.kind == "controller_stopped":
+                self._record_root_strategy(
+                    store, attempt_id, outcome, checkpoint=checkpoint
+                )
                 return self._pause_resumable(
                     store,
-                    workspace,
                     outcome,
                     attempt_id,
                     index,
                     "final_review_fix",
                 )
-            if outcome.kind in {"implemented", "blocked", "failed"}:
+            if (
+                outcome.kind in {"implemented", "blocked", "failed"}
+                and outcome.result is not None
+            ):
                 try:
                     self._validated_plan_result(outcome.result)
                 except ValueError as error:
-                    return self._integrity_failure(store, str(error))
+                    outcome = dataclasses.replace(
+                        outcome,
+                        kind="failed",
+                        result=None,
+                        provider_code="provider_result_invalid",
+                    )
+                    decision = self._record_root_strategy(
+                        store,
+                        attempt_id,
+                        outcome,
+                        checkpoint=checkpoint,
+                        safe=checkpoint.get("clean") is False,
+                    )
+                    if decision["action"] == "block":
+                        return self._integrity_failure(store, str(error))
+                    self._checkpoint_outcome(
+                        store,
+                        outcome,
+                        attempt_id,
+                        index,
+                        "final_review_fix",
+                    )
+                    code = self._recover(
+                        store,
+                        workspace,
+                        outcome,
+                        index,
+                        mode="final_review_fix",
+                        continue_execution=False,
+                    )
+                    if code is not None:
+                        return code
+                    continue
             self._checkpoint_outcome(
                 store, outcome, attempt_id, index, "final_review_fix"
             )
+            if outcome.kind != "implemented":
+                self._record_root_strategy(
+                    store, attempt_id, outcome, checkpoint=checkpoint
+                )
             if outcome.kind == "blocked":
                 return self._block(store, outcome)
             if outcome.kind != "implemented":
@@ -2647,10 +2976,14 @@ class PlanRunner:
     ) -> None:
         try:
             state = store.snapshot()
+            preserved = self._checkpoint_failure_fields(state.get("failure"))
             state["status"] = "failed"
             state["failure"] = {
+                **preserved,
                 "reason_code": reason_code,
                 "detail": str(detail)[:512],
+                "next_strategy": "block",
+                "next_session_action": "none",
             }
             store.commit(state)
             self._emit_summary(store.snapshot())

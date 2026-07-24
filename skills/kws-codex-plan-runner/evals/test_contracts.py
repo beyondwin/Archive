@@ -11,6 +11,7 @@ from plan_runner.contracts import (  # noqa: E402
     CONTRACT_VERSION,
     FAILURE_TAXONOMY,
     FORMAT_VERSION,
+    NEXT_STRATEGIES,
     PLAN_STATUSES,
     RUNNER_RUNTIME_CONTRACT,
     RUN_STATUSES,
@@ -89,6 +90,7 @@ class ContractVocabularyTest(unittest.TestCase):
         self.assertEqual(sorted(PLAN_STATUSES), sorted(fixture["plan_statuses"]))
         self.assertEqual(sorted(TASK_STATUSES), sorted(fixture["task_statuses"]))
         self.assertEqual(sorted(FAILURE_TAXONOMY), sorted(fixture["failure_taxonomy"]))
+        self.assertEqual(sorted(NEXT_STRATEGIES), sorted(fixture["next_strategies"]))
         self.assertEqual(RUNNER_RUNTIME_CONTRACT, fixture["runner_runtime"])
         self.assertEqual(
             {item.name.lower(): int(item) for item in ExitCode},
