@@ -79,11 +79,16 @@ _AUTHORITY_BLOCKERS = frozenset(
         "provider_usage_blocked",
     }
 )
-_SEALED_PROVIDER_FAILURES = frozenset(
+_SEALED_PROVIDER_OUTCOMES = frozenset(
     {
-        "provider_result_invalid",
-        "provider_stream_malformed",
-        "provider_stream_oversized",
+        ("failed", "provider_result_invalid"),
+        ("failed", "provider_stream_malformed"),
+        ("failed", "provider_stream_oversized"),
+        ("transport_failed", "controller_transport_failed"),
+        ("transport_failed", "provider_unavailable"),
+        ("resume_failed", "session_resume_failed"),
+        ("context_overflow", "session_invalid"),
+        ("stalled", "stall_expired"),
     }
 )
 _ROOT_AUTHORITY_BLOCKERS = _AUTHORITY_BLOCKERS - {"provider_unavailable"}
@@ -673,7 +678,11 @@ class PlanRunner:
             or attempt.get("post_provider_worktree") != sealed
             or (
                 attempt.get("outcome") != "controller_stopped"
-                and attempt.get("provider_code") not in _SEALED_PROVIDER_FAILURES
+                and (
+                    attempt.get("outcome"),
+                    attempt.get("provider_code"),
+                )
+                not in _SEALED_PROVIDER_OUTCOMES
             )
         ):
             raise ValueError("sealed partial worktree attempt is invalid")
@@ -1533,6 +1542,8 @@ class PlanRunner:
                 attempt["provider_code"] = outcome.provider_code
                 if result_artifact is not None:
                     attempt["result_artifact"] = result_artifact.as_dict()
+                    if mode == "finalization":
+                        attempt["result_validated"] = False
                 break
         if (
             result_artifact is not None
@@ -2334,6 +2345,9 @@ class PlanRunner:
                 )
             except ValueError as error:
                 return self._integrity_failure(store, str(error))
+            self._mark_final_result_reusable(
+                store, candidate.head, result
+            )
             important = [
                 item
                 for item in result["open_findings"]
@@ -2421,6 +2435,7 @@ class PlanRunner:
                 or attempt.get("mode") != "finalization"
                 or attempt.get("completed") is not True
                 or attempt.get("outcome") != "reviewed"
+                or attempt.get("result_validated") is not True
                 or not isinstance(attempt.get("result_artifact"), Mapping)
             ):
                 continue
@@ -2442,6 +2457,40 @@ class PlanRunner:
                 "",
             )
         return None
+
+    @staticmethod
+    def _mark_final_result_reusable(
+        store: StateStore,
+        candidate_head: str,
+        result: Mapping[str, object],
+    ) -> None:
+        state = store.snapshot()
+        result_digest = sha256_json(dict(result))
+        for attempt in reversed(state["attempts"]):
+            reference = attempt.get("result_artifact")
+            if (
+                not isinstance(attempt, dict)
+                or attempt.get("mode") != "finalization"
+                or attempt.get("completed") is not True
+                or attempt.get("outcome") != "reviewed"
+                or not isinstance(reference, Mapping)
+                or reference.get("kind") != "provider_result"
+                or reference.get("digest") != result_digest
+                or reference not in state["artifact_refs"]
+            ):
+                continue
+            payload = _artifact_payload(store, reference)
+            if (
+                not isinstance(payload, Mapping)
+                or payload.get("review_head") != candidate_head
+                or dict(payload) != dict(result)
+            ):
+                continue
+            if attempt.get("result_validated") is not True:
+                attempt["result_validated"] = True
+                store.commit(state)
+            return
+        raise ValueError("validated final result attempt is missing")
 
     @staticmethod
     def _plan_implementation_summaries(
