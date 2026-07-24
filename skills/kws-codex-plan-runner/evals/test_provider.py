@@ -1,3 +1,4 @@
+import dataclasses
 import json
 import os
 import stat
@@ -19,6 +20,12 @@ from plan_runner.recovery import ActivityLease  # noqa: E402
 
 
 SESSION_ID = "12345678-1234-4234-8234-123456789abc"
+SDD_RELATIVE_PATHS = (
+    Path("skills/subagent-driven-development/SKILL.md"),
+    Path("skills/subagent-driven-development/scripts/sdd-workspace"),
+    Path("skills/subagent-driven-development/scripts/task-brief"),
+    Path("skills/subagent-driven-development/scripts/review-package"),
+)
 
 
 class RecordingLease(ActivityLease):
@@ -51,6 +58,8 @@ class CodexProviderTest(unittest.TestCase):
         fake = SKILL_ROOT / "evals" / "fake_codex.py"
         fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
         (self.bin / "codex").symlink_to(fake)
+        self.codex_home = self.root / "operator-codex-home"
+        self.make_codex_home(self.codex_home)
         self.helper = HelperDescriptor(
             1,
             self.worktree / ".kws-plan-runner.sock",
@@ -74,12 +83,23 @@ class CodexProviderTest(unittest.TestCase):
             session_id=session_id,
         )
 
-    def adapter(self, scenario="initial", **overrides):
-        source_env = {
+    def make_codex_home(self, path, *, auth=True, sdd=True):
+        path.mkdir()
+        if auth:
+            (path / "auth.json").write_text("fake-auth-marker\n", encoding="utf-8")
+        if sdd:
+            for relative in SDD_RELATIVE_PATHS:
+                target = path / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("fake-sdd-entrypoint\n", encoding="utf-8")
+
+    def environment(self, scenario):
+        return {
             "PATH": f"{self.bin}{os.pathsep}{os.environ['PATH']}",
             "FAKE_CODEX_SCENARIO": scenario,
             "FAKE_CODEX_LOG": str(self.log),
             "OPENAI_API_KEY": "provider-secret",
+            "CODEX_HOME": str(self.codex_home),
             "GH_TOKEN": "must-not-leak",
             "SSH_AUTH_SOCK": "/tmp/agent.sock",
             "HOME": "/Users/operator",
@@ -90,6 +110,9 @@ class CodexProviderTest(unittest.TestCase):
             "STRIPE_SECRET_KEY": "sk_live_service_secret",
             "LANG": "C.UTF-8",
         }
+
+    def adapter(self, scenario="initial", **overrides):
+        source_env = overrides.pop("source_env", self.environment(scenario))
         values = {
             "source_env": source_env,
             "provider_auth_prefixes": ("OPENAI_", "CODEX_"),
@@ -117,6 +140,7 @@ class CodexProviderTest(unittest.TestCase):
                 "codex",
                 "exec",
                 "--ignore-user-config",
+                "--ignore-rules",
                 "--json",
                 "--output-schema",
                 str(self.schema),
@@ -145,6 +169,7 @@ class CodexProviderTest(unittest.TestCase):
                 "codex",
                 "exec",
                 "--ignore-user-config",
+                "--ignore-rules",
                 "--json",
                 "--output-schema",
                 str(self.schema),
@@ -223,6 +248,7 @@ class CodexProviderTest(unittest.TestCase):
         self.assertEqual(record["argv"][-3:], ["resume", SESSION_ID, "-"])
         self.assertEqual(Path(record["cwd"]).resolve(), self.worktree.resolve())
         self.assertEqual(record["env"]["OPENAI_API_KEY"], "provider-secret")
+        self.assertEqual(record["env"]["CODEX_HOME"], str(self.codex_home))
         self.assertNotIn("GH_TOKEN", record["env"])
         self.assertNotIn("SSH_AUTH_SOCK", record["env"])
         for key in (
@@ -299,6 +325,146 @@ class CodexProviderTest(unittest.TestCase):
             }
             self.assertEqual(config["user.name"], "Runner Test")
             self.assertEqual(config["user.email"], "runner@example.test")
+
+    def test_effective_codex_home_preserves_auth_and_superpowers_discovery(self):
+        environment = self.environment("initial")
+        environment.pop("OPENAI_API_KEY")
+
+        outcome = self.adapter(source_env=environment).launch(
+            self.request(), RecordingLease()
+        )
+
+        self.assertEqual(outcome.kind, "implemented")
+        record = self.record()
+        self.assertEqual(record["env"]["CODEX_HOME"], str(self.codex_home))
+        self.assertTrue(record["codex_auth_visible"])
+        self.assertTrue(record["sdd_capabilities_visible"])
+
+    def test_environment_token_auth_still_uses_effective_codex_home_for_superpowers(self):
+        (self.codex_home / "auth.json").unlink()
+        environment = self.environment("initial")
+        environment["OPENAI_API_KEY"] = "test-token"
+
+        outcome = self.adapter(source_env=environment).launch(
+            self.request(), RecordingLease()
+        )
+
+        self.assertEqual(outcome.kind, "implemented")
+        record = self.record()
+        self.assertFalse(record["codex_auth_visible"])
+        self.assertTrue(record["sdd_capabilities_visible"])
+        self.assertEqual(record["env"]["CODEX_HOME"], str(self.codex_home))
+
+    def test_missing_auth_or_sdd_capability_fails_before_child_launch(self):
+        missing_auth = self.root / "missing-auth-home"
+        self.make_codex_home(missing_auth, auth=False)
+        auth_environment = self.environment("initial")
+        auth_environment["CODEX_HOME"] = str(missing_auth)
+        auth_environment.pop("OPENAI_API_KEY")
+
+        missing_sdd = self.root / "missing-sdd-home"
+        self.make_codex_home(missing_sdd, sdd=False)
+        sdd_environment = self.environment("initial")
+        sdd_environment["CODEX_HOME"] = str(missing_sdd)
+
+        cases = (
+            (auth_environment, "provider_auth_blocked"),
+            (sdd_environment, "provider_capability_blocked"),
+        )
+        for environment, provider_code in cases:
+            with self.subTest(provider_code=provider_code):
+                outcome = self.adapter(source_env=environment).launch(
+                    self.request(), RecordingLease()
+                )
+                self.assertEqual(outcome.kind, "blocked")
+                self.assertEqual(outcome.provider_code, provider_code)
+                self.assertFalse(self.log.exists())
+
+    def test_child_does_not_copy_codex_home_into_runner_state(self):
+        private_markers = {
+            "config.toml": "operator-config-secret",
+            "rules/default.rules": "operator-rule-secret",
+            "sessions/history.jsonl": "operator-session-secret",
+            "log/codex.log": "operator-log-secret",
+        }
+        for relative, contents in private_markers.items():
+            target = self.codex_home / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(contents, encoding="utf-8")
+        runner_root = self.root / "runner-state"
+        artifacts = runner_root / "artifacts"
+        artifacts.mkdir(parents=True)
+        request = dataclasses.replace(
+            self.request(), output_path=artifacts / "provider-result.json"
+        )
+
+        outcome = self.adapter().launch(request, RecordingLease())
+
+        self.assertEqual(outcome.kind, "implemented")
+        runner_files = [path for path in runner_root.rglob("*") if path.is_file()]
+        self.assertEqual(
+            [path.name for path in runner_files],
+            ["provider-result.json"],
+        )
+        retained = b"".join(path.read_bytes() for path in runner_files)
+        for contents in private_markers.values():
+            self.assertNotIn(contents.encode(), retained)
+
+    def test_child_argv_ignores_user_config_and_repository_rules(self):
+        initial = self.launch("initial")
+        resumed = self.launch(
+            "explicit-resume", request=self.request(session_id=SESSION_ID)
+        )
+
+        self.assertEqual((initial.kind, resumed.kind), ("implemented", "implemented"))
+        records = [
+            json.loads(line)
+            for line in self.log.read_text(encoding="utf-8").splitlines()
+        ]
+        self.assertEqual(len(records), 2)
+        for record in records:
+            self.assertIn("--ignore-user-config", record["argv"])
+            self.assertIn("--ignore-rules", record["argv"])
+
+    def test_subagent_completion_does_not_replace_root_completion(self):
+        outcome = self.launch("subagent-completion-only")
+
+        self.assertEqual(outcome.kind, "transport_failed")
+        self.assertEqual(outcome.provider_code, "controller_transport_failed")
+        self.assertIsNone(outcome.result)
+        self.assertIn("tool_finished:collaboration-1", outcome.activity_keys)
+
+    def test_result_without_completed_root_turn_is_transport_failure(self):
+        outcome = self.launch("result-without-root-turn")
+
+        self.assertEqual(outcome.kind, "transport_failed")
+        self.assertEqual(outcome.provider_code, "controller_transport_failed")
+        self.assertIsNone(outcome.result)
+
+    def test_root_and_collaboration_events_accept_one_root_final_result(self):
+        reads = []
+
+        class CountingAdapter(CodexAdapter):
+            def _read_result(self, output_path):
+                reads.append(output_path)
+                return super()._read_result(output_path)
+
+        adapter = CountingAdapter(
+            source_env=self.environment("root-and-collaboration"),
+            provider_auth_prefixes=("OPENAI_", "CODEX_"),
+            remotes=("origin",),
+            run_id="run-1234",
+            helper=self.helper,
+            poll_seconds=0.01,
+        )
+
+        outcome = adapter.launch(self.request(), RecordingLease())
+
+        self.assertEqual(outcome.kind, "implemented")
+        self.assertEqual(outcome.result["summary"], "root-final-result")
+        self.assertEqual(reads, [self.output])
+        self.assertIn("tool_started:collaboration-1", outcome.activity_keys)
+        self.assertIn("tool_finished:collaboration-1", outcome.activity_keys)
 
     def test_only_distinct_lifecycle_and_tool_events_refresh_activity(self):
         lease = RecordingLease()

@@ -72,6 +72,21 @@ _IMMUTABLE_STATE_KEYS = (
 )
 
 
+def resolve_effective_codex_home(source_env: Mapping[str, str]) -> Path:
+    configured = source_env.get("CODEX_HOME")
+    if configured is None or configured == "":
+        operator_home = source_env.get("HOME")
+        if operator_home is None or operator_home == "":
+            raise ValueError("effective Codex home is unavailable")
+        configured = str(Path(operator_home) / ".codex")
+    if not isinstance(configured, str) or "\0" in configured:
+        raise ValueError("effective Codex home is invalid")
+    path = Path(configured)
+    if not path.is_absolute():
+        raise ValueError("effective Codex home must be absolute")
+    return path
+
+
 @dataclass(frozen=True)
 class ArtifactRef:
     kind: str
