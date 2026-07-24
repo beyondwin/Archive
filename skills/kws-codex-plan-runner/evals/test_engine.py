@@ -914,6 +914,48 @@ class EngineTest(unittest.TestCase):
 
         self.assertEqual(code, ExitCode.READY, [self.output, self.state().get("failure")])
 
+    def test_present_volatile_ref_policy_version_requires_exact_integer(self):
+        invalid_versions = (None, False, True, 1.0, "1", 2)
+        for index, invalid_version in enumerate(invalid_versions):
+            if index:
+                self.tearDown()
+                self.setUp()
+            with self.subTest(invalid_version=invalid_version):
+                self.crash_after_session = True
+                with self.assertRaises(SimulatedCrash):
+                    self.runner().create_run(
+                        specs=self.specs,
+                        plans=self.plans[:1],
+                        workspace=self.source,
+                        stall_seconds=30,
+                        sandbox="workspace-write",
+                        model=None,
+                    )
+                state = self.state()
+                state["immutable_config"][
+                    "volatile_ref_policy_version"
+                ] = invalid_version
+                state["state_digest"] = storage_module._state_digest(state)
+                state_path = (
+                    self.paths.state_home / state["run_id"] / "state.json"
+                )
+                state_path.write_text(json.dumps(state), encoding="utf-8")
+                launch_count = len(self.requests)
+
+                code = self.runner().resume(
+                    state["run_id"],
+                    retry_blocked=False,
+                    retry_failed=False,
+                    strategy_note=None,
+                )
+
+                self.assertEqual(code, ExitCode.INTEGRITY)
+                self.assertEqual(len(self.requests), launch_count)
+                self.assertEqual(
+                    self.state()["failure"]["reason_code"],
+                    "state_integrity_failed",
+                )
+
     def test_clean_transport_loss_resumes_root_once_then_changes_strategy(self):
         failures = 0
 

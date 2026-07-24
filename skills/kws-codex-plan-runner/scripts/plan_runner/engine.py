@@ -210,14 +210,20 @@ def _input_digest(specs: Sequence[Path], plans: Sequence[Path]) -> str:
 
 def _sealed_protected_refs(config: Mapping[str, object]) -> object:
     sealed_refs = config.get("protected_refs")
-    policy_version = config.get("volatile_ref_policy_version")
-    if policy_version is None and isinstance(sealed_refs, Mapping):
+    if (
+        "volatile_ref_policy_version" not in config
+        and isinstance(sealed_refs, Mapping)
+    ):
         return {
             name: value
             for name, value in sealed_refs.items()
             if isinstance(name, str) and not is_volatile_ref(name)
         }
-    if policy_version != VOLATILE_REF_POLICY_VERSION:
+    policy_version = config.get("volatile_ref_policy_version")
+    if (
+        type(policy_version) is not int
+        or policy_version != VOLATILE_REF_POLICY_VERSION
+    ):
         raise ValueError("volatile ref policy version is unsupported")
     return sealed_refs
 
