@@ -112,18 +112,19 @@ class ScriptedAdapter:
             )
         if packet["mode"] == "final_review_fix":
             marker = request.worktree / "review-fix.txt"
-            marker.write_text("review fixed\n", encoding="utf-8")
-            git("add", marker.name, cwd=request.worktree)
-            git(
-                "-c",
-                "user.name=Engine Test",
-                "-c",
-                "user.email=engine@example.test",
-                "commit",
-                "-m",
-                "fix final review findings",
-                cwd=request.worktree,
-            )
+            if not marker.exists():
+                marker.write_text("review fixed\n", encoding="utf-8")
+                git("add", marker.name, cwd=request.worktree)
+                git(
+                    "-c",
+                    "user.name=Engine Test",
+                    "-c",
+                    "user.email=engine@example.test",
+                    "commit",
+                    "-m",
+                    "fix final review findings",
+                    cwd=request.worktree,
+                )
             head = git("rev-parse", "HEAD", cwd=request.worktree)
             return ProviderOutcome(
                 "implemented",
@@ -453,6 +454,53 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(len(implementation_requests), 2)
         self.assertIsNone(implementation_requests[1].session_id)
 
+    def test_clean_invalid_result_retries_from_fresh_root_after_checkpoint(self):
+        implementation_launches = 0
+
+        def invalid_then_succeed(_adapter, _request, packet, session_id):
+            nonlocal implementation_launches
+            if packet["mode"] != "implementation":
+                return None
+            implementation_launches += 1
+            if implementation_launches == 1:
+                return ProviderOutcome(
+                    "implemented",
+                    0,
+                    session_id,
+                    {"status": "implemented"},
+                    None,
+                    {},
+                    (),
+                    "",
+                )
+            return None
+
+        self.outcome_hook = invalid_then_succeed
+        code = self.runner().create_run(
+            specs=self.specs,
+            plans=self.plans[:1],
+            workspace=self.source,
+            stall_seconds=30,
+            sandbox="workspace-write",
+            model=None,
+        )
+
+        self.assertEqual(code, ExitCode.READY)
+        attempts = [
+            item for item in self.state()["attempts"]
+            if item["mode"] == "implementation"
+        ]
+        self.assertTrue(attempts[0]["post_provider_worktree"]["clean"])
+        self.assertEqual(attempts[0]["provider_code"], "provider_result_invalid")
+        self.assertEqual(attempts[0]["next_strategy"], "fresh_root_full_diff")
+        requests = [
+            request
+            for request, packet in zip(self.requests, self.packets, strict=True)
+            if packet["mode"] == "implementation"
+        ]
+        self.assertEqual(len(requests), 2)
+        self.assertIsNone(requests[1].session_id)
+
     def test_dirty_malformed_stream_is_checkpointed_before_failure(self):
         self._assert_dirty_stream_checkpoint(
             "provider_stream_malformed",
@@ -592,6 +640,98 @@ class EngineTest(unittest.TestCase):
         ]
         self.assertEqual(len(fix_requests), 2)
         self.assertIsNone(fix_requests[1].session_id)
+
+    def test_clean_final_review_fix_invalid_result_uses_fresh_root(self):
+        self.review_findings_once = True
+        fix_launches = 0
+
+        def invalid_then_fix(_adapter, _request, packet, session_id):
+            nonlocal fix_launches
+            if packet["mode"] != "final_review_fix":
+                return None
+            fix_launches += 1
+            if fix_launches == 1:
+                return ProviderOutcome(
+                    "implemented",
+                    0,
+                    session_id,
+                    {"status": "implemented"},
+                    None,
+                    {},
+                    (),
+                    "",
+                )
+            return None
+
+        self.outcome_hook = invalid_then_fix
+        code = self.runner().create_run(
+            specs=self.specs,
+            plans=self.plans[:1],
+            workspace=self.source,
+            stall_seconds=30,
+            sandbox="workspace-write",
+            model=None,
+        )
+
+        self.assertEqual(code, ExitCode.READY)
+        attempts = [
+            item for item in self.state()["attempts"]
+            if item["mode"] == "final_review_fix"
+        ]
+        self.assertTrue(attempts[0]["post_provider_worktree"]["clean"])
+        self.assertEqual(attempts[0]["provider_code"], "provider_result_invalid")
+        self.assertEqual(attempts[0]["next_strategy"], "fresh_root_full_diff")
+        requests = [
+            request
+            for request, packet in zip(self.requests, self.packets, strict=True)
+            if packet["mode"] == "final_review_fix"
+        ]
+        self.assertEqual(len(requests), 2)
+        self.assertIsNone(requests[1].session_id)
+
+    def test_dirty_finalization_attempt_is_durable_before_blocking(self):
+        checkpoint_revision = []
+
+        def dirty_finalization(_adapter, request, _packet, _session_id, _digest):
+            (request.worktree / "finalization-drift.txt").write_text(
+                "forbidden finalization mutation\n", encoding="utf-8"
+            )
+            return None
+
+        def capture_revision(stage):
+            if (
+                stage == "provider_outcome_received"
+                and self.packets
+                and self.packets[-1]["mode"] == "finalization"
+            ):
+                checkpoint_revision.append(self.state()["revision"])
+
+        self.after_final_hook = dirty_finalization
+        self.engine_event_hook = capture_revision
+        code = self.runner().create_run(
+            specs=self.specs,
+            plans=self.plans[:1],
+            workspace=self.source,
+            stall_seconds=30,
+            sandbox="workspace-write",
+            model=None,
+        )
+
+        self.assertEqual(code, ExitCode.INTEGRITY)
+        state = self.state()
+        attempt = next(
+            item for item in reversed(state["attempts"])
+            if item["mode"] == "finalization"
+        )
+        self.assertTrue(attempt["completed"])
+        self.assertEqual(
+            attempt["post_provider_worktree"],
+            self.worktree_observation(state),
+        )
+        self.assertFalse(attempt["post_provider_worktree"]["clean"])
+        self.assertGreaterEqual(state["revision"], checkpoint_revision[0] + 2)
+        self.assertEqual(state["failure"]["next_strategy"], "block")
+        self.assertNotIn("partial_worktree", state["failure"])
 
     def test_dirty_checkpoint_rejects_branch_or_product_ref_drift(self):
         def drift_branch(_adapter, request, packet, session_id):
@@ -1228,7 +1368,11 @@ class EngineTest(unittest.TestCase):
             sandbox="workspace-write",
             model=None,
         )
-        self.assertEqual(code, ExitCode.INTEGRITY)
+        self.assertEqual(code, ExitCode.FAILED)
+        self.assertEqual(
+            self.state()["failure"]["reason_code"],
+            "recovery_exhausted",
+        )
         self.assertEqual(
             sum(packet["mode"] == "finalization" for packet in self.packets),
             1,
@@ -2125,8 +2269,11 @@ class EngineTest(unittest.TestCase):
             sandbox="workspace-write",
             model=None,
         )
-        self.assertEqual(code, ExitCode.INTEGRITY)
-        self.assertEqual(self.state()["failure"]["reason_code"], "state_integrity_failed")
+        self.assertEqual(code, ExitCode.FAILED)
+        self.assertEqual(
+            self.state()["failure"]["reason_code"],
+            "recovery_exhausted",
+        )
 
     def test_final_gate_rejects_persisted_task_not_reported_done(self):
         self.implementation_ledger = [

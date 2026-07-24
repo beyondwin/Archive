@@ -370,9 +370,14 @@ def main() -> int:
     scenario = os.environ.get("FAKE_CODEX_SCENARIO", "initial")
     session_id = argv[-2] if "resume" in argv else SESSION_ID
 
-    if scenario == "malformed-jsonl":
+    if scenario in {"malformed-jsonl", "malformed-jsonl-ready"}:
         sys.stdout.write("{not-json}\n")
         sys.stdout.flush()
+        if scenario == "malformed-jsonl-ready":
+            Path(os.environ["FAKE_CODEX_LOG"] + ".ready").write_text(
+                "ready\n", encoding="utf-8"
+            )
+            time.sleep(5)
         return 0
     if scenario == "oversized-jsonl":
         sys.stdout.write(json.dumps({"type": "log", "text": "x" * 70_000}) + "\n")

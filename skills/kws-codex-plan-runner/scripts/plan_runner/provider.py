@@ -349,17 +349,6 @@ class CodexAdapter:
                 tuple(activity_keys),
                 stderr,
             )
-        if stalled:
-            return ProviderOutcome(
-                "stalled",
-                None,
-                session_id or request.session_id,
-                None,
-                "stall_expired",
-                dict(usage),
-                tuple(activity_keys),
-                stderr,
-            )
         if stream_failure is not None:
             return ProviderOutcome(
                 "failed",
@@ -367,6 +356,17 @@ class CodexAdapter:
                 session_id or request.session_id,
                 None,
                 stream_failure,
+                dict(usage),
+                tuple(activity_keys),
+                stderr,
+            )
+        if stalled:
+            return ProviderOutcome(
+                "stalled",
+                None,
+                session_id or request.session_id,
+                None,
+                "stall_expired",
                 dict(usage),
                 tuple(activity_keys),
                 stderr,

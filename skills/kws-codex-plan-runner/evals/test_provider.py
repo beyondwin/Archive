@@ -377,6 +377,41 @@ class CodexProviderTest(unittest.TestCase):
                 self.assertEqual(outcome.kind, "failed")
                 self.assertEqual(outcome.provider_code, reason)
 
+    def test_stream_corruption_observed_while_lease_expires_beats_stall(self):
+        ready = Path(str(self.log) + ".ready")
+
+        class DelayedExpiredLease(RecordingLease):
+            def expired(self, _now):
+                deadline = time.monotonic() + 2
+                while not ready.exists() and time.monotonic() < deadline:
+                    time.sleep(0.005)
+                return True
+
+        outcome = self.launch(
+            "malformed-jsonl-ready",
+            lease=DelayedExpiredLease(),
+        )
+
+        self.assertEqual(outcome.kind, "failed")
+        self.assertEqual(outcome.provider_code, "provider_stream_malformed")
+
+    def test_operator_stop_explicitly_beats_observed_stream_corruption(self):
+        ready = Path(str(self.log) + ".ready")
+
+        def delayed_stop():
+            deadline = time.monotonic() + 2
+            while not ready.exists() and time.monotonic() < deadline:
+                time.sleep(0.005)
+            return True
+
+        outcome = self.launch(
+            "malformed-jsonl-ready",
+            stop_requested=delayed_stop,
+        )
+
+        self.assertEqual(outcome.kind, "controller_stopped")
+        self.assertEqual(outcome.provider_code, "controller_transport_failed")
+
     def test_result_statuses_are_preserved_and_only_implemented_commits(self):
         subprocess = __import__("subprocess")
         subprocess.run(["git", "init", "-q"], cwd=self.worktree, check=True)
