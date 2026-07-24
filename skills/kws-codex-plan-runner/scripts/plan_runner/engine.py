@@ -78,6 +78,10 @@ the enforced structured result. Do not merge, push, deploy, or modify files
 outside WORKTREE."""
 
 _RUN_SLUG = re.compile(r"[^a-z0-9]+")
+_RUN_ID_CONTRACT = re.compile(
+    r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?"
+    r"-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+)
 _AUTHORITY_BLOCKERS = frozenset(
     {
         "credentials_unavailable",
@@ -126,6 +130,7 @@ _RUNNER_COMMAND = "./skills/kws-codex-plan-runner/scripts/runner"
 _REPAIR_KINDS = frozenset(
     {"volatile-codex-turn-refs", "unsealed-provider-partial"}
 )
+_MAX_REPAIR_STRATEGY_NOTE = 4096
 _RETRYABLE_FAILED_REASONS = frozenset({"recovery_exhausted"})
 _RETRYABLE_FAILED_NEXT_STRATEGIES = frozenset(
     {"resume_root", "fresh_root_full_diff"}
@@ -271,6 +276,27 @@ def _snapshot_input_digest(state: Mapping[str, object]) -> str:
             }
         )
     return sha256_json(records)
+
+
+def _all_ref_map(worktree: Path, assigned_branch: str) -> dict[str, str]:
+    refs: dict[str, str] = {}
+    for line in _git_text(
+        worktree, "for-each-ref", "--format=%(refname)%09%(objectname)"
+    ).splitlines():
+        name, separator, object_id = line.partition("\t")
+        if separator and name != f"refs/heads/{assigned_branch}":
+            refs[name] = object_id
+    return refs
+
+
+def _ref_delta(
+    before: Mapping[str, object], after: Mapping[str, object]
+) -> list[dict[str, object]]:
+    return [
+        {"ref": name, "before": before.get(name), "after": after.get(name)}
+        for name in sorted(set(before) | set(after))
+        if before.get(name) != after.get(name)
+    ]
 
 
 def _descriptor_document(descriptor: HelperDescriptor) -> dict[str, object]:
@@ -475,25 +501,9 @@ class PlanRunner:
                 if isinstance(failure, Mapping)
                 else None
             )
-            repair_kind = (
-                failure.get("repair_kind")
-                if isinstance(failure, Mapping)
-                else None
-            )
-            attempt_id = (
-                failure.get("attempt_id")
-                if isinstance(failure, Mapping)
-                else None
-            )
-            if (
-                reason_code == "state_integrity_failed"
-                and repair_kind in _REPAIR_KINDS
-                and (
-                    repair_kind != "unsealed-provider-partial"
-                    or isinstance(attempt_id, str)
-                    and attempt_id
-                )
-            ):
+            repair = self._known_repair_evidence(state)
+            if reason_code == "state_integrity_failed" and repair is not None:
+                repair_kind, attempt_id = repair
                 action = (
                     f"{_RUNNER_COMMAND} repair --run-id {run_id} "
                     f"--expected-revision {state['revision']} "
@@ -533,6 +543,46 @@ class PlanRunner:
             detail=detail,
         )
         return int(code)
+
+    def _known_repair_evidence(
+        self, state: Mapping[str, object]
+    ) -> tuple[str, str | None] | None:
+        try:
+            workspace = self._open_repair_workspace(state)
+        except (TypeError, ValueError):
+            return None
+        try:
+            self._repair_evidence(
+                state,
+                workspace,
+                repair_kind="volatile-codex-turn-refs",
+                attempt_id=None,
+            )
+            return ("volatile-codex-turn-refs", None)
+        except (TypeError, ValueError):
+            pass
+        attempts = state.get("attempts")
+        if not isinstance(attempts, list):
+            return None
+        for attempt in reversed(attempts):
+            attempt_id = (
+                attempt.get("attempt_id")
+                if isinstance(attempt, Mapping)
+                else None
+            )
+            if not isinstance(attempt_id, str) or not attempt_id:
+                continue
+            try:
+                self._repair_evidence(
+                    state,
+                    workspace,
+                    repair_kind="unsealed-provider-partial",
+                    attempt_id=attempt_id,
+                )
+                return ("unsealed-provider-partial", attempt_id)
+            except (TypeError, ValueError):
+                continue
+        return None
 
     @staticmethod
     def _is_retryable_failed_state(failure: object) -> bool:
@@ -771,6 +821,271 @@ class PlanRunner:
             self._emit_error("state_integrity_failed", error)
             return int(ExitCode.INTEGRITY)
 
+    def repair(
+        self,
+        run_id: str,
+        *,
+        expected_revision: int,
+        repair_kind: str,
+        strategy_note: str,
+        attempt_id: str | None,
+    ) -> int:
+        try:
+            note = self._repair_strategy_note(strategy_note)
+            if not isinstance(run_id, str) or _RUN_ID_CONTRACT.fullmatch(run_id) is None:
+                raise ValueError("run ID proof failed")
+            if type(expected_revision) is not int or expected_revision < 1:
+                raise ValueError("revision proof failed")
+            if repair_kind not in _REPAIR_KINDS:
+                raise ValueError("repair kind proof failed")
+            if repair_kind == "volatile-codex-turn-refs" and attempt_id is not None:
+                raise ValueError("attempt proof failed: volatile repair forbids attempt ID")
+            if repair_kind == "unsealed-provider-partial" and not attempt_id:
+                raise ValueError("attempt proof failed: partial repair requires attempt ID")
+            run_root = self.paths.state_home / run_id
+            if not run_root.exists():
+                raise FileNotFoundError(f"unknown run: {run_id}")
+            with RunLock(run_root / "run.lock"):
+                try:
+                    store = StateStore.open(run_root)
+                except ValueError as error:
+                    detail = str(error)
+                    if "input snapshot" in detail:
+                        raise ValueError(f"input proof failed: {detail}") from error
+                    raise
+                state = store.snapshot()
+                if state["revision"] != expected_revision:
+                    raise ValueError("revision proof failed: stale expected revision")
+                workspace = self._open_repair_workspace(state)
+                evidence = self._repair_evidence(
+                    state,
+                    workspace,
+                    repair_kind=repair_kind,
+                    attempt_id=attempt_id,
+                )
+                audit_payload = {
+                    "contract_version": 1,
+                    "run_id": state["run_id"],
+                    "expected_revision": expected_revision,
+                    "repair_kind": repair_kind,
+                    "strategy_note": note,
+                    **evidence["audit"],
+                }
+                audit = store.put_repair_artifact(
+                    expected_revision=expected_revision,
+                    payload=audit_payload,
+                )
+                next_state = store.snapshot()
+                if repair_kind == "unsealed-provider-partial":
+                    selected = self._require_attempt(next_state, str(attempt_id))
+                    for name in (
+                        "result",
+                        "result_artifact",
+                        "result_validated",
+                        "task_ledger",
+                        "open_obligation_ids",
+                        "summary",
+                        "verification_set_digest",
+                        "review_artifact",
+                    ):
+                        selected.pop(name, None)
+                    selected.update(
+                        {
+                            "completed": True,
+                            "outcome": "adopted_untrusted_partial",
+                            "provider_code": "historical_repair",
+                            "post_provider_worktree": evidence["observation"],
+                            "repair_audit_artifact": audit.as_dict(),
+                        }
+                    )
+                if audit.as_dict() not in next_state["artifact_refs"]:
+                    next_state["artifact_refs"].append(audit.as_dict())
+                next_state["status"] = "resumable"
+                next_state["failure"] = {
+                    "reason_code": "incident_repaired",
+                    "repair_kind": repair_kind,
+                    "operator_strategy_note": note,
+                    "repair_audit_artifact": audit.as_dict(),
+                    "next_strategy": "fresh_root_full_diff",
+                    "next_session_action": "fresh_session",
+                }
+                if repair_kind == "unsealed-provider-partial":
+                    next_state["failure"].update(
+                        {
+                            "partial_worktree": evidence["observation"],
+                            "partial_attempt_id": attempt_id,
+                            "partial_mode": evidence["mode"],
+                            "adopted_untrusted_partial": True,
+                        }
+                    )
+                store.commit(next_state)
+                self._emit_summary(store.snapshot())
+                return int(ExitCode.RESUMABLE)
+        except FileNotFoundError as error:
+            self._emit_error("unknown_run", error)
+            return int(ExitCode.INVALID)
+        except (OSError, RuntimeError, TypeError, ValueError) as error:
+            self._emit_error("repair_refused", error)
+            return int(ExitCode.INTEGRITY)
+
+    @staticmethod
+    def _repair_strategy_note(value: object) -> str:
+        if not isinstance(value, str):
+            raise ValueError("strategy note proof failed")
+        normalized = " ".join(value.split())
+        if not normalized or len(normalized) > _MAX_REPAIR_STRATEGY_NOTE:
+            raise ValueError("strategy note proof failed")
+        return normalized
+
+    @staticmethod
+    def _open_repair_workspace(state: Mapping[str, object]) -> GitWorkspace:
+        repository = state["repository"]
+        try:
+            return GitWorkspace.open(
+                Path(repository["source_repository"]),
+                Path(repository["worktree"]),
+                str(repository["branch"]),
+            )
+        except ValueError as error:
+            detail = str(error)
+            proof = "common directory" if "common directory" in detail else "branch"
+            raise ValueError(f"{proof} proof failed: {detail}") from error
+
+    def _repair_evidence(
+        self,
+        state: Mapping[str, object],
+        workspace: GitWorkspace,
+        *,
+        repair_kind: str,
+        attempt_id: str | None,
+    ) -> dict[str, object]:
+        failure = state.get("failure")
+        if (
+            state.get("status") != "failed"
+            or not isinstance(failure, Mapping)
+            or failure.get("reason_code") != "state_integrity_failed"
+        ):
+            raise ValueError("failed integrity state proof failed")
+        config = state["immutable_config"]
+        if str(workspace._common_dir) != config.get("git_common_dir"):
+            raise ValueError("common directory proof failed")
+        if (
+            _snapshot_input_digest(state)
+            != config.get("input_snapshot_digest")
+        ):
+            raise ValueError("input proof failed")
+        try:
+            observation = workspace.require_identity()
+        except ValueError as error:
+            raise ValueError(f"branch proof failed: {error}") from error
+        try:
+            _git_text(
+                workspace.worktree,
+                "merge-base",
+                "--is-ancestor",
+                state["repository"]["source_commit"],
+                observation.head,
+            )
+        except ValueError as error:
+            raise ValueError(f"ancestry proof failed: {error}") from error
+        current_refs = _all_ref_map(workspace.worktree, workspace.branch)
+        if len(current_refs) > 4096:
+            raise ValueError("ref proof failed: bounded ref map exceeded")
+        recorded_refs = config.get("protected_refs")
+        if not isinstance(recorded_refs, Mapping) or any(
+            not isinstance(name, str) or not isinstance(value, str)
+            for name, value in recorded_refs.items()
+        ):
+            raise ValueError("recorded ref proof failed")
+        recorded = dict(recorded_refs)
+        sealed_refs = _sealed_protected_refs(config)
+        if not isinstance(sealed_refs, Mapping):
+            raise ValueError("recorded ref proof failed")
+        stable_before = dict(sealed_refs)
+        stable_after = {
+            name: value
+            for name, value in current_refs.items()
+            if not is_volatile_ref(name)
+        }
+        if stable_before != stable_after:
+            raise ValueError("stable ref proof failed")
+
+        observation_payload = dataclasses.asdict(observation)
+        if repair_kind == "volatile-codex-turn-refs":
+            if "volatile_ref_policy_version" in config:
+                raise ValueError("historical volatile policy proof failed")
+            recorded_observation = failure.get("worktree_observation")
+            if recorded_observation != observation_payload:
+                raise ValueError("worktree observation proof failed")
+            delta = _ref_delta(recorded, current_refs)
+            if not delta or any(
+                not is_volatile_ref(str(item["ref"])) for item in delta
+            ):
+                raise ValueError("volatile ref delta proof failed")
+            return {
+                "audit": {
+                    "policy_version": VOLATILE_REF_POLICY_VERSION,
+                    "recorded_refs": recorded,
+                    "current_refs": current_refs,
+                    "ref_delta": delta,
+                    "worktree_observation": observation_payload,
+                },
+                "observation": observation_payload,
+            }
+
+        if observation.clean:
+            raise ValueError("dirty worktree proof failed")
+        try:
+            attempt = self._require_attempt(state, str(attempt_id))
+        except ValueError as error:
+            raise ValueError("attempt proof failed") from error
+        if attempt.get("completed") is not False:
+            raise ValueError("incomplete attempt proof failed")
+        for pid_name in ("controller_pid", "provider_pid", "helper_pid"):
+            pid = attempt.get(pid_name)
+            if type(pid) is not int or pid <= 0:
+                continue
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                continue
+            except PermissionError as error:
+                raise ValueError("live process proof failed") from error
+            raise ValueError("live process proof failed")
+        mode = attempt.get("mode")
+        if mode not in {"implementation", "final_review_fix"}:
+            raise ValueError("attempt mode proof failed")
+        current_index = state["current_plan_index"]
+        if (
+            mode == "implementation"
+            and (
+                current_index >= len(state["plans"])
+                or state["plans"][current_index].get("status") != "running"
+                or attempt.get("plan_index") != current_index
+            )
+        ) or (
+            mode == "final_review_fix"
+            and (
+                current_index != len(state["plans"])
+                or attempt.get("plan_index") != len(state["plans"]) - 1
+                or any(plan.get("status") != "implemented" for plan in state["plans"])
+            )
+        ):
+            raise ValueError("attempt mode proof failed")
+        return {
+            "audit": {
+                "attempt_id": attempt_id,
+                "mode": mode,
+                "plan_index": attempt.get("plan_index"),
+                "recorded_stable_refs": stable_before,
+                "current_stable_refs": stable_after,
+                "adopted_observation": observation_payload,
+                "discarded_semantic_claims": True,
+            },
+            "observation": observation_payload,
+            "mode": mode,
+        }
+
     def _require_runtime(self) -> RuntimeIdentity:
         if self._runtime_checker is None:
             return require_compatible_runtime()
@@ -908,6 +1223,16 @@ class PlanRunner:
             or attempt.get("post_provider_worktree") != sealed
             or (
                 attempt.get("outcome") != "controller_stopped"
+                and not (
+                    attempt.get("outcome") == "adopted_untrusted_partial"
+                    and attempt.get("provider_code") == "historical_repair"
+                    and failure.get("adopted_untrusted_partial") is True
+                    and isinstance(failure.get("repair_audit_artifact"), Mapping)
+                    and failure.get("repair_audit_artifact")
+                    == attempt.get("repair_audit_artifact")
+                    and failure.get("repair_audit_artifact")
+                    in state.get("artifact_refs", [])
+                )
                 and (
                     attempt.get("outcome"),
                     attempt.get("provider_code"),

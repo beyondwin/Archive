@@ -138,6 +138,38 @@ class StateStoreTest(unittest.TestCase):
         self.assertEqual(committed["revision"], 2)
         self.assertTrue(reopened.referenced_artifact(orphan.as_dict()).is_file())
 
+    def test_repair_artifact_requires_the_current_recorded_revision(self):
+        store = self.create_store()
+        before = store.snapshot()
+        artifacts_before = sorted(
+            path.relative_to(store.root).as_posix()
+            for path in (store.root / "artifacts").rglob("*")
+            if path.is_file()
+        )
+
+        with self.assertRaisesRegex(ValueError, "stale expected revision"):
+            store.put_repair_artifact(
+                expected_revision=before["revision"] + 1,
+                payload={"repair_kind": "volatile-codex-turn-refs"},
+            )
+
+        self.assertEqual(store.snapshot(), before)
+        self.assertEqual(
+            sorted(
+                path.relative_to(store.root).as_posix()
+                for path in (store.root / "artifacts").rglob("*")
+                if path.is_file()
+            ),
+            artifacts_before,
+        )
+
+        artifact = store.put_repair_artifact(
+            expected_revision=before["revision"],
+            payload={"repair_kind": "volatile-codex-turn-refs"},
+        )
+        self.assertEqual(artifact.kind, "repair_audit")
+        self.assertTrue(store.referenced_artifact(artifact.as_dict()).is_file())
+
     def test_fault_windows_reopen_previous_then_next_complete_revision(self):
         store = self.create_store()
         previous = store.snapshot()
