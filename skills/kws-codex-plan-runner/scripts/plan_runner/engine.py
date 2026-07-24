@@ -955,12 +955,50 @@ class PlanRunner:
                             }
                         )
                     next_state["revision"] = expected_revision + 1
-                    self._require_git_contract(
-                        next_state,
-                        workspace,
-                        store=store,
-                    )
-                    committed = store.commit(next_state)
+
+                    def require_pre_replace(
+                        candidate: Mapping[str, object],
+                    ) -> None:
+                        if StateStore.open(run_root).snapshot() != state:
+                            raise ValueError(
+                                "repair evidence changed at state CAS: state drift"
+                            )
+                        try:
+                            cas_evidence = self._repair_evidence(
+                                state,
+                                workspace,
+                                repair_kind=repair_kind,
+                                attempt_id=attempt_id,
+                            )
+                        except (TypeError, ValueError) as error:
+                            raise ValueError(
+                                "repair evidence changed at state CAS: "
+                                f"{error}"
+                            ) from error
+                        if cas_evidence != evidence:
+                            raise ValueError(
+                                "repair evidence changed at state CAS"
+                            )
+                        self._require_git_contract(
+                            candidate,
+                            workspace,
+                            store=store,
+                        )
+
+                    try:
+                        committed = store.commit(
+                            next_state,
+                            pre_replace=require_pre_replace,
+                        )
+                    except BaseException:
+                        reconciled = self._reconcile_durable_repair(
+                            run_root,
+                            intended_state=next_state,
+                            workspace=workspace,
+                        )
+                        if reconciled is None:
+                            raise
+                        committed = reconciled
                 except BaseException:
                     store.rollback_repair_artifact(
                         audit,
@@ -975,6 +1013,34 @@ class PlanRunner:
         except (OSError, RuntimeError, TypeError, ValueError) as error:
             self._emit_error("repair_refused", error)
             return int(ExitCode.INTEGRITY)
+
+    def _reconcile_durable_repair(
+        self,
+        run_root: Path,
+        *,
+        intended_state: Mapping[str, object],
+        workspace: GitWorkspace,
+    ) -> dict[str, object] | None:
+        try:
+            reopened = StateStore.open(run_root)
+            durable = reopened.snapshot()
+        except (OSError, TypeError, ValueError):
+            return None
+        durable_without_digest = dict(durable)
+        durable_without_digest.pop("state_digest", None)
+        intended_without_digest = dict(intended_state)
+        intended_without_digest.pop("state_digest", None)
+        if durable_without_digest != intended_without_digest:
+            return None
+        try:
+            self._require_git_contract(
+                durable,
+                workspace,
+                store=reopened,
+            )
+        except (OSError, TypeError, ValueError):
+            return None
+        return durable
 
     @staticmethod
     def _repair_strategy_note(value: object) -> str:
@@ -1293,11 +1359,16 @@ class PlanRunner:
         }
         if not isinstance(payload, Mapping) or set(payload) != expected_keys:
             raise ValueError("repair audit contract proof failed")
+        if (
+            payload.get("repair_kind") != "unsealed-provider-partial"
+            or failure.get("repair_kind") != "unsealed-provider-partial"
+            or payload.get("repair_kind") != failure.get("repair_kind")
+        ):
+            raise ValueError("repair audit kind proof failed")
         repaired_revision = failure.get("repaired_revision")
         if (
             payload.get("contract_version") != 1
             or payload.get("run_id") != state.get("run_id")
-            or payload.get("repair_kind") != "unsealed-provider-partial"
             or type(payload.get("expected_revision")) is not int
             or type(repaired_revision) is not int
             or payload["expected_revision"] + 1 != repaired_revision
