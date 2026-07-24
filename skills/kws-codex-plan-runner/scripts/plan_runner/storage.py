@@ -1025,6 +1025,29 @@ class StateStore:
                 raise ValueError("content-addressed artifact write mismatch")
         return ArtifactRef(kind=kind, digest=digest, relative_path=str(relative))
 
+    def put_repair_artifact(
+        self, *, expected_revision: int, payload: object
+    ) -> ArtifactRef:
+        current = self._state.get("revision")
+        if (
+            type(expected_revision) is not int
+            or expected_revision < 1
+            or current != expected_revision
+        ):
+            raise ValueError("stale expected revision")
+        _require_private_regular(self.state_path, "run state")
+        try:
+            disk_state = json.loads(self.state_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise ValueError("run state is unavailable or invalid") from error
+        disk_state = _validate_state(self.root, disk_state)
+        if (
+            disk_state["revision"] != expected_revision
+            or disk_state["state_digest"] != self._state["state_digest"]
+        ):
+            raise ValueError("stale expected revision")
+        return self.put_artifact("repair_audit", payload)
+
     def commit(self, next_state: Mapping[str, object]) -> dict[str, object]:
         _require_private_directory(self.root)
         _require_private_regular(self.state_path, "run state")

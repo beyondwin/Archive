@@ -432,6 +432,95 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(code, ExitCode.RESUMABLE)
         return self.state()
 
+    def rewrite_run_state(self, mutate):
+        state = self.state()
+        mutate(state)
+        state["state_digest"] = storage_module._state_digest(state)
+        run_root = self.paths.state_home / state["run_id"]
+        (run_root / "state.json").write_bytes(storage_module.canonical_json(state))
+        return StateStore.open(run_root).snapshot()
+
+    def git_surface(self, state):
+        worktree = Path(state["repository"]["worktree"])
+        return {
+            "head": git("rev-parse", "HEAD", cwd=worktree),
+            "refs": git(
+                "for-each-ref", "--format=%(refname)%09%(objectname)", cwd=worktree
+            ),
+            "index": git("ls-files", "--stage", cwd=worktree),
+            "worktree": self.worktree_observation(state),
+        }
+
+    def make_volatile_repair_state(self):
+        state = self.create_paused_run()
+        worktree = Path(state["repository"]["worktree"])
+        volatile_ref = "refs/codex/turn-diffs/captures/task-4"
+        git("update-ref", volatile_ref, self.starting_head, cwd=worktree)
+        recorded_refs = {
+            line.split("\t", 1)[0]: line.split("\t", 1)[1]
+            for line in git(
+                "for-each-ref", "--format=%(refname)%09%(objectname)", cwd=worktree
+            ).splitlines()
+            if line and not line.startswith(
+                f"refs/heads/{state['repository']['branch']}\t"
+            )
+        }
+        observation = self.worktree_observation(state)
+
+        def historical_failure(candidate):
+            config = candidate["immutable_config"]
+            config.pop("volatile_ref_policy_version", None)
+            config["protected_refs"] = recorded_refs
+            candidate["status"] = "failed"
+            candidate["failure"] = {
+                "reason_code": "state_integrity_failed",
+                "detail": "historical protected ref mutation",
+                "worktree_observation": observation,
+            }
+
+        state = self.rewrite_run_state(historical_failure)
+        changed = subprocess.run(
+            ["git", "hash-object", "-w", "--stdin"],
+            cwd=worktree,
+            input="volatile replacement\n",
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        git("update-ref", volatile_ref, changed, cwd=worktree)
+        return state, volatile_ref
+
+    def make_partial_repair_state(
+        self,
+        *,
+        attempt_id="attempt-partial",
+        mode="implementation",
+        completed=False,
+    ):
+        state = self.create_paused_run()
+        worktree = Path(state["repository"]["worktree"])
+        (worktree / "partial.txt").write_text("untrusted partial\n", encoding="utf-8")
+
+        def historical_failure(candidate):
+            candidate["status"] = "failed"
+            candidate["plans"][0]["status"] = "running"
+            candidate["attempts"].append(
+                {
+                    "attempt_id": attempt_id,
+                    "mode": mode,
+                    "plan_index": 0,
+                    "completed": completed,
+                    "result_artifact": {"untrusted": True},
+                    "result_validated": True,
+                }
+            )
+            candidate["failure"] = {
+                "reason_code": "state_integrity_failed",
+                "detail": "historical unsealed provider partial",
+            }
+
+        return self.rewrite_run_state(historical_failure)
+
     def matching_response(self):
         response = json.loads(self.output[-1])
         self.assertIn(
@@ -596,27 +685,6 @@ class EngineTest(unittest.TestCase):
                 ExitCode.FAILED,
                 "retry_failed",
             ),
-            (
-                "failed",
-                {
-                    "reason_code": "state_integrity_failed",
-                    "detail": "only volatile refs changed",
-                    "repair_kind": "volatile-codex-turn-refs",
-                },
-                ExitCode.INTEGRITY,
-                "repair",
-            ),
-            (
-                "failed",
-                {
-                    "reason_code": "state_integrity_failed",
-                    "detail": "provider partial needs evidence adoption",
-                    "repair_kind": "unsealed-provider-partial",
-                    "attempt_id": "attempt-7",
-                },
-                ExitCode.INTEGRITY,
-                "repair_partial",
-            ),
             ("ready_for_integration", None, ExitCode.READY, "inspect"),
         )
 
@@ -638,18 +706,6 @@ class EngineTest(unittest.TestCase):
                     "retry_failed": (
                         f"{runner_path} resume --run-id {run_id} "
                         "--retry-failed --strategy-note TEXT"
-                    ),
-                    "repair": (
-                        f"{runner_path} repair --run-id {run_id} "
-                        f"--expected-revision {state['revision']} "
-                        "--repair-kind volatile-codex-turn-refs "
-                        "--strategy-note TEXT"
-                    ),
-                    "repair_partial": (
-                        f"{runner_path} repair --run-id {run_id} "
-                        f"--expected-revision {state['revision']} "
-                        "--repair-kind unsealed-provider-partial "
-                        "--strategy-note TEXT --attempt-id attempt-7"
                     ),
                 }
                 self.output.clear()
@@ -697,7 +753,7 @@ class EngineTest(unittest.TestCase):
                     "repair_kind": "volatile-codex-turn-refs",
                 },
                 ExitCode.INTEGRITY,
-                "matching_run_exists",
+                "matching_run_unproven",
             ),
             (
                 {"reason_code": "state_integrity_failed", "detail": "unknown drift"},
@@ -3678,6 +3734,331 @@ class EngineTest(unittest.TestCase):
         self.assertFalse(self.paths.worktree_home.exists())
         blocked = json.loads(self.output[-1])
         self.assertEqual(blocked["reason_code"], "runtime_incompatible")
+
+    def test_volatile_and_partial_repairs_accept_only_the_recorded_evidence(self):
+        volatile, _refname = self.make_volatile_repair_state()
+        volatile_root = self.paths.state_home / volatile["run_id"]
+        adapter_count = len(self.adapter_values)
+        git_before = self.git_surface(volatile)
+        self.output.clear()
+        duplicate = self.runner().create_run(
+            specs=self.specs,
+            plans=self.plans[:1],
+            workspace=self.source,
+            stall_seconds=30,
+            sandbox="danger-full-access",
+            model=None,
+        )
+        self.assertEqual(duplicate, ExitCode.INTEGRITY)
+        self.assertEqual(
+            self.matching_response()["recommended_action"],
+            "./skills/kws-codex-plan-runner/scripts/runner repair "
+            f"--run-id {volatile['run_id']} "
+            f"--expected-revision {volatile['revision']} "
+            "--repair-kind volatile-codex-turn-refs --strategy-note TEXT",
+        )
+        self.output.clear()
+
+        code = self.runner().repair(
+            volatile["run_id"],
+            expected_revision=volatile["revision"],
+            repair_kind="volatile-codex-turn-refs",
+            strategy_note="continue in a fresh root after validating volatile refs",
+            attempt_id=None,
+        )
+
+        self.assertEqual(code, ExitCode.RESUMABLE, self.output)
+        repaired = StateStore.open(volatile_root).snapshot()
+        self.assertEqual(repaired["revision"], volatile["revision"] + 1)
+        self.assertEqual(repaired["status"], "resumable")
+        self.assertEqual(repaired["failure"]["next_session_action"], "fresh_session")
+        audit = repaired["failure"]["repair_audit_artifact"]
+        self.assertEqual(audit["kind"], "repair_audit")
+        payload = json.loads(
+            StateStore.open(volatile_root)
+            .referenced_artifact(audit)
+            .read_text(encoding="utf-8")
+        )
+        self.assertEqual(payload["repair_kind"], "volatile-codex-turn-refs")
+        self.assertTrue(payload["ref_delta"])
+        self.assertEqual(len(self.adapter_values), adapter_count)
+        self.assertEqual(self.git_surface(repaired), git_before)
+
+        state_bytes = (volatile_root / "state.json").read_bytes()
+        artifacts = list((volatile_root / "artifacts").rglob("*.json"))
+        retry = self.runner().repair(
+            volatile["run_id"],
+            expected_revision=volatile["revision"],
+            repair_kind="volatile-codex-turn-refs",
+            strategy_note="continue in a fresh root after validating volatile refs",
+            attempt_id=None,
+        )
+        self.assertEqual(retry, ExitCode.INTEGRITY)
+        self.assertIn(
+            "revision proof failed",
+            json.loads(self.output[-1])["detail"],
+        )
+        self.assertEqual((volatile_root / "state.json").read_bytes(), state_bytes)
+        self.assertEqual(list((volatile_root / "artifacts").rglob("*.json")), artifacts)
+
+    def test_partial_repair_adopts_dirty_observation_and_discards_claims(self):
+        state = self.make_partial_repair_state()
+        root = self.paths.state_home / state["run_id"]
+        before_git = self.git_surface(state)
+        adapter_count = len(self.adapter_values)
+        self.output.clear()
+        duplicate = self.runner().create_run(
+            specs=self.specs,
+            plans=self.plans[:1],
+            workspace=self.source,
+            stall_seconds=30,
+            sandbox="danger-full-access",
+            model=None,
+        )
+        self.assertEqual(duplicate, ExitCode.INTEGRITY)
+        self.assertEqual(
+            self.matching_response()["recommended_action"],
+            "./skills/kws-codex-plan-runner/scripts/runner repair "
+            f"--run-id {state['run_id']} "
+            f"--expected-revision {state['revision']} "
+            "--repair-kind unsealed-provider-partial --strategy-note TEXT "
+            "--attempt-id attempt-partial",
+        )
+        self.output.clear()
+
+        code = self.runner().repair(
+            state["run_id"],
+            expected_revision=state["revision"],
+            repair_kind="unsealed-provider-partial",
+            strategy_note="fresh root must inspect the complete untrusted diff",
+            attempt_id="attempt-partial",
+        )
+
+        self.assertEqual(code, ExitCode.RESUMABLE, self.output)
+        repaired = StateStore.open(root).snapshot()
+        attempt = repaired["attempts"][-1]
+        self.assertEqual(attempt["outcome"], "adopted_untrusted_partial")
+        self.assertTrue(attempt["completed"])
+        self.assertNotIn("result_artifact", attempt)
+        self.assertNotIn("result_validated", attempt)
+        self.assertEqual(
+            repaired["failure"]["partial_worktree"],
+            self.worktree_observation(repaired),
+        )
+        self.assertEqual(repaired["failure"]["next_session_action"], "fresh_session")
+        self.assertEqual(len(self.adapter_values), adapter_count)
+        self.assertEqual(self.git_surface(repaired), before_git)
+
+    def test_repair_rejects_stale_revision_without_state_or_artifact_write(self):
+        state = self.make_partial_repair_state()
+        root = self.paths.state_home / state["run_id"]
+        state_before = (root / "state.json").read_bytes()
+        artifacts_before = sorted(
+            path.relative_to(root).as_posix()
+            for path in (root / "artifacts").rglob("*")
+            if path.is_file()
+        )
+        git_before = self.git_surface(state)
+
+        code = self.runner().repair(
+            state["run_id"],
+            expected_revision=state["revision"] - 1,
+            repair_kind="unsealed-provider-partial",
+            strategy_note="fresh root inspects the complete diff",
+            attempt_id="attempt-partial",
+        )
+
+        self.assertEqual(code, ExitCode.INTEGRITY)
+        refusal = json.loads(self.output[-1])
+        self.assertEqual(refusal["reason_code"], "repair_refused")
+        self.assertIn("revision proof failed", refusal["detail"])
+        self.assertEqual((root / "state.json").read_bytes(), state_before)
+        self.assertEqual(
+            sorted(
+                path.relative_to(root).as_posix()
+                for path in (root / "artifacts").rglob("*")
+                if path.is_file()
+            ),
+            artifacts_before,
+        )
+        self.assertEqual(self.git_surface(state), git_before)
+
+    def test_volatile_repair_rejects_product_and_unknown_ref_delta(self):
+        for refname in ("refs/tags/product-test", "refs/codex/other/test"):
+            with self.subTest(refname=refname):
+                self.tearDown()
+                self.setUp()
+                state, _volatile = self.make_volatile_repair_state()
+                root = self.paths.state_home / state["run_id"]
+                git("update-ref", refname, self.starting_head, cwd=Path(state["repository"]["worktree"]))
+                state_before = (root / "state.json").read_bytes()
+                artifacts_before = list((root / "artifacts").rglob("*.json"))
+                git_before = self.git_surface(state)
+
+                code = self.runner().repair(
+                    state["run_id"],
+                    expected_revision=state["revision"],
+                    repair_kind="volatile-codex-turn-refs",
+                    strategy_note="validate only confirmed volatile refs",
+                    attempt_id=None,
+                )
+
+                self.assertEqual(code, ExitCode.INTEGRITY)
+                self.assertIn(
+                    "stable ref proof failed",
+                    json.loads(self.output[-1])["detail"],
+                )
+                self.assertEqual((root / "state.json").read_bytes(), state_before)
+                self.assertEqual(list((root / "artifacts").rglob("*.json")), artifacts_before)
+                self.assertEqual(self.git_surface(state), git_before)
+
+    def test_partial_repair_rejects_clean_wrong_completed_and_mismatched_attempts(self):
+        cases = ("clean", "unknown", "completed", "mode", "live")
+        for case in cases:
+            with self.subTest(case=case):
+                self.tearDown()
+                self.setUp()
+                state = self.make_partial_repair_state(
+                    completed=case == "completed",
+                    mode="finalization" if case == "mode" else "implementation",
+                )
+                if case == "live":
+                    state = self.rewrite_run_state(
+                        lambda candidate: candidate["attempts"][-1].__setitem__(
+                            "controller_pid", os.getpid()
+                        )
+                    )
+                worktree = Path(state["repository"]["worktree"])
+                if case == "clean":
+                    (worktree / "partial.txt").unlink()
+                root = self.paths.state_home / state["run_id"]
+                state_before = (root / "state.json").read_bytes()
+                git_before = self.git_surface(state)
+                code = self.runner().repair(
+                    state["run_id"],
+                    expected_revision=state["revision"],
+                    repair_kind="unsealed-provider-partial",
+                    strategy_note="fresh root inspects the complete diff",
+                    attempt_id="unknown" if case == "unknown" else "attempt-partial",
+                )
+                self.assertEqual(code, ExitCode.INTEGRITY)
+                detail = json.loads(self.output[-1])["detail"]
+                expected = {
+                    "clean": "dirty worktree proof failed",
+                    "unknown": "attempt proof failed",
+                    "completed": "incomplete attempt proof failed",
+                    "mode": "attempt mode proof failed",
+                    "live": "live process proof failed",
+                }[case]
+                self.assertIn(expected, detail)
+                self.assertEqual((root / "state.json").read_bytes(), state_before)
+                self.assertEqual(self.git_surface(state), git_before)
+
+    def test_partial_repair_rejects_branch_ancestry_and_input_drift_precisely(self):
+        cases = ("branch", "ancestry", "input")
+        for case in cases:
+            with self.subTest(case=case):
+                self.tearDown()
+                self.setUp()
+                state = self.make_partial_repair_state()
+                root = self.paths.state_home / state["run_id"]
+                worktree = Path(state["repository"]["worktree"])
+                if case == "branch":
+                    git("switch", "-c", "other-branch", cwd=worktree)
+                elif case == "ancestry":
+                    orphan = git(
+                        "commit-tree",
+                        "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+                        "-m",
+                        "orphan",
+                        cwd=worktree,
+                    )
+                    git("reset", "--mixed", orphan, cwd=worktree)
+                else:
+                    snapshot = Path(state["inputs"][0]["snapshot_path"])
+                    snapshot.write_text("drifted input\n", encoding="utf-8")
+                state_before = (root / "state.json").read_bytes()
+                artifacts_before = list((root / "artifacts").rglob("*.json"))
+                git_before = self.git_surface(state) if case != "branch" else None
+
+                code = self.runner().repair(
+                    state["run_id"],
+                    expected_revision=state["revision"],
+                    repair_kind="unsealed-provider-partial",
+                    strategy_note="fresh root inspects the complete diff",
+                    attempt_id="attempt-partial",
+                )
+
+                self.assertEqual(code, ExitCode.INTEGRITY)
+                detail = json.loads(self.output[-1])["detail"]
+                self.assertIn(f"{case} proof failed", detail)
+                self.assertEqual((root / "state.json").read_bytes(), state_before)
+                self.assertEqual(list((root / "artifacts").rglob("*.json")), artifacts_before)
+                if git_before is not None:
+                    self.assertEqual(self.git_surface(state), git_before)
+
+    def test_repair_cli_rejects_kind_specific_arguments_and_note_bounds(self):
+        cases = (
+            [
+                "repair",
+                "--run-id",
+                "missing-run",
+                "--expected-revision",
+                "1",
+                "--repair-kind",
+                "volatile-codex-turn-refs",
+                "--strategy-note",
+                "note",
+                "--attempt-id",
+                "unexpected",
+            ],
+            [
+                "repair",
+                "--run-id",
+                "missing-run",
+                "--expected-revision",
+                "1",
+                "--repair-kind",
+                "unsealed-provider-partial",
+                "--strategy-note",
+                "note",
+            ],
+            [
+                "repair",
+                "--run-id",
+                "missing-run",
+                "--expected-revision",
+                "1",
+                "--repair-kind",
+                "volatile-codex-turn-refs",
+                "--strategy-note",
+                " ",
+            ],
+            [
+                "repair",
+                "--run-id",
+                "missing-run",
+                "--expected-revision",
+                "1",
+                "--repair-kind",
+                "volatile-codex-turn-refs",
+                "--strategy-note",
+                "x" * 4097,
+            ],
+        )
+        for arguments in cases:
+            with self.subTest(arguments=arguments):
+                completed = subprocess.run(
+                    [sys.executable, str(SKILL_ROOT / "scripts" / "runner.py"), *arguments],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(completed.returncode, ExitCode.INVALID)
+                self.assertEqual(
+                    json.loads(completed.stdout)["reason_code"],
+                    "invalid_invocation",
+                )
 
     def test_cli_invalid_retry_combination_uses_contract_exit_code(self):
         completed = subprocess.run(

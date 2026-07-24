@@ -48,6 +48,16 @@ def _parser() -> argparse.ArgumentParser:
     resume.add_argument("--strategy-note")
     inspect = commands.add_parser("inspect")
     inspect.add_argument("--run-id", required=True)
+    repair = commands.add_parser("repair")
+    repair.add_argument("--run-id", required=True)
+    repair.add_argument("--expected-revision", required=True, type=int)
+    repair.add_argument(
+        "--repair-kind",
+        required=True,
+        choices=("volatile-codex-turn-refs", "unsealed-provider-partial"),
+    )
+    repair.add_argument("--strategy-note", required=True)
+    repair.add_argument("--attempt-id")
     return parser
 
 
@@ -108,6 +118,20 @@ def main(argv: list[str] | None = None) -> int:
         arguments = _parser().parse_args(raw_arguments)
     except InvocationError as error:
         return _invalid(str(error))
+    if arguments.command == "repair":
+        note = arguments.strategy_note.strip()
+        if not note or len(" ".join(note.split())) > 4096:
+            return _invalid("--strategy-note must be nonempty and at most 4096 characters")
+        if (
+            arguments.repair_kind == "volatile-codex-turn-refs"
+            and arguments.attempt_id is not None
+        ):
+            return _invalid("--attempt-id is not valid for volatile repair")
+        if (
+            arguments.repair_kind == "unsealed-provider-partial"
+            and not arguments.attempt_id
+        ):
+            return _invalid("--attempt-id is required for partial repair")
     try:
         runtime = require_compatible_runtime()
     except RuntimeUnavailable as error:
@@ -147,6 +171,14 @@ def main(argv: list[str] | None = None) -> int:
             retry_blocked=arguments.retry_blocked,
             retry_failed=arguments.retry_failed,
             strategy_note=arguments.strategy_note,
+        )
+    if arguments.command == "repair":
+        return runner.repair(
+            arguments.run_id,
+            expected_revision=arguments.expected_revision,
+            repair_kind=arguments.repair_kind,
+            strategy_note=arguments.strategy_note,
+            attempt_id=arguments.attempt_id,
         )
     return runner.inspect(arguments.run_id)
 
