@@ -732,6 +732,14 @@ class CodexProviderTest(unittest.TestCase):
         self.assertIn("tool_started:collaboration-1", outcome.activity_keys)
         self.assertIn("tool_finished:collaboration-1", outcome.activity_keys)
 
+    def test_fake_collaboration_event_uses_current_codex_wire_type(self):
+        fake_source = (SKILL_ROOT / "evals" / "fake_codex.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('"collab_tool_call" if collaboration', fake_source)
+        self.assertNotIn('"collaboration_tool_call" if collaboration', fake_source)
+
     def test_only_distinct_lifecycle_and_tool_events_refresh_activity(self):
         lease = RecordingLease()
         outcome = self.launch("repeated-log", lease=lease)

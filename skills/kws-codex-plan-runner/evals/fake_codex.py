@@ -459,7 +459,7 @@ def main() -> int:
         "subagent-completion-only",
     }
     item_id = "collaboration-1" if collaboration else "tool-1"
-    item_type = "collaboration_tool_call" if collaboration else "command"
+    item_type = "collab_tool_call" if collaboration else "command"
     _emit({"type": "item.started", "item": {"id": item_id, "type": item_type}})
 
     if scenario in {"repeated-log", "stall"}:

@@ -44,7 +44,11 @@ Run from this directory. Inputs may live anywhere, but paths should be absolute.
 ./scripts/runner resume --run-id RUN_ID
 ./scripts/runner resume --run-id RUN_ID --retry-blocked
 ./scripts/runner resume --run-id RUN_ID \
-  --retry-failed --strategy-note "new evidence and changed strategy"
+  --retry-blocked --sandbox danger-full-access \
+  --strategy-note "workspace-write capability is blocked; use authorized full access"
+./scripts/runner resume --run-id RUN_ID \
+  --retry-failed --strategy-note "new evidence and changed strategy" \
+  --model MODEL
 
 ./scripts/runner inspect --run-id RUN_ID
 
@@ -63,6 +67,8 @@ context; plans run sequentially in one isolated worktree/branch with no position
 between `spec[i]` and `plan[i]`. The provider receives all
 specs but only the current plan target. A completed prior plan is represented by
 Git, ledger, and receipts, not its provider conversation.
+Every prior plan handoff HEAD is required to remain an ancestor of the current
+candidate; resetting or dropping an earlier plan fails closed.
 
 `--model` is an explicit user selection, not an automatic escalation policy.
 The default sandbox is `workspace-write`. The stall lease defaults to 3600
@@ -76,6 +82,9 @@ ledger. Superpowers v6.2.0 also owns its plan-scoped workspace, task briefs,
 review packages, bounded fix loop, and cleanup through the public
 `subagent-driven-development` workflow. Compatibility is judged by those
 capabilities rather than exact version-string equality.
+The public helper surface used by that workflow is `sdd-workspace`,
+`task-brief`, and `review-package`; the runner depends on those interfaces, not
+their private storage layout.
 
 The runner owns immutable inputs, one isolated worktree, root launch/resume,
 checkpoint-before-result handling, bounded strategic external recovery, and
@@ -97,6 +106,9 @@ implementation may resume an uncommitted partial tree only when its HEAD,
 branch, porcelain digest, and bounded content digest exactly match the sealed
 checkpoint; arbitrary dirty state or later drift fails closed without launching
 another provider.
+Historical partial repair additionally requires proof that the recorded
+process group and descendant PIDs are quiescent. Missing or live process
+evidence fails closed.
 
 While the controller remains alive, provider loss, session loss, and stall
 outcomes enter a bounded automatic `recovering` loop; the user is not asked to
@@ -105,6 +117,12 @@ that needs another invocation. Use `--retry-blocked` only after an external
 blocker changes. `--retry-failed` requires a non-empty `--strategy-note`, so it
 cannot silently reset and repeat the same strategy.
 
+An authorized blocked or failed retry may select a different sandbox or model
+on the same logical run. The initial immutable profile is retained, the
+effective change is sealed as an `execution_profile_transition`, and the next
+provider launch always uses a fresh session. Unchanged, unauthorized, or
+tampered transitions fail before provider launch.
+
 The wrapper is a strategic recovery shell, not a second workflow engine. An
 unexpected external failure first preserves the latest checkpoint, then changes
 one relevant strategy dimension and autonomously resumes the same goal. It
@@ -112,7 +130,8 @@ blocks only for missing external authority or an unprovable load-bearing
 identity, ref, path, digest, state, or acceptance invariant. Filesystem
 capability failures use `sandbox_capability_blocked`; macOS TCC, Keychain, and
 other host permission failures use `host_permission_blocked` and are not
-auto-approved.
+auto-approved. Provider-runtime capability gaps use
+`provider_capability_blocked`.
 
 Equivalent execution intents are serialized before run allocation. A refusal
 uses `matching_run_exists`, names the existing branch/worktree, and recommends:
@@ -131,6 +150,11 @@ Only `refs/codex/turn-diffs/captures/` and
 unknown refs remain protected. Historical recovery is limited to the two exact
 repair kinds shown above; repair never launches a provider, mutates Git, resets,
 rebases, merges, pushes, or deploys.
+Legacy state without a volatile-ref policy remains readable only while the
+protected observation still matches. A recognized volatile-only drift is
+reported with its current observation and exact revision-guarded repair action;
+successful repair creates the audit evidence that authorizes the current
+versioned interpretation.
 
 Canonical recovery evidence is under `~/.codex/plan-runner`; isolated worktrees
 are under `~/.codex/worktrees/plan-runner`. Session memory is an optimization,

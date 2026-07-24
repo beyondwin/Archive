@@ -167,6 +167,28 @@ class SkillContractTests(unittest.TestCase):
             with self.subTest(required=required):
                 self.assertIn(required, readme)
 
+    def test_public_contract_documents_audited_recovery_and_v62_helpers(self) -> None:
+        documents = {
+            name: (SKILL_ROOT / name).read_text(encoding="utf-8")
+            for name in ("SKILL.md", "README.md", "CHANGELOG.md")
+        }
+        combined = " ".join("\n".join(documents.values()).split())
+
+        for required in (
+            "--retry-blocked --sandbox danger-full-access",
+            "--retry-failed --strategy-note",
+            "--model MODEL",
+            "execution_profile_transition",
+            "provider_capability_blocked",
+            "recorded process group and descendant PIDs are quiescent",
+            "prior plan handoff HEAD is an ancestor",
+            "sdd-workspace",
+            "task-brief",
+            "review-package",
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, combined)
+
 
 if __name__ == "__main__":
     unittest.main()

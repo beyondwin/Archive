@@ -36,7 +36,11 @@ directory:
 ./scripts/runner resume --run-id RUN_ID
 ./scripts/runner resume --run-id RUN_ID --retry-blocked
 ./scripts/runner resume --run-id RUN_ID \
-  --retry-failed --strategy-note "new evidence and changed strategy"
+  --retry-blocked --sandbox danger-full-access \
+  --strategy-note "workspace-write capability is blocked; use authorized full access"
+./scripts/runner resume --run-id RUN_ID \
+  --retry-failed --strategy-note "new evidence and changed strategy" \
+  --model MODEL
 ./scripts/runner repair --run-id RUN_ID --expected-revision N \
   --repair-kind volatile-codex-turn-refs --strategy-note "verified ref-only drift"
 ./scripts/runner repair --run-id RUN_ID --expected-revision N \
@@ -48,6 +52,8 @@ Repeat `--spec` and `--plan` in order. Do not merge, rewrite, or positionally pa
 specs and plans. Specs are immutable common context; plans
 execute sequentially in one worktree and branch. Every provider packet identifies
 the current plan only and excludes future-plan paths.
+Every prior plan handoff HEAD is an ancestor of the accepted current candidate;
+dropping an earlier plan is an integrity failure.
 
 Use `resume` after controller or terminal interruption. Use `--retry-blocked`
 only after the external blocker is corrected. A failed run requires new
@@ -57,6 +63,8 @@ information: `--retry-failed --strategy-note "changed strategy"`.
 durable `resumable` checkpoint. If an interrupted implementation left
 uncommitted work, that exact bounded Git worktree identity is sealed; resume
 accepts it only while unchanged and rejects any drift as an integrity failure.
+Historical partial repair also proves the recorded process group and descendant
+PIDs are quiescent before adopting that sealed tree.
 
 ## Superpowers and Codex Boundary
 
@@ -70,7 +78,8 @@ Superpowers v6.2.0 owns its plan-scoped workspace, task briefs, review packages,
 bounded fix loop, and workspace cleanup through the public
 `subagent-driven-development` capabilities. Compatibility is capability-based,
 not an exact version-string gate. The runner does not parse or migrate those
-internals.
+internals. Its public helper dependency is limited to `sdd-workspace`,
+`task-brief`, and `review-package`.
 
 ## Recovery and Completion
 
@@ -86,6 +95,13 @@ must restart the controller. Ordinary implementation defects are fixed autonomou
 true external authority, provider/runtime unavailability, irreconcilable product
 requirements, exhausted changed strategies, or integrity failure stop the run.
 
+An explicitly authorized blocked or failed retry can change sandbox or model
+without allocating another logical run. The immutable initial profile remains
+unchanged; the effective change is recorded as an
+`execution_profile_transition`, requires a bounded strategy note, and starts a
+fresh provider session. Provider-runtime capability gaps use
+`provider_capability_blocked`.
+
 Equivalent inputs are admitted once. A refusal reports `matching_run_exists`
 and the existing run's state-specific `inspect`, `resume`, retry, or repair
 action. Unexpected external errors preserve evidence, change one relevant
@@ -96,6 +112,9 @@ Only `refs/codex/turn-diffs/captures/` and
 `refs/codex/turn-diffs/checkpoints/` are volatile. Recovery never exempts
 unknown or product refs and exposes only the revision-guarded
 `volatile-codex-turn-refs` and `unsealed-provider-partial` repairs.
+Legacy state remains readable without reinterpretation while its ref
+observation matches. Recognized volatile-only drift must first be converted
+into the exact reported revision-guarded repair evidence.
 
 A plan becomes `implemented` after its current-plan ledger and Git result are
 sealed. That is not final completion. The run becomes

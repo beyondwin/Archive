@@ -1237,3 +1237,17 @@ The deliberate residual boundary remains narrow: the runner does not copy the
 operator's full Git configuration and does not infer alternate authors from
 ambient variables. A future alternate-author workflow requires a separate
 explicit contract.
+
+## Whole-review hardening addendum (2026-07-25)
+
+Follow-up runtime commit `1248ab56` closes two identity-adjacent gaps without
+expanding the runner's ownership. Controller Git inspection and provider
+subprocesses now remove Git routing variables such as `GIT_DIR`,
+`GIT_WORK_TREE`, `GIT_INDEX_FILE`, object/common-directory overrides,
+namespaces, replace refs, and quarantine paths before resolving repository
+state. A real two-repository regression proves that ambient routing cannot
+redirect controller or provider operations.
+
+The same focused suite now covers author-only and committer-only mismatches
+independently. Both remain integrity failures; successful configured-identity
+coverage does not stand in for either asymmetric case.
