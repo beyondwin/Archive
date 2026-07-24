@@ -31,6 +31,7 @@ MAX_PROCESS_LINES = 4_096
 MAX_COMMAND_BYTES = 65_536
 MAX_OUTPUT_BYTES = 1_048_576
 RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,126}\Z")
+CPE_RUN_ID = re.compile(r"cpe-[0-9a-f]{16}\Z")
 DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 INTEGRITY_BLOCKERS = frozenset(
     {
@@ -414,6 +415,11 @@ def scan_states(home: Path) -> tuple[list[dict[str, object]], list[str]]:
             continue
         for entry in entries:
             run_id = entry.name
+            # The Codex orchestrator root predates CPE and is shared with
+            # unrelated historical controllers. Only the namespace emitted by
+            # the legacy CPE runner is part of this cutover contract.
+            if provider == "codex" and CPE_RUN_ID.fullmatch(run_id) is None:
+                continue
             key = (provider, run_id)
             if (
                 RUN_ID.fullmatch(run_id) is None

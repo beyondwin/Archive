@@ -209,6 +209,7 @@ def _generic_result(packet: dict[str, object], action: str) -> dict[str, object]
         "open_obligation_ids": [],
         "failure_signature": None,
         "strategy_note": None,
+        "blocker": None,
     }
 
 
@@ -347,7 +348,11 @@ def main() -> int:
         return 0
 
     _emit({"type": "thread.started", "thread_id": session_id})
-    _emit({"type": "turn.started", "turn_id": "turn-1"})
+    _emit(
+        {"type": "turn.started"}
+        if scenario == "current-cli-lifecycle"
+        else {"type": "turn.started", "turn_id": "turn-1"}
+    )
     _emit({"type": "item.started", "item": {"id": "tool-1", "type": "command"}})
 
     if scenario in {"repeated-log", "stall"}:
@@ -388,7 +393,11 @@ def main() -> int:
     _emit(
         {
             "type": "turn.completed",
-            "turn_id": "turn-1",
+            **(
+                {}
+                if scenario == "current-cli-lifecycle"
+                else {"turn_id": "turn-1"}
+            ),
             "usage": {"input_tokens": 12, "output_tokens": 7},
         }
     )

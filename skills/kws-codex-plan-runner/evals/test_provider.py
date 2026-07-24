@@ -182,6 +182,24 @@ class CodexProviderTest(unittest.TestCase):
         )
         self.assertEqual(self.record()["prompt"], "execute this plan")
 
+    def test_current_codex_cli_lifecycle_without_turn_ids_is_accepted(self):
+        lease = RecordingLease()
+
+        outcome = self.launch("current-cli-lifecycle", lease=lease)
+
+        self.assertEqual(outcome.kind, "implemented")
+        self.assertEqual(outcome.session_id, SESSION_ID)
+        self.assertEqual(outcome.usage, {"input_tokens": 12, "output_tokens": 7})
+        self.assertEqual(
+            outcome.activity_keys,
+            (
+                "lifecycle_advanced:turn.started",
+                "tool_started:tool-1",
+                "tool_finished:tool-1",
+                "lifecycle_advanced:turn.completed",
+            ),
+        )
+
     def test_session_callback_fires_before_later_result_validation_fails(self):
         captured = []
         outcome = self.adapter("invalid-output").launch(

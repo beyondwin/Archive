@@ -103,6 +103,7 @@ class ScriptedAdapter:
                 "open_obligation_ids": [],
                 "failure_signature": None,
                 "strategy_note": None,
+                "blocker": None,
             }
             return ProviderOutcome(
                 "implemented", 0, session_id, result, None, {}, (), ""
@@ -138,6 +139,7 @@ class ScriptedAdapter:
                     "open_obligation_ids": [],
                     "failure_signature": None,
                     "strategy_note": "fix only bundled review findings",
+                    "blocker": None,
                 },
                 None,
                 {},
@@ -274,6 +276,87 @@ class EngineTest(unittest.TestCase):
             output=self.output.append,
             environment={"PATH": os.environ["PATH"]},
             event_hook=self.engine_event_hook,
+        )
+
+    def test_plan_result_validation_preserves_constraints_not_in_provider_schema(self):
+        valid = {
+            "status": "implemented",
+            "head_commit": "a" * 40,
+            "summary": "implemented",
+            "task_ledger": [
+                {
+                    "task_id": "T1",
+                    "status": "reported_done",
+                    "evidence_digests": ["b" * 64],
+                }
+            ],
+            "open_obligation_ids": [],
+            "failure_signature": None,
+            "strategy_note": None,
+            "blocker": None,
+        }
+        self.assertEqual(
+            "T1",
+            PlanRunner._validated_plan_result(valid)[0]["task_id"],
+        )
+        invalid_values = [
+            {**valid, "summary": ""},
+            {
+                **valid,
+                "task_ledger": [
+                    {
+                        **valid["task_ledger"][0],
+                        "evidence_digests": ["b" * 64, "b" * 64],
+                    }
+                ],
+            },
+            {**valid, "blocker": {"kind": "permission_required", "detail": "x"}},
+            {
+                **valid,
+                "status": "failed",
+                "failure_signature": "c" * 64,
+                "strategy_note": None,
+            },
+        ]
+        for value in invalid_values:
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    PlanRunner._validated_plan_result(value)
+
+    def test_final_review_rejects_empty_strings_not_enforced_by_provider_schema(self):
+        def empty_review(_adapter, _request, packet, session_id, digest):
+            return ProviderOutcome(
+                "reviewed",
+                0,
+                session_id,
+                {
+                    "status": "reviewed",
+                    "review_head": packet["candidate_head"],
+                    "verification_set_digest": digest,
+                    "open_findings": [],
+                    "open_obligation_ids": [],
+                    "no_applicable_verification_approved": False,
+                    "summary": "",
+                },
+                None,
+                {},
+                (),
+                "",
+            )
+
+        self.after_final_hook = empty_review
+        code = self.runner().create_run(
+            specs=self.specs,
+            plans=self.plans[:1],
+            workspace=self.source,
+            stall_seconds=30,
+            sandbox="workspace-write",
+            model=None,
+        )
+        self.assertEqual(
+            code,
+            ExitCode.INTEGRITY,
+            [self.output, self.state().get("failure")],
         )
 
     def state(self):
@@ -929,6 +1012,7 @@ class EngineTest(unittest.TestCase):
             "open_obligation_ids": [],
             "failure_signature": None,
             "strategy_note": None,
+            "blocker": None,
         }
         artifact = store.put_artifact("provider_result", result)
         pending = store.snapshot()
@@ -1424,25 +1508,20 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(handoff["verification_receipts"], receipt_refs)
         self.assertEqual(len(handoff["verification_receipts"]), 1)
 
-    def test_implemented_schema_uses_reported_done_only_task_ledger(self):
+    def test_provider_schema_defers_implemented_ledger_condition_to_engine(self):
         schema = json.loads(
             (
                 SKILL_ROOT / "templates" / "plan-result.schema.json"
             ).read_text(encoding="utf-8")
         )
-        implemented = next(
-            branch
-            for branch in schema["oneOf"]
-            if branch["properties"]["status"].get("const") == "implemented"
+        self.assertEqual(
+            schema["properties"]["task_ledger"]["$ref"],
+            "#/$defs/taskLedger",
         )
         self.assertEqual(
-            implemented["properties"]["task_ledger"]["$ref"],
-            "#/$defs/implementedTaskLedger",
+            schema["$defs"]["taskLedger"]["items"]["properties"]["status"],
+            {"enum": ["pending", "running", "reported_done"]},
         )
-        status = schema["$defs"]["implementedTaskLedger"]["items"][
-            "properties"
-        ]["status"]
-        self.assertEqual(status, {"const": "reported_done"})
 
     def test_implemented_result_rejects_any_task_not_reported_done(self):
         self.implementation_ledger = [

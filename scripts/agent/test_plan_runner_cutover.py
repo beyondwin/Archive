@@ -110,6 +110,33 @@ class CutoverFixture(unittest.TestCase):
 
 
 class AuditStateTests(CutoverFixture):
+    def test_shared_codex_orchestrator_history_outside_cpe_namespace_is_ignored(self):
+        historical = (
+            self.home
+            / ".codex"
+            / "orchestrator"
+            / "2026-07-06-historical-orchestrator-run"
+        )
+        write_json(
+            historical / "state.json",
+            {
+                "schema_version": 1,
+                "run_id": historical.name,
+                "current_phase": "completed",
+            },
+        )
+        (
+            self.home
+            / ".codex"
+            / "orchestrator"
+            / "2026-07-07-historical-run-without-state"
+        ).mkdir(parents=True)
+
+        report = self.audit()
+
+        self.assertEqual([], report["states"])
+        self.assertNotIn("legacy_state_integrity", report["blocker_codes"])
+
     def test_missing_and_empty_state_roots_are_allowed(self):
         report = self.audit()
         self.assertEqual([], report["states"])
@@ -139,7 +166,12 @@ class AuditStateTests(CutoverFixture):
             ),
         }.items():
             for index, status in enumerate(statuses):
-                self.state(provider, f"{provider}-{index}", status)
+                run_id = (
+                    f"cpe-{index:016x}"
+                    if provider == "codex"
+                    else f"{provider}-{index}"
+                )
+                self.state(provider, run_id, status)
         report = self.audit()
         classifications = {
             (item["provider"], item["status"]): item["classification"]
@@ -159,7 +191,8 @@ class AuditStateTests(CutoverFixture):
         self.assertIn("legacy_nonterminal_state", report["blocker_codes"])
 
     def test_malformed_unknown_and_unsafe_states_block(self):
-        malformed = self.state_path("codex", "malformed")
+        malformed_id = "cpe-ffffffffffffffff"
+        malformed = self.state_path("codex", malformed_id)
         malformed.parent.mkdir(parents=True)
         malformed.write_text("{", encoding="utf-8")
         symlinked = self.state_path("claude", "symlinked")
@@ -167,12 +200,12 @@ class AuditStateTests(CutoverFixture):
         symlinked.symlink_to(malformed)
         report = self.audit()
         by_id = {item["run_id"]: item for item in report["states"]}
-        self.assertEqual("malformed", by_id["malformed"]["classification"])
+        self.assertEqual("malformed", by_id[malformed_id]["classification"])
         self.assertEqual("unsafe", by_id["symlinked"]["classification"])
         self.assertIn("legacy_state_integrity", report["blocker_codes"])
 
     def test_audit_hashes_without_mutating_state_metadata(self):
-        path = self.state("codex", "stable", "running")
+        path = self.state("codex", "cpe-1111111111111111", "running")
         os.chmod(path, 0o600)
         before = path.stat()
         payload = path.read_bytes()
@@ -186,8 +219,10 @@ class AuditStateTests(CutoverFixture):
 
     def test_duplicate_and_unsafe_run_directories_block(self):
         root = self.home / ".codex" / "orchestrator"
-        (root / "unsafe.name").mkdir(parents=True)
-        (root / "unsafe.name" / "state.json").write_text("{}", encoding="utf-8")
+        (root / "cpe-2222222222222222").mkdir(parents=True)
+        (root / "cpe-2222222222222222" / "state.json").write_text(
+            "{}", encoding="utf-8"
+        )
         report = self.audit()
         self.assertIn("legacy_state_integrity", report["blocker_codes"])
 
@@ -232,12 +267,13 @@ class ProcessAuditTests(CutoverFixture):
         self.assertEqual([], self.audit(ps=snapshot)["processes"])
 
     def test_process_absence_does_not_clear_nonterminal_state(self):
-        self.state("codex", "no-process", "failed")
+        self.state("codex", "cpe-3333333333333333", "failed")
         self.assertIn("legacy_nonterminal_state", self.audit()["blocker_codes"])
 
     def test_process_presence_blocks_completed_state(self):
-        self.state("codex", "live-completed", "completed")
-        report = self.audit(ps="301 1 301 python scripts/cpe.py live-completed")
+        run_id = "cpe-4444444444444444"
+        self.state("codex", run_id, "completed")
+        report = self.audit(ps=f"301 1 301 python scripts/cpe.py {run_id}")
         self.assertIn("legacy_process_active", report["blocker_codes"])
 
     def test_exact_legacy_cwd_blocks_even_when_command_is_generic(self):
@@ -301,9 +337,10 @@ class AbandonmentTests(CutoverFixture):
         }
 
     def test_exact_digest_suppresses_only_matching_nonterminal_state(self):
-        path = self.state("codex", "abandoned-run", "failed")
+        run_id = "cpe-5555555555555555"
+        path = self.state("codex", run_id, "failed")
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
-        abandonment = self.abandonment([self.entry("codex", "abandoned-run", digest)])
+        abandonment = self.abandonment([self.entry("codex", run_id, digest)])
         report = self.audit(abandonment=abandonment)
         self.assertEqual([], report["blocker_codes"])
         self.assertEqual("abandoned", report["states"][0]["classification"])
@@ -311,17 +348,18 @@ class AbandonmentTests(CutoverFixture):
         self.assertEqual(digest, hashlib.sha256(payload).hexdigest())
 
     def test_rejects_duplicate_unknown_unsafe_vague_and_mismatched_entries(self):
-        path = self.state("codex", "run-one", "failed")
+        run_id = "cpe-6666666666666666"
+        path = self.state("codex", run_id, "failed")
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         invalid_sets = [
             [
-                self.entry("codex", "run-one", digest),
-                self.entry("codex", "run-one", digest),
+                self.entry("codex", run_id, digest),
+                self.entry("codex", run_id, digest),
             ],
-            [self.entry("other", "run-one", digest)],
+            [self.entry("other", run_id, digest)],
             [self.entry("codex", "../run-one", digest)],
-            [{**self.entry("codex", "run-one", digest), "reason": "skip"}],
-            [self.entry("codex", "run-one", "0" * 64)],
+            [{**self.entry("codex", run_id, digest), "reason": "skip"}],
+            [self.entry("codex", run_id, "0" * 64)],
         ]
         for index, entries in enumerate(invalid_sets):
             with self.subTest(index=index):

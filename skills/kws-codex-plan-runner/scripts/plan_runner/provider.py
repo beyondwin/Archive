@@ -496,9 +496,15 @@ class CodexAdapter:
                 session_id = candidate
             elif event_type in {"turn.started", "turn.completed"}:
                 turn_id = event.get("turn_id")
-                if not isinstance(turn_id, str) or not turn_id:
+                if turn_id is not None and (
+                    not isinstance(turn_id, str) or not turn_id
+                ):
                     return True, session_id, provider_code
-                key = f"{event_type}:{turn_id}"
+                key = (
+                    f"{event_type}:{turn_id}"
+                    if isinstance(turn_id, str)
+                    else event_type
+                )
                 if lease.observe_provider_event(
                     "lifecycle_advanced", key, time.monotonic()
                 ):

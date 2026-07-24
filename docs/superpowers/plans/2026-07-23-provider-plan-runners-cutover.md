@@ -243,9 +243,12 @@ git commit -m "test: add live provider plan runner canaries"
 
 Use disposable homes and synthetic process snapshots to cover:
 
-- CPE `~/.codex/orchestrator/<run-id>/state.json`: only `completed` is
-  terminal; `pending`, `running`, `checkpointed`, `blocked`, `failed`,
-  malformed, unreadable, or unknown states block;
+- CPE
+  `~/.codex/orchestrator/cpe-<16-lowercase-hex>/state.json`: only
+  `completed` is terminal; `pending`, `running`, `checkpointed`, `blocked`,
+  `failed`, malformed, unreadable, or unknown states block. The parent root is
+  shared with pre-CPE orchestrators, so non-CPE namespaces are preserved but
+  excluded from this executor cutover gate;
 - CLPE `~/.claude/clpe/<run-id>/run.json`: only `completed` is terminal;
   `running`, `resumable`, `blocked`, `failed`, `resumable=true`, malformed,
   unreadable, or unknown states block;

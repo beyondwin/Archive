@@ -118,6 +118,7 @@ def generic_result(packet: dict[str, object], action: str) -> dict[str, object]:
         "open_obligation_ids": [],
         "failure_signature": None,
         "strategy_note": None,
+        "blocker": None,
     }
 
 
