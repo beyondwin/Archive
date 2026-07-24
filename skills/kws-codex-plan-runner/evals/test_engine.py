@@ -1129,6 +1129,67 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(state["failure"]["next_session_action"], "none")
         self.assertNotIn("approval", json.dumps(state).lower())
 
+    def test_retry_blocked_permission_failure_forces_fresh_session(self):
+        launches = 0
+
+        def permission_blocked_twice(
+            _adapter, request, packet, session_id
+        ):
+            nonlocal launches
+            if packet["mode"] != "implementation":
+                return None
+            launches += 1
+            if launches == 1:
+                (request.worktree / "permission-partial.txt").write_text(
+                    "durable partial implementation\n",
+                    encoding="utf-8",
+                )
+            return ProviderOutcome(
+                "blocked",
+                1,
+                session_id,
+                None,
+                "host_permission_blocked",
+                {},
+                (),
+                "",
+            )
+
+        self.outcome_hook = permission_blocked_twice
+        runner = self.runner()
+        initial_code = runner.create_run(
+            specs=self.specs,
+            plans=self.plans[:1],
+            workspace=self.source,
+            stall_seconds=30,
+            sandbox="danger-full-access",
+            model=None,
+        )
+        initial_state = self.state()
+        initial_checkpoint = initial_state["failure"]["partial_worktree"]
+        captured_session = initial_state["sessions"][-1]["session_id"]
+
+        retry_code = self.runner().resume(
+            initial_state["run_id"],
+            retry_blocked=True,
+            retry_failed=False,
+            strategy_note=None,
+        )
+
+        self.assertEqual(initial_code, ExitCode.BLOCKED)
+        self.assertEqual(retry_code, ExitCode.BLOCKED)
+        self.assertEqual(launches, 2)
+        self.assertIsNone(self.requests[-1].session_id)
+        retried_state = self.state()
+        self.assertEqual(
+            retried_state["failure"]["partial_worktree"],
+            initial_checkpoint,
+        )
+        self.assertNotEqual(
+            retried_state["sessions"][-1]["session_id"],
+            captured_session,
+        )
+
     def test_top_level_auth_error_blocks_without_retry_or_worktree_mutation(self):
         codex_home = self.root / "auth-error-codex-home"
         make_codex_home(codex_home)

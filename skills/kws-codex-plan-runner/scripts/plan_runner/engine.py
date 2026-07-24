@@ -99,6 +99,9 @@ _ROOT_AUTHORITY_BLOCKERS = _AUTHORITY_BLOCKERS - {"provider_unavailable"}
 _ROOT_TRANSPORT_FAILURES = frozenset(
     {"controller_transport_failed", "provider_unavailable"}
 )
+_PERMISSION_BLOCKERS = frozenset(
+    {"host_permission_blocked", "sandbox_capability_blocked"}
+)
 _CHECKPOINT_FAILURE_FIELDS = (
     "partial_worktree",
     "partial_attempt_id",
@@ -498,7 +501,16 @@ class PlanRunner:
             elif retry_failed:
                 raise ValueError("--retry-failed is valid only for a failed run")
             elif status == "blocked":
+                failure = state.get("failure")
                 state["status"] = "resumable"
+                if (
+                    isinstance(failure, Mapping)
+                    and failure.get("reason_code") in _PERMISSION_BLOCKERS
+                ):
+                    state["failure"] = {
+                        **failure,
+                        "next_session_action": "fresh_session",
+                    }
                 store.commit(state)
             elif retry_blocked:
                 raise ValueError("--retry-blocked is valid only for a blocked run")

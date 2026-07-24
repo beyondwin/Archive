@@ -21,6 +21,7 @@ from .process import (
     _bounded_direct_cleanup,
     _finish_group,
     OpenedExecutable,
+    ProcessResult,
     open_executable,
     run_exact,
 )
@@ -88,6 +89,28 @@ _PERMISSION_ERRNOS = frozenset({"EACCES", "EPERM"})
 _CLI_PROBE_DEADLINE_SECONDS = 5
 _CLI_PROBE_OUTPUT_LIMIT = 65_536
 _CLI_CAPABILITY_CACHE: set[tuple[object, ...]] = set()
+_CLI_PARSE_REJECTION_MARKERS = (
+    "invalid value",
+    "unexpected argument",
+    "unknown argument",
+    "unknown flag",
+    "unknown option",
+    "unrecognized argument",
+    "unrecognized option",
+    "unsupported flag",
+    "unsupported option",
+)
+_REQUIRED_POLICY_ARGUMENTS = frozenset(
+    {
+        "--add-dir",
+        "--ignore-rules",
+        "--ignore-user-config",
+        "--sandbox",
+        "--strict-config",
+        "-c",
+        'approval_policy="never"',
+    }
+)
 _RECOGNIZED_ERROR_CODES = (
     _AUTH_CODES
     | _USAGE_CODES
@@ -280,26 +303,9 @@ class CodexAdapter:
         if preflight_code is not None:
             return _blocked_preflight(preflight_code)
         env["CODEX_HOME"] = str(codex_home)
-        try:
-            with open_executable(
-                self.executable, cwd=request.worktree, env=env
-            ) as opened:
-                if not _required_cli_capabilities_available(
-                    opened,
-                    cwd=request.worktree,
-                    env=env,
-                    probe_argv=[
-                        *self._exec_prefix(),
-                        "--sandbox",
-                        request.sandbox,
-                        "--add-dir",
-                        str(request.git_common_dir),
-                        "--help",
-                    ],
-                ):
-                    return _blocked_preflight("sandbox_capability_blocked")
-        except (OSError, RuntimeError, ValueError):
-            return _blocked_preflight("sandbox_capability_blocked")
+        cli_preflight = self._cli_preflight(request, env)
+        if cli_preflight is not None:
+            return cli_preflight
         isolated_home = request.output_path.parent / ".codex-child-home"
         isolated_config = isolated_home / ".config"
         _ensure_private_directory(isolated_home)
@@ -322,7 +328,7 @@ class CodexAdapter:
             with open_executable(
                 self.executable, cwd=request.worktree, env=env
             ) as opened:
-                if not _required_cli_capabilities_available(
+                cli_failure = _required_cli_capability_failure(
                     opened,
                     cwd=request.worktree,
                     env=env,
@@ -334,8 +340,9 @@ class CodexAdapter:
                         str(request.git_common_dir),
                         "--help",
                     ],
-                ):
-                    return _blocked_preflight("sandbox_capability_blocked")
+                )
+                if cli_failure is not None:
+                    return _cli_preflight_failure(cli_failure)
                 opened.revalidate()
                 process = subprocess.Popen(
                     argv,
@@ -575,6 +582,36 @@ class CodexAdapter:
             tuple(activity_keys),
             stderr,
         )
+
+    def _cli_preflight(
+        self,
+        request: ProviderRequest,
+        env: Mapping[str, str],
+    ) -> ProviderOutcome | None:
+        try:
+            opened = open_executable(
+                self.executable, cwd=request.worktree, env=env
+            )
+        except (OSError, ValueError):
+            return _transport_preflight("provider_unavailable")
+        try:
+            with opened:
+                failure = _required_cli_capability_failure(
+                    opened,
+                    cwd=request.worktree,
+                    env=env,
+                    probe_argv=[
+                        *self._exec_prefix(),
+                        "--sandbox",
+                        request.sandbox,
+                        "--add-dir",
+                        str(request.git_common_dir),
+                        "--help",
+                    ],
+                )
+        except (OSError, RuntimeError, ValueError):
+            return _transport_preflight("controller_transport_failed")
+        return None if failure is None else _cli_preflight_failure(failure)
 
     def _validate_launch_paths(self, request: ProviderRequest) -> None:
         if not request.worktree.is_dir() or not request.git_common_dir.is_dir():
@@ -924,13 +961,13 @@ def _structured_permission_code(error: object) -> str | None:
     return None
 
 
-def _required_cli_capabilities_available(
+def _required_cli_capability_failure(
     opened: OpenedExecutable,
     *,
     cwd: Path,
     env: Mapping[str, str],
     probe_argv: Sequence[str],
-) -> bool:
+) -> str | None:
     version = run_exact(
         [probe_argv[0], "--version"],
         cwd=cwd,
@@ -940,7 +977,7 @@ def _required_cli_capabilities_available(
         opened_executable=opened,
     )
     if version.kind != "success" or not version.stdout_tail.strip():
-        return False
+        return "provider_unavailable"
     identity = opened.identity()
     cache_key = (
         str(identity["path"]),
@@ -951,7 +988,7 @@ def _required_cli_capabilities_available(
         tuple(probe_argv[1:]),
     )
     if cache_key in _CLI_CAPABILITY_CACHE:
-        return True
+        return None
     probe = run_exact(
         probe_argv,
         cwd=cwd,
@@ -961,10 +998,57 @@ def _required_cli_capabilities_available(
         opened_executable=opened,
     )
     if probe.kind != "success":
-        return False
+        return (
+            "sandbox_capability_blocked"
+            if _is_required_policy_parse_rejection(probe, probe_argv)
+            else "controller_transport_failed"
+        )
     opened.revalidate()
     _CLI_CAPABILITY_CACHE.add(cache_key)
-    return True
+    return None
+
+
+def _is_required_policy_parse_rejection(
+    result: ProcessResult,
+    probe_argv: Sequence[str],
+) -> bool:
+    message = (
+        result.stderr_tail + b"\n" + result.stdout_tail
+    ).decode("utf-8", "replace").lower()
+    diagnostic = message.split("\nusage:", 1)[0]
+    if not any(marker in diagnostic for marker in _CLI_PARSE_REJECTION_MARKERS):
+        return False
+    for argument in probe_argv:
+        if argument not in _REQUIRED_POLICY_ARGUMENTS:
+            continue
+        if argument == "-c":
+            if re.search(r"(?<![a-z0-9])-c(?![a-z0-9])", diagnostic):
+                return True
+        elif argument.startswith("approval_policy="):
+            if "approval_policy" in diagnostic:
+                return True
+        elif argument.lower() in diagnostic:
+            return True
+    return False
+
+
+def _cli_preflight_failure(provider_code: str) -> ProviderOutcome:
+    if provider_code == "sandbox_capability_blocked":
+        return _blocked_preflight(provider_code)
+    return _transport_preflight(provider_code)
+
+
+def _transport_preflight(provider_code: str) -> ProviderOutcome:
+    return ProviderOutcome(
+        kind="transport_failed",
+        return_code=None,
+        session_id=None,
+        result=None,
+        provider_code=provider_code,
+        usage={},
+        activity_keys=(),
+        stderr_tail="",
+    )
 
 
 def _blocked_preflight(provider_code: str) -> ProviderOutcome:
