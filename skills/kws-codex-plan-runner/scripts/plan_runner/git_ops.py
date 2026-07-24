@@ -102,6 +102,24 @@ _GIT_ENV_INJECTION_KEYS = frozenset(
         "GIT_CONFIG_SYSTEM",
     )
 )
+_GIT_REPOSITORY_ROUTING_KEYS = frozenset(
+    (
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_CEILING_DIRECTORIES",
+        "GIT_COMMON_DIR",
+        "GIT_DIR",
+        "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+        "GIT_INDEX_FILE",
+        "GIT_INTERNAL_SUPER_PREFIX",
+        "GIT_NAMESPACE",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_PREFIX",
+        "GIT_QUARANTINE_PATH",
+        "GIT_REPLACE_REF_BASE",
+        "GIT_SHALLOW_FILE",
+        "GIT_WORK_TREE",
+    )
+)
 
 
 @dataclass(frozen=True)
@@ -144,18 +162,42 @@ class WorktreeObservation:
         require_digest(self.tree_digest)
 
 
+def _trusted_git_env(source: Mapping[str, str] | None = None) -> dict[str, str]:
+    clean = dict(os.environ if source is None else source)
+    for key in (
+        *_GIT_ENV_INJECTION_KEYS,
+        *_GIT_REPOSITORY_ROUTING_KEYS,
+        "GIT_CONFIG_COUNT",
+        "GIT_CONFIG_PARAMETERS",
+    ):
+        clean.pop(key, None)
+    for key in tuple(clean):
+        if key.startswith("GIT_CONFIG_KEY_") or key.startswith("GIT_CONFIG_VALUE_"):
+            clean.pop(key, None)
+    clean["GIT_CONFIG_GLOBAL"] = os.devnull
+    clean["GIT_CONFIG_NOSYSTEM"] = "1"
+    return clean
+
+
 def _git(cwd: Path, arguments: Sequence[str], *, env: Mapping[str, str] | None = None) -> subprocess.CompletedProcess[bytes]:
     try:
         return subprocess.run(
             ["git", *arguments],
             cwd=str(cwd),
-            env=None if env is None else dict(env),
+            env=_trusted_git_env(env),
             check=False,
             capture_output=True,
             text=False,
         )
     except FileNotFoundError as error:
         raise ValueError(f"Git common directory is unavailable: {cwd}") from error
+
+
+def git_text(cwd: Path, *arguments: str) -> str:
+    result = _git(cwd, arguments)
+    return _output(result, " ".join(arguments)).decode(
+        "utf-8", "surrogateescape"
+    ).strip()
 
 
 def _output(result: subprocess.CompletedProcess[bytes], action: str) -> bytes:
@@ -402,6 +444,16 @@ class GitWorkspace:
             raise ValueError("protected ref mutation detected")
         return observation
 
+    def require_ancestor(self, ancestor: str, candidate: str) -> None:
+        ancestor = require_full_sha(ancestor)
+        candidate = require_full_sha(candidate)
+        result = _git(
+            self.worktree,
+            ("merge-base", "--is-ancestor", ancestor, candidate),
+        )
+        if result.returncode != 0:
+            raise ValueError("plan handoff commit is not an ancestor of candidate HEAD")
+
 
 def validate_commit_identities(
     worktree: Path,
@@ -455,7 +507,7 @@ def sanitized_child_env(
     allowed_prefixes = tuple(provider_auth_prefixes)
     clean: dict[str, str] = {}
     for key, value in source_env.items():
-        if key in _GIT_ENV_INJECTION_KEYS or key in {
+        if key in _GIT_ENV_INJECTION_KEYS or key in _GIT_REPOSITORY_ROUTING_KEYS or key in {
             "SSH_AUTH_SOCK",
             "SSH_ASKPASS",
             "GIT_ASKPASS",
