@@ -15,9 +15,11 @@ from pathlib import Path
 
 from .contracts import (
     FORMAT_VERSION,
+    NEXT_STRATEGIES,
     PLAN_STATUSES,
     RUN_STATUSES,
     canonical_json,
+    require_digest,
     require_full_sha,
     sha256_json,
 )
@@ -219,6 +221,28 @@ def _state_digest(state: Mapping[str, object]) -> str:
     return sha256_json(without_digest)
 
 
+def _validate_worktree_observation(value: object) -> dict[str, object]:
+    expected = {
+        "head",
+        "branch",
+        "porcelain_digest",
+        "tree_digest",
+        "clean",
+    }
+    if not isinstance(value, dict) or set(value) != expected:
+        raise ValueError("provider worktree observation is invalid")
+    require_full_sha(value["head"])
+    require_digest(value["porcelain_digest"])
+    require_digest(value["tree_digest"])
+    if (
+        not isinstance(value["branch"], str)
+        or not value["branch"]
+        or not isinstance(value["clean"], bool)
+    ):
+        raise ValueError("provider worktree observation is invalid")
+    return value
+
+
 def _safe_artifact_reference(
     root: Path, reference: object, *, require_file: bool
 ) -> tuple[ArtifactRef, Path]:
@@ -415,6 +439,36 @@ def _validate_state(
     for name in ("task_ledger", "sessions", "attempts", "artifact_refs"):
         if not isinstance(state[name], list):
             raise ValueError(f"{name} must be a list")
+    for attempt in state["attempts"]:
+        if not isinstance(attempt, dict):
+            raise ValueError("provider attempt is invalid")
+        checkpoint = attempt.get("post_provider_worktree")
+        if checkpoint is not None:
+            _validate_worktree_observation(checkpoint)
+        for name in ("next_strategy", "previous_failed_strategy"):
+            strategy = attempt.get(name)
+            if strategy is not None and strategy not in NEXT_STRATEGIES:
+                raise ValueError("provider attempt strategy is invalid")
+    failure = state["failure"]
+    if failure is not None and not isinstance(failure, dict):
+        raise ValueError("failure state is invalid")
+    if isinstance(failure, dict):
+        partial = failure.get("partial_worktree")
+        if partial is not None:
+            _validate_worktree_observation(partial)
+            if partial["clean"] is not False:
+                raise ValueError("partial worktree observation must be dirty")
+            if (
+                not isinstance(failure.get("partial_attempt_id"), str)
+                or not failure["partial_attempt_id"]
+                or failure.get("partial_mode")
+                not in {"implementation", "final_review_fix"}
+            ):
+                raise ValueError("partial worktree checkpoint is invalid")
+        for name in ("next_strategy", "previous_failed_strategy"):
+            strategy = failure.get(name)
+            if strategy is not None and strategy not in NEXT_STRATEGIES:
+                raise ValueError("failure strategy is invalid")
     for reference in state["artifact_refs"]:
         _safe_artifact_reference(root, reference, require_file=True)
     return state

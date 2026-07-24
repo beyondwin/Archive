@@ -17,7 +17,7 @@ SKILL_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SKILL_ROOT / "scripts"))
 
 from plan_runner.contracts import ExitCode  # noqa: E402
-from plan_runner.git_ops import GitIdentity  # noqa: E402
+from plan_runner.git_ops import GitIdentity, GitWorkspace  # noqa: E402
 from plan_runner.helper import helper_client  # noqa: E402
 from plan_runner.provider import ProviderOutcome  # noqa: E402
 from plan_runner.recovery import strategy_note_digest  # noqa: E402
@@ -366,6 +366,398 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(len(run_roots), 1)
         return json.loads((run_roots[0] / "state.json").read_text(encoding="utf-8"))
 
+    def worktree_observation(self, state=None):
+        state = self.state() if state is None else state
+        repository = state["repository"]
+        workspace = GitWorkspace.open(
+            Path(repository["source_repository"]),
+            Path(repository["worktree"]),
+            repository["branch"],
+        )
+        return dataclasses.asdict(workspace.observe())
+
+    def test_dirty_invalid_result_is_checkpointed_before_failure(self):
+        implementation_launches = 0
+
+        def invalid_then_block(_adapter, request, packet, session_id):
+            nonlocal implementation_launches
+            if packet["mode"] != "implementation":
+                return None
+            implementation_launches += 1
+            if implementation_launches == 1:
+                (request.worktree / "partial.txt").write_text(
+                    "partial implementation\n", encoding="utf-8"
+                )
+                return ProviderOutcome(
+                    "implemented",
+                    0,
+                    session_id,
+                    {"status": "implemented"},
+                    None,
+                    {},
+                    (),
+                    "",
+                )
+            return ProviderOutcome(
+                "blocked",
+                1,
+                session_id,
+                {
+                    "status": "blocked",
+                    "head_commit": git("rev-parse", "HEAD", cwd=request.worktree),
+                    "summary": "external authority required",
+                    "task_ledger": [],
+                    "open_obligation_ids": [],
+                    "failure_signature": None,
+                    "strategy_note": None,
+                    "blocker": {
+                        "kind": "external_authority_required",
+                        "detail": "host permission is required",
+                    },
+                },
+                "external_authority_required",
+                {},
+                (),
+                "",
+            )
+
+        self.outcome_hook = invalid_then_block
+        code = self.runner().create_run(
+            specs=self.specs,
+            plans=self.plans[:1],
+            workspace=self.source,
+            stall_seconds=30,
+            sandbox="workspace-write",
+            model=None,
+        )
+
+        self.assertEqual(code, ExitCode.BLOCKED)
+        state = self.state()
+        first = next(
+            item
+            for item in state["attempts"]
+            if item["mode"] == "implementation"
+        )
+        self.assertEqual(
+            first["post_provider_worktree"],
+            self.worktree_observation(state),
+        )
+        self.assertFalse(first["post_provider_worktree"]["clean"])
+        self.assertEqual(first["provider_code"], "provider_result_invalid")
+        self.assertEqual(first["next_strategy"], "fresh_root_full_diff")
+        implementation_requests = [
+            request
+            for request, packet in zip(self.requests, self.packets, strict=True)
+            if packet["mode"] == "implementation"
+        ]
+        self.assertEqual(len(implementation_requests), 2)
+        self.assertIsNone(implementation_requests[1].session_id)
+
+    def test_dirty_malformed_stream_is_checkpointed_before_failure(self):
+        self._assert_dirty_stream_checkpoint(
+            "provider_stream_malformed",
+            "failed",
+        )
+
+    def test_dirty_oversized_stream_is_checkpointed_before_failure(self):
+        self._assert_dirty_stream_checkpoint(
+            "provider_stream_oversized",
+            "failed",
+        )
+
+    def _assert_dirty_stream_checkpoint(self, provider_code, outcome_kind):
+        def dirty_failure_then_block(_adapter, request, packet, session_id):
+            if packet["mode"] != "implementation":
+                return None
+            prior = [
+                item
+                for item in self.state()["attempts"]
+                if item["mode"] == "implementation"
+            ]
+            if len(prior) == 1:
+                (request.worktree / "partial.txt").write_text(
+                    "partial implementation\n", encoding="utf-8"
+                )
+                return ProviderOutcome(
+                    outcome_kind,
+                    1,
+                    session_id,
+                    None,
+                    provider_code,
+                    {},
+                    (),
+                    "",
+                )
+            return ProviderOutcome(
+                "blocked",
+                1,
+                session_id,
+                {
+                    "status": "blocked",
+                    "head_commit": git("rev-parse", "HEAD", cwd=request.worktree),
+                    "summary": "external authority required",
+                    "task_ledger": [],
+                    "open_obligation_ids": [],
+                    "failure_signature": None,
+                    "strategy_note": None,
+                    "blocker": {
+                        "kind": "external_authority_required",
+                        "detail": "host permission is required",
+                    },
+                },
+                "external_authority_required",
+                {},
+                (),
+                "",
+            )
+
+        self.outcome_hook = dirty_failure_then_block
+        code = self.runner().create_run(
+            specs=self.specs,
+            plans=self.plans[:1],
+            workspace=self.source,
+            stall_seconds=30,
+            sandbox="workspace-write",
+            model=None,
+        )
+        self.assertEqual(code, ExitCode.BLOCKED)
+        state = self.state()
+        first = next(
+            item
+            for item in state["attempts"]
+            if item["mode"] == "implementation"
+        )
+        self.assertEqual(first["provider_code"], provider_code)
+        self.assertEqual(first["post_provider_worktree"], self.worktree_observation(state))
+        self.assertFalse(first["post_provider_worktree"]["clean"])
+
+    def test_final_review_fix_failure_uses_the_same_checkpoint_order(self):
+        self.review_findings_once = True
+        fix_launches = 0
+        checkpoint = []
+
+        def invalid_then_fix(_adapter, request, packet, session_id):
+            nonlocal fix_launches
+            if packet["mode"] != "final_review_fix":
+                return None
+            fix_launches += 1
+            partial = request.worktree / "partial.txt"
+            if fix_launches == 1:
+                partial.write_text("partial review fix\n", encoding="utf-8")
+                return ProviderOutcome(
+                    "implemented",
+                    0,
+                    session_id,
+                    {"status": "implemented"},
+                    None,
+                    {},
+                    (),
+                    "",
+                )
+            git("add", partial.name, cwd=request.worktree)
+            return None
+
+        def capture_checkpoint(stage):
+            if (
+                stage == "provider_outcome_received"
+                and self.packets
+                and self.packets[-1]["mode"] == "final_review_fix"
+                and not checkpoint
+            ):
+                checkpoint.append(self.worktree_observation())
+
+        self.outcome_hook = invalid_then_fix
+        self.engine_event_hook = capture_checkpoint
+        code = self.runner().create_run(
+            specs=self.specs,
+            plans=self.plans[:1],
+            workspace=self.source,
+            stall_seconds=30,
+            sandbox="workspace-write",
+            model=None,
+        )
+        self.assertEqual(code, ExitCode.READY)
+        fixes = [
+            item for item in self.state()["attempts"]
+            if item["mode"] == "final_review_fix"
+        ]
+        self.assertEqual(fixes[0]["post_provider_worktree"], checkpoint[0])
+        self.assertFalse(checkpoint[0]["clean"])
+        self.assertEqual(fixes[0]["provider_code"], "provider_result_invalid")
+        self.assertEqual(fixes[0]["next_strategy"], "fresh_root_full_diff")
+        fix_requests = [
+            request
+            for request, packet in zip(self.requests, self.packets, strict=True)
+            if packet["mode"] == "final_review_fix"
+        ]
+        self.assertEqual(len(fix_requests), 2)
+        self.assertIsNone(fix_requests[1].session_id)
+
+    def test_dirty_checkpoint_rejects_branch_or_product_ref_drift(self):
+        def drift_branch(_adapter, request, packet, session_id):
+            if packet["mode"] != "implementation":
+                return None
+            (request.worktree / "partial.txt").write_text(
+                "partial implementation\n", encoding="utf-8"
+            )
+            git("switch", "-c", "provider-drift", cwd=request.worktree)
+            return ProviderOutcome(
+                "failed",
+                1,
+                session_id,
+                None,
+                "provider_stream_malformed",
+                {},
+                (),
+                "",
+            )
+
+        self.outcome_hook = drift_branch
+        code = self.runner().create_run(
+            specs=self.specs,
+            plans=self.plans[:1],
+            workspace=self.source,
+            stall_seconds=30,
+            sandbox="workspace-write",
+            model=None,
+        )
+        self.assertEqual(code, ExitCode.INTEGRITY)
+        failure = self.state()["failure"]
+        self.assertEqual(failure["reason_code"], "state_integrity_failed")
+        self.assertEqual(failure["next_strategy"], "block")
+        self.assertNotIn("partial_worktree", failure)
+
+    def test_clean_transport_loss_resumes_root_once_then_changes_strategy(self):
+        failures = 0
+
+        def fail_twice(_adapter, _request, packet, session_id):
+            nonlocal failures
+            if packet["mode"] == "implementation" and failures < 2:
+                failures += 1
+                return ProviderOutcome(
+                    "transport_failed",
+                    1,
+                    session_id,
+                    None,
+                    "controller_transport_failed",
+                    {},
+                    (),
+                    "",
+                )
+            return None
+
+        self.outcome_hook = fail_twice
+        code = self.runner().create_run(
+            specs=self.specs,
+            plans=self.plans[:1],
+            workspace=self.source,
+            stall_seconds=30,
+            sandbox="workspace-write",
+            model=None,
+        )
+        self.assertEqual(code, ExitCode.READY)
+        attempts = [
+            item for item in self.state()["attempts"]
+            if item["mode"] == "implementation"
+        ]
+        self.assertEqual(attempts[0]["next_strategy"], "resume_root")
+        self.assertEqual(attempts[1]["previous_failed_strategy"], "resume_root")
+        self.assertEqual(attempts[1]["next_strategy"], "fresh_root_full_diff")
+        requests = [
+            request
+            for request, packet in zip(self.requests, self.packets, strict=True)
+            if packet["mode"] == "implementation"
+        ]
+        self.assertIsNone(requests[0].session_id)
+        self.assertIsNotNone(requests[1].session_id)
+        self.assertIsNone(requests[2].session_id)
+
+    def test_safe_dirty_failure_uses_fresh_root_without_user_checkpoint(self):
+        observed_requests = []
+
+        def dirty_then_complete(_adapter, request, packet, session_id):
+            if packet["mode"] != "implementation":
+                return None
+            observed_requests.append(request)
+            partial = request.worktree / "partial.txt"
+            if len(observed_requests) == 1:
+                partial.write_text("partial implementation\n", encoding="utf-8")
+                return ProviderOutcome(
+                    "failed",
+                    1,
+                    session_id,
+                    None,
+                    "provider_stream_malformed",
+                    {},
+                    (),
+                    "",
+                )
+            git("add", partial.name, cwd=request.worktree)
+            return None
+
+        self.outcome_hook = dirty_then_complete
+        code = self.runner().create_run(
+            specs=self.specs,
+            plans=self.plans[:1],
+            workspace=self.source,
+            stall_seconds=30,
+            sandbox="workspace-write",
+            model=None,
+        )
+        self.assertEqual(code, ExitCode.READY)
+        attempts = [
+            item for item in self.state()["attempts"]
+            if item["mode"] == "implementation"
+        ]
+        self.assertEqual(attempts[0]["next_strategy"], "fresh_root_full_diff")
+        self.assertIsNone(observed_requests[1].session_id)
+        self.assertNotIn("approval", json.dumps(attempts[0]).lower())
+        retry_packet = [
+            packet for packet in self.packets
+            if packet["mode"] == "implementation"
+        ][1]
+        self.assertEqual(
+            retry_packet["recovery_context"]["checkpoint"][
+                "post_provider_worktree"
+            ],
+            attempts[0]["post_provider_worktree"],
+        )
+        self.assertEqual(
+            retry_packet["recovery_context"]["next_strategy"],
+            "fresh_root_full_diff",
+        )
+
+    def test_external_authority_or_unsafe_identity_blocks(self):
+        cases = [
+            (
+                {
+                    "clean": True,
+                    "session_id": str(uuid.uuid4()),
+                    "reason_code": "provider_auth_blocked",
+                    "previous_failed_strategy": None,
+                    "safe": True,
+                },
+                ("block", "provider_auth_blocked"),
+            ),
+            (
+                {
+                    "clean": False,
+                    "session_id": None,
+                    "reason_code": "state_integrity_failed",
+                    "previous_failed_strategy": None,
+                    "safe": False,
+                },
+                ("block", "state_integrity_failed"),
+            ),
+        ]
+        for inputs, expected in cases:
+            with self.subTest(inputs=inputs):
+                decision = PlanRunner._select_root_strategy(**inputs)
+                self.assertEqual(
+                    (decision["action"], decision["reason_code"]),
+                    expected,
+                )
+
     def test_runtime_paths_are_immutable(self):
         with self.assertRaises(dataclasses.FrozenInstanceError):
             self.paths.state_home = self.root / "other"
@@ -593,9 +985,11 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(json.loads(stdout.splitlines()[-1])["status"], "resumable")
         checkpoint = json.loads(state_path.read_text(encoding="utf-8"))
         sealed = checkpoint["failure"]["partial_worktree"]
-        self.assertEqual(sealed["attempt_id"], checkpoint["attempts"][-1]["attempt_id"])
-        self.assertEqual(sealed["mode"], "implementation")
-        self.assertEqual(sealed["plan_index"], 0)
+        self.assertEqual(
+            checkpoint["failure"]["partial_attempt_id"],
+            checkpoint["attempts"][-1]["attempt_id"],
+        )
+        self.assertEqual(checkpoint["failure"]["partial_mode"], "implementation")
         self.assertEqual(sealed["branch"], checkpoint["repository"]["branch"])
         self.assertEqual(sealed["head"], git("rev-parse", "HEAD", cwd=partial.parent))
         self.assertFalse(sealed["clean"])
@@ -640,8 +1034,11 @@ class EngineTest(unittest.TestCase):
             json.loads(line)
             for line in launch_log.read_text(encoding="utf-8").splitlines()
         ]
-        self.assertEqual(launches[1]["session_action"], "resume")
-        self.assertEqual(launches[1]["session_id"], checkpoint["sessions"][-1]["session_id"])
+        self.assertEqual(launches[1]["session_action"], "fresh")
+        self.assertNotEqual(
+            launches[1]["session_id"],
+            checkpoint["sessions"][-1]["session_id"],
+        )
 
     def test_sigint_seals_dirty_worktree_and_resumes_after_provider_cleanup(self):
         self._assert_graceful_dirty_signal_checkpoint(signal.SIGINT)
@@ -1123,7 +1520,8 @@ class EngineTest(unittest.TestCase):
             )
         state = self.state()
         self.assertEqual(state["plans"][0]["status"], "running")
-        self.assertFalse(state["attempts"][-1]["completed"])
+        self.assertTrue(state["attempts"][-1]["completed"])
+        self.assertTrue(state["attempts"][-1]["post_provider_worktree"]["clean"])
         committed_head = git(
             "rev-parse", "HEAD", cwd=Path(state["repository"]["worktree"])
         )
@@ -1495,6 +1893,12 @@ class EngineTest(unittest.TestCase):
                 "revision": retry_packet["checkpoint_revision"],
                 "head": retry_packet["current_head"],
                 "plan_index": retry_packet["current_plan"]["index"],
+                "post_provider_worktree": next(
+                    item["post_provider_worktree"]
+                    for item in self.state()["attempts"]
+                    if item["mode"] == "implementation"
+                    and item.get("next_strategy") == "fresh_root_full_diff"
+                ),
             },
         )
         attempted = context["attempted_strategies"]

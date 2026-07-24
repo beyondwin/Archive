@@ -14,6 +14,7 @@ RUN_STATUSES = frozenset(
 )
 PLAN_STATUSES = frozenset({"pending", "running", "implemented"})
 TASK_STATUSES = frozenset({"pending", "running", "reported_done"})
+NEXT_STRATEGIES = frozenset({"resume_root", "fresh_root_full_diff", "block"})
 RUNNER_RUNTIME_CONTRACT = {
     "free_threaded": False,
     "implementation": "cpython",
@@ -29,6 +30,9 @@ FAILURE_TAXONOMY = frozenset(
         "input_changed_requires_new_run",
         "irreconcilable_requirements",
         "provider_auth_blocked",
+        "provider_result_invalid",
+        "provider_stream_malformed",
+        "provider_stream_oversized",
         "provider_unavailable",
         "provider_usage_blocked",
         "recovery_exhausted",

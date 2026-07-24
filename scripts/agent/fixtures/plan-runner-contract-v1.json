@@ -42,6 +42,9 @@
     "input_changed_requires_new_run",
     "irreconcilable_requirements",
     "provider_auth_blocked",
+    "provider_result_invalid",
+    "provider_stream_malformed",
+    "provider_stream_oversized",
     "provider_unavailable",
     "provider_usage_blocked",
     "recovery_exhausted",
@@ -54,6 +57,11 @@
     "state_integrity_failed",
     "verification_failed",
     "verification_timed_out"
+  ],
+  "next_strategies": [
+    "block",
+    "fresh_root_full_diff",
+    "resume_root"
   ],
   "receipt_identity_fields": [
     "argv",

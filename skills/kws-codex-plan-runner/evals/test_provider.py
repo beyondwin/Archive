@@ -365,12 +365,17 @@ class CodexProviderTest(unittest.TestCase):
                 outcome = self.launch(scenario, request=request)
                 self.assertEqual((outcome.kind, outcome.provider_code), expected)
 
-    def test_malformed_stream_and_invalid_structured_output_fail_closed(self):
-        for scenario in ("malformed-jsonl", "oversized-jsonl", "invalid-output"):
+    def test_malformed_stream_and_invalid_structured_output_have_precise_codes(self):
+        cases = {
+            "malformed-jsonl": "provider_stream_malformed",
+            "oversized-jsonl": "provider_stream_oversized",
+            "invalid-output": "provider_result_invalid",
+        }
+        for scenario, reason in cases.items():
             with self.subTest(scenario=scenario):
                 outcome = self.launch(scenario)
                 self.assertEqual(outcome.kind, "failed")
-                self.assertEqual(outcome.provider_code, "controller_transport_failed")
+                self.assertEqual(outcome.provider_code, reason)
 
     def test_result_statuses_are_preserved_and_only_implemented_commits(self):
         subprocess = __import__("subprocess")

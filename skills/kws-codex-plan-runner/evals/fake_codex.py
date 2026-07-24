@@ -281,7 +281,35 @@ def _generic_main(argv: list[str], prompt: str, sequence_path: Path) -> int:
             )
         time.sleep(2)
         return 7
-    if action in {"interrupted", "same-failure"}:
+    if action in {
+        "interrupted",
+        "same-failure",
+        "dirty-invalid-result",
+        "dirty-malformed-stream",
+        "dirty-oversized-stream",
+    }:
+        Path("partial.txt").write_text("partial implementation\n", encoding="utf-8")
+        if action == "dirty-malformed-stream":
+            sys.stdout.write("{not-json}\n")
+            sys.stdout.flush()
+            return 0
+        if action == "dirty-oversized-stream":
+            sys.stdout.write(
+                json.dumps({"type": "log", "text": "x" * 70_000}) + "\n"
+            )
+            sys.stdout.flush()
+            return 0
+        if action == "dirty-invalid-result":
+            _emit({"type": "turn.started", "turn_id": f"turn-{action_index + 1}"})
+            _emit(
+                {
+                    "type": "turn.completed",
+                    "turn_id": f"turn-{action_index + 1}",
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                }
+            )
+            _write_result(argv, {"status": "implemented"})
+            return 0
         return 7
     _emit({"type": "turn.started", "turn_id": f"turn-{action_index + 1}"})
     if action in {"implemented", "resume-dirty-implemented"}:
@@ -289,7 +317,11 @@ def _generic_main(argv: list[str], prompt: str, sequence_path: Path) -> int:
         marker = f"plan-{index}.txt"
         Path(marker).write_text("implemented\n", encoding="utf-8")
         paths = [marker]
-        partial = Path("partial-provider-edit.txt")
+        partial = (
+            Path("partial-provider-edit.txt")
+            if Path("partial-provider-edit.txt").exists()
+            else Path("partial.txt")
+        )
         if action == "resume-dirty-implemented":
             if not partial.is_file():
                 raise ValueError("sealed partial implementation is missing")
