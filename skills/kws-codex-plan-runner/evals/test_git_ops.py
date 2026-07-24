@@ -331,6 +331,46 @@ class GitWorkspaceTest(unittest.TestCase):
         )
         self.assertNotEqual(pushed.returncode, 0)
 
+    def test_sanitized_environment_strips_higher_precedence_git_config_parameters(self):
+        workspace = self.create()
+        clean = sanitized_child_env(
+            {
+                "PATH": os.environ["PATH"],
+                "GIT_CONFIG_NOSYSTEM": "1",
+                "GIT_CONFIG_PARAMETERS": (
+                    "'remote.origin.pushurl'='file:///unsafe' "
+                    "'commit.gpgSign'='true' "
+                    "'credential.helper'='store'"
+                ),
+            },
+            provider_auth_prefixes=("OPENAI_", "CODEX_"),
+            remotes=("origin",),
+            run_id="run-123",
+            git_identity=sealed_identity(),
+        )
+
+        self.assertEqual(
+            git("config", "--get", "remote.origin.pushurl", cwd=workspace.worktree, env=clean)
+            .stdout.decode()
+            .strip(),
+            "disabled://plan-runner/run-123/origin",
+        )
+        self.assertEqual(
+            git("config", "--get", "commit.gpgSign", cwd=workspace.worktree, env=clean)
+            .stdout.decode()
+            .strip(),
+            "false",
+        )
+        credential_helper = subprocess.run(
+            ["git", "config", "--get", "credential.helper"],
+            cwd=workspace.worktree,
+            env=clean,
+            check=False,
+            capture_output=True,
+        )
+        self.assertEqual(credential_helper.returncode, 1)
+        self.assertNotIn("GIT_CONFIG_PARAMETERS", clean)
+
     def test_sanitized_environment_rejects_control_characters_in_remote_names(self):
         with self.assertRaisesRegex(ValueError, "control characters"):
             sanitized_child_env(
