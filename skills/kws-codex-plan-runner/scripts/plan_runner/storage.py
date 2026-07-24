@@ -11,6 +11,7 @@ import stat
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
+from itertools import islice
 from pathlib import Path
 
 from .contracts import (
@@ -39,6 +40,21 @@ _ARTIFACT_KIND = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _MAX_INTENT_SCAN_ROOTS = 4096
 _MAX_PEEK_STATE_BYTES = 2 * 1024 * 1024
+_MAX_INTENT_ENVELOPE_BYTES = 64 * 1024
+_INTENT_ENVELOPE_NAME = "intent.json"
+_INTENT_ENVELOPE_KEYS = {
+    "format_version",
+    "contract_version",
+    "provider",
+    "run_id",
+    "execution_intent_digest",
+    "source_repository",
+    "source_commit",
+    "worktree",
+    "branch",
+    "input_snapshot_digest",
+    "envelope_digest",
+}
 _STATE_KEYS = {
     "format_version",
     "contract_version",
@@ -295,6 +311,106 @@ def _execution_intent_digest_from_records(
             ],
         }
     )
+
+
+def _intent_envelope_digest(envelope: Mapping[str, object]) -> str:
+    payload = dict(envelope)
+    payload.pop("envelope_digest", None)
+    return sha256_json(payload)
+
+
+def _intent_envelope_document(
+    *,
+    provider: str,
+    run_id: str,
+    execution_intent_digest: str,
+    source_repository: Path,
+    source_commit: str,
+    worktree: Path,
+    branch: str,
+    input_snapshot_digest: object,
+) -> dict[str, object]:
+    envelope: dict[str, object] = {
+        "format_version": FORMAT_VERSION,
+        "contract_version": _CONTRACT_VERSION,
+        "provider": provider,
+        "run_id": run_id,
+        "execution_intent_digest": execution_intent_digest,
+        "source_repository": str(source_repository),
+        "source_commit": source_commit,
+        "worktree": str(worktree),
+        "branch": branch,
+        "input_snapshot_digest": input_snapshot_digest,
+        "envelope_digest": "",
+    }
+    envelope["envelope_digest"] = _intent_envelope_digest(envelope)
+    return envelope
+
+
+def _read_intent_envelope(root: Path) -> dict[str, object]:
+    path = root / _INTENT_ENVELOPE_NAME
+    metadata = _require_private_regular(path, "execution intent envelope")
+    if metadata.st_size > _MAX_INTENT_ENVELOPE_BYTES:
+        raise ValueError("execution intent envelope is oversized")
+    try:
+        payload = path.read_bytes()
+        envelope = json.loads(payload.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("execution intent envelope is invalid") from error
+    if (
+        not isinstance(envelope, dict)
+        or set(envelope) != _INTENT_ENVELOPE_KEYS
+        or canonical_json(envelope) != payload
+        or envelope.get("envelope_digest") != _intent_envelope_digest(envelope)
+    ):
+        raise ValueError("execution intent envelope is invalid")
+    if (
+        envelope["format_version"] != FORMAT_VERSION
+        or envelope["contract_version"] != _CONTRACT_VERSION
+        or envelope["provider"] != _PROVIDER
+    ):
+        raise ValueError("execution intent envelope contract is invalid")
+    _validate_run_id(envelope["run_id"])
+    require_digest(envelope["execution_intent_digest"])
+    require_full_sha(envelope["source_commit"])
+    input_digest = envelope["input_snapshot_digest"]
+    if input_digest is not None:
+        require_digest(input_digest)
+    if (
+        envelope["run_id"] != root.name
+        or not isinstance(envelope["source_repository"], str)
+        or not Path(envelope["source_repository"]).is_absolute()
+        or not isinstance(envelope["worktree"], str)
+        or not Path(envelope["worktree"]).is_absolute()
+        or not isinstance(envelope["branch"], str)
+        or not envelope["branch"]
+    ):
+        raise ValueError("execution intent envelope identity is invalid")
+    return envelope
+
+
+def _require_intent_envelope(
+    root: Path, state: Mapping[str, object]
+) -> dict[str, object]:
+    config = state["immutable_config"]
+    repository = state["repository"]
+    intent_digest = config.get("execution_intent_digest")
+    if intent_digest is None:
+        return {}
+    expected = _intent_envelope_document(
+        provider=str(state["provider"]),
+        run_id=str(state["run_id"]),
+        execution_intent_digest=str(intent_digest),
+        source_repository=Path(str(repository["source_repository"])),
+        source_commit=str(repository["source_commit"]),
+        worktree=Path(str(repository["worktree"])),
+        branch=str(repository["branch"]),
+        input_snapshot_digest=config.get("input_snapshot_digest"),
+    )
+    envelope = _read_intent_envelope(root)
+    if envelope != expected:
+        raise ValueError("execution intent envelope does not match run state")
+    return envelope
 
 
 def _validate_run_id(run_id: object) -> str:
@@ -674,6 +790,23 @@ class StateStore:
             directory.mkdir(mode=0o700)
             _require_private_directory(directory)
         _require_private_directory(root)
+        if sealed_intent is not None:
+            intent_envelope = _intent_envelope_document(
+                provider=provider,
+                run_id=run_id,
+                execution_intent_digest=sealed_intent,
+                source_repository=repository,
+                source_commit=source_commit,
+                worktree=worktree.absolute(),
+                branch=branch,
+                input_snapshot_digest=immutable_config.get(
+                    "input_snapshot_digest"
+                ),
+            )
+            atomic_private_write(
+                root / _INTENT_ENVELOPE_NAME,
+                canonical_json(intent_envelope),
+            )
 
         records: list[dict[str, object]] = []
         for role, order, source, payload in prepared:
@@ -733,6 +866,7 @@ class StateStore:
         }
         state["state_digest"] = _state_digest(state)
         _validate_state(root, state, expected_revision=1)
+        _require_intent_envelope(root, state)
         atomic_private_write(root / "state.json", canonical_json(state))
         return cls(root, state)
 
@@ -750,6 +884,7 @@ class StateStore:
         except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
             raise ValueError("run state is unavailable or invalid") from error
         validated = _validate_state(root, state)
+        _require_intent_envelope(root, validated)
         return cls(root, validated)
 
     def snapshot(self) -> dict[str, object]:
@@ -787,6 +922,7 @@ class StateStore:
         except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
             raise ValueError("run state is unavailable or invalid") from error
         disk_state = _validate_state(self.root, disk_state)
+        _require_intent_envelope(self.root, disk_state)
         current_revision = self._state["revision"]
         if (
             not isinstance(current_revision, int)
@@ -806,6 +942,7 @@ class StateStore:
             candidate,
             expected_revision=current_revision + 1,
         )
+        _require_intent_envelope(self.root, candidate)
         if self._fault_injector is not None:
             self._fault_injector(BEFORE_STATE_REPLACE)
         atomic_private_write(self.state_path, canonical_json(candidate))
@@ -927,9 +1064,12 @@ def find_execution_intent(
     if not state_home.exists():
         return None
     _require_private_directory(state_home)
-    candidates = sorted(state_home.iterdir(), key=lambda path: path.name)
+    candidates = list(
+        islice(state_home.iterdir(), _MAX_INTENT_SCAN_ROOTS + 1)
+    )
     if len(candidates) > _MAX_INTENT_SCAN_ROOTS:
         raise ValueError("bounded execution-intent scan limit exceeded")
+    candidates.sort(key=lambda path: path.name)
 
     matching: list[IntentMatch] = []
     for root in candidates:
@@ -937,34 +1077,25 @@ def find_execution_intent(
             continue
         try:
             _require_private_directory(root)
-            state_path = root / "state.json"
-            metadata = _require_private_regular(state_path, "run state")
-            if metadata.st_size > _MAX_PEEK_STATE_BYTES:
-                continue
-            raw_state = json.loads(state_path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
-            continue
-        if not isinstance(raw_state, dict):
-            continue
-        config = raw_state.get("immutable_config")
-        if (
-            not isinstance(config, dict)
-            or config.get("execution_intent_digest") != intent_digest
-        ):
+        except ValueError:
             continue
 
-        repository = raw_state.get("repository")
-        branch = repository.get("branch") if isinstance(repository, dict) else None
-        worktree = (
-            repository.get("worktree") if isinstance(repository, dict) else None
-        )
-        run_id = raw_state.get("run_id")
-        status = raw_state.get("status")
+        try:
+            envelope = _read_intent_envelope(root)
+        except (OSError, ValueError) as error:
+            fallback = _matching_intent_from_state_peek(
+                root, intent_digest, str(error)
+            )
+            if fallback is not None:
+                matching.append(fallback)
+            continue
+        if envelope["execution_intent_digest"] != intent_digest:
+            continue
         identity = IntentMatch(
-            run_id=run_id if isinstance(run_id, str) else root.name,
-            status=status if isinstance(status, str) else "invalid",
-            branch=branch if isinstance(branch, str) else "",
-            worktree=worktree if isinstance(worktree, str) else "",
+            run_id=str(envelope["run_id"]),
+            status="invalid",
+            branch=str(envelope["branch"]),
+            worktree=str(envelope["worktree"]),
             state=None,
         )
         try:
@@ -977,3 +1108,45 @@ def find_execution_intent(
     if len(matching) > 1:
         raise ValueError("multiple runs claim the same execution intent")
     return matching[0] if matching else None
+
+
+def _matching_intent_from_state_peek(
+    root: Path, intent_digest: str, detail: str
+) -> IntentMatch | None:
+    state_path = root / "state.json"
+    try:
+        metadata = _require_private_regular(state_path, "run state")
+        if metadata.st_size > _MAX_PEEK_STATE_BYTES:
+            return IntentMatch(
+                run_id=root.name,
+                status="invalid",
+                branch="",
+                worktree="",
+                state=None,
+                invalid_detail=(
+                    f"{detail}; bounded state peek is unavailable"
+                )[:512],
+            )
+        raw_state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(raw_state, dict):
+        return None
+    config = raw_state.get("immutable_config")
+    if (
+        not isinstance(config, dict)
+        or config.get("execution_intent_digest") != intent_digest
+    ):
+        return None
+    repository = raw_state.get("repository")
+    branch = repository.get("branch") if isinstance(repository, dict) else None
+    worktree = repository.get("worktree") if isinstance(repository, dict) else None
+    run_id = raw_state.get("run_id")
+    return IntentMatch(
+        run_id=run_id if isinstance(run_id, str) else root.name,
+        status="invalid",
+        branch=branch if isinstance(branch, str) else "",
+        worktree=worktree if isinstance(worktree, str) else "",
+        state=None,
+        invalid_detail=detail[:512],
+    )

@@ -16,6 +16,7 @@ from unittest import mock
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SKILL_ROOT / "scripts"))
 
+from plan_runner import engine as engine_module  # noqa: E402
 from plan_runner import storage as storage_module  # noqa: E402
 from plan_runner.contracts import ExitCode  # noqa: E402
 from plan_runner.git_ops import GitIdentity, GitWorkspace  # noqa: E402
@@ -585,7 +586,13 @@ class EngineTest(unittest.TestCase):
             ),
             (
                 "failed",
-                {"reason_code": "recovery_exhausted", "detail": "strategies exhausted"},
+                {
+                    "reason_code": "recovery_exhausted",
+                    "detail": "strategies exhausted",
+                    "failure_sequence": [],
+                    "strategy_digests": [],
+                    "next_strategy": "fresh_root_full_diff",
+                },
                 ExitCode.FAILED,
                 "retry_failed",
             ),
@@ -673,7 +680,13 @@ class EngineTest(unittest.TestCase):
         run_root = self.paths.state_home / initial["run_id"]
         cases = (
             (
-                {"reason_code": "recovery_exhausted", "detail": "retryable"},
+                {
+                    "reason_code": "recovery_exhausted",
+                    "detail": "retryable",
+                    "failure_sequence": [],
+                    "strategy_digests": [],
+                    "next_strategy": "fresh_root_full_diff",
+                },
                 ExitCode.FAILED,
                 "matching_run_exists",
             ),
@@ -778,6 +791,144 @@ class EngineTest(unittest.TestCase):
             git("for-each-ref", "--format=%(refname) %(objectname)", cwd=self.source),
             before_refs,
         )
+
+    def test_large_valid_matching_state_is_discovered_without_duplicate_admission(self):
+        initial = self.create_paused_run()
+        run_root = self.paths.state_home / initial["run_id"]
+        store = StateStore.open(run_root)
+        state = store.snapshot()
+        state["failure"] = {"detail": "x" * (2 * 1024 * 1024 + 4096)}
+        store.commit(state)
+        self.assertGreater((run_root / "state.json").stat().st_size, 2 * 1024 * 1024)
+        self.output.clear()
+
+        with (
+            mock.patch(
+                "plan_runner.engine._run_id", wraps=engine_module._run_id
+            ) as allocate_id,
+            mock.patch.object(
+                PlanRunner, "_execute", return_value=int(ExitCode.RESUMABLE)
+            ),
+        ):
+            code = self.runner().create_run(
+                specs=self.specs,
+                plans=self.plans[:1],
+                workspace=self.source,
+                stall_seconds=30,
+                sandbox="danger-full-access",
+                model="different-model",
+            )
+
+        self.assertEqual(code, ExitCode.RESUMABLE)
+        self.assertEqual(self.matching_response()["run_id"], initial["run_id"])
+        allocate_id.assert_not_called()
+        self.assertEqual(len(list(self.paths.state_home.iterdir())), 1)
+        self.assertEqual(len(list(self.paths.worktree_home.iterdir())), 1)
+
+    def assert_matching_intent_evidence_fails_closed(self, mutate):
+        initial = self.create_paused_run()
+        run_root = self.paths.state_home / initial["run_id"]
+        mutate(run_root / "intent.json", initial)
+        self.output.clear()
+
+        with (
+            mock.patch(
+                "plan_runner.engine._run_id", wraps=engine_module._run_id
+            ) as allocate_id,
+            mock.patch.object(StateStore, "create") as create_state,
+            mock.patch.object(GitWorkspace, "create") as create_worktree,
+        ):
+            code = self.runner().create_run(
+                specs=self.specs,
+                plans=self.plans[:1],
+                workspace=self.source,
+                stall_seconds=30,
+                sandbox="danger-full-access",
+                model="different-model",
+            )
+
+        self.assertEqual(code, ExitCode.INTEGRITY)
+        response = self.matching_response()
+        self.assertEqual(response["reason"], "matching_run_unproven")
+        self.assertEqual(response["run_id"], initial["run_id"])
+        self.assertEqual(response["recommended_action"], "preserve evidence and stop")
+        allocate_id.assert_not_called()
+        create_state.assert_not_called()
+        create_worktree.assert_not_called()
+        self.assertEqual(len(list(self.paths.state_home.iterdir())), 1)
+        self.assertEqual(len(list(self.paths.worktree_home.iterdir())), 1)
+
+    def test_missing_matching_intent_envelope_fails_closed(self):
+        self.assert_matching_intent_evidence_fails_closed(
+            lambda path, _state: path.unlink(missing_ok=True)
+        )
+
+    def test_tampered_matching_intent_envelope_fails_closed(self):
+        def tamper(path, state):
+            path.write_text(
+                json.dumps(
+                    {
+                        "execution_intent_digest": state["immutable_config"][
+                            "execution_intent_digest"
+                        ],
+                        "run_id": state["run_id"],
+                        "envelope_digest": "0" * 64,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+        self.assert_matching_intent_evidence_fails_closed(tamper)
+
+    def test_oversized_matching_intent_envelope_fails_closed(self):
+        self.assert_matching_intent_evidence_fails_closed(
+            lambda path, _state: path.write_bytes(b"x" * (64 * 1024 + 1))
+        )
+
+    def test_unknown_or_nonretryable_failed_state_is_not_offered_retry(self):
+        initial = self.create_paused_run()
+        run_root = self.paths.state_home / initial["run_id"]
+        cases = (
+            None,
+            {"reason_code": "recovery_exhausted"},
+            {
+                "reason_code": "input_changed_requires_new_run",
+                "failure_sequence": [],
+                "strategy_digests": [],
+                "next_strategy": "fresh_root_full_diff",
+            },
+            {
+                "reason_code": "recovery_exhausted",
+                "failure_sequence": [],
+                "strategy_digests": [],
+                "next_strategy": "block",
+            },
+        )
+
+        for failure in cases:
+            with self.subTest(failure=failure):
+                store = StateStore.open(run_root)
+                state = store.snapshot()
+                state["status"] = "failed"
+                state["failure"] = failure
+                store.commit(state)
+                self.output.clear()
+
+                code = self.runner().create_run(
+                    specs=self.specs,
+                    plans=self.plans[:1],
+                    workspace=self.source,
+                    stall_seconds=30,
+                    sandbox="workspace-write",
+                    model=None,
+                )
+
+                self.assertEqual(code, ExitCode.INTEGRITY)
+                response = self.matching_response()
+                self.assertEqual(response["reason"], "matching_run_unproven")
+                self.assertEqual(
+                    response["recommended_action"], "preserve evidence and stop"
+                )
 
     def test_dirty_invalid_result_is_checkpointed_before_failure(self):
         implementation_launches = 0

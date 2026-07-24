@@ -528,6 +528,23 @@ class StateStoreTest(unittest.TestCase):
         self.assertFalse(second.is_alive())
         self.assertEqual(order, ["holder", "waiter"])
 
+    def test_intent_scan_stops_after_bound_plus_one_before_sorting(self):
+        state_home = self.root / "state-home"
+        state_home.mkdir(mode=0o700)
+        yielded = 0
+
+        def candidates():
+            nonlocal yielded
+            for index in range(storage._MAX_INTENT_SCAN_ROOTS + 100):
+                yielded += 1
+                yield state_home / f"not-a-run-{index}"
+
+        with mock.patch.object(Path, "iterdir", return_value=candidates()):
+            with self.assertRaisesRegex(ValueError, "scan limit"):
+                storage.find_execution_intent(state_home, "a" * 64)
+
+        self.assertEqual(yielded, storage._MAX_INTENT_SCAN_ROOTS + 1)
+
 
 if __name__ == "__main__":
     unittest.main()
