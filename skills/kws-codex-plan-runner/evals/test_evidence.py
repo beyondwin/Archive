@@ -67,7 +67,12 @@ class EvidenceStoreTest(unittest.TestCase):
             branch="codex-plan/evidence",
             specs=[self.spec],
             plans=[self.plan],
-            immutable_config={},
+            immutable_config={
+                "git_identity": {
+                    "name": "Runner Test",
+                    "email": "runner@example.test",
+                }
+            },
             runner_runtime={},
         )
         self.environment = {"PATH": os.environ["PATH"], "SECRET_TOKEN": "super-secret"}
