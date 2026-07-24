@@ -46,6 +46,7 @@ from .storage import (
     atomic_private_write,
     execution_intent_digest,
     find_execution_intent,
+    write_intent_admission,
 )
 
 
@@ -374,6 +375,14 @@ class PlanRunner:
                 branch = f"codex-plan/{run_id}"
                 worktree = self.paths.worktree_home / run_id
                 root = self.paths.state_home / run_id
+                write_intent_admission(
+                    lock_home=lock_home,
+                    intent_digest=intent_digest,
+                    run_id=run_id,
+                    run_root=root,
+                    branch=branch,
+                    worktree=worktree,
+                )
                 input_digest = _input_digest(ordered_specs, ordered_plans)
                 immutable_config = {
                     "stall_seconds": float(stall_seconds),

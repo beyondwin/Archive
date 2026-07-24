@@ -55,6 +55,17 @@ _INTENT_ENVELOPE_KEYS = {
     "input_snapshot_digest",
     "envelope_digest",
 }
+_ADMISSION_RECORD_KEYS = {
+    "format_version",
+    "contract_version",
+    "provider",
+    "execution_intent_digest",
+    "run_id",
+    "run_root",
+    "branch",
+    "worktree",
+    "record_digest",
+}
 _STATE_KEYS = {
     "format_version",
     "contract_version",
@@ -317,6 +328,106 @@ def _intent_envelope_digest(envelope: Mapping[str, object]) -> str:
     payload = dict(envelope)
     payload.pop("envelope_digest", None)
     return sha256_json(payload)
+
+
+def _admission_record_digest(record: Mapping[str, object]) -> str:
+    payload = dict(record)
+    payload.pop("record_digest", None)
+    return sha256_json(payload)
+
+
+def _admission_record_document(
+    *,
+    execution_intent_digest: str,
+    run_id: str,
+    run_root: Path,
+    branch: str,
+    worktree: Path,
+) -> dict[str, object]:
+    record: dict[str, object] = {
+        "format_version": FORMAT_VERSION,
+        "contract_version": _CONTRACT_VERSION,
+        "provider": _PROVIDER,
+        "execution_intent_digest": execution_intent_digest,
+        "run_id": run_id,
+        "run_root": str(run_root),
+        "branch": branch,
+        "worktree": str(worktree),
+        "record_digest": "",
+    }
+    record["record_digest"] = _admission_record_digest(record)
+    return record
+
+
+def _admission_record_path(lock_home: Path, intent_digest: str) -> Path:
+    require_digest(intent_digest)
+    return Path(lock_home).absolute() / f"{intent_digest}.json"
+
+
+def _read_admission_record(
+    lock_home: Path, intent_digest: str
+) -> dict[str, object]:
+    path = _admission_record_path(lock_home, intent_digest)
+    metadata = _require_private_regular(path, "execution intent admission record")
+    if metadata.st_size > _MAX_INTENT_ENVELOPE_BYTES:
+        raise ValueError("execution intent admission record is oversized")
+    try:
+        payload = path.read_bytes()
+        record = json.loads(payload.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("execution intent admission record is invalid") from error
+    if (
+        not isinstance(record, dict)
+        or set(record) != _ADMISSION_RECORD_KEYS
+        or canonical_json(record) != payload
+        or record.get("record_digest") != _admission_record_digest(record)
+    ):
+        raise ValueError("execution intent admission record is invalid")
+    if (
+        record["format_version"] != FORMAT_VERSION
+        or record["contract_version"] != _CONTRACT_VERSION
+        or record["provider"] != _PROVIDER
+        or record["execution_intent_digest"] != intent_digest
+    ):
+        raise ValueError("execution intent admission record contract is invalid")
+    _validate_run_id(record["run_id"])
+    if (
+        not isinstance(record["run_root"], str)
+        or not Path(record["run_root"]).is_absolute()
+        or not isinstance(record["worktree"], str)
+        or not Path(record["worktree"]).is_absolute()
+        or not isinstance(record["branch"], str)
+        or not record["branch"]
+    ):
+        raise ValueError("execution intent admission record identity is invalid")
+    return record
+
+
+def write_intent_admission(
+    *,
+    lock_home: Path,
+    intent_digest: str,
+    run_id: str,
+    run_root: Path,
+    branch: str,
+    worktree: Path,
+) -> None:
+    _require_private_directory(Path(lock_home).absolute())
+    record = _admission_record_document(
+        execution_intent_digest=intent_digest,
+        run_id=run_id,
+        run_root=Path(run_root).absolute(),
+        branch=branch,
+        worktree=Path(worktree).absolute(),
+    )
+    path = _admission_record_path(lock_home, intent_digest)
+    if path.exists() or path.is_symlink():
+        if _read_admission_record(lock_home, intent_digest) != record:
+            raise ValueError("execution intent admission record already exists")
+        return
+    atomic_private_write(path, canonical_json(record))
+    if _read_admission_record(lock_home, intent_digest) != record:
+        raise ValueError("execution intent admission record write mismatch")
 
 
 def _intent_envelope_document(
@@ -1061,6 +1172,78 @@ def find_execution_intent(
 ) -> IntentMatch | None:
     require_digest(intent_digest)
     state_home = Path(state_home).absolute()
+    lock_home = state_home.with_name(f".{state_home.name}-intent-locks")
+    record_path = _admission_record_path(lock_home, intent_digest)
+    if record_path.exists() or record_path.is_symlink():
+        try:
+            record = _read_admission_record(lock_home, intent_digest)
+        except (OSError, ValueError) as error:
+            fallback = _find_compatibility_intent(
+                state_home,
+                intent_digest,
+                missing_record_detail=str(error),
+            )
+            return fallback or IntentMatch(
+                run_id="unknown",
+                status="invalid",
+                branch="",
+                worktree="",
+                state=None,
+                invalid_detail=str(error)[:512],
+            )
+        return _match_admission_record(state_home, record)
+    return _find_compatibility_intent(
+        state_home,
+        intent_digest,
+        missing_record_detail="digest-keyed admission record is missing",
+    )
+
+
+def _match_admission_record(
+    state_home: Path, record: Mapping[str, object]
+) -> IntentMatch:
+    root = Path(str(record["run_root"]))
+    identity = IntentMatch(
+        run_id=str(record["run_id"]),
+        status="invalid",
+        branch=str(record["branch"]),
+        worktree=str(record["worktree"]),
+        state=None,
+    )
+    if (
+        root.parent != state_home
+        or root.name != record["run_id"]
+    ):
+        return replace(
+            identity,
+            invalid_detail="execution intent admission record root is invalid",
+        )
+    try:
+        state = StateStore.open(root).snapshot()
+        expected = _admission_record_document(
+            execution_intent_digest=str(
+                state["immutable_config"]["execution_intent_digest"]
+            ),
+            run_id=str(state["run_id"]),
+            run_root=root,
+            branch=str(state["repository"]["branch"]),
+            worktree=Path(str(state["repository"]["worktree"])),
+        )
+        if record != expected:
+            raise ValueError(
+                "execution intent admission record does not match run state"
+            )
+    except (KeyError, OSError, TypeError, ValueError) as error:
+        return replace(identity, invalid_detail=str(error)[:512])
+    return replace(identity, state=state)
+
+
+def _find_compatibility_intent(
+    state_home: Path,
+    intent_digest: str,
+    *,
+    missing_record_detail: str,
+) -> IntentMatch | None:
     if not state_home.exists():
         return None
     _require_private_directory(state_home)
@@ -1103,7 +1286,9 @@ def find_execution_intent(
         except (OSError, ValueError) as error:
             matching.append(replace(identity, invalid_detail=str(error)[:512]))
         else:
-            matching.append(replace(identity, state=state))
+            matching.append(
+                replace(identity, invalid_detail=missing_record_detail[:512])
+            )
 
     if len(matching) > 1:
         raise ValueError("multiple runs claim the same execution intent")
@@ -1117,16 +1302,7 @@ def _matching_intent_from_state_peek(
     try:
         metadata = _require_private_regular(state_path, "run state")
         if metadata.st_size > _MAX_PEEK_STATE_BYTES:
-            return IntentMatch(
-                run_id=root.name,
-                status="invalid",
-                branch="",
-                worktree="",
-                state=None,
-                invalid_detail=(
-                    f"{detail}; bounded state peek is unavailable"
-                )[:512],
-            )
+            return None
         raw_state = json.loads(state_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
         return None
