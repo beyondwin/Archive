@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
 import stat
 import tempfile
 import unittest
@@ -216,10 +217,10 @@ class ParityInvariantTest(unittest.TestCase):
         ]
         self.assertEqual(
             PARITY._validate_recovery_evidence("healthy-resume", healthy),
-            "resume",
+            "recovered",
         )
         healthy[1]["session_id"] = "00000000-0000-4000-8000-000000000002"
-        with self.assertRaisesRegex(PARITY.ParityFailure, "exact captured"):
+        with self.assertRaisesRegex(PARITY.ParityFailure, "exact healthy session"):
             PARITY._validate_recovery_evidence("healthy-resume", healthy)
 
         stalled = [
@@ -259,6 +260,43 @@ class ParityInvariantTest(unittest.TestCase):
     def test_parity_stall_lease_allows_provider_startup_jitter(self) -> None:
         self.assertGreaterEqual(PARITY.PARITY_STALL_SECONDS, 1.5)
         self.assertLess(PARITY.PARITY_STALL_SECONDS, 2.0)
+
+    def test_fake_codex_home_is_private_bounded_and_self_contained(self) -> None:
+        ambient = self.root / "ambient-codex-home"
+        ambient.mkdir()
+        (ambient / "auth.json").write_text(
+            json.dumps({"OPENAI_API_KEY": "must-not-copy"}), encoding="utf-8"
+        )
+        environment = {
+            "CODEX_HOME": str(ambient),
+            "OPENAI_API_KEY": "must-not-copy",
+            "PATH": os.environ["PATH"],
+        }
+
+        codex_home = PARITY._prepare_fake_codex_environment(
+            self.root / "scenario", environment
+        )
+
+        self.assertEqual(codex_home, self.root / "scenario" / "fake-codex-home")
+        self.assertEqual(environment["CODEX_HOME"], str(codex_home))
+        self.assertNotIn("OPENAI_API_KEY", environment)
+        self.assertEqual(stat.S_IMODE(codex_home.stat().st_mode), 0o700)
+        relative_files = {
+            path.relative_to(codex_home)
+            for path in codex_home.rglob("*")
+            if path.is_file()
+        }
+        self.assertEqual(
+            relative_files,
+            {Path("auth.json"), *PARITY.CODEX_SDD_RELATIVE_PATHS},
+        )
+        for path in relative_files:
+            target = codex_home / path
+            self.assertFalse(target.is_symlink())
+            self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o600)
+            self.assertGreater(target.stat().st_size, 0)
+            self.assertLessEqual(target.stat().st_size, PARITY.FAKE_FILE_LIMIT)
+            self.assertNotIn("must-not-copy", target.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

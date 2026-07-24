@@ -53,6 +53,17 @@ GIT_ENV = {
     "GIT_AUTHOR_DATE": "2026-01-01T00:00:00+00:00",
     "GIT_COMMITTER_DATE": "2026-01-01T00:00:00+00:00",
 }
+FAKE_FILE_LIMIT = 4_096
+CODEX_SDD_RELATIVE_PATHS = (
+    Path("skills/subagent-driven-development/SKILL.md"),
+    Path("skills/subagent-driven-development/scripts/sdd-workspace"),
+    Path("skills/subagent-driven-development/scripts/task-brief"),
+    Path("skills/subagent-driven-development/scripts/review-package"),
+    Path("skills/subagent-driven-development/implementer-prompt.md"),
+    Path("skills/subagent-driven-development/task-reviewer-prompt.md"),
+    Path("skills/subagent-driven-development/re-review-prompt.md"),
+    Path("skills/requesting-code-review/code-reviewer.md"),
+)
 
 
 class ParityFailure(RuntimeError):
@@ -226,6 +237,60 @@ def _install_fake(provider: str, root: Path) -> Path:
     shutil.copyfile(PROVIDERS[provider]["fake"], target)
     target.chmod(0o700)
     return binary
+
+
+def _prepare_fake_codex_environment(
+    root: Path, environment: dict[str, str]
+) -> Path:
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    codex_home = root / "fake-codex-home"
+    codex_home.mkdir(mode=0o700)
+    codex_home.chmod(0o700)
+    documents = {
+        Path("auth.json"): json.dumps(
+            {
+                "auth_mode": "apikey",
+                "last_refresh": None,
+                "OPENAI_API_KEY": "fake-parity-api-key",
+                "tokens": None,
+            },
+            sort_keys=True,
+        )
+        + "\n",
+    }
+    documents.update(
+        {
+            relative: "fake-sdd-entrypoint\n"
+            for relative in CODEX_SDD_RELATIVE_PATHS
+        }
+    )
+    for relative, contents in documents.items():
+        encoded = contents.encode("utf-8")
+        if not encoded or len(encoded) > FAKE_FILE_LIMIT:
+            raise ParityFailure("fake Codex capability file is not bounded")
+        target = codex_home / relative
+        target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        target.write_bytes(encoded)
+        target.chmod(0o600)
+
+    expected = set(documents)
+    actual = {
+        path.relative_to(codex_home)
+        for path in codex_home.rglob("*")
+        if path.is_file()
+    }
+    if actual != expected or any(
+        path.is_symlink()
+        or not path.is_file()
+        or path.stat().st_size <= 0
+        or path.stat().st_size > FAKE_FILE_LIMIT
+        for path in (codex_home / relative for relative in expected)
+    ):
+        raise ParityFailure("fake Codex capability home failed its self-check")
+
+    environment.pop("OPENAI_API_KEY", None)
+    environment["CODEX_HOME"] = str(codex_home)
+    return codex_home
 
 
 def _write_sequence(path: Path, actions: Sequence[str]) -> None:
@@ -668,6 +733,8 @@ def run_provider(
     env = dict(os.environ)
     env.update(GIT_ENV)
     env["HOME"] = str(home)
+    if provider == "codex":
+        _prepare_fake_codex_environment(root, env)
     # Keep runtime discovery read-only while isolating every provider HOME.
     env["UV_PYTHON_INSTALL_DIR"] = str(Path(sys.executable).resolve().parents[2])
     binary = _install_fake(provider, root)
