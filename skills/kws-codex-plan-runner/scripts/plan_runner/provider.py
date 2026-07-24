@@ -274,6 +274,7 @@ class CodexAdapter:
         request: ProviderRequest,
         lease: ActivityLease,
         on_session_id: Callable[[str], None] | None = None,
+        on_process_observation: Callable[[Mapping[str, object]], None] | None = None,
     ) -> ProviderOutcome:
         argv = self.build_argv(request)
         self._validate_launch_paths(request)
@@ -356,6 +357,7 @@ class CodexAdapter:
                     start_new_session=True,
                 )
                 pgid = process.pid
+                recorded_descendants: set[int] = set()
                 try:
                     opened.revalidate()
                     try:
@@ -365,6 +367,14 @@ class CodexAdapter:
                             )
                     except ProcessLookupError:
                         pass
+                    if on_process_observation is not None:
+                        on_process_observation(
+                            {
+                                "provider_pid": process.pid,
+                                "provider_pgid": pgid,
+                                "descendant_pids": [],
+                            }
+                        )
                     assert (
                         process.stdin is not None
                         and process.stdout is not None
@@ -433,10 +443,22 @@ class CodexAdapter:
                                 )
                                 leader_finished = True
                             if not leader_finished:
-                                leader_exited, _descendants = _anchored_group(
+                                leader_exited, descendants = _anchored_group(
                                     process,
                                     pgid,
                                 )
+                                if (
+                                    on_process_observation is not None
+                                    and descendants != recorded_descendants
+                                ):
+                                    on_process_observation(
+                                        {
+                                            "provider_pid": process.pid,
+                                            "provider_pgid": pgid,
+                                            "descendant_pids": sorted(descendants),
+                                        }
+                                    )
+                                    recorded_descendants = set(descendants)
                                 if leader_exited:
                                     return_code, _forced = _finish_group(
                                         process, pgid, terminate_leader=False
@@ -934,6 +956,7 @@ def _structured_permission_code(error: object) -> str | None:
     permission_system = error.get("permission_system")
     normalized_code = code.lower() if isinstance(code, str) else None
     normalized_errno = errno.upper() if isinstance(errno, str) else None
+    normalized_code_errno = code.upper() if isinstance(code, str) else None
     normalized_capability = (
         capability.lower() if isinstance(capability, str) else None
     )
@@ -947,13 +970,14 @@ def _structured_permission_code(error: object) -> str | None:
         or normalized_system in _HOST_PERMISSION_SYSTEMS
     ):
         return "host_permission_blocked"
-    if (
+    if normalized_code == "sandbox_denied" or (
         normalized_code in _SANDBOX_PERMISSION_CODES
         and normalized_errno in _PERMISSION_ERRNOS
     ) or (
         normalized_capability in _SANDBOX_CAPABILITIES
         and (
             normalized_errno in _PERMISSION_ERRNOS
+            or normalized_code_errno in _PERMISSION_ERRNOS
             or normalized_code in _SANDBOX_PERMISSION_CODES
         )
     ):

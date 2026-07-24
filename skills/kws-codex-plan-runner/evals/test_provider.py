@@ -663,6 +663,27 @@ class CodexProviderTest(unittest.TestCase):
         self.assertEqual(outcome.kind, "blocked")
         self.assertEqual(outcome.provider_code, "sandbox_capability_blocked")
 
+    def test_structured_sandbox_permission_normalization_is_exact(self):
+        cases = (
+            ({"code": "sandbox_denied"}, "sandbox_capability_blocked"),
+            (
+                {"code": "EPERM", "capability": "workspace_write"},
+                "sandbox_capability_blocked",
+            ),
+            (
+                {"errno": "EACCES", "capability": "helper_socket"},
+                "sandbox_capability_blocked",
+            ),
+            ({"code": "EPERM", "capability": "unrecognized"}, None),
+            ({"message": "permission denied while writing workspace"}, None),
+        )
+        for error, expected in cases:
+            with self.subTest(error=error):
+                self.assertEqual(
+                    provider_module._structured_permission_code(error),
+                    expected,
+                )
+
     def test_tcc_or_keychain_denial_is_host_permission_blocked(self):
         for scenario in ("host-tcc-denied", "host-keychain-denied"):
             with self.subTest(scenario=scenario):
@@ -741,6 +762,23 @@ class CodexProviderTest(unittest.TestCase):
         self.assertTrue(observation_timeouts)
         self.assertGreaterEqual(min(observation_timeouts), 0.25)
         self.assertLessEqual(max(observation_timeouts), 0.25)
+
+    def test_provider_process_group_identity_is_reported_immediately(self):
+        observations = []
+
+        outcome = self.adapter().launch(
+            self.request(),
+            RecordingLease(),
+            on_process_observation=observations.append,
+        )
+
+        self.assertEqual(outcome.kind, "implemented")
+        self.assertTrue(observations)
+        first = observations[0]
+        self.assertEqual(set(first), {"provider_pid", "provider_pgid", "descendant_pids"})
+        self.assertEqual(first["provider_pid"], first["provider_pgid"])
+        self.assertGreater(first["provider_pid"], 0)
+        self.assertEqual(first["descendant_pids"], [])
 
     def test_token_deltas_and_repeated_logs_do_not_prevent_stall(self):
         started = time.monotonic()

@@ -214,6 +214,31 @@ def _observe_group(pgid: int, *, timeout: float) -> dict[int, str]:
     return members
 
 
+def process_group_is_quiescent(
+    pgid: int,
+    recorded_pids: Sequence[int],
+) -> bool:
+    if type(pgid) is not int or pgid <= 0:
+        raise ValueError("provider process group evidence is invalid")
+    if (
+        not isinstance(recorded_pids, Sequence)
+        or isinstance(recorded_pids, (str, bytes))
+        or any(type(pid) is not int or pid <= 0 for pid in recorded_pids)
+    ):
+        raise ValueError("recorded process evidence is invalid")
+    if _observe_group(pgid, timeout=0.25):
+        return False
+    for pid in set(recorded_pids):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            continue
+        except PermissionError:
+            return False
+        return False
+    return True
+
+
 def _anchored_group(
     process: subprocess.Popen[bytes],
     pgid: int,
