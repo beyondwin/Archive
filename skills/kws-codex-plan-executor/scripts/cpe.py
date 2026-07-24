@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run, resume, or inspect ordered Superpowers implementation plans."""
+"""Run, resume, recover, or inspect ordered Superpowers implementation plans."""
 
 from __future__ import annotations
 
@@ -60,6 +60,15 @@ def build_parser() -> argparse.ArgumentParser:
     inspect = commands.add_parser("inspect")
     inspect.add_argument("--run-id", required=True)
 
+    recover_ledger = commands.add_parser("recover-ledger")
+    recover_ledger.add_argument("--run-id", required=True)
+    recover_ledger.add_argument("--sha256", required=True)
+    recover_ledger.add_argument(
+        "--authority-profile",
+        choices=("local-implementation-with-evidence-approvals",),
+        required=True,
+    )
+
     verify = commands.add_parser("verify")
     verify.add_argument("--run-id", required=True)
     verify.add_argument(
@@ -113,6 +122,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 retry_failed=args.retry_failed,
             )
             return _emit(result)
+        if args.command == "recover-ledger":
+            result = runner.recover_execution_ledger(
+                run_id=args.run_id,
+                ledger_sha256=args.sha256,
+                authority_profile=args.authority_profile,
+            )
+            return _emit(result, 0)
         if args.command == "verify":
             command_argv = list(args.argv)
             if command_argv[:1] != ["--"]:
