@@ -302,9 +302,6 @@ class CodexAdapter:
                                 leader_exited, _descendants = _anchored_group(
                                     process,
                                     pgid,
-                                    observation_timeout=max(
-                                        0.1, min(0.25, self._poll_seconds)
-                                    ),
                                 )
                                 if leader_exited:
                                     return_code, _forced = _finish_group(

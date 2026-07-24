@@ -517,7 +517,7 @@ test("CLI reports the Claude full eval as opt-in and not run", async () => {
 test.each([
   ["console", "apps/console/src/App.tsx", "\"console-test\": argv=[\"bun\",\"test\",\"src\"] cwd=\"apps/console\""],
   ["native", "native/kernel/crates/kernel-cli/src/main.rs", "\"rust-test\": argv=[\"cargo\",\"test\",\"--workspace\"] cwd=\"native/kernel\""],
-  ["executor", "skills/kws-codex-plan-executor/scripts/cpe.py", "\"codex-executor-eval\": argv=[\"./evals/run.sh\"] cwd=\"skills/kws-codex-plan-executor\""],
+  ["Codex plan runner", "skills/kws-codex-plan-runner/scripts/runner.py", "\"codex-plan-runner-eval\": argv=[\"./evals/run.sh\"] cwd=\"skills/kws-codex-plan-runner\""],
 ])("CLI includes cwd in $0 command summaries", async (_name, path, expected) => {
   const script = join(process.cwd(), "scripts/agent/verify.ts");
   const child = Bun.spawn([
