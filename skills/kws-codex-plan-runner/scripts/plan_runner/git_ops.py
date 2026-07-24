@@ -13,6 +13,7 @@ from .contracts import require_digest, require_full_sha
 
 
 MAX_HASH_BYTES = 8 * 1024 * 1024
+MAX_GIT_IDENTITY_BYTES = 1024
 
 _CREDENTIAL_CONFIG_PATHS = frozenset(
     (
@@ -88,6 +89,32 @@ _SERVICE_CREDENTIALS = frozenset(
 
 
 @dataclass(frozen=True)
+class GitIdentity:
+    name: str
+    email: str
+
+    def __post_init__(self) -> None:
+        for label, value in (("name", self.name), ("email", self.email)):
+            if (
+                not isinstance(value, str)
+                or value != value.strip()
+                or not value
+                or len(value.encode("utf-8")) > MAX_GIT_IDENTITY_BYTES
+                or any(ord(char) < 32 or ord(char) == 127 for char in value)
+            ):
+                raise ValueError(f"invalid Git identity {label}")
+
+    def as_dict(self) -> dict[str, str]:
+        return {"name": self.name, "email": self.email}
+
+    @classmethod
+    def from_mapping(cls, value: object) -> "GitIdentity":
+        if not isinstance(value, dict) or set(value) != {"name", "email"}:
+            raise ValueError("invalid sealed Git identity")
+        return cls(name=value["name"], email=value["email"])
+
+
+@dataclass(frozen=True)
 class WorktreeObservation:
     head: str
     branch: str
@@ -139,6 +166,21 @@ def _common_directory(path: Path) -> Path:
 def _head(path: Path) -> str:
     value = _output(_git(path, ("rev-parse", "HEAD")), "rev-parse HEAD").decode().strip()
     return require_full_sha(value)
+
+
+def configured_git_identity(path: Path) -> GitIdentity:
+    try:
+        name = _output(
+            _git(path, ("config", "--get", "user.name")),
+            "Git user.name",
+        ).decode().rstrip("\n")
+        email = _output(
+            _git(path, ("config", "--get", "user.email")),
+            "Git user.email",
+        ).decode().rstrip("\n")
+        return GitIdentity(name=name, email=email)
+    except (UnicodeError, ValueError) as error:
+        raise RuntimeError("configured Git identity is missing or invalid") from error
 
 
 def _branch(path: Path) -> str:
@@ -331,12 +373,48 @@ class GitWorkspace:
         return observation
 
 
+def validate_commit_identities(
+    worktree: Path,
+    starting_commit: str,
+    candidate_head: str,
+    identity: GitIdentity,
+) -> None:
+    starting_commit = require_full_sha(starting_commit)
+    candidate_head = require_full_sha(candidate_head)
+    try:
+        raw = _output(
+            _git(
+                worktree,
+                (
+                    "log",
+                    "--format=%H%x00%an%x00%ae%x00%cn%x00%ce",
+                    f"{starting_commit}..{candidate_head}",
+                ),
+            ),
+            "log commit identities",
+        )
+    except ValueError as error:
+        raise RuntimeError("commit identity validation failed") from error
+    expected = (identity.name.encode(), identity.email.encode()) * 2
+    for record in raw.splitlines():
+        fields = record.split(b"\0")
+        if len(fields) != 5:
+            raise RuntimeError("malformed commit identity output")
+        try:
+            require_full_sha(fields[0].decode("ascii"))
+        except (UnicodeError, ValueError) as error:
+            raise RuntimeError("malformed commit identity output") from error
+        if tuple(fields[1:]) != expected:
+            raise RuntimeError("commit identity mismatch")
+
+
 def sanitized_child_env(
     source_env: Mapping[str, str],
     *,
     provider_auth_prefixes: Sequence[str],
     remotes: Sequence[str],
     run_id: str,
+    git_identity: GitIdentity,
 ) -> dict[str, str]:
     """Return a child environment that blocks accidental Git remote mutation.
 
@@ -375,11 +453,25 @@ def sanitized_child_env(
         safe_remotes.append(remote)
     if any(ord(character) < 32 or ord(character) == 127 for character in run_id):
         raise ValueError("run id contains control characters")
-    for index, remote in enumerate(safe_remotes):
+    safe_config = (
+        ("user.name", git_identity.name),
+        ("user.email", git_identity.email),
+        ("user.useConfigOnly", "true"),
+        ("commit.gpgSign", "false"),
+    )
+    for index, (key, value) in enumerate(safe_config):
+        clean[f"GIT_CONFIG_KEY_{index}"] = key
+        clean[f"GIT_CONFIG_VALUE_{index}"] = value
+    for index, remote in enumerate(safe_remotes, start=len(safe_config)):
         clean[f"GIT_CONFIG_KEY_{index}"] = f"remote.{remote}.pushurl"
         clean[f"GIT_CONFIG_VALUE_{index}"] = f"disabled://plan-runner/{run_id}/{remote}"
-    clean["GIT_CONFIG_COUNT"] = str(len(safe_remotes))
+    clean["GIT_CONFIG_COUNT"] = str(len(safe_config) + len(safe_remotes))
+    clean["GIT_AUTHOR_NAME"] = git_identity.name
+    clean["GIT_AUTHOR_EMAIL"] = git_identity.email
+    clean["GIT_COMMITTER_NAME"] = git_identity.name
+    clean["GIT_COMMITTER_EMAIL"] = git_identity.email
     clean["GIT_TERMINAL_PROMPT"] = "0"
+    clean["GCM_INTERACTIVE"] = "Never"
     return clean
 
 
