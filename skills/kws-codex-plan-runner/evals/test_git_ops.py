@@ -99,12 +99,18 @@ class GitWorkspaceTest(unittest.TestCase):
             {
                 "PATH": "/usr/bin",
                 "HOME": "/Users/operator",
+                "EMAIL": "ambient@example.test",
                 "GIT_AUTHOR_NAME": "Ambient",
                 "GIT_AUTHOR_EMAIL": "ambient@example.test",
+                "GIT_AUTHOR_DATE": "2000-01-01T00:00:00+00:00",
                 "GIT_COMMITTER_NAME": "Ambient",
                 "GIT_COMMITTER_EMAIL": "ambient@example.test",
+                "GIT_COMMITTER_DATE": "2000-01-01T00:00:00+00:00",
                 "GIT_CONFIG_COUNT": "99",
+                "GIT_CONFIG_GLOBAL": "/tmp/ambient-global-config",
                 "GIT_CONFIG_KEY_0": "commit.gpgSign",
+                "GIT_CONFIG_NOSYSTEM": "0",
+                "GIT_CONFIG_SYSTEM": "/tmp/ambient-system-config",
                 "GIT_CONFIG_VALUE_0": "true",
             },
             provider_auth_prefixes=("OPENAI_",),
@@ -132,6 +138,52 @@ class GitWorkspaceTest(unittest.TestCase):
                 ("commit.gpgSign", "false"),
                 ("remote.origin.pushurl", "disabled://plan-runner/run-1/origin"),
             ],
+        )
+        for inherited in (
+            "EMAIL",
+            "GIT_AUTHOR_DATE",
+            "GIT_COMMITTER_DATE",
+            "GIT_CONFIG_SYSTEM",
+        ):
+            self.assertNotIn(inherited, env)
+        self.assertEqual(env["GIT_CONFIG_GLOBAL"], os.devnull)
+        self.assertEqual(env["GIT_CONFIG_NOSYSTEM"], "1")
+
+    def test_child_git_ignores_inherited_global_config_behavior(self):
+        workspace = self.create()
+        hooks = self.root / "ambient-hooks"
+        hooks.mkdir()
+        rejecting_hook = hooks / "pre-commit"
+        rejecting_hook.write_text("#!/bin/sh\nexit 97\n", encoding="utf-8")
+        rejecting_hook.chmod(0o700)
+        global_config = self.root / "ambient-global.gitconfig"
+        global_config.write_text(
+            f"[core]\n\thooksPath = {hooks}\n",
+            encoding="utf-8",
+        )
+        env = sanitized_child_env(
+            {
+                "PATH": os.environ["PATH"],
+                "GIT_CONFIG_GLOBAL": str(global_config),
+            },
+            provider_auth_prefixes=("OPENAI_", "CODEX_"),
+            remotes=(),
+            run_id="run-123",
+            git_identity=sealed_identity(),
+        )
+
+        committed = subprocess.run(
+            ["git", "commit", "--allow-empty", "-m", "global config ignored"],
+            cwd=workspace.worktree,
+            env=env,
+            check=False,
+            capture_output=True,
+        )
+
+        self.assertEqual(
+            committed.returncode,
+            0,
+            committed.stderr.decode("utf-8", "replace"),
         )
 
     def test_child_environment_suppresses_repository_signing_and_seals_commit_identity(self):

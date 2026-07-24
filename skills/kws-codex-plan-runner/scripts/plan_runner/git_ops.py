@@ -86,6 +86,16 @@ _SERVICE_CREDENTIALS = frozenset(
         "PGPASSWORD",
     )
 )
+_GIT_ENV_INJECTION_KEYS = frozenset(
+    (
+        "EMAIL",
+        "GIT_AUTHOR_DATE",
+        "GIT_COMMITTER_DATE",
+        "GIT_CONFIG_GLOBAL",
+        "GIT_CONFIG_NOSYSTEM",
+        "GIT_CONFIG_SYSTEM",
+    )
+)
 
 
 @dataclass(frozen=True)
@@ -425,7 +435,13 @@ def sanitized_child_env(
     allowed_prefixes = tuple(provider_auth_prefixes)
     clean: dict[str, str] = {}
     for key, value in source_env.items():
-        if key in {"SSH_AUTH_SOCK", "SSH_ASKPASS", "GIT_ASKPASS", "GIT_SSH", "GIT_SSH_COMMAND"}:
+        if key in _GIT_ENV_INJECTION_KEYS or key in {
+            "SSH_AUTH_SOCK",
+            "SSH_ASKPASS",
+            "GIT_ASKPASS",
+            "GIT_SSH",
+            "GIT_SSH_COMMAND",
+        }:
             continue
         if (
             key in {"GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS"}
@@ -450,6 +466,8 @@ def sanitized_child_env(
         ):
             continue
         clean[str(key)] = str(value)
+    clean["GIT_CONFIG_GLOBAL"] = os.devnull
+    clean["GIT_CONFIG_NOSYSTEM"] = "1"
     safe_remotes: list[str] = []
     for remote in sorted(set(remotes)):
         if not isinstance(remote, str) or not remote or any(ord(character) < 32 or ord(character) == 127 for character in remote):

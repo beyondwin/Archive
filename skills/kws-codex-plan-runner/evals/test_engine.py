@@ -898,6 +898,129 @@ class EngineTest(unittest.TestCase):
             "fresh_root_full_diff",
         )
 
+    def test_safe_dirty_transport_failure_launches_fresh_root_from_exact_checkpoint(self):
+        observed_requests = []
+
+        def dirty_transport_then_complete(
+            _adapter, request, packet, session_id
+        ):
+            if packet["mode"] != "implementation":
+                return None
+            observed_requests.append(request)
+            partial = request.worktree / "partial.txt"
+            if len(observed_requests) == 1:
+                partial.write_text(
+                    "partial implementation\n", encoding="utf-8"
+                )
+                return ProviderOutcome(
+                    "transport_failed",
+                    1,
+                    session_id,
+                    None,
+                    "controller_transport_failed",
+                    {},
+                    (),
+                    "",
+                )
+            git("add", partial.name, cwd=request.worktree)
+            return None
+
+        self.outcome_hook = dirty_transport_then_complete
+        code = self.runner().create_run(
+            specs=self.specs,
+            plans=self.plans[:1],
+            workspace=self.source,
+            stall_seconds=30,
+            sandbox="workspace-write",
+            model=None,
+        )
+
+        self.assertEqual(code, ExitCode.READY)
+        attempts = [
+            item
+            for item in self.state()["attempts"]
+            if item["mode"] == "implementation"
+        ]
+        self.assertFalse(attempts[0]["post_provider_worktree"]["clean"])
+        self.assertEqual(
+            attempts[0]["next_strategy"], "fresh_root_full_diff"
+        )
+        self.assertIsNone(observed_requests[1].session_id)
+        retry_packet = [
+            packet
+            for packet in self.packets
+            if packet["mode"] == "implementation"
+        ][1]
+        self.assertEqual(
+            retry_packet["recovery_context"]["checkpoint"][
+                "post_provider_worktree"
+            ],
+            attempts[0]["post_provider_worktree"],
+        )
+
+    def test_safe_dirty_resumed_session_failure_launches_fresh_root(self):
+        observed_requests = []
+
+        def transport_then_dirty_session_loss(
+            _adapter, request, packet, session_id
+        ):
+            if packet["mode"] != "implementation":
+                return None
+            observed_requests.append(request)
+            partial = request.worktree / "partial.txt"
+            if len(observed_requests) == 1:
+                return ProviderOutcome(
+                    "transport_failed",
+                    1,
+                    session_id,
+                    None,
+                    "controller_transport_failed",
+                    {},
+                    (),
+                    "",
+                )
+            if len(observed_requests) == 2:
+                partial.write_text(
+                    "partial implementation\n", encoding="utf-8"
+                )
+                return ProviderOutcome(
+                    "resume_failed",
+                    1,
+                    session_id,
+                    None,
+                    "session_resume_failed",
+                    {},
+                    (),
+                    "",
+                )
+            git("add", partial.name, cwd=request.worktree)
+            return None
+
+        self.outcome_hook = transport_then_dirty_session_loss
+        code = self.runner().create_run(
+            specs=self.specs,
+            plans=self.plans[:1],
+            workspace=self.source,
+            stall_seconds=30,
+            sandbox="workspace-write",
+            model=None,
+        )
+
+        self.assertEqual(code, ExitCode.READY)
+        attempts = [
+            item
+            for item in self.state()["attempts"]
+            if item["mode"] == "implementation"
+        ]
+        self.assertEqual(attempts[0]["next_strategy"], "resume_root")
+        self.assertFalse(attempts[1]["post_provider_worktree"]["clean"])
+        self.assertEqual(
+            attempts[1]["next_strategy"], "fresh_root_full_diff"
+        )
+        self.assertIsNone(observed_requests[0].session_id)
+        self.assertIsNotNone(observed_requests[1].session_id)
+        self.assertIsNone(observed_requests[2].session_id)
+
     def test_external_authority_or_unsafe_identity_blocks(self):
         cases = [
             (
@@ -2408,17 +2531,20 @@ class EngineTest(unittest.TestCase):
 
     def test_completed_same_head_review_is_reconciled_without_provider_replay(self):
         runner = self.runner()
-        original_validate = runner._validate_final_result
+        original_mark_reusable = runner._mark_final_result_reusable
         crashed = False
 
-        def crash_after_review_checkpoint(*args, **kwargs):
+        def crash_after_validated_review_checkpoint(*args, **kwargs):
             nonlocal crashed
+            result = original_mark_reusable(*args, **kwargs)
             if not crashed:
                 crashed = True
-                raise SimulatedCrash("after reviewed checkpoint")
-            return original_validate(*args, **kwargs)
+                raise SimulatedCrash("after validated reviewed checkpoint")
+            return result
 
-        runner._validate_final_result = crash_after_review_checkpoint
+        runner._mark_final_result_reusable = (
+            crash_after_validated_review_checkpoint
+        )
         with self.assertRaises(SimulatedCrash):
             runner.create_run(
                 specs=self.specs,
@@ -2436,6 +2562,7 @@ class EngineTest(unittest.TestCase):
         attempt = state["attempts"][-1]
         self.assertEqual(attempt["outcome"], "reviewed")
         self.assertIn("result_artifact", attempt)
+        self.assertTrue(attempt["result_validated"])
 
         code = self.runner().resume(
             state["run_id"],
@@ -2448,6 +2575,84 @@ class EngineTest(unittest.TestCase):
             sum(packet["mode"] == "finalization" for packet in self.packets),
             final_launches,
         )
+
+    def test_invalid_final_result_retry_launches_fresh_root_after_changed_strategy(self):
+        finalization_launches = 0
+
+        def invalid_then_valid(
+            _adapter, _request, packet, session_id, digest
+        ):
+            nonlocal finalization_launches
+            finalization_launches += 1
+            if finalization_launches != 1:
+                return None
+            return ProviderOutcome(
+                "reviewed",
+                0,
+                session_id,
+                {
+                    "status": "reviewed",
+                    "review_head": packet["candidate_head"],
+                    "verification_set_digest": digest,
+                    "open_findings": [],
+                    "open_obligation_ids": [],
+                    "no_applicable_verification_approved": False,
+                    "summary": "",
+                },
+                None,
+                {},
+                (),
+                "",
+            )
+
+        self.after_final_hook = invalid_then_valid
+        runner = self.runner()
+        first_code = runner.create_run(
+            specs=self.specs,
+            plans=self.plans[:1],
+            workspace=self.source,
+            stall_seconds=30,
+            sandbox="workspace-write",
+            model=None,
+        )
+        self.assertEqual(first_code, ExitCode.INTEGRITY)
+        failed = self.state()
+        first_final_attempt = next(
+            item
+            for item in failed["attempts"]
+            if item["mode"] == "finalization"
+        )
+        self.assertIn("result_artifact", first_final_attempt)
+        self.assertFalse(
+            first_final_attempt.get("result_validated", False)
+        )
+
+        retry_code = runner.resume(
+            failed["run_id"],
+            retry_blocked=False,
+            retry_failed=True,
+            strategy_note="re-run finalization with corrected review output",
+        )
+
+        self.assertEqual(retry_code, ExitCode.READY)
+        final_requests = [
+            request
+            for request, packet in zip(
+                self.requests, self.packets, strict=True
+            )
+            if packet["mode"] == "finalization"
+        ]
+        self.assertEqual(len(final_requests), 2)
+        self.assertIsNone(final_requests[1].session_id)
+        final_attempts = [
+            item
+            for item in self.state()["attempts"]
+            if item["mode"] == "finalization"
+        ]
+        self.assertFalse(
+            final_attempts[0].get("result_validated", False)
+        )
+        self.assertTrue(final_attempts[1]["result_validated"])
 
     def test_runtime_failure_blocks_before_worktree_or_provider(self):
         def unavailable():
