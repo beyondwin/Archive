@@ -17,6 +17,18 @@
 실제로 존재하는 `README.md`를 확인하고, 해당 스킬이 제공하는 추가 파일을
 따르세요.
 
+## 버전과 릴리스 상태
+
+`kws-codex-plan-runner`와 `kws-claude-plan-runner`의 최초 greenfield
+릴리스는 각각 `1.0.0`입니다. 발견성에 사용하는 현재 버전은 각
+`SKILL.md`의 `metadata.version`, 릴리스 이력은 같은 디렉터리의
+`CHANGELOG.md`가 단일 출처입니다.
+
+사용자 홈에 심볼릭 링크를 추가하거나 문서만 정리하는 작업은 런타임 계약을
+바꾸지 않으므로 버전을 올리지 않습니다. CLI, 상태, 복구, 검증, 완료 의미가
+바뀌면 SemVer에 따라 `SKILL.md`, `CHANGELOG.md`, README, 계약 테스트를
+같이 갱신합니다.
+
 ## Waygent Boundary
 
 Waygent 요청은 `skills/waygent/`에서 CLI로 라우팅하고, 런타임 상태와
@@ -93,6 +105,10 @@ ln -sfn "$ARCHIVE_REPO/skills/waygent" \
 
 > `ln -sfn` 은 기존 심링크를 안전하게 갱신합니다(`-f` 강제, `-n` 디렉터리 타깃 보호). 실제 디렉터리를 덮어쓰지 않으려면 대상 경로가 심링크인지 먼저 확인하세요.
 
+새 링크를 추가한 뒤에는 Codex를 재시작하거나 새 task를 시작해 스킬 카탈로그를
+다시 로드하세요. 이미 열린 task의 시작 시점 카탈로그에는 새 스킬이 나타나지
+않을 수 있습니다.
+
 ### 확인
 
 ```bash
@@ -100,10 +116,15 @@ ls -l ~/.claude/skills/ | grep -E 'kws-|waygent'
 ls -l ~/.codex/skills/  | grep -E 'kws-|waygent'
 ```
 
-Codex 홈에는 Codex plan runner만, Claude 홈에는 Claude plan runner만
-설치되어야 합니다. Claude multi-agent executor는 위의 독립 링크로
-유지합니다. 모든 링크가 `ARCHIVE_REPO/skills/...` 아래의 정확한 source를
-가리키는지 확인하세요.
+신규 설치 대상은 Codex 홈의 Codex plan runner와 Claude 홈의 Claude plan
+runner입니다. Claude multi-agent executor는 위의 독립 링크로 유지합니다.
+모든 링크가 `ARCHIVE_REPO/skills/...` 아래의 정확한 source를 가리키는지
+확인하세요.
+
+레거시 executor 실행이나 재개 가능한 state가 남아 있으면 새 runner 링크와
+기존 executor 링크가 일시적으로 공존할 수 있습니다. 이때 기존 링크나 source를
+수동으로 제거하지 마세요. `scripts/agent/plan-runner-cutover audit`가
+zero-blocker를 확인한 뒤 정식 cutover 절차로만 제거합니다.
 
 ## 수정 워크플로우
 

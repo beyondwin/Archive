@@ -8,8 +8,8 @@ emission.
 Lens is the TypeScript observability and inspection path inside Waygent.
 `agentlens.event.v3` remains the event contract label, but the legacy Python
 `components/agentlens/` tree has been removed from the product runtime. KWS
-executor skills remain in this repository as local executor contracts, but
-they are not the Waygent product runtime.
+plan-runner and executor skills remain in this repository as local execution
+contracts, but they are not the Waygent product runtime.
 
 ## Project Map
 
@@ -17,7 +17,7 @@ they are not the Waygent product runtime.
 apps/                  CLI, API, and console surfaces
 packages/              TypeScript runtime packages
 native/kernel/         Rust execution kernel boundary
-skills/                Waygent and KWS executor skill definitions
+skills/                Waygent and KWS runner/executor skill definitions
 docs/                  Architecture, operations, contracts, and migration notes
 ```
 
@@ -82,6 +82,7 @@ durable state and TypeScript projections, not from chat context.
 - Recovery: [docs/operations/recovery.md](docs/operations/recovery.md)
 - Verification: [docs/operations/verification.md](docs/operations/verification.md)
 - State root migration: [docs/operations/state-root-migration.md](docs/operations/state-root-migration.md)
+- Skill overview and installation: [skills/README.md](skills/README.md)
 - Waygent skill: [skills/waygent/README.md](skills/waygent/README.md)
 
 ## Working Rules

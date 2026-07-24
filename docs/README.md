@@ -61,12 +61,15 @@ verification, recovery, and apply readiness.
 
 - [Skills overview](../skills/README.md)
 - [Waygent skill](../skills/waygent/README.md)
-- [Codex executor skill](../skills/kws-codex-plan-executor/README.md)
-- [Claude executor skill](../skills/kws-claude-multi-agent-executor/README.md)
+- [Codex plan runner](../skills/kws-codex-plan-runner/README.md)
+- [Claude plan runner](../skills/kws-claude-plan-runner/README.md)
+- [Claude multi-agent executor](../skills/kws-claude-multi-agent-executor/README.md)
 
 The Waygent skill routes natural-language operator intent to the CLI. The KWS
-executor skills remain load-bearing local executor contracts, but they are not
-the Waygent product runtime.
+plan runners and specialized multi-agent executor remain load-bearing local
+execution contracts, but they are not the Waygent product runtime. Legacy plan
+executor documents are migration history, not the active sequential-runner
+entry points.
 
 ## Historical Planning
 
