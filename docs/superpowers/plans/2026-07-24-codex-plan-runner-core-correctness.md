@@ -369,16 +369,18 @@ Add deterministic fake scenarios and these exact tests:
 - `test_safe_dirty_failure_uses_fresh_root_without_user_checkpoint`: preserve a safe dirty observation and assert the next action is a fresh root reviewing the complete diff with no routine approval state.
 - `test_external_authority_or_unsafe_identity_blocks`: assert auth/host-permission requirements and identity/ref/path/digest drift choose `block` with a precise reason instead of being relabeled recoverable.
 
-Each accepted dirty checkpoint must assert exact equality for:
+Each accepted dirty checkpoint must use the repository's existing
+`WorktreeObservation` as its canonical identity. Capture one observation and
+assert exact equality for its current fields:
 
 ```python
+observation = workspace.observe()
 {
-    "branch": workspace.branch,
-    "head": git("rev-parse", "HEAD", cwd=workspace.worktree).strip(),
-    "tracked_digest": workspace.observe().tracked_digest,
-    "staged_digest": workspace.observe().staged_digest,
-    "untracked_digest": workspace.observe().untracked_digest,
-    "dirty": True,
+    "head": observation.head,
+    "branch": observation.branch,
+    "porcelain_digest": observation.porcelain_digest,
+    "tree_digest": observation.tree_digest,
+    "clean": False,
 }
 ```
 
@@ -410,7 +412,7 @@ def _checkpoint_provider_attempt(
 ) -> dict[str, object]:
     workspace.require_identity()
     observation = workspace.observe()
-    payload = observation.as_dict()
+    payload = dataclasses.asdict(observation)
     with store.update() as state:
         attempt = self._require_attempt(state, attempt_id)
         attempt["completed"] = True
