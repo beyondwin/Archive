@@ -13,6 +13,12 @@ from pathlib import Path
 
 
 SESSION_ID = "12345678-1234-4234-8234-123456789abc"
+SDD_RELATIVE_PATHS = (
+    Path("skills/subagent-driven-development/SKILL.md"),
+    Path("skills/subagent-driven-development/scripts/sdd-workspace"),
+    Path("skills/subagent-driven-development/scripts/task-brief"),
+    Path("skills/subagent-driven-development/scripts/review-package"),
+)
 
 
 def _value(argv: list[str], flag: str) -> str:
@@ -61,12 +67,26 @@ def _record(
     }
     record = {
         "argv": argv,
+        "codex_auth_visible": False,
         "cwd": os.getcwd(),
         "env": selected,
         "launch_number": _launch_number(log_path),
         "pid": os.getpid(),
         "prompt": prompt,
+        "sdd_capabilities_visible": False,
     }
+    codex_home_value = os.environ.get("CODEX_HOME")
+    if codex_home_value is not None:
+        codex_home = Path(codex_home_value)
+        auth = codex_home / "auth.json"
+        record["codex_auth_visible"] = (
+            auth.is_file() and not auth.is_symlink() and auth.stat().st_size > 0
+        )
+        record["sdd_capabilities_visible"] = all(
+            (codex_home / relative).is_file()
+            and not (codex_home / relative).is_symlink()
+            for relative in SDD_RELATIVE_PATHS
+        )
     if action is not None:
         packet = _packet(prompt)
         record.update(
@@ -390,7 +410,13 @@ def main() -> int:
         if scenario == "current-cli-lifecycle"
         else {"type": "turn.started", "turn_id": "turn-1"}
     )
-    _emit({"type": "item.started", "item": {"id": "tool-1", "type": "command"}})
+    collaboration = scenario in {
+        "root-and-collaboration",
+        "subagent-completion-only",
+    }
+    item_id = "collaboration-1" if collaboration else "tool-1"
+    item_type = "collaboration_tool_call" if collaboration else "command"
+    _emit({"type": "item.started", "item": {"id": item_id, "type": item_type}})
 
     if scenario in {"repeated-log", "stall"}:
         deadline = time.monotonic() + (0.15 if scenario == "repeated-log" else 5)
@@ -426,7 +452,20 @@ def main() -> int:
         sys.stderr.write("\nOPENAI_API_KEY=super-secret password=hunter2\n")
         sys.stderr.flush()
 
-    _emit({"type": "item.completed", "item": {"id": "tool-1", "type": "command"}})
+    completed_item = {"id": item_id, "type": item_type}
+    if collaboration:
+        completed_item["status"] = "completed"
+        completed_item["result"] = {
+            "status": "implemented",
+            "summary": "subagent-result-must-not-be-root",
+        }
+    _emit({"type": "item.completed", "item": completed_item})
+    if scenario in {"result-without-root-turn", "subagent-completion-only"}:
+        _write_result(
+            argv,
+            {"status": "implemented", "summary": "uncompleted-root-result"},
+        )
+        return 0
     _emit(
         {
             "type": "turn.completed",
@@ -448,6 +487,8 @@ def main() -> int:
         result = {"status": "blocked", "reason_code": "external_authority_required"}
     elif scenario == "failed":
         result = {"status": "failed", "reason_code": "verification_failed"}
+    elif scenario == "root-and-collaboration":
+        result = {"status": "implemented", "summary": "root-final-result"}
     else:
         result = {"status": "implemented", "summary": scenario}
     _write_result(argv, result)

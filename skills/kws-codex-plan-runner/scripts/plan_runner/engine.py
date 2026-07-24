@@ -74,6 +74,7 @@ _AUTHORITY_BLOCKERS = frozenset(
         "irreconcilable_requirements",
         "permission_required",
         "provider_auth_blocked",
+        "provider_capability_blocked",
         "provider_unavailable",
         "provider_usage_blocked",
     }

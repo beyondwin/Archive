@@ -26,6 +26,23 @@ from plan_runner.storage import StateStore  # noqa: E402
 from plan_runner.engine import PlanRunner, RuntimePaths  # noqa: E402
 
 
+SDD_RELATIVE_PATHS = (
+    Path("skills/subagent-driven-development/SKILL.md"),
+    Path("skills/subagent-driven-development/scripts/sdd-workspace"),
+    Path("skills/subagent-driven-development/scripts/task-brief"),
+    Path("skills/subagent-driven-development/scripts/review-package"),
+)
+
+
+def make_codex_home(path: Path) -> None:
+    path.mkdir()
+    (path / "auth.json").write_text("fake-auth-marker\n", encoding="utf-8")
+    for relative in SDD_RELATIVE_PATHS:
+        target = path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("fake-sdd-entrypoint\n", encoding="utf-8")
+
+
 def git(*arguments: str, cwd: Path) -> str:
     return subprocess.run(
         ["git", *arguments],
@@ -881,6 +898,16 @@ class EngineTest(unittest.TestCase):
             ),
             (
                 {
+                    "clean": True,
+                    "session_id": str(uuid.uuid4()),
+                    "reason_code": "provider_capability_blocked",
+                    "previous_failed_strategy": None,
+                    "safe": True,
+                },
+                ("block", "provider_capability_blocked"),
+            ),
+            (
+                {
                     "clean": False,
                     "session_id": None,
                     "reason_code": "state_integrity_failed",
@@ -1044,6 +1071,8 @@ class EngineTest(unittest.TestCase):
         self, signum, *, drift=False, clean_drift=False
     ):
         home = self.root / "home"
+        codex_home = self.root / "codex-home"
+        make_codex_home(codex_home)
         fake_bin = self.root / "fake-bin"
         fake_bin.mkdir()
         fake = SKILL_ROOT / "evals" / "fake_codex.py"
@@ -1069,6 +1098,7 @@ class EngineTest(unittest.TestCase):
         environment.update(
             {
                 "HOME": str(home),
+                "CODEX_HOME": str(codex_home),
                 "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
                 "UV_PYTHON_INSTALL_DIR": str(Path(sys.executable).parents[2]),
                 "PLAN_RUNNER_FAKE_SEQUENCE": str(sequence),

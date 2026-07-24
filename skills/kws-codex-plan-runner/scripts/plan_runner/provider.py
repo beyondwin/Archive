@@ -23,6 +23,7 @@ from .process import (
     open_executable,
 )
 from .recovery import ActivityLease
+from .storage import resolve_effective_codex_home
 
 
 MAX_JSONL_LINE_BYTES = 65_536
@@ -71,6 +72,13 @@ _RECOGNIZED_ERROR_CODES = (
     | _TRANSPORT_CODES
 )
 _RESULT_STATUSES = frozenset({"implemented", "blocked", "failed", "reviewed"})
+_AUTH_ENV_SUFFIXES = ("_API_KEY", "_ACCESS_TOKEN", "_AUTH_TOKEN")
+_REQUIRED_SDD_PATHS = (
+    Path("skills/subagent-driven-development/SKILL.md"),
+    Path("skills/subagent-driven-development/scripts/sdd-workspace"),
+    Path("skills/subagent-driven-development/scripts/task-brief"),
+    Path("skills/subagent-driven-development/scripts/review-package"),
+)
 
 
 @dataclass(frozen=True)
@@ -115,6 +123,14 @@ class ProviderOutcome:
     stderr_tail: str
 
 
+@dataclass(frozen=True)
+class StreamSummary:
+    session_id: str | None = None
+    provider_code: str | None = None
+    root_turn_completed: bool = False
+    stream_error: str | None = None
+
+
 class CodexAdapter:
     def __init__(
         self,
@@ -151,6 +167,7 @@ class CodexAdapter:
             "codex",
             "exec",
             "--ignore-user-config",
+            "--ignore-rules",
             "--json",
             "--output-schema",
             str(request.output_schema),
@@ -179,6 +196,17 @@ class CodexAdapter:
     ) -> ProviderOutcome:
         argv = self.build_argv(request)
         self._validate_launch_paths(request)
+        try:
+            codex_home = resolve_effective_codex_home(self._source_env)
+        except ValueError:
+            code = (
+                "provider_capability_blocked"
+                if _has_environment_auth(
+                    self._source_env, self._provider_auth_prefixes
+                )
+                else "provider_auth_blocked"
+            )
+            return _blocked_preflight(code)
         env = sanitized_child_env(
             self._source_env,
             provider_auth_prefixes=self._provider_auth_prefixes,
@@ -186,6 +214,14 @@ class CodexAdapter:
             run_id=self._run_id,
             git_identity=request.git_identity,
         )
+        preflight_code = _capability_preflight(
+            codex_home,
+            env,
+            provider_auth_prefixes=self._provider_auth_prefixes,
+        )
+        if preflight_code is not None:
+            return _blocked_preflight(preflight_code)
+        env["CODEX_HOME"] = str(codex_home)
         isolated_home = request.output_path.parent / ".codex-child-home"
         isolated_config = isolated_home / ".config"
         _ensure_private_directory(isolated_home)
@@ -197,9 +233,7 @@ class CodexAdapter:
 
         activity_keys: list[str] = []
         usage: dict[str, int | float] = {}
-        session_id: str | None = None
-        provider_code: str | None = None
-        stream_failure: str | None = None
+        summary = StreamSummary()
         stalled = False
         controller_stopped = False
         stderr_tail = bytearray()
@@ -255,7 +289,7 @@ class CodexAdapter:
                                 leader_finished = True
                             if (
                                 not leader_finished
-                                and stream_failure is None
+                                and summary.stream_error is None
                                 and lease.expired(time.monotonic())
                             ):
                                 stalled = True
@@ -278,15 +312,9 @@ class CodexAdapter:
                                         )
                                         continue
                                     stdout_buffer.extend(chunk)
-                                    (
-                                        stream_failure,
-                                        session_id,
-                                        provider_code,
-                                    ) = self._consume_stdout(
+                                    summary = self._consume_stdout(
                                         stdout_buffer,
-                                        stream_failure=stream_failure,
-                                        session_id=session_id,
-                                        provider_code=provider_code,
+                                        summary=summary,
                                         usage=usage,
                                         activity_keys=activity_keys,
                                         lease=lease,
@@ -295,7 +323,10 @@ class CodexAdapter:
                             elif not leader_finished:
                                 time.sleep(self._poll_seconds)
 
-                            if stream_failure is not None and not leader_finished:
+                            if (
+                                summary.stream_error is not None
+                                and not leader_finished
+                            ):
                                 return_code, _forced = _finish_group(
                                     process, pgid, terminate_leader=True
                                 )
@@ -327,7 +358,7 @@ class CodexAdapter:
             return ProviderOutcome(
                 kind="transport_failed",
                 return_code=None,
-                session_id=session_id or request.session_id,
+                session_id=summary.session_id or request.session_id,
                 result=None,
                 provider_code="controller_transport_failed",
                 usage=dict(usage),
@@ -335,27 +366,32 @@ class CodexAdapter:
                 stderr_tail=_scrub(stderr_tail),
             )
 
-        if stdout_buffer and stream_failure is None:
-            stream_failure = "provider_stream_malformed"
+        if stdout_buffer and summary.stream_error is None:
+            summary = StreamSummary(
+                session_id=summary.session_id,
+                provider_code=summary.provider_code,
+                root_turn_completed=summary.root_turn_completed,
+                stream_error="provider_stream_malformed",
+            )
         stderr = _scrub(stderr_tail)
         if controller_stopped:
             return ProviderOutcome(
                 "controller_stopped",
                 return_code,
-                session_id or request.session_id,
+                summary.session_id or request.session_id,
                 None,
                 "controller_transport_failed",
                 dict(usage),
                 tuple(activity_keys),
                 stderr,
             )
-        if stream_failure is not None:
+        if summary.stream_error is not None:
             return ProviderOutcome(
                 "failed",
                 return_code,
-                session_id or request.session_id,
+                summary.session_id or request.session_id,
                 None,
-                stream_failure,
+                summary.stream_error,
                 dict(usage),
                 tuple(activity_keys),
                 stderr,
@@ -364,7 +400,7 @@ class CodexAdapter:
             return ProviderOutcome(
                 "stalled",
                 None,
-                session_id or request.session_id,
+                summary.session_id or request.session_id,
                 None,
                 "stall_expired",
                 dict(usage),
@@ -372,13 +408,15 @@ class CodexAdapter:
                 stderr,
             )
 
-        classified = _classified_provider_outcome(provider_code, request.session_id)
+        classified = _classified_provider_outcome(
+            summary.provider_code, request.session_id
+        )
         if classified is not None:
             kind, normalized_code = classified
             return ProviderOutcome(
                 kind,
                 return_code,
-                session_id or request.session_id,
+                summary.session_id or request.session_id,
                 None,
                 normalized_code,
                 dict(usage),
@@ -389,22 +427,34 @@ class CodexAdapter:
             return ProviderOutcome(
                 "transport_failed",
                 return_code,
-                session_id or request.session_id,
+                summary.session_id or request.session_id,
                 None,
                 "controller_transport_failed",
                 dict(usage),
                 tuple(activity_keys),
                 stderr,
             )
-        if session_id is None or (
-            request.session_id is not None and session_id != request.session_id
+        if summary.session_id is None or (
+            request.session_id is not None
+            and summary.session_id != request.session_id
         ):
             return ProviderOutcome(
                 "failed",
                 return_code,
-                session_id,
+                summary.session_id,
                 None,
                 "provider_stream_malformed",
+                dict(usage),
+                tuple(activity_keys),
+                stderr,
+            )
+        if not summary.root_turn_completed:
+            return ProviderOutcome(
+                "transport_failed",
+                return_code,
+                summary.session_id,
+                None,
+                "controller_transport_failed",
                 dict(usage),
                 tuple(activity_keys),
                 stderr,
@@ -414,7 +464,7 @@ class CodexAdapter:
             return ProviderOutcome(
                 "failed",
                 return_code,
-                session_id,
+                summary.session_id,
                 None,
                 "provider_result_invalid",
                 dict(usage),
@@ -424,7 +474,7 @@ class CodexAdapter:
         return ProviderOutcome(
             str(result["status"]),
             return_code,
-            session_id,
+            summary.session_id,
             result,
             None,
             dict(usage),
@@ -460,38 +510,71 @@ class CodexAdapter:
         self,
         buffer: bytearray,
         *,
-        stream_failure: str | None,
-        session_id: str | None,
-        provider_code: str | None,
+        summary: StreamSummary,
         usage: dict[str, int | float],
         activity_keys: list[str],
         lease: ActivityLease,
         on_session_id: Callable[[str], None] | None = None,
-    ) -> tuple[str | None, str | None, str | None]:
+    ) -> StreamSummary:
+        if summary.stream_error is not None:
+            return summary
+        session_id = summary.session_id
+        provider_code = summary.provider_code
+        root_turn_completed = summary.root_turn_completed
         while b"\n" in buffer:
             raw, remainder = buffer.split(b"\n", 1)
             buffer[:] = remainder
             if len(raw) > MAX_JSONL_LINE_BYTES:
-                return "provider_stream_oversized", session_id, provider_code
+                return StreamSummary(
+                    session_id,
+                    provider_code,
+                    root_turn_completed,
+                    "provider_stream_oversized",
+                )
             if not raw:
-                return "provider_stream_malformed", session_id, provider_code
+                return StreamSummary(
+                    session_id,
+                    provider_code,
+                    root_turn_completed,
+                    "provider_stream_malformed",
+                )
             try:
                 event = json.loads(raw)
             except (UnicodeDecodeError, json.JSONDecodeError):
-                return "provider_stream_malformed", session_id, provider_code
+                return StreamSummary(
+                    session_id,
+                    provider_code,
+                    root_turn_completed,
+                    "provider_stream_malformed",
+                )
             if not isinstance(event, Mapping) or not isinstance(
                 event.get("type"), str
             ):
-                return "provider_stream_malformed", session_id, provider_code
+                return StreamSummary(
+                    session_id,
+                    provider_code,
+                    root_turn_completed,
+                    "provider_stream_malformed",
+                )
             event_type = event["type"]
             if event_type == "thread.started":
                 candidate = event.get("thread_id")
                 try:
                     candidate = _require_uuid(candidate)
                 except ValueError:
-                    return "provider_stream_malformed", session_id, provider_code
+                    return StreamSummary(
+                        session_id,
+                        provider_code,
+                        root_turn_completed,
+                        "provider_stream_malformed",
+                    )
                 if session_id is not None and session_id != candidate:
-                    return "provider_stream_malformed", session_id, provider_code
+                    return StreamSummary(
+                        session_id,
+                        provider_code,
+                        root_turn_completed,
+                        "provider_stream_malformed",
+                    )
                 if session_id is None and on_session_id is not None:
                     on_session_id(candidate)
                 session_id = candidate
@@ -500,7 +583,12 @@ class CodexAdapter:
                 if turn_id is not None and (
                     not isinstance(turn_id, str) or not turn_id
                 ):
-                    return "provider_stream_malformed", session_id, provider_code
+                    return StreamSummary(
+                        session_id,
+                        provider_code,
+                        root_turn_completed,
+                        "provider_stream_malformed",
+                    )
                 key = (
                     f"{event_type}:{turn_id}"
                     if isinstance(turn_id, str)
@@ -511,12 +599,18 @@ class CodexAdapter:
                 ):
                     activity_keys.append(f"lifecycle_advanced:{key}")
                 if event_type == "turn.completed":
+                    root_turn_completed = True
                     _merge_usage(usage, event.get("usage"))
             elif event_type in {"item.started", "item.completed"}:
                 item = event.get("item")
                 item_id = item.get("id") if isinstance(item, Mapping) else None
                 if not isinstance(item_id, str) or not item_id:
-                    return True, session_id, provider_code
+                    return StreamSummary(
+                        session_id,
+                        provider_code,
+                        root_turn_completed,
+                        "provider_stream_malformed",
+                    )
                 kind = (
                     "tool_started"
                     if event_type == "item.started"
@@ -533,9 +627,17 @@ class CodexAdapter:
                         or provider_code not in _RECOGNIZED_ERROR_CODES
                     ):
                         provider_code = code
-        if len(buffer) > MAX_JSONL_LINE_BYTES:
-            stream_failure = "provider_stream_oversized"
-        return stream_failure, session_id, provider_code
+        stream_error = (
+            "provider_stream_oversized"
+            if len(buffer) > MAX_JSONL_LINE_BYTES
+            else None
+        )
+        return StreamSummary(
+            session_id,
+            provider_code,
+            root_turn_completed,
+            stream_error,
+        )
 
     @staticmethod
     def _read_result(output_path: Path) -> dict[str, Any] | None:
@@ -570,6 +672,70 @@ def _ensure_private_directory(path: Path) -> None:
         path.chmod(0o700)
     except OSError as error:
         raise ValueError("isolated provider home permissions are unavailable") from error
+
+
+def _has_environment_auth(
+    environment: Mapping[str, str], prefixes: Sequence[str]
+) -> bool:
+    allowed_prefixes = tuple(prefixes)
+    return any(
+        isinstance(key, str)
+        and key.startswith(allowed_prefixes)
+        and key.endswith(_AUTH_ENV_SUFFIXES)
+        and isinstance(value, str)
+        and bool(value.strip())
+        for key, value in environment.items()
+    )
+
+
+def _readable_nonempty_regular(path: Path) -> bool:
+    try:
+        metadata = path.lstat()
+    except OSError:
+        return False
+    return (
+        stat.S_ISREG(metadata.st_mode)
+        and not stat.S_ISLNK(metadata.st_mode)
+        and metadata.st_size > 0
+        and os.access(path, os.R_OK)
+    )
+
+
+def _capability_preflight(
+    codex_home: Path,
+    environment: Mapping[str, str],
+    *,
+    provider_auth_prefixes: Sequence[str],
+) -> str | None:
+    environment_auth = _has_environment_auth(
+        environment, provider_auth_prefixes
+    )
+    file_auth = _readable_nonempty_regular(codex_home / "auth.json")
+    if not environment_auth and not file_auth:
+        return "provider_auth_blocked"
+    try:
+        home_available = codex_home.is_dir()
+    except OSError:
+        home_available = False
+    if not home_available or any(
+        not _readable_nonempty_regular(codex_home / relative)
+        for relative in _REQUIRED_SDD_PATHS
+    ):
+        return "provider_capability_blocked"
+    return None
+
+
+def _blocked_preflight(provider_code: str) -> ProviderOutcome:
+    return ProviderOutcome(
+        kind="blocked",
+        return_code=None,
+        session_id=None,
+        result=None,
+        provider_code=provider_code,
+        usage={},
+        activity_keys=(),
+        stderr_tail="",
+    )
 
 
 def _require_uuid(value: object) -> str:
