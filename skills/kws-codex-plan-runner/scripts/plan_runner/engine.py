@@ -125,6 +125,10 @@ _RUNNER_COMMAND = "./skills/kws-codex-plan-runner/scripts/runner"
 _REPAIR_KINDS = frozenset(
     {"volatile-codex-turn-refs", "unsealed-provider-partial"}
 )
+_RETRYABLE_FAILED_REASONS = frozenset({"recovery_exhausted"})
+_RETRYABLE_FAILED_NEXT_STRATEGIES = frozenset(
+    {"resume_root", "fresh_root_full_diff"}
+)
 
 
 @dataclass(frozen=True)
@@ -494,12 +498,17 @@ class PlanRunner:
                 action = "preserve evidence and stop"
                 detail = failure.get("detail") if isinstance(failure, Mapping) else None
                 code = ExitCode.INTEGRITY
-            else:
+            elif self._is_retryable_failed_state(failure):
                 action = (
                     f"{_RUNNER_COMMAND} resume --run-id {run_id} "
                     "--retry-failed --strategy-note TEXT"
                 )
                 code = ExitCode.FAILED
+            else:
+                reason = "matching_run_unproven"
+                action = "preserve evidence and stop"
+                detail = failure.get("detail") if isinstance(failure, Mapping) else None
+                code = ExitCode.INTEGRITY
         else:
             reason = "matching_run_unproven"
             action = "preserve evidence and stop"
@@ -515,6 +524,28 @@ class PlanRunner:
             detail=detail,
         )
         return int(code)
+
+    @staticmethod
+    def _is_retryable_failed_state(failure: object) -> bool:
+        if not isinstance(failure, Mapping):
+            return False
+        sequence = failure.get("failure_sequence")
+        strategy_digests = failure.get("strategy_digests")
+        if (
+            failure.get("reason_code") not in _RETRYABLE_FAILED_REASONS
+            or failure.get("next_strategy")
+            not in _RETRYABLE_FAILED_NEXT_STRATEGIES
+            or not isinstance(sequence, list)
+            or not isinstance(strategy_digests, list)
+        ):
+            return False
+        if any(not isinstance(item, Mapping) for item in sequence):
+            return False
+        return all(
+            isinstance(digest, str)
+            and re.fullmatch(r"[0-9a-f]{64}", digest) is not None
+            for digest in strategy_digests
+        )
 
     def _emit_matching_run(
         self,
