@@ -20,8 +20,11 @@ from .evidence import EvidenceStore
 from .git_ops import (
     GitIdentity,
     GitWorkspace,
+    VOLATILE_REF_POLICY_VERSION,
     WorktreeObservation,
     configured_git_identity,
+    is_volatile_ref,
+    protected_refs,
     validate_commit_identities,
 )
 from .helper import HelperDescriptor, HelperServer
@@ -186,19 +189,6 @@ def _git_common_dir(workspace: Path) -> Path:
     return value.resolve(strict=True)
 
 
-def _protected_refs(workspace: Path, assigned_branch: str) -> dict[str, str]:
-    result: dict[str, str] = {}
-    assigned = f"refs/heads/{assigned_branch}"
-    raw = _git_text(
-        workspace, "for-each-ref", "--format=%(refname)%09%(objectname)"
-    )
-    for line in raw.splitlines():
-        name, separator, value = line.partition("\t")
-        if separator and name != assigned:
-            result[name] = value
-    return result
-
-
 def _input_digest(specs: Sequence[Path], plans: Sequence[Path]) -> str:
     import hashlib
 
@@ -216,6 +206,27 @@ def _input_digest(specs: Sequence[Path], plans: Sequence[Path]) -> str:
                 }
             )
     return sha256_json(records)
+
+
+def _sealed_protected_refs(config: Mapping[str, object]) -> object:
+    sealed_refs = config.get("protected_refs")
+    policy_version = config.get("volatile_ref_policy_version")
+    if policy_version is None and isinstance(sealed_refs, Mapping):
+        return {
+            name: value
+            for name, value in sealed_refs.items()
+            if isinstance(name, str) and not is_volatile_ref(name)
+        }
+    if policy_version != VOLATILE_REF_POLICY_VERSION:
+        raise ValueError("volatile ref policy version is unsupported")
+    return sealed_refs
+
+
+def _require_protected_refs(
+    config: Mapping[str, object], workspace: GitWorkspace
+) -> None:
+    if workspace.protected_refs() != _sealed_protected_refs(config):
+        raise ValueError("protected ref mutation detected")
 
 
 def _snapshot_input_digest(state: Mapping[str, object]) -> str:
@@ -328,7 +339,8 @@ class PlanRunner:
                 "model": model,
                 "input_snapshot_digest": input_digest,
                 "git_common_dir": str(common_dir),
-                "protected_refs": _protected_refs(workspace, branch),
+                "protected_refs": protected_refs(workspace, branch),
+                "volatile_ref_policy_version": VOLATILE_REF_POLICY_VERSION,
                 "git_identity": git_identity.as_dict(),
             }
             store = StateStore.create(
@@ -630,8 +642,7 @@ class PlanRunner:
         config = state["immutable_config"]
         if str(workspace._common_dir) != config.get("git_common_dir"):
             raise ValueError("Git common directory drift detected")
-        if workspace.protected_refs() != config.get("protected_refs"):
-            raise ValueError("protected ref mutation detected")
+        _require_protected_refs(config, workspace)
         observation = workspace.require_identity()
         _git_text(
             workspace.worktree,
@@ -1384,8 +1395,7 @@ class PlanRunner:
         config = state["immutable_config"]
         if str(workspace._common_dir) != config.get("git_common_dir"):
             raise ValueError("Git common directory drift detected")
-        if workspace.protected_refs() != config.get("protected_refs"):
-            raise ValueError("protected ref mutation detected")
+        _require_protected_refs(config, workspace)
         observation = workspace.require_identity()
         _git_text(
             workspace.worktree,

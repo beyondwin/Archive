@@ -14,6 +14,12 @@ from .contracts import require_digest, require_full_sha
 
 MAX_HASH_BYTES = 8 * 1024 * 1024
 MAX_GIT_IDENTITY_BYTES = 1024
+VOLATILE_REF_POLICY_VERSION = 1
+
+_VOLATILE_REF_PREFIXES = (
+    "refs/codex/turn-diffs/captures/",
+    "refs/codex/turn-diffs/checkpoints/",
+)
 
 _CREDENTIAL_CONFIG_PATHS = frozenset(
     (
@@ -176,6 +182,31 @@ def _common_directory(path: Path) -> Path:
 def _head(path: Path) -> str:
     value = _output(_git(path, ("rev-parse", "HEAD")), "rev-parse HEAD").decode().strip()
     return require_full_sha(value)
+
+
+def is_volatile_ref(refname: str) -> bool:
+    return any(refname.startswith(prefix) for prefix in _VOLATILE_REF_PREFIXES)
+
+
+def _all_refs(path: Path) -> dict[str, str]:
+    raw = _output(
+        _git(path, ("for-each-ref", "--format=%(refname)\t%(objectname)")),
+        "for-each-ref",
+    )
+    refs: dict[str, str] = {}
+    for line in raw.decode("utf-8", "surrogateescape").splitlines():
+        name, separator, object_id = line.partition("\t")
+        if separator:
+            refs[name] = require_full_sha(object_id)
+    return refs
+
+
+def protected_refs(path: Path, assigned_branch: str) -> dict[str, str]:
+    return {
+        name: sha
+        for name, sha in _all_refs(path).items()
+        if name != f"refs/heads/{assigned_branch}" and not is_volatile_ref(name)
+    }
 
 
 def configured_git_identity(path: Path) -> GitIdentity:
@@ -342,18 +373,7 @@ class GitWorkspace:
         return cls(source_path, worktree_path, branch, source_common, instance.protected_refs())
 
     def protected_refs(self) -> dict[str, str]:
-        raw = _output(
-            _git(self.worktree, ("for-each-ref", "--format=%(refname)\t%(objectname)")),
-            "for-each-ref",
-        )
-        protected: dict[str, str] = {}
-        assigned = f"refs/heads/{self.branch}"
-        for line in raw.decode("utf-8", "surrogateescape").splitlines():
-            name, separator, object_id = line.partition("\t")
-            if not separator or name == assigned:
-                continue
-            protected[name] = require_full_sha(object_id)
-        return protected
+        return protected_refs(self.worktree, self.branch)
 
     def require_identity(self) -> WorktreeObservation:
         if _common_directory(self.source) != self._common_dir or _common_directory(self.worktree) != self._common_dir:
