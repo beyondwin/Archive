@@ -622,6 +622,10 @@ class VerificationReuseIntegrationTests(unittest.TestCase):
         )
 
         self.assertIn(f"VERIFICATION_HELPER_DESCRIPTOR: {descriptor}", prompt)
+        self.assertIn("RUN_AUTHORITY_PROFILE: unavailable", prompt)
+        self.assertNotIn(
+            "authorizes implementation, local checkpoint commits", prompt,
+        )
         self.assertNotIn("command-id", prompt)
         self.assertNotIn("cache", prompt.lower())
         self.assertNotIn("fallback", prompt.lower())
@@ -6623,6 +6627,61 @@ class CheckpointTrustAndLedgerTests(_RecoveryRunnerFixture):
         )
         self.assertEqual("failed", result["status"])
         self.assertEqual("execution_ledger_invalid", result["error"])
+
+    def test_exact_digest_recovery_quarantines_invalid_ledger_and_resumes(self) -> None:
+        run_id = "recover-malformed-ledger"
+        runner = self.runner(run_id)
+        result = runner.run(
+            workspace=self.repo,
+            specs=[],
+            plans=[self.plan("malformed_ledger_then_completed")],
+            run_id=run_id,
+        )
+        self.assertEqual("failed", result["status"])
+        self.assertEqual("execution_ledger_invalid", result["error"])
+        run_root = self.home / "orchestrator" / run_id
+        ledger = (
+            self.home
+            / "worktrees"
+            / run_id
+            / ".superpowers"
+            / "sdd"
+            / "execution-ledger.jsonl"
+        )
+        ledger_digest = hashlib.sha256(ledger.read_bytes()).hexdigest()
+
+        with self.assertRaisesRegex(ValueError, "digest"):
+            runner.recover_execution_ledger(
+                run_id=run_id,
+                ledger_sha256="0" * 64,
+                authority_profile="local-implementation-with-evidence-approvals",
+            )
+        recovery = runner.recover_execution_ledger(
+            run_id=run_id,
+            ledger_sha256=ledger_digest,
+            authority_profile="local-implementation-with-evidence-approvals",
+        )
+
+        self.assertEqual("recovered", recovery["status"])
+        self.assertEqual(ledger_digest, recovery["ledger_sha256"])
+        self.assertFalse(ledger.exists())
+        quarantined = run_root / str(recovery["quarantine_path"])
+        self.assertEqual("{not-json}\n", quarantined.read_text(encoding="utf-8"))
+        self.assertEqual(0o400, quarantined.stat().st_mode & 0o777)
+        resumed = runner.resume(run_id=run_id, retry_failed=True)
+        self.assertEqual("completed", resumed["status"])
+        self.assertEqual(1, fake_codex_launch_count(run_root))
+        self.assertEqual(
+            2, StateStore.open(run_root).state["plans"][0]["attempt_count"]
+        )
+        events = _runner_events(run_root)
+        self.assertTrue(any(
+            event.get("action") == "plan.execution_ledger_quarantined"
+            and event.get("ledger_sha256") == ledger_digest
+            and event.get("authority_profile")
+            == "local-implementation-with-evidence-approvals"
+            for event in events
+        ))
 
     def test_populated_ledger_deletion_is_regression_not_progress(self) -> None:
         run_id = "ledger-regression"
