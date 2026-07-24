@@ -46,6 +46,11 @@ def _parser() -> argparse.ArgumentParser:
     retry.add_argument("--retry-blocked", action="store_true")
     retry.add_argument("--retry-failed", action="store_true")
     resume.add_argument("--strategy-note")
+    resume.add_argument(
+        "--sandbox",
+        choices=("workspace-write", "danger-full-access"),
+    )
+    resume.add_argument("--model")
     inspect = commands.add_parser("inspect")
     inspect.add_argument("--run-id", required=True)
     repair = commands.add_parser("repair")
@@ -160,7 +165,14 @@ def main(argv: list[str] | None = None) -> int:
             model=arguments.model,
         )
     if arguments.command == "resume":
-        if arguments.strategy_note is not None and not arguments.retry_failed:
+        profile_requested = (
+            arguments.sandbox is not None or arguments.model is not None
+        )
+        if (
+            arguments.strategy_note is not None
+            and not arguments.retry_failed
+            and not profile_requested
+        ):
             return _invalid("--strategy-note requires --retry-failed")
         if arguments.retry_failed and not (
             arguments.strategy_note and arguments.strategy_note.strip()
@@ -171,6 +183,8 @@ def main(argv: list[str] | None = None) -> int:
             retry_blocked=arguments.retry_blocked,
             retry_failed=arguments.retry_failed,
             strategy_note=arguments.strategy_note,
+            sandbox=arguments.sandbox,
+            model=arguments.model,
         )
     if arguments.command == "repair":
         return runner.repair(

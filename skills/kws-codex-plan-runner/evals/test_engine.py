@@ -1725,7 +1725,7 @@ class EngineTest(unittest.TestCase):
                 self.assertEqual(failure["reason_code"], "state_integrity_failed")
                 self.assertEqual(failure["next_strategy"], "block")
 
-    def test_legacy_ref_snapshot_without_policy_version_remains_readable(self):
+    def test_legacy_volatile_ref_delta_requires_revision_guarded_repair(self):
         self.crash_after_session = True
         with self.assertRaises(SimulatedCrash):
             self.runner().create_run(
@@ -1754,7 +1754,225 @@ class EngineTest(unittest.TestCase):
             strategy_note=None,
         )
 
-        self.assertEqual(code, ExitCode.READY, [self.output, self.state().get("failure")])
+        self.assertEqual(code, ExitCode.INTEGRITY, [self.output, self.state().get("failure")])
+        failed = self.state()
+        self.assertEqual(failed["failure"]["reason_code"], "state_integrity_failed")
+        self.assertIn(
+            "legacy volatile ref delta requires repair",
+            failed["failure"]["detail"],
+        )
+        self.output.clear()
+        duplicate = self.runner().create_run(
+            specs=self.specs,
+            plans=self.plans[:1],
+            workspace=self.source,
+            stall_seconds=30,
+            sandbox="danger-full-access",
+            model=None,
+        )
+        self.assertEqual(duplicate, ExitCode.INTEGRITY)
+        self.assertIn(
+            "--repair-kind volatile-codex-turn-refs",
+            self.matching_response()["recommended_action"],
+        )
+
+    def test_legacy_ref_snapshot_without_drift_remains_readable(self):
+        self.crash_after_session = True
+        with self.assertRaises(SimulatedCrash):
+            self.runner().create_run(
+                specs=self.specs,
+                plans=self.plans[:1],
+                workspace=self.source,
+                stall_seconds=30,
+                sandbox="workspace-write",
+                model=None,
+            )
+        state = self.state()
+        state["immutable_config"].pop("volatile_ref_policy_version")
+        state["state_digest"] = storage_module._state_digest(state)
+        state_path = self.paths.state_home / state["run_id"] / "state.json"
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+
+        code = self.runner().resume(
+            state["run_id"],
+            retry_blocked=False,
+            retry_failed=False,
+            strategy_note=None,
+        )
+
+        self.assertEqual(code, ExitCode.READY, self.output)
+
+    def test_blocked_workspace_write_can_audit_same_run_full_access_transition(self):
+        state = self.create_paused_run(
+            sandbox="workspace-write",
+            model="model-a",
+        )
+
+        def blocked(candidate):
+            candidate["status"] = "blocked"
+            candidate["failure"] = {
+                "reason_code": "sandbox_capability_blocked",
+                "detail": "workspace write denied",
+                "mode": "implementation",
+                "plan_index": 0,
+            }
+
+        state = self.rewrite_run_state(blocked)
+        code = self.runner().resume(
+            state["run_id"],
+            retry_blocked=True,
+            retry_failed=False,
+            strategy_note="workspace-write cannot edit; use the authorized full-access profile",
+            sandbox="danger-full-access",
+            model="model-b",
+        )
+
+        self.assertEqual(code, ExitCode.READY, self.output)
+        final = self.state()
+        self.assertEqual(final["immutable_config"]["sandbox"], "workspace-write")
+        self.assertEqual(final["immutable_config"]["model"], "model-a")
+        transition = next(
+            item
+            for item in final["artifact_refs"]
+            if item["kind"] == "execution_profile_transition"
+        )
+        payload = json.loads(
+            StateStore.open(self.paths.state_home / final["run_id"])
+            .referenced_artifact(transition)
+            .read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            payload["from_profile"],
+            {"sandbox": "workspace-write", "model": "model-a"},
+        )
+        self.assertEqual(
+            payload["to_profile"],
+            {"sandbox": "danger-full-access", "model": "model-b"},
+        )
+        self.assertEqual(self.requests[0].sandbox, "danger-full-access")
+        self.assertEqual(self.requests[0].model, "model-b")
+        self.assertIsNone(self.requests[0].session_id)
+
+    def test_execution_profile_transition_rejects_unapproved_or_unchanged_change(self):
+        cases = (
+            ("host_permission_blocked", "danger-full-access", "model-b"),
+            ("sandbox_capability_blocked", "workspace-write", "model-a"),
+        )
+        for index, (reason, sandbox, model) in enumerate(cases):
+            if index:
+                self.tearDown()
+                self.setUp()
+            state = self.create_paused_run(
+                sandbox="workspace-write",
+                model="model-a",
+            )
+
+            def blocked(candidate):
+                candidate["status"] = "blocked"
+                candidate["failure"] = {
+                    "reason_code": reason,
+                    "detail": "blocked",
+                    "mode": "implementation",
+                    "plan_index": 0,
+                }
+
+            state = self.rewrite_run_state(blocked)
+            before = (
+                self.paths.state_home / state["run_id"] / "state.json"
+            ).read_bytes()
+            code = self.runner().resume(
+                state["run_id"],
+                retry_blocked=True,
+                retry_failed=False,
+                strategy_note="attempt an audited profile change",
+                sandbox=sandbox,
+                model=model,
+            )
+            self.assertIn(code, {ExitCode.INVALID, ExitCode.INTEGRITY})
+            after = (
+                self.paths.state_home / state["run_id"] / "state.json"
+            ).read_bytes()
+            self.assertEqual(after, before)
+
+    def test_retryable_failure_can_audit_model_change_without_new_run(self):
+        state = self.create_paused_run(
+            sandbox="danger-full-access",
+            model="model-a",
+        )
+
+        def failed(candidate):
+            candidate["status"] = "failed"
+            candidate["failure"] = {
+                "reason_code": "recovery_exhausted",
+                "detail": "model strategy exhausted",
+                "mode": "implementation",
+                "plan_index": 0,
+                "failure_signature": "f" * 64,
+                "failure_sequence": [],
+                "strategy_digests": [],
+                "next_strategy": "resume_root",
+            }
+
+        state = self.rewrite_run_state(failed)
+        code = self.runner().resume(
+            state["run_id"],
+            retry_blocked=False,
+            retry_failed=True,
+            strategy_note="change the model strategy for the same failed run",
+            sandbox=None,
+            model="model-b",
+        )
+
+        self.assertEqual(code, ExitCode.READY, self.output)
+        self.assertEqual(self.requests[0].sandbox, "danger-full-access")
+        self.assertEqual(self.requests[0].model, "model-b")
+        self.assertIsNone(self.requests[0].session_id)
+        self.assertEqual(
+            self.state()["immutable_config"]["model"],
+            "model-a",
+        )
+
+    def test_execution_profile_artifact_chain_tampering_fails_before_launch(self):
+        state = self.create_paused_run(
+            sandbox="workspace-write",
+            model="model-a",
+        )
+        store = StateStore.open(self.paths.state_home / state["run_id"])
+        artifact = store.put_artifact(
+            "execution_profile_transition",
+            {
+                "contract_version": 1,
+                "run_id": state["run_id"],
+                "from_profile": {
+                    "sandbox": "danger-full-access",
+                    "model": "wrong-chain",
+                },
+                "to_profile": {
+                    "sandbox": "danger-full-access",
+                    "model": "model-b",
+                },
+                "failure_reason_code": "sandbox_capability_blocked",
+                "strategy_note": "tampered chain",
+                "strategy_note_digest": strategy_note_digest("tampered chain"),
+            },
+        )
+        candidate = store.snapshot()
+        candidate["artifact_refs"].append(artifact.as_dict())
+        store.commit(candidate)
+
+        code = self.runner().resume(
+            state["run_id"],
+            retry_blocked=False,
+            retry_failed=False,
+            strategy_note=None,
+        )
+
+        self.assertEqual(code, ExitCode.INTEGRITY)
+        self.assertFalse(self.requests)
+        self.assertIn(
+            "execution profile transition chain",
+            self.state()["failure"]["detail"],
+        )
 
     def test_present_volatile_ref_policy_version_requires_exact_integer(self):
         invalid_versions = (None, False, True, 1.0, "1", 2)
@@ -4085,10 +4303,35 @@ class EngineTest(unittest.TestCase):
         repaired_store = StateStore.open(root)
         repaired = repaired_store.snapshot()
         workspace = self.runner()._open_repair_workspace(repaired)
-        self.runner()._require_git_contract(
-            repaired,
-            workspace,
-            store=repaired_store,
+        with self.assertRaisesRegex(
+            ValueError,
+            "legacy volatile ref delta requires repair",
+        ):
+            self.runner()._require_git_contract(
+                repaired,
+                workspace,
+                store=repaired_store,
+            )
+        resume = self.runner().resume(
+            repaired["run_id"],
+            retry_blocked=False,
+            retry_failed=False,
+            strategy_note=None,
+        )
+        self.assertEqual(resume, ExitCode.INTEGRITY)
+        self.output.clear()
+        duplicate = self.runner().create_run(
+            specs=self.specs,
+            plans=self.plans[:1],
+            workspace=self.source,
+            stall_seconds=30,
+            sandbox="danger-full-access",
+            model=None,
+        )
+        self.assertEqual(duplicate, ExitCode.INTEGRITY)
+        self.assertIn(
+            "--repair-kind volatile-codex-turn-refs",
+            self.matching_response()["recommended_action"],
         )
 
     def test_adopted_partial_rejects_a_different_valid_repair_audit(self):
@@ -4583,6 +4826,31 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(
             json.loads(completed.stdout)["reason_code"], "invalid_invocation"
         )
+
+    def test_cli_accepts_explicit_resume_execution_profile_surface(self):
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(SKILL_ROOT / "scripts" / "runner.py"),
+                "resume",
+                "--run-id",
+                "missing-run",
+                "--retry-blocked",
+                "--strategy-note",
+                "workspace write requires authorized full access",
+                "--sandbox",
+                "danger-full-access",
+                "--model",
+                "model-b",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertEqual(completed.returncode, ExitCode.INVALID)
+        response = json.loads(completed.stdout)
+        self.assertEqual(response["reason_code"], "unknown_run")
 
     def test_cli_parse_failures_use_one_bounded_contract_response(self):
         cases = {

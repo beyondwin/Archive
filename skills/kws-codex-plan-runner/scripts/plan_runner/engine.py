@@ -153,6 +153,12 @@ class RuntimePaths:
             object.__setattr__(self, name, value)
 
 
+class _LegacyVolatileRefRepairRequired(ValueError):
+    def __init__(self, observation: WorktreeObservation) -> None:
+        super().__init__("legacy volatile ref delta requires repair")
+        self.observation = observation
+
+
 class _SignalGate:
     def __init__(self) -> None:
         self._event = threading.Event()
@@ -634,8 +640,11 @@ class PlanRunner:
         retry_blocked: bool,
         retry_failed: bool,
         strategy_note: str | None,
+        sandbox: str | None = None,
+        model: str | None = None,
     ) -> int:
-        if strategy_note is not None and not retry_failed:
+        profile_requested = sandbox is not None or model is not None
+        if strategy_note is not None and not retry_failed and not profile_requested:
             self._emit_error(
                 "invalid_invocation", "--strategy-note requires --retry-failed"
             )
@@ -654,6 +663,18 @@ class PlanRunner:
             store = StateStore.open(run_root)
             state = store.snapshot()
             status = state["status"]
+            if profile_requested:
+                self._transition_execution_profile(
+                    store,
+                    state,
+                    retry_blocked=retry_blocked,
+                    retry_failed=retry_failed,
+                    strategy_note=strategy_note,
+                    sandbox=sandbox,
+                    model=model,
+                )
+                state = store.snapshot()
+                status = state["status"]
             if status == "ready_for_integration":
                 self._emit_summary(state)
                 return int(ExitCode.READY)
@@ -803,6 +824,139 @@ class PlanRunner:
         except Exception as error:
             self._emit_error("internal_error", error)
             return int(ExitCode.INTERNAL)
+
+    @staticmethod
+    def _effective_execution_profile(
+        store: StateStore,
+        state: Mapping[str, object],
+    ) -> dict[str, object]:
+        config = state["immutable_config"]
+        current: dict[str, object] = {
+            "sandbox": config.get("sandbox"),
+            "model": config.get("model"),
+        }
+        if current["sandbox"] not in {"workspace-write", "danger-full-access"}:
+            raise ValueError("initial execution profile is invalid")
+        if current["model"] is not None and (
+            not isinstance(current["model"], str) or not current["model"]
+        ):
+            raise ValueError("initial execution profile is invalid")
+        expected_keys = {
+            "contract_version",
+            "run_id",
+            "from_profile",
+            "to_profile",
+            "failure_reason_code",
+            "strategy_note",
+            "strategy_note_digest",
+        }
+        for reference in state["artifact_refs"]:
+            if (
+                not isinstance(reference, Mapping)
+                or reference.get("kind") != "execution_profile_transition"
+            ):
+                continue
+            payload = _artifact_payload(store, reference)
+            if not isinstance(payload, Mapping) or set(payload) != expected_keys:
+                raise ValueError("execution profile transition artifact is invalid")
+            if (
+                payload.get("contract_version") != 1
+                or payload.get("run_id") != state.get("run_id")
+                or payload.get("from_profile") != current
+            ):
+                raise ValueError("execution profile transition chain is invalid")
+            target = payload.get("to_profile")
+            if (
+                not isinstance(target, Mapping)
+                or set(target) != {"sandbox", "model"}
+                or target.get("sandbox")
+                not in {"workspace-write", "danger-full-access"}
+                or (
+                    target.get("model") is not None
+                    and (
+                        not isinstance(target.get("model"), str)
+                        or not target.get("model")
+                    )
+                )
+            ):
+                raise ValueError("execution profile transition target is invalid")
+            current = dict(target)
+        return current
+
+    def _transition_execution_profile(
+        self,
+        store: StateStore,
+        state: Mapping[str, object],
+        *,
+        retry_blocked: bool,
+        retry_failed: bool,
+        strategy_note: str | None,
+        sandbox: str | None,
+        model: str | None,
+    ) -> None:
+        if not isinstance(strategy_note, str) or not strategy_note.strip():
+            raise ValueError("execution profile change requires a nonempty strategy note")
+        normalized_note = normalize_strategy_note(strategy_note)
+        current = self._effective_execution_profile(store, state)
+        target = {
+            "sandbox": current["sandbox"] if sandbox is None else sandbox,
+            "model": current["model"] if model is None else model,
+        }
+        if target == current:
+            raise ValueError("execution profile change must change sandbox or model")
+        if target["sandbox"] not in {"workspace-write", "danger-full-access"}:
+            raise ValueError("execution profile sandbox is invalid")
+        if target["model"] is not None and (
+            not isinstance(target["model"], str)
+            or not target["model"]
+            or "\0" in target["model"]
+        ):
+            raise ValueError("execution profile model is invalid")
+        failure = state.get("failure")
+        reason_code = (
+            failure.get("reason_code") if isinstance(failure, Mapping) else None
+        )
+        if state.get("status") == "blocked":
+            if (
+                not retry_blocked
+                or retry_failed
+                or reason_code != "sandbox_capability_blocked"
+                or current["sandbox"] != "workspace-write"
+                or target["sandbox"] != "danger-full-access"
+            ):
+                raise ValueError("execution profile change is not approved for this blocker")
+        elif state.get("status") == "failed":
+            if (
+                not retry_failed
+                or retry_blocked
+                or not self._is_retryable_failed_state(failure)
+            ):
+                raise ValueError("execution profile change is not approved for this failure")
+        else:
+            raise ValueError("execution profile change requires blocked or failed retry")
+        artifact = store.put_artifact(
+            "execution_profile_transition",
+            {
+                "contract_version": 1,
+                "run_id": state["run_id"],
+                "from_profile": current,
+                "to_profile": target,
+                "failure_reason_code": reason_code,
+                "strategy_note": normalized_note,
+                "strategy_note_digest": strategy_note_digest(normalized_note),
+            },
+        )
+        next_state = store.snapshot()
+        if artifact.as_dict() not in next_state["artifact_refs"]:
+            next_state["artifact_refs"].append(artifact.as_dict())
+        existing_failure = next_state.get("failure")
+        if isinstance(existing_failure, Mapping):
+            next_state["failure"] = {
+                **existing_failure,
+                "execution_profile_artifact": artifact.as_dict(),
+                "next_session_action": "fresh_session",
+            }
+        store.commit(next_state)
 
     def inspect(self, run_id: str) -> int:
         try:
@@ -970,11 +1124,19 @@ class PlanRunner:
                             raise ValueError(
                                 "repair evidence changed at state CAS"
                             )
-                        self._require_git_contract(
-                            candidate,
-                            workspace,
-                            store=store,
-                        )
+                        try:
+                            self._require_git_contract(
+                                candidate,
+                                workspace,
+                                store=store,
+                            )
+                        except _LegacyVolatileRefRepairRequired as error:
+                            if (
+                                repair_kind != "unsealed-provider-partial"
+                                or dataclasses.asdict(error.observation)
+                                != evidence["observation"]
+                            ):
+                                raise
 
                     try:
                         committed = store.commit(
@@ -1264,6 +1426,19 @@ class PlanRunner:
                         return code
                     state = store.snapshot()
                 return self._finalize(store, workspace)
+        except _LegacyVolatileRefRepairRequired as error:
+            state = store.snapshot()
+            state["status"] = "failed"
+            state["failure"] = {
+                "reason_code": "state_integrity_failed",
+                "detail": str(error),
+                "worktree_observation": dataclasses.asdict(error.observation),
+                "next_strategy": "block",
+                "next_session_action": "none",
+            }
+            store.commit(state)
+            self._emit_summary(store.snapshot())
+            return int(ExitCode.INTEGRITY)
         except ValueError as error:
             if "input snapshot digest" in str(error):
                 self._emit_error("input_changed_requires_new_run", error)
@@ -1287,8 +1462,42 @@ class PlanRunner:
         config = state["immutable_config"]
         if str(workspace._common_dir) != config.get("git_common_dir"):
             raise ValueError("Git common directory drift detected")
-        _require_protected_refs(config, workspace)
         observation = workspace.require_identity()
+        if "volatile_ref_policy_version" not in config:
+            recorded_refs = config.get("protected_refs")
+            if not isinstance(recorded_refs, Mapping):
+                raise ValueError("legacy protected ref snapshot is invalid")
+            current_refs = _all_ref_map(workspace.worktree, workspace.branch)
+            delta = _ref_delta(recorded_refs, current_refs)
+            if delta:
+                stable_recorded = {
+                    name: value
+                    for name, value in recorded_refs.items()
+                    if isinstance(name, str) and not is_volatile_ref(name)
+                }
+                stable_current = {
+                    name: value
+                    for name, value in current_refs.items()
+                    if not is_volatile_ref(name)
+                }
+                if stable_recorded == stable_current and all(
+                    is_volatile_ref(str(item["ref"])) for item in delta
+                ):
+                    if (
+                        store is None
+                        or not self._authorized_volatile_ref_repair(
+                            store,
+                            state,
+                            observation,
+                            current_refs,
+                            delta,
+                        )
+                    ):
+                        raise _LegacyVolatileRefRepairRequired(observation)
+                else:
+                    raise ValueError("protected ref mutation detected")
+        else:
+            _require_protected_refs(config, workspace)
         _git_text(
             workspace.worktree,
             "merge-base",
@@ -1316,6 +1525,45 @@ class PlanRunner:
         if sealed_partial is not None or not observation.clean:
             self._require_sealed_partial_worktree(state, observation)
         return observation
+
+    @staticmethod
+    def _authorized_volatile_ref_repair(
+        store: StateStore,
+        state: Mapping[str, object],
+        observation: WorktreeObservation,
+        current_refs: Mapping[str, str],
+        delta: Sequence[Mapping[str, object]],
+    ) -> bool:
+        failure = state.get("failure")
+        reference = (
+            failure.get("repair_audit_artifact")
+            if isinstance(failure, Mapping)
+            and failure.get("repair_kind") == "volatile-codex-turn-refs"
+            else None
+        )
+        if (
+            not isinstance(reference, Mapping)
+            or reference.get("kind") != "repair_audit"
+            or reference not in state.get("artifact_refs", [])
+        ):
+            return False
+        payload = _artifact_payload(store, reference)
+        repaired_revision = failure.get("repaired_revision")
+        return bool(
+            isinstance(payload, Mapping)
+            and payload.get("contract_version") == 1
+            and payload.get("run_id") == state.get("run_id")
+            and payload.get("repair_kind") == "volatile-codex-turn-refs"
+            and type(payload.get("expected_revision")) is int
+            and type(repaired_revision) is int
+            and payload["expected_revision"] + 1 == repaired_revision
+            and state.get("revision", 0) >= repaired_revision
+            and payload.get("policy_version") == VOLATILE_REF_POLICY_VERSION
+            and payload.get("current_refs") == dict(current_refs)
+            and payload.get("ref_delta") == list(delta)
+            and payload.get("worktree_observation")
+            == dataclasses.asdict(observation)
+        )
 
     @staticmethod
     def _require_adopted_partial_audit(
@@ -1676,6 +1924,7 @@ class PlanRunner:
             adapter = self._make_adapter(
                 state["run_id"], helper.descriptor, workspace
             )
+            execution_profile = self._effective_execution_profile(store, state)
             request = ProviderRequest(
                 worktree=workspace.worktree,
                 git_common_dir=workspace._common_dir,
@@ -1687,8 +1936,8 @@ class PlanRunner:
                 + canonical_json(packet).decode("utf-8"),
                 output_schema=schema.resolve(),
                 output_path=output_path,
-                sandbox=state["immutable_config"]["sandbox"],
-                model=state["immutable_config"]["model"],
+                sandbox=execution_profile["sandbox"],
+                model=execution_profile["model"],
                 session_id=session_id,
             )
             try:
