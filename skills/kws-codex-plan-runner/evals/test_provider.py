@@ -155,6 +155,9 @@ class CodexProviderTest(unittest.TestCase):
                 "exec",
                 "--ignore-user-config",
                 "--ignore-rules",
+                "--strict-config",
+                "-c",
+                'approval_policy="never"',
                 "--json",
                 "--output-schema",
                 str(self.schema),
@@ -184,6 +187,9 @@ class CodexProviderTest(unittest.TestCase):
                 "exec",
                 "--ignore-user-config",
                 "--ignore-rules",
+                "--strict-config",
+                "-c",
+                'approval_policy="never"',
                 "--json",
                 "--output-schema",
                 str(self.schema),
@@ -206,6 +212,25 @@ class CodexProviderTest(unittest.TestCase):
             self.adapter().build_argv(self.request(session_id="not-a-session"))
         with self.assertRaisesRegex(ValueError, "canonical UUID"):
             self.adapter().build_argv(self.request(session_id=SESSION_ID.upper()))
+
+    def test_resume_reuses_exact_noninteractive_flags(self):
+        expected_prefix = [
+            "codex",
+            "exec",
+            "--ignore-user-config",
+            "--ignore-rules",
+            "--strict-config",
+            "-c",
+            'approval_policy="never"',
+            "--json",
+        ]
+        initial = self.adapter().build_argv(self.request())
+        resumed = self.adapter().build_argv(
+            self.request(session_id=SESSION_ID, model=None)
+        )
+
+        self.assertEqual(initial[: len(expected_prefix)], expected_prefix)
+        self.assertEqual(resumed[: len(expected_prefix)], expected_prefix)
 
     def test_launch_captures_explicit_session_and_structured_result(self):
         lease = RecordingLease()
@@ -507,21 +532,79 @@ class CodexProviderTest(unittest.TestCase):
         for contents in private_markers.values():
             self.assertNotIn(contents.encode(), retained)
 
-    def test_child_argv_ignores_user_config_and_repository_rules(self):
-        initial = self.launch("initial")
-        resumed = self.launch(
-            "explicit-resume", request=self.request(session_id=SESSION_ID)
+    def test_full_access_ignores_repo_rules_and_never_requests_approval(self):
+        rule = self.worktree / ".codex" / "rules" / "git-prompt.rules"
+        rule.parent.mkdir(parents=True)
+        rule.write_text(
+            'prefix_rule(pattern=["git"], decision="prompt")\n',
+            encoding="utf-8",
         )
 
-        self.assertEqual((initial.kind, resumed.kind), ("implemented", "implemented"))
-        records = [
-            json.loads(line)
-            for line in self.log.read_text(encoding="utf-8").splitlines()
-        ]
-        self.assertEqual(len(records), 2)
-        for record in records:
-            self.assertIn("--ignore-user-config", record["argv"])
-            self.assertIn("--ignore-rules", record["argv"])
+        outcome = self.launch("initial")
+
+        self.assertEqual(outcome.kind, "implemented")
+        record = self.record()
+        self.assertIn("--ignore-rules", record["argv"])
+        self.assertIn("--strict-config", record["argv"])
+        self.assertEqual(
+            record["argv"][record["argv"].index("-c") + 1],
+            'approval_policy="never"',
+        )
+        self.assertEqual(
+            record["argv"][record["argv"].index("--sandbox") + 1],
+            "danger-full-access",
+        )
+        self.assertEqual(record.get("approval_events", 1), 0)
+
+    def test_unsupported_required_cli_flag_blocks_before_provider_edits(self):
+        rejecting_bin = self.root / "rejecting-bin"
+        rejecting_bin.mkdir()
+        rejecting_codex = rejecting_bin / "codex"
+        rejecting_codex.write_bytes(
+            (SKILL_ROOT / "evals" / "fake_codex.py").read_bytes()
+        )
+        rejecting_codex.chmod(rejecting_codex.stat().st_mode | stat.S_IXUSR)
+        environment = self.environment("initial")
+        environment["PATH"] = (
+            f"{rejecting_bin}{os.pathsep}{os.environ['PATH']}"
+        )
+        environment["FAKE_CODEX_REJECT_REQUIRED_FLAG"] = "--ignore-rules"
+        before = sorted(
+            str(path.relative_to(self.worktree))
+            for path in self.worktree.rglob("*")
+        )
+
+        outcome = self.adapter(source_env=environment).launch(
+            self.request(), RecordingLease()
+        )
+
+        self.assertEqual(outcome.kind, "blocked")
+        self.assertEqual(outcome.provider_code, "sandbox_capability_blocked")
+        self.assertFalse(self.log.exists())
+        self.assertEqual(
+            sorted(
+                str(path.relative_to(self.worktree))
+                for path in self.worktree.rglob("*")
+            ),
+            before,
+        )
+
+    def test_workspace_write_helper_denial_is_sandbox_capability_blocked(self):
+        outcome = self.launch(
+            "sandbox-helper-eperm",
+            request=dataclasses.replace(self.request(), sandbox="workspace-write"),
+        )
+
+        self.assertEqual(outcome.kind, "blocked")
+        self.assertEqual(outcome.provider_code, "sandbox_capability_blocked")
+
+    def test_tcc_or_keychain_denial_is_host_permission_blocked(self):
+        for scenario in ("host-tcc-denied", "host-keychain-denied"):
+            with self.subTest(scenario=scenario):
+                outcome = self.launch(scenario)
+                self.assertEqual(outcome.kind, "blocked")
+                self.assertEqual(outcome.provider_code, "host_permission_blocked")
+                self.assertEqual(self.record().get("approval_events", 1), 0)
 
     def test_subagent_completion_does_not_replace_root_completion(self):
         outcome = self.launch("subagent-completion-only")

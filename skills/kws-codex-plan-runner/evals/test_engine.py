@@ -1045,6 +1045,26 @@ class EngineTest(unittest.TestCase):
             ),
             (
                 {
+                    "clean": True,
+                    "session_id": str(uuid.uuid4()),
+                    "reason_code": "sandbox_capability_blocked",
+                    "previous_failed_strategy": None,
+                    "safe": True,
+                },
+                ("block", "sandbox_capability_blocked"),
+            ),
+            (
+                {
+                    "clean": True,
+                    "session_id": str(uuid.uuid4()),
+                    "reason_code": "host_permission_blocked",
+                    "previous_failed_strategy": None,
+                    "safe": True,
+                },
+                ("block", "host_permission_blocked"),
+            ),
+            (
+                {
                     "clean": False,
                     "session_id": None,
                     "reason_code": "state_integrity_failed",
@@ -1061,6 +1081,53 @@ class EngineTest(unittest.TestCase):
                     (decision["action"], decision["reason_code"]),
                     expected,
                 )
+
+    def test_permission_failure_after_edit_retains_task3_checkpoint(self):
+        launches = 0
+
+        def dirty_then_permission_blocked(
+            _adapter, request, packet, session_id
+        ):
+            nonlocal launches
+            if packet["mode"] != "implementation":
+                return None
+            launches += 1
+            (request.worktree / "permission-partial.txt").write_text(
+                "durable partial implementation\n",
+                encoding="utf-8",
+            )
+            return ProviderOutcome(
+                "blocked",
+                1,
+                session_id,
+                None,
+                "host_permission_blocked",
+                {},
+                (),
+                "",
+            )
+
+        self.outcome_hook = dirty_then_permission_blocked
+        code = self.runner().create_run(
+            specs=self.specs,
+            plans=self.plans[:1],
+            workspace=self.source,
+            stall_seconds=30,
+            sandbox="danger-full-access",
+            model=None,
+        )
+
+        self.assertEqual(code, ExitCode.BLOCKED)
+        self.assertEqual(launches, 1)
+        state = self.state()
+        attempt = state["attempts"][-1]
+        observation = self.worktree_observation(state)
+        self.assertEqual(attempt["post_provider_worktree"], observation)
+        self.assertEqual(state["failure"]["partial_worktree"], observation)
+        self.assertEqual(state["failure"]["reason_code"], "host_permission_blocked")
+        self.assertEqual(state["failure"]["next_strategy"], "block")
+        self.assertEqual(state["failure"]["next_session_action"], "none")
+        self.assertNotIn("approval", json.dumps(state).lower())
 
     def test_top_level_auth_error_blocks_without_retry_or_worktree_mutation(self):
         codex_home = self.root / "auth-error-codex-home"

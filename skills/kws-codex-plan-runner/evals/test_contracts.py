@@ -25,6 +25,10 @@ from plan_runner.contracts import (  # noqa: E402
 
 
 class ContractVocabularyTest(unittest.TestCase):
+    def test_permission_failures_have_distinct_terminal_reason_codes(self):
+        self.assertIn("sandbox_capability_blocked", FAILURE_TAXONOMY)
+        self.assertIn("host_permission_blocked", FAILURE_TAXONOMY)
+
     def test_codex_output_schemas_use_supported_structured_output_subset(self):
         unsupported = {
             "allOf",

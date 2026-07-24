@@ -20,7 +20,9 @@ from .process import (
     _anchored_group,
     _bounded_direct_cleanup,
     _finish_group,
+    OpenedExecutable,
     open_executable,
+    run_exact,
 )
 from .recovery import ActivityLease
 from .storage import resolve_effective_codex_home
@@ -63,6 +65,29 @@ _CONTEXT_CODES = frozenset(
 _TRANSPORT_CODES = frozenset(
     {"connection_error", "stream_disconnected", "transport_error"}
 )
+_SANDBOX_PERMISSION_CODES = frozenset(
+    {
+        "helper_denied",
+        "sandbox_capability_denied",
+        "sandbox_denied",
+    }
+)
+_HOST_PERMISSION_CODES = frozenset(
+    {
+        "host_permission_denied",
+        "keychain_denied",
+        "protected_gui_resource_denied",
+        "tcc_denied",
+    }
+)
+_HOST_PERMISSION_SYSTEMS = frozenset({"keychain", "protected_gui", "tcc"})
+_SANDBOX_CAPABILITIES = frozenset(
+    {"helper", "helper_socket", "unix_socket", "workspace_write"}
+)
+_PERMISSION_ERRNOS = frozenset({"EACCES", "EPERM"})
+_CLI_PROBE_DEADLINE_SECONDS = 5
+_CLI_PROBE_OUTPUT_LIMIT = 65_536
+_CLI_CAPABILITY_CACHE: set[tuple[object, ...]] = set()
 _RECOGNIZED_ERROR_CODES = (
     _AUTH_CODES
     | _USAGE_CODES
@@ -70,6 +95,7 @@ _RECOGNIZED_ERROR_CODES = (
     | _RESUME_CODES
     | _CONTEXT_CODES
     | _TRANSPORT_CODES
+    | frozenset({"host_permission_blocked", "sandbox_capability_blocked"})
 )
 _RESULT_STATUSES = frozenset({"implemented", "blocked", "failed", "reviewed"})
 _SUPPORTED_ENV_AUTH_NAMES = frozenset({"OPENAI_API_KEY"})
@@ -157,6 +183,7 @@ class CodexAdapter:
         remotes: Sequence[str] = (),
         run_id: str = "codex-plan-runner",
         helper: HelperDescriptor | None = None,
+        executable: str = "codex",
         poll_seconds: float = 0.05,
         stop_requested: Callable[[], bool] | None = None,
     ) -> None:
@@ -172,6 +199,13 @@ class CodexAdapter:
         self._remotes = tuple(remotes)
         self._run_id = run_id
         self._helper = helper
+        if (
+            not isinstance(executable, str)
+            or not executable
+            or "\0" in executable
+        ):
+            raise ValueError("executable must be a non-empty NUL-free string")
+        self.executable = executable
         self._poll_seconds = float(poll_seconds)
         if stop_requested is not None and not callable(stop_requested):
             raise ValueError("stop_requested must be callable")
@@ -180,12 +214,7 @@ class CodexAdapter:
     def build_argv(self, request: ProviderRequest) -> list[str]:
         if request.session_id is not None:
             _require_uuid(request.session_id)
-        argv = [
-            "codex",
-            "exec",
-            "--ignore-user-config",
-            "--ignore-rules",
-            "--json",
+        argv = self._exec_prefix() + [
             "--output-schema",
             str(request.output_schema),
             "--output-last-message",
@@ -204,6 +233,18 @@ class CodexAdapter:
         else:
             argv.extend(["resume", request.session_id, "-"])
         return argv
+
+    def _exec_prefix(self) -> list[str]:
+        return [
+            self.executable,
+            "exec",
+            "--ignore-user-config",
+            "--ignore-rules",
+            "--strict-config",
+            "-c",
+            'approval_policy="never"',
+            "--json",
+        ]
 
     def launch(
         self,
@@ -239,6 +280,26 @@ class CodexAdapter:
         if preflight_code is not None:
             return _blocked_preflight(preflight_code)
         env["CODEX_HOME"] = str(codex_home)
+        try:
+            with open_executable(
+                self.executable, cwd=request.worktree, env=env
+            ) as opened:
+                if not _required_cli_capabilities_available(
+                    opened,
+                    cwd=request.worktree,
+                    env=env,
+                    probe_argv=[
+                        *self._exec_prefix(),
+                        "--sandbox",
+                        request.sandbox,
+                        "--add-dir",
+                        str(request.git_common_dir),
+                        "--help",
+                    ],
+                ):
+                    return _blocked_preflight("sandbox_capability_blocked")
+        except (OSError, RuntimeError, ValueError):
+            return _blocked_preflight("sandbox_capability_blocked")
         isolated_home = request.output_path.parent / ".codex-child-home"
         isolated_config = isolated_home / ".config"
         _ensure_private_directory(isolated_home)
@@ -258,7 +319,23 @@ class CodexAdapter:
         return_code: int | None = None
 
         try:
-            with open_executable("codex", cwd=request.worktree, env=env) as opened:
+            with open_executable(
+                self.executable, cwd=request.worktree, env=env
+            ) as opened:
+                if not _required_cli_capabilities_available(
+                    opened,
+                    cwd=request.worktree,
+                    env=env,
+                    probe_argv=[
+                        *self._exec_prefix(),
+                        "--sandbox",
+                        request.sandbox,
+                        "--add-dir",
+                        str(request.git_common_dir),
+                        "--help",
+                    ],
+                ):
+                    return _blocked_preflight("sandbox_capability_blocked")
                 opened.revalidate()
                 process = subprocess.Popen(
                     argv,
@@ -796,6 +873,9 @@ def _capability_preflight(
 
 def _event_provider_code(event: Mapping[str, Any]) -> str | None:
     error = event.get("error")
+    permission_code = _structured_permission_code(error)
+    if permission_code is not None:
+        return permission_code
     code = error.get("code") if isinstance(error, Mapping) else None
     if isinstance(code, str) and code:
         return code
@@ -806,6 +886,85 @@ def _event_provider_code(event: Mapping[str, Any]) -> str | None:
         return None
     bounded = message[:_MAX_ERROR_MESSAGE_CHARS]
     return "authentication_failed" if _AUTH_MESSAGE.search(bounded) else None
+
+
+def _structured_permission_code(error: object) -> str | None:
+    if not isinstance(error, Mapping):
+        return None
+    code = error.get("code")
+    errno = error.get("errno")
+    capability = error.get("capability")
+    permission_system = error.get("permission_system")
+    normalized_code = code.lower() if isinstance(code, str) else None
+    normalized_errno = errno.upper() if isinstance(errno, str) else None
+    normalized_capability = (
+        capability.lower() if isinstance(capability, str) else None
+    )
+    normalized_system = (
+        permission_system.lower()
+        if isinstance(permission_system, str)
+        else None
+    )
+    if (
+        normalized_code in _HOST_PERMISSION_CODES
+        or normalized_system in _HOST_PERMISSION_SYSTEMS
+    ):
+        return "host_permission_blocked"
+    if (
+        normalized_code in _SANDBOX_PERMISSION_CODES
+        and normalized_errno in _PERMISSION_ERRNOS
+    ) or (
+        normalized_capability in _SANDBOX_CAPABILITIES
+        and (
+            normalized_errno in _PERMISSION_ERRNOS
+            or normalized_code in _SANDBOX_PERMISSION_CODES
+        )
+    ):
+        return "sandbox_capability_blocked"
+    return None
+
+
+def _required_cli_capabilities_available(
+    opened: OpenedExecutable,
+    *,
+    cwd: Path,
+    env: Mapping[str, str],
+    probe_argv: Sequence[str],
+) -> bool:
+    version = run_exact(
+        [probe_argv[0], "--version"],
+        cwd=cwd,
+        env=env,
+        deadline_seconds=_CLI_PROBE_DEADLINE_SECONDS,
+        output_limit=_CLI_PROBE_OUTPUT_LIMIT,
+        opened_executable=opened,
+    )
+    if version.kind != "success" or not version.stdout_tail.strip():
+        return False
+    identity = opened.identity()
+    cache_key = (
+        str(identity["path"]),
+        str(identity["sha256"]),
+        int(identity["mode"]),
+        int(identity["size"]),
+        version.stdout_tail.decode("utf-8", "replace").strip(),
+        tuple(probe_argv[1:]),
+    )
+    if cache_key in _CLI_CAPABILITY_CACHE:
+        return True
+    probe = run_exact(
+        probe_argv,
+        cwd=cwd,
+        env=env,
+        deadline_seconds=_CLI_PROBE_DEADLINE_SECONDS,
+        output_limit=_CLI_PROBE_OUTPUT_LIMIT,
+        opened_executable=opened,
+    )
+    if probe.kind != "success":
+        return False
+    opened.revalidate()
+    _CLI_CAPABILITY_CACHE.add(cache_key)
+    return True
 
 
 def _blocked_preflight(provider_code: str) -> ProviderOutcome:
@@ -881,4 +1040,6 @@ def _classified_provider_outcome(
         return "context_overflow", "session_invalid"
     if code in _TRANSPORT_CODES:
         return "transport_failed", "controller_transport_failed"
+    if code in {"host_permission_blocked", "sandbox_capability_blocked"}:
+        return "blocked", code
     return None

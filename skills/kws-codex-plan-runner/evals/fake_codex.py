@@ -70,6 +70,15 @@ def _record(
         }
     }
     record = {
+        "approval_events": (
+            1
+            if any(
+                "decision=\"prompt\"" in path.read_text(encoding="utf-8")
+                for path in Path.cwd().glob(".codex/rules/*.rules")
+            )
+            and "--ignore-rules" not in argv
+            else 0
+        ),
         "argv": argv,
         "codex_auth_visible": False,
         "cwd": os.getcwd(),
@@ -395,6 +404,16 @@ def _generic_main(argv: list[str], prompt: str, sequence_path: Path) -> int:
 
 def main() -> int:
     argv = sys.argv[1:]
+    if argv == ["--version"]:
+        print("fake-codex 1.0")
+        return 0
+    if "--help" in argv:
+        rejected = os.environ.get("FAKE_CODEX_REJECT_REQUIRED_FLAG")
+        if rejected is not None and rejected in argv:
+            sys.stderr.write(f"unsupported flag: {rejected}\n")
+            return 2
+        print("fake codex exec help")
+        return 0
     prompt = sys.stdin.read()
     sequence = os.environ.get("PLAN_RUNNER_FAKE_SEQUENCE")
     if sequence is not None:
@@ -477,6 +496,31 @@ def main() -> int:
         _emit({"type": "error", "error": {"code": codes[scenario]}})
         if scenario == "auth-then-unknown":
             _emit({"type": "error", "error": {"code": "unrecognized_later_error"}})
+        return 1
+    if scenario == "sandbox-helper-eperm":
+        _emit(
+            {
+                "type": "error",
+                "error": {
+                    "code": "sandbox_denied",
+                    "errno": "EPERM",
+                    "capability": "unix_socket",
+                },
+            }
+        )
+        return 1
+    if scenario in {"host-tcc-denied", "host-keychain-denied"}:
+        _emit(
+            {
+                "type": "error",
+                "error": {
+                    "code": "host_permission_denied",
+                    "permission_system": (
+                        "tcc" if scenario == "host-tcc-denied" else "keychain"
+                    ),
+                },
+            }
+        )
         return 1
     if scenario == "stderr-secret":
         sys.stderr.write("x" * 1_100_000)
