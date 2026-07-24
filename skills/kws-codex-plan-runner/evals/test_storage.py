@@ -3,6 +3,7 @@ import json
 import os
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -12,7 +13,12 @@ sys.path.insert(0, str(SKILL_ROOT / "scripts"))
 
 from plan_runner import storage  # noqa: E402
 from plan_runner.contracts import canonical_json, sha256_json  # noqa: E402
-from plan_runner.storage import RunLock, StateStore  # noqa: E402
+from plan_runner.storage import (  # noqa: E402
+    IntentLock,
+    RunLock,
+    StateStore,
+    execution_intent_digest,
+)
 
 
 class InjectedStorageFault(RuntimeError):
@@ -420,6 +426,107 @@ class StateStoreTest(unittest.TestCase):
                     self.fail("second lock must not be acquired")
         with RunLock(lock_path):
             pass
+
+    def test_execution_intent_digest_is_ordered_and_profile_independent(self):
+        common_dir = self.root / "common"
+        common_dir.mkdir()
+
+        first = execution_intent_digest(
+            source_common_dir=common_dir,
+            starting_commit="a" * 40,
+            specs=[self.spec_a, self.spec_b],
+            plans=[self.plan_a, self.plan_b],
+        )
+        same_inputs = execution_intent_digest(
+            source_common_dir=common_dir,
+            starting_commit="a" * 40,
+            specs=[self.spec_a, self.spec_b],
+            plans=[self.plan_a, self.plan_b],
+        )
+        reversed_plans = execution_intent_digest(
+            source_common_dir=common_dir,
+            starting_commit="a" * 40,
+            specs=[self.spec_a, self.spec_b],
+            plans=[self.plan_b, self.plan_a],
+        )
+
+        self.assertEqual(first, same_inputs)
+        self.assertNotEqual(first, reversed_plans)
+
+    def test_create_rejects_input_changed_after_intent_was_computed(self):
+        common_dir = self.root / "common"
+        common_dir.mkdir()
+        intent = execution_intent_digest(
+            source_common_dir=common_dir,
+            starting_commit="a" * 40,
+            specs=[self.spec_a],
+            plans=[self.plan_a],
+        )
+        self.plan_a.write_text("changed after admission digest\n", encoding="utf-8")
+        run_root = self.root / "state" / "run-1"
+
+        with self.assertRaisesRegex(ValueError, "input changed"):
+            StateStore.create(
+                root=run_root,
+                provider="codex",
+                run_id="plan-a-12345678-1234-4234-8234-123456789abc",
+                source_repository=self.repo,
+                source_commit="a" * 40,
+                worktree=self.root / "worktree",
+                branch="codex-plan/plan-a-12345678-1234-4234-8234-123456789abc",
+                specs=[self.spec_a],
+                plans=[self.plan_a],
+                immutable_config={
+                    "git_common_dir": str(common_dir),
+                    "execution_intent_digest": intent,
+                    "git_identity": {
+                        "name": "Runner Test",
+                        "email": "runner@example.test",
+                    },
+                },
+                runner_runtime={
+                    "uv_version": "uv test",
+                    "implementation": "cpython",
+                    "python_version": "3.13.9",
+                    "executable": "/managed/python3.13",
+                    "architecture": "arm64",
+                    "gil_disabled": False,
+                },
+            )
+
+        self.assertFalse(run_root.exists())
+
+    def test_intent_lock_serializes_waiters_instead_of_reporting_busy(self):
+        lock_home = self.root / "intent-locks"
+        lock_home.mkdir(mode=0o700)
+        entered = threading.Event()
+        release = threading.Event()
+        order = []
+
+        def holder():
+            with IntentLock(lock_home, "a" * 64):
+                order.append("holder")
+                entered.set()
+                release.wait(timeout=5)
+
+        def waiter():
+            entered.wait(timeout=5)
+            with IntentLock(lock_home, "a" * 64):
+                order.append("waiter")
+
+        first = threading.Thread(target=holder)
+        second = threading.Thread(target=waiter)
+        first.start()
+        second.start()
+        self.assertTrue(entered.wait(timeout=5))
+        self.assertEqual(order, ["holder"])
+        release.set()
+        first.join(timeout=5)
+        second.join(timeout=5)
+
+        self.assertFalse(first.is_alive())
+        self.assertFalse(second.is_alive())
+        self.assertEqual(order, ["holder", "waiter"])
 
 
 if __name__ == "__main__":
