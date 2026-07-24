@@ -191,6 +191,33 @@ class StateStoreTest(unittest.TestCase):
         store.rollback_repair_artifact(artifact, created=created)
         self.assertTrue(store.referenced_artifact(artifact.as_dict()).is_file())
 
+    def test_commit_runs_pre_replace_precondition_after_before_fault_hook(self):
+        store = self.create_store()
+        order = []
+        next_state = store.snapshot()
+        next_state["status"] = "running"
+
+        def observe_fault_stage(stage):
+            order.append(stage)
+
+        def pre_replace(candidate):
+            order.append("pre_replace")
+            self.assertEqual(candidate["revision"], 2)
+            self.assertEqual(candidate["status"], "running")
+
+        store._fault_injector = observe_fault_stage
+        committed = store.commit(next_state, pre_replace=pre_replace)
+
+        self.assertEqual(
+            order,
+            [
+                storage.BEFORE_STATE_REPLACE,
+                "pre_replace",
+                storage.AFTER_STATE_REPLACE,
+            ],
+        )
+        self.assertEqual(committed["revision"], 2)
+
     def test_fault_windows_reopen_previous_then_next_complete_revision(self):
         store = self.create_store()
         previous = store.snapshot()

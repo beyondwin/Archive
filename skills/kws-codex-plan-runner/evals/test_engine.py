@@ -4009,6 +4009,31 @@ class EngineTest(unittest.TestCase):
                 store=tampered,
             )
 
+    def test_adopted_partial_rejects_failure_kind_tamper(self):
+        state = self.make_partial_repair_state()
+        root = self.paths.state_home / state["run_id"]
+        code = self.runner().repair(
+            state["run_id"],
+            expected_revision=state["revision"],
+            repair_kind="unsealed-provider-partial",
+            strategy_note="fresh root inspects the complete diff",
+            attempt_id="attempt-partial",
+        )
+        self.assertEqual(code, ExitCode.RESUMABLE)
+        store = StateStore.open(root)
+        candidate = store.snapshot()
+        candidate["failure"]["repair_kind"] = "volatile-codex-turn-refs"
+        store.commit(candidate)
+        tampered = StateStore.open(root)
+        workspace = self.runner()._open_repair_workspace(tampered.snapshot())
+
+        with self.assertRaisesRegex(ValueError, "repair audit kind proof failed"):
+            self.runner()._require_git_contract(
+                tampered.snapshot(),
+                workspace,
+                store=tampered,
+            )
+
     def test_repair_rechecks_git_evidence_after_audit_preparation(self):
         state = self.make_partial_repair_state()
         root = self.paths.state_home / state["run_id"]
@@ -4099,6 +4124,106 @@ class EngineTest(unittest.TestCase):
                 self.assertEqual(self.git_surface(state), git_before)
                 if prior is not None:
                     self.assertTrue(root.joinpath(prior.relative_path).is_file())
+
+    def test_before_replace_git_mutation_is_refused_by_cas_precondition(self):
+        state = self.make_partial_repair_state()
+        root = self.paths.state_home / state["run_id"]
+        state_before = (root / "state.json").read_bytes()
+        artifacts_before = self.artifact_files(root)
+        real_open = StateStore.open
+
+        def faulting_open(path):
+            opened = real_open(path)
+
+            def mutate_before_replace(stage):
+                if stage == storage_module.BEFORE_STATE_REPLACE:
+                    Path(state["repository"]["worktree"]).joinpath(
+                        "commit-entry-drift.txt"
+                    ).write_text("commit entry drift\n", encoding="utf-8")
+
+            opened._fault_injector = mutate_before_replace
+            return opened
+
+        with mock.patch.object(StateStore, "open", side_effect=faulting_open):
+            code = self.runner().repair(
+                state["run_id"],
+                expected_revision=state["revision"],
+                repair_kind="unsealed-provider-partial",
+                strategy_note="fresh root inspects the complete diff",
+                attempt_id="attempt-partial",
+            )
+
+        self.assertEqual(code, ExitCode.INTEGRITY)
+        self.assertEqual((root / "state.json").read_bytes(), state_before)
+        self.assertEqual(self.artifact_files(root), artifacts_before)
+
+    def test_after_replace_fault_reconciles_exact_durable_repair(self):
+        state = self.make_partial_repair_state()
+        root = self.paths.state_home / state["run_id"]
+        real_open = StateStore.open
+
+        def faulting_open(path):
+            opened = real_open(path)
+
+            def fail_after_replace(stage):
+                if stage == storage_module.AFTER_STATE_REPLACE:
+                    raise RuntimeError("injected post-replace fault")
+
+            opened._fault_injector = fail_after_replace
+            return opened
+
+        with mock.patch.object(StateStore, "open", side_effect=faulting_open):
+            code = self.runner().repair(
+                state["run_id"],
+                expected_revision=state["revision"],
+                repair_kind="unsealed-provider-partial",
+                strategy_note="fresh root inspects the complete diff",
+                attempt_id="attempt-partial",
+            )
+
+        self.assertEqual(code, ExitCode.RESUMABLE)
+        repaired = real_open(root)
+        self.assertEqual(repaired.snapshot()["revision"], state["revision"] + 1)
+        workspace = self.runner()._open_repair_workspace(repaired.snapshot())
+        self.runner()._require_git_contract(
+            repaired.snapshot(),
+            workspace,
+            store=repaired,
+        )
+
+    def test_after_replace_fault_with_git_drift_refuses_but_keeps_referenced_audit(self):
+        state = self.make_partial_repair_state()
+        root = self.paths.state_home / state["run_id"]
+        real_open = StateStore.open
+
+        def faulting_open(path):
+            opened = real_open(path)
+
+            def drift_after_replace(stage):
+                if stage == storage_module.AFTER_STATE_REPLACE:
+                    Path(state["repository"]["worktree"]).joinpath(
+                        "post-replace-drift.txt"
+                    ).write_text("post replace drift\n", encoding="utf-8")
+                    raise RuntimeError("injected post-replace drift")
+
+            opened._fault_injector = drift_after_replace
+            return opened
+
+        with mock.patch.object(StateStore, "open", side_effect=faulting_open):
+            code = self.runner().repair(
+                state["run_id"],
+                expected_revision=state["revision"],
+                repair_kind="unsealed-provider-partial",
+                strategy_note="fresh root inspects the complete diff",
+                attempt_id="attempt-partial",
+            )
+
+        self.assertEqual(code, ExitCode.INTEGRITY)
+        durable = real_open(root).snapshot()
+        self.assertEqual(durable["revision"], state["revision"] + 1)
+        audit = durable["failure"]["repair_audit_artifact"]
+        self.assertIn(audit, durable["artifact_refs"])
+        self.assertTrue(root.joinpath(audit["relative_path"]).is_file())
 
     def test_repair_rejects_stale_revision_without_state_or_artifact_write(self):
         state = self.make_partial_repair_state()

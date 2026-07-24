@@ -1101,7 +1101,12 @@ class StateStore:
         finally:
             os.close(directory)
 
-    def commit(self, next_state: Mapping[str, object]) -> dict[str, object]:
+    def commit(
+        self,
+        next_state: Mapping[str, object],
+        *,
+        pre_replace: Callable[[Mapping[str, object]], None] | None = None,
+    ) -> dict[str, object]:
         _require_private_directory(self.root)
         _require_private_regular(self.state_path, "run state")
         try:
@@ -1132,6 +1137,10 @@ class StateStore:
         _require_intent_envelope(self.root, candidate)
         if self._fault_injector is not None:
             self._fault_injector(BEFORE_STATE_REPLACE)
+        if pre_replace is not None:
+            if not callable(pre_replace):
+                raise TypeError("state pre-replace precondition must be callable")
+            pre_replace(copy.deepcopy(candidate))
         atomic_private_write(self.state_path, canonical_json(candidate))
         self._state = candidate
         if self._fault_injector is not None:
