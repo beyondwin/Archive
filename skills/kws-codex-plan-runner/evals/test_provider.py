@@ -12,6 +12,7 @@ SKILL_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SKILL_ROOT / "scripts"))
 
 from plan_runner import provider as provider_module  # noqa: E402
+from plan_runner.git_ops import GitIdentity  # noqa: E402
 from plan_runner.helper import HelperDescriptor  # noqa: E402
 from plan_runner.provider import CodexAdapter, ProviderRequest  # noqa: E402
 from plan_runner.recovery import ActivityLease  # noqa: E402
@@ -64,6 +65,7 @@ class CodexProviderTest(unittest.TestCase):
         return ProviderRequest(
             worktree=self.worktree,
             git_common_dir=self.common,
+            git_identity=GitIdentity("Runner Test", "runner@example.test"),
             prompt="execute this plan",
             output_schema=self.schema,
             output_path=self.output,
@@ -236,9 +238,15 @@ class CodexProviderTest(unittest.TestCase):
             record["env"]["XDG_CONFIG_HOME"], str(isolated_home / ".config")
         )
         self.assertEqual(record["env"]["GIT_TERMINAL_PROMPT"], "0")
-        self.assertEqual(record["env"]["GIT_CONFIG_COUNT"], "1")
+        self.assertEqual(record["env"]["GIT_CONFIG_COUNT"], "5")
+        self.assertEqual(record["env"]["GIT_CONFIG_KEY_0"], "user.name")
+        self.assertEqual(record["env"]["GIT_CONFIG_VALUE_0"], "Runner Test")
+        self.assertEqual(record["env"]["GIT_CONFIG_KEY_1"], "user.email")
         self.assertEqual(
-            record["env"]["GIT_CONFIG_VALUE_0"],
+            record["env"]["GIT_CONFIG_VALUE_1"], "runner@example.test"
+        )
+        self.assertEqual(
+            record["env"]["GIT_CONFIG_VALUE_4"],
             "disabled://plan-runner/run-1234/origin",
         )
         self.assertEqual(
@@ -249,6 +257,48 @@ class CodexProviderTest(unittest.TestCase):
             json.loads(record["env"]["KWS_PLAN_RUNNER_HELPER_CLIENT_ARGV"]),
             list(self.helper.client_argv),
         )
+
+    def test_initial_and_resumed_requests_use_the_same_sealed_git_identity(self):
+        isolated_home = self.output.parent / ".codex-child-home"
+        isolated_home.mkdir()
+        (isolated_home / ".gitconfig").write_text(
+            "[user]\n"
+            "\tname = Wrong Home\n"
+            "\temail = wrong-home@example.test\n",
+            encoding="utf-8",
+        )
+        request_values = {
+            "worktree": self.worktree,
+            "git_common_dir": self.common,
+            "git_identity": GitIdentity("Runner Test", "runner@example.test"),
+            "prompt": "execute this plan",
+            "output_schema": self.schema,
+            "output_path": self.output,
+            "sandbox": "danger-full-access",
+            "model": "gpt-test",
+        }
+        try:
+            initial = ProviderRequest(**request_values)
+            resumed = ProviderRequest(**request_values, session_id=SESSION_ID)
+        except TypeError as error:
+            self.fail(f"ProviderRequest does not accept sealed Git identity: {error}")
+
+        self.launch("initial", request=initial)
+        self.launch("explicit-resume", request=resumed)
+        records = [
+            json.loads(line)
+            for line in self.log.read_text(encoding="utf-8").splitlines()
+        ]
+        self.assertEqual(initial.git_identity, resumed.git_identity)
+        for record in records:
+            config = {
+                record["env"][f"GIT_CONFIG_KEY_{index}"]: record["env"][
+                    f"GIT_CONFIG_VALUE_{index}"
+                ]
+                for index in range(int(record["env"]["GIT_CONFIG_COUNT"]))
+            }
+            self.assertEqual(config["user.name"], "Runner Test")
+            self.assertEqual(config["user.email"], "runner@example.test")
 
     def test_only_distinct_lifecycle_and_tool_events_refresh_activity(self):
         lease = RecordingLease()

@@ -10,12 +10,14 @@ import time
 import unittest
 import uuid
 from pathlib import Path
+from unittest import mock
 
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SKILL_ROOT / "scripts"))
 
 from plan_runner.contracts import ExitCode  # noqa: E402
+from plan_runner.git_ops import GitIdentity  # noqa: E402
 from plan_runner.helper import helper_client  # noqa: E402
 from plan_runner.provider import ProviderOutcome  # noqa: E402
 from plan_runner.recovery import strategy_note_digest  # noqa: E402
@@ -367,6 +369,144 @@ class EngineTest(unittest.TestCase):
     def test_runtime_paths_are_immutable(self):
         with self.assertRaises(dataclasses.FrozenInstanceError):
             self.paths.state_home = self.root / "other"
+
+    def test_missing_git_identity_blocks_before_state_worktree_or_provider(self):
+        git("config", "--unset", "user.email", cwd=self.source)
+        isolated_home = self.root / "isolated-home"
+        isolated_home.mkdir()
+        with mock.patch.dict(
+            os.environ,
+            {"HOME": str(isolated_home), "GIT_CONFIG_NOSYSTEM": "1"},
+        ):
+            code = self.runner().create_run(
+                specs=self.specs,
+                plans=self.plans[:1],
+                workspace=self.source,
+                stall_seconds=30,
+                sandbox="workspace-write",
+                model=None,
+            )
+
+        self.assertEqual(code, ExitCode.INVALID)
+        self.assertEqual(self.adapter_values, [])
+        self.assertFalse(self.paths.state_home.exists())
+        self.assertFalse(self.paths.worktree_home.exists())
+        self.assertEqual(
+            git(
+                "for-each-ref",
+                "--format=%(refname)",
+                "refs/heads/codex-plan",
+                cwd=self.source,
+            ),
+            "",
+        )
+
+    def test_identity_is_sealed_and_passed_to_every_provider_request(self):
+        self.crash_after_session = True
+        self.review_findings_once = True
+        runner = self.runner()
+        with self.assertRaises(SimulatedCrash):
+            runner.create_run(
+                specs=self.specs,
+                plans=self.plans[:1],
+                workspace=self.source,
+                stall_seconds=30,
+                sandbox="workspace-write",
+                model=None,
+            )
+        state = self.state()
+        self.assertEqual(
+            state["immutable_config"].get("git_identity"),
+            {"name": "Engine Test", "email": "engine@example.test"},
+        )
+
+        code = self.runner().resume(
+            state["run_id"],
+            retry_blocked=False,
+            retry_failed=False,
+            strategy_note=None,
+        )
+
+        self.assertEqual(code, ExitCode.READY)
+        implementation_requests = [
+            request
+            for request, packet in zip(self.requests, self.packets, strict=True)
+            if packet["mode"] == "implementation"
+        ]
+        review_fix_request = next(
+            request
+            for request, packet in zip(self.requests, self.packets, strict=True)
+            if packet["mode"] == "final_review_fix"
+        )
+        self.assertEqual(len(implementation_requests), 2)
+        self.assertIsNone(implementation_requests[0].session_id)
+        self.assertIsNotNone(implementation_requests[1].session_id)
+        expected = GitIdentity("Engine Test", "engine@example.test")
+        self.assertEqual(
+            [
+                getattr(request, "git_identity", None)
+                for request in (*implementation_requests, review_fix_request)
+            ],
+            [expected, expected, expected],
+        )
+
+    def test_candidate_with_wrong_committer_identity_fails_closed(self):
+        def commit_with_wrong_identity(
+            _adapter, request, packet, session_id
+        ):
+            if packet["mode"] != "implementation":
+                return None
+            marker = request.worktree / "wrong-identity.txt"
+            marker.write_text("wrong identity\n", encoding="utf-8")
+            git("add", marker.name, cwd=request.worktree)
+            git(
+                "-c",
+                "user.name=Wrong",
+                "-c",
+                "user.email=wrong@example.test",
+                "commit",
+                "-m",
+                "commit with wrong identity",
+                cwd=request.worktree,
+            )
+            head = git("rev-parse", "HEAD", cwd=request.worktree)
+            return ProviderOutcome(
+                "implemented",
+                0,
+                session_id,
+                {
+                    "status": "implemented",
+                    "head_commit": head,
+                    "summary": "wrong identity",
+                    "task_ledger": [],
+                    "open_obligation_ids": [],
+                    "failure_signature": None,
+                    "strategy_note": None,
+                    "blocker": None,
+                },
+                None,
+                {},
+                (),
+                "",
+            )
+
+        self.outcome_hook = commit_with_wrong_identity
+        code = self.runner().create_run(
+            specs=self.specs,
+            plans=self.plans[:1],
+            workspace=self.source,
+            stall_seconds=30,
+            sandbox="workspace-write",
+            model=None,
+        )
+
+        self.assertEqual(code, ExitCode.INTEGRITY)
+        state = self.state()
+        self.assertEqual(state["failure"]["reason_code"], "state_integrity_failed")
+        self.assertNotEqual(state["plans"][0]["status"], "implemented")
+        self.assertFalse(
+            any(item["kind"] == "plan_handoff" for item in state["artifact_refs"])
+        )
 
     def _assert_graceful_dirty_signal_checkpoint(
         self, signum, *, drift=False, clean_drift=False

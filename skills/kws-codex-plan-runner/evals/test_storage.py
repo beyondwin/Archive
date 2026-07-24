@@ -53,7 +53,14 @@ class StateStoreTest(unittest.TestCase):
             branch="codex-plan/plan-a-12345678-1234-4234-8234-123456789abc",
             specs=[self.spec_b, self.spec_a],
             plans=[self.plan_b, self.plan_a],
-            immutable_config={"stall_seconds": 3600, "sandbox": "workspace-write"},
+            immutable_config={
+                "stall_seconds": 3600,
+                "sandbox": "workspace-write",
+                "git_identity": {
+                    "name": "Runner Test",
+                    "email": "runner@example.test",
+                },
+            },
             runner_runtime={
                 "uv_version": "uv 0.11.28",
                 "implementation": "cpython",
@@ -188,7 +195,14 @@ class StateStoreTest(unittest.TestCase):
                 branch="codex-plan/bad-12345678-1234-4234-8234-123456789abc",
                 specs=[link],
                 plans=[self.plan_a],
-                immutable_config={"stall_seconds": 3600, "sandbox": "workspace-write"},
+                immutable_config={
+                    "stall_seconds": 3600,
+                    "sandbox": "workspace-write",
+                    "git_identity": {
+                        "name": "Runner Test",
+                        "email": "runner@example.test",
+                    },
+                },
                 runner_runtime={
                     "uv_version": "uv 0.11.28",
                     "implementation": "cpython",
@@ -224,7 +238,14 @@ class StateStoreTest(unittest.TestCase):
                 branch="codex-plan/bad-12345678-1234-4234-8234-123456789abc",
                 specs=[self.spec_a],
                 plans=[self.plan_a],
-                immutable_config={"stall_seconds": 3600, "sandbox": "workspace-write"},
+                immutable_config={
+                    "stall_seconds": 3600,
+                    "sandbox": "workspace-write",
+                    "git_identity": {
+                        "name": "Runner Test",
+                        "email": "runner@example.test",
+                    },
+                },
                 runner_runtime={
                     "uv_version": "uv 0.11.28",
                     "implementation": "cpython",
@@ -256,6 +277,18 @@ class StateStoreTest(unittest.TestCase):
         state["status"] = "running"
         state_path.write_bytes(canonical_json(state))
         with self.assertRaisesRegex(ValueError, "digest"):
+            StateStore.open(store.root)
+
+    def test_tampered_immutable_git_identity_is_rejected_on_open(self):
+        store = self.create_store(self.root / "tampered-git-identity")
+        self.rewrite_state(
+            store,
+            lambda state: state["immutable_config"]["git_identity"].__setitem__(
+                "email", ""
+            ),
+        )
+
+        with self.assertRaisesRegex(ValueError, "Git identity"):
             StateStore.open(store.root)
 
     def test_rejects_stale_revision_and_unsafe_or_missing_artifact_reference(self):

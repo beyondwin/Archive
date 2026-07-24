@@ -21,6 +21,7 @@ from .contracts import (
     require_full_sha,
     sha256_json,
 )
+from .git_ops import GitIdentity
 
 
 BEFORE_STATE_REPLACE = "artifact_durable_before_state_replace"
@@ -293,6 +294,7 @@ def _validate_state(
         raise ValueError("integration state is invalid")
     if not isinstance(state["immutable_config"], dict):
         raise ValueError("immutable config is invalid")
+    GitIdentity.from_mapping(state["immutable_config"].get("git_identity"))
     if not isinstance(state["runner_runtime"], dict):
         raise ValueError("runner runtime is invalid")
 
