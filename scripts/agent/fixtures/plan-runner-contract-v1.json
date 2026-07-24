@@ -39,20 +39,15 @@
     "controller_transport_failed",
     "destructive_authorization_required",
     "external_authority_required",
-    "host_permission_blocked",
     "input_changed_requires_new_run",
     "irreconcilable_requirements",
     "provider_auth_blocked",
-    "provider_result_invalid",
-    "provider_stream_malformed",
-    "provider_stream_oversized",
     "provider_unavailable",
     "provider_usage_blocked",
     "recovery_exhausted",
     "review_failed",
     "runtime_incompatible",
     "runtime_missing",
-    "sandbox_capability_blocked",
     "session_invalid",
     "session_resume_failed",
     "stall_expired",
@@ -60,11 +55,28 @@
     "verification_failed",
     "verification_timed_out"
   ],
+  "provider_failure_taxonomy_extensions": {
+    "claude": [],
+    "codex": [
+      "host_permission_blocked",
+      "provider_result_invalid",
+      "provider_stream_malformed",
+      "provider_stream_oversized",
+      "sandbox_capability_blocked"
+    ]
+  },
   "next_strategies": [
     "block",
     "fresh_root_full_diff",
     "resume_root"
   ],
+  "volatile_ref_policy": {
+    "version": 1,
+    "prefixes": [
+      "refs/codex/turn-diffs/captures/",
+      "refs/codex/turn-diffs/checkpoints/"
+    ]
+  },
   "receipt_identity_fields": [
     "argv",
     "candidate_head",

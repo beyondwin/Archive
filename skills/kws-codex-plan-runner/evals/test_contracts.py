@@ -22,6 +22,10 @@ from plan_runner.contracts import (  # noqa: E402
     require_full_sha,
     sha256_json,
 )
+from plan_runner.git_ops import (  # noqa: E402
+    VOLATILE_REF_POLICY_VERSION,
+    is_volatile_ref,
+)
 
 
 class ContractVocabularyTest(unittest.TestCase):
@@ -93,13 +97,42 @@ class ContractVocabularyTest(unittest.TestCase):
         self.assertEqual(sorted(RUN_STATUSES), sorted(fixture["run_statuses"]))
         self.assertEqual(sorted(PLAN_STATUSES), sorted(fixture["plan_statuses"]))
         self.assertEqual(sorted(TASK_STATUSES), sorted(fixture["task_statuses"]))
-        self.assertEqual(sorted(FAILURE_TAXONOMY), sorted(fixture["failure_taxonomy"]))
+        expected_failures = set(fixture["failure_taxonomy"])
+        expected_failures.update(
+            fixture["provider_failure_taxonomy_extensions"]["codex"]
+        )
+        self.assertEqual(sorted(FAILURE_TAXONOMY), sorted(expected_failures))
         self.assertEqual(sorted(NEXT_STRATEGIES), sorted(fixture["next_strategies"]))
         self.assertEqual(RUNNER_RUNTIME_CONTRACT, fixture["runner_runtime"])
         self.assertEqual(
             {item.name.lower(): int(item) for item in ExitCode},
             fixture["exit_codes"],
         )
+
+    def test_versioned_contract_seals_the_volatile_ref_policy(self):
+        fixture = json.loads(
+            (REPO_ROOT / "scripts/agent/fixtures/plan-runner-contract-v1.json")
+            .read_text(encoding="utf-8")
+        )
+        policy = fixture["volatile_ref_policy"]
+        self.assertEqual(VOLATILE_REF_POLICY_VERSION, policy["version"])
+        self.assertEqual(
+            [
+                "refs/codex/turn-diffs/captures/",
+                "refs/codex/turn-diffs/checkpoints/",
+            ],
+            policy["prefixes"],
+        )
+        for prefix in policy["prefixes"]:
+            with self.subTest(prefix=prefix):
+                self.assertTrue(is_volatile_ref(f"{prefix}candidate"))
+        for protected in (
+            "refs/heads/main",
+            "refs/tags/release",
+            "refs/codex/other/candidate",
+        ):
+            with self.subTest(protected=protected):
+                self.assertFalse(is_volatile_ref(protected))
 
     def test_canonical_digest_is_stable(self):
         left = {"b": [2, 1], "a": "value"}
