@@ -31,6 +31,7 @@ FAILURE_TAXONOMY = frozenset(
         "input_changed_requires_new_run",
         "irreconcilable_requirements",
         "provider_auth_blocked",
+        "provider_capability_blocked",
         "provider_result_invalid",
         "provider_stream_malformed",
         "provider_stream_oversized",
