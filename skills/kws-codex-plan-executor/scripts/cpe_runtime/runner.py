@@ -83,7 +83,14 @@ from .verification import (
 _RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _VERIFICATION_COMMAND_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _SHA = re.compile(r"^[0-9a-f]{40}$")
+_DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _EVENT_ID = re.compile(r"^[0-9a-f]{32}$")
+_AUTHORITY_PROFILES = {"local-implementation-with-evidence-approvals"}
+_EXECUTION_LEDGER_SCHEMA = (
+    Path(__file__).resolve().parents[2]
+    / "templates"
+    / "execution-ledger.schema.json"
+)
 _RUN_COMPLETED_FIELDS = {
     "event_id", "at", "source", "run_id", "category", "action", "head",
 }
@@ -785,6 +792,189 @@ class SequentialRunner:
                     )
                 except KeyboardInterrupt:
                     return self._record_interrupted(store)
+        except RunBusyError:
+            return self._busy_summary(store)
+
+    @staticmethod
+    def _recorded_authority_profile(store: StateStore) -> str | None:
+        profiles = {
+            event.get("authority_profile")
+            for event in (
+                strict_json_object(line)
+                for line in store.events_path.read_bytes().splitlines()
+            )
+            if isinstance(event, dict)
+            and event.get("action") == "plan.execution_ledger_quarantined"
+        }
+        if not profiles:
+            return None
+        if len(profiles) != 1 or not profiles.issubset(_AUTHORITY_PROFILES):
+            raise ValueError("recorded authority profile is invalid")
+        return str(next(iter(profiles)))
+
+    def recover_execution_ledger(
+        self,
+        *,
+        run_id: str,
+        ledger_sha256: str,
+        authority_profile: str,
+    ) -> dict[str, object]:
+        """Quarantine one exact invalid ledger so the same run can resume."""
+        if not _RUN_ID.fullmatch(run_id):
+            raise ValueError("run ID contains unsupported characters")
+        if not _DIGEST.fullmatch(ledger_sha256):
+            raise ValueError("execution ledger digest is invalid")
+        if authority_profile not in _AUTHORITY_PROFILES:
+            raise ValueError("authority profile is invalid")
+
+        store = StateStore.open(self.codex_home / "orchestrator" / run_id)
+        try:
+            with _RunLock(store.root / "run.lock"):
+                store = StateStore.open(store.root)
+                self._verify_worktree(store)
+                state = store.state
+                plan_index = state["current_plan_index"]
+                if (
+                    state["status"] != "failed"
+                    or not isinstance(plan_index, int)
+                    or not 0 <= plan_index < len(state["plans"])
+                ):
+                    raise ValueError(
+                        "execution ledger recovery requires a failed active plan"
+                    )
+                plan = state["plans"][plan_index]
+                if plan["status"] != "failed":
+                    raise ValueError(
+                        "execution ledger recovery requires a failed active plan"
+                    )
+                if plan["execution_ledger_event_digests"]:
+                    raise ValueError(
+                        "execution ledger recovery refuses accepted ledger history"
+                    )
+
+                terminal_events = [
+                    event
+                    for event in (
+                        strict_json_object(line)
+                        for line in store.events_path.read_bytes().splitlines()
+                    )
+                    if isinstance(event, dict)
+                    and event.get("action") in {
+                        "plan.integrity_failed",
+                        "plan.evidence_failed",
+                        "plan.failed",
+                        "plan.blocked",
+                    }
+                ]
+                if (
+                    not terminal_events
+                    or terminal_events[-1].get("action")
+                    != "plan.integrity_failed"
+                    or terminal_events[-1].get("plan_id") != plan["plan_id"]
+                    or terminal_events[-1].get("reason")
+                    != "execution_ledger_invalid"
+                ):
+                    raise ValueError(
+                        "execution ledger recovery requires the matching "
+                        "execution_ledger_invalid failure"
+                    )
+
+                ledger = (
+                    Path(state["worktree"])
+                    / ".superpowers"
+                    / "sdd"
+                    / "execution-ledger.jsonl"
+                )
+                descriptor: int | None = None
+                try:
+                    visible = os.lstat(ledger)
+                    descriptor = os.open(
+                        ledger,
+                        os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                    )
+                    opened = os.fstat(descriptor)
+                    if (
+                        not stat.S_ISREG(visible.st_mode)
+                        or not stat.S_ISREG(opened.st_mode)
+                        or visible.st_uid != os.geteuid()
+                        or opened.st_uid != os.geteuid()
+                        or visible.st_dev != opened.st_dev
+                        or visible.st_ino != opened.st_ino
+                        or opened.st_size > 1_048_576
+                    ):
+                        raise ValueError("execution ledger is unsafe")
+                    chunks: list[bytes] = []
+                    remaining = opened.st_size + 1
+                    while remaining:
+                        chunk = os.read(descriptor, remaining)
+                        if not chunk:
+                            break
+                        chunks.append(chunk)
+                        remaining -= len(chunk)
+                    content = b"".join(chunks)
+                    if (
+                        len(content) != opened.st_size
+                        or hashlib.sha256(content).hexdigest() != ledger_sha256
+                    ):
+                        raise ValueError("execution ledger digest does not match")
+                except FileNotFoundError as exc:
+                    raise ValueError("execution ledger is unavailable") from exc
+                except OSError as exc:
+                    raise ValueError("execution ledger is unsafe") from exc
+                finally:
+                    if descriptor is not None:
+                        os.close(descriptor)
+
+                try:
+                    validate_execution_ledger(
+                        ledger,
+                        expected_plan_id=plan["plan_id"],
+                    )
+                except (OSError, ValueError):
+                    pass
+                else:
+                    raise ValueError(
+                        "execution ledger recovery refuses a valid ledger"
+                    )
+
+                quarantine_directory = (
+                    store.root / "recovery" / "execution-ledgers"
+                )
+                quarantine_directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+                os.chmod(quarantine_directory, 0o700)
+                quarantine = quarantine_directory / f"{ledger_sha256}.jsonl"
+                if quarantine.exists() or quarantine.is_symlink():
+                    raise ValueError(
+                        "execution ledger quarantine target already exists"
+                    )
+                os.replace(ledger, quarantine)
+                os.chmod(quarantine, 0o400)
+                with quarantine.open("rb") as recovered:
+                    os.fsync(recovered.fileno())
+                for directory_path in (ledger.parent, quarantine_directory):
+                    directory_descriptor = os.open(directory_path, os.O_RDONLY)
+                    try:
+                        os.fsync(directory_descriptor)
+                    finally:
+                        os.close(directory_descriptor)
+
+                quarantine_ref = quarantine.resolve(strict=True).relative_to(
+                    store.root.resolve(strict=True)
+                ).as_posix()
+                store.append_event(
+                    "plan.execution_ledger_quarantined",
+                    plan_id=plan["plan_id"],
+                    ledger_sha256=ledger_sha256,
+                    quarantine_path=quarantine_ref,
+                    authority_profile=authority_profile,
+                )
+                return {
+                    "status": "recovered",
+                    "run_id": run_id,
+                    "ledger_sha256": ledger_sha256,
+                    "quarantine_path": quarantine_ref,
+                    "authority_profile": authority_profile,
+                }
         except RunBusyError:
             return self._busy_summary(store)
 
@@ -2327,6 +2517,8 @@ class SequentialRunner:
                         execution_ledger=(
                             worktree / ".superpowers" / "sdd" / "execution-ledger.jsonl"
                         ),
+                        execution_ledger_schema=_EXECUTION_LEDGER_SCHEMA,
+                        authority_profile=self._recorded_authority_profile(store),
                         verification_helper_descriptor=verification_helper_descriptor,
                     ),
                     result_path=result_path,

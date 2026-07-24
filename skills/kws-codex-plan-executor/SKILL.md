@@ -2,13 +2,13 @@
 name: kws-codex-plan-executor
 description: Use when approved Superpowers implementation plans must run in fixed order and survive process interruption.
 metadata:
-  version: "2.1.0"
-  updated_at: "2026-07-18"
+  version: "2.1.1"
+  updated_at: "2026-07-24"
 ---
 
 # KWS Codex Plan Executor
 
-Version 2.1.0 publishes format 3 run state for a thin, local execution
+Version 2.1.1 publishes format 3 run state for a thin, local execution
 harness. Use CPE only for approved Superpowers plans that need durable ordered
 execution and resume. For bounded work that does not need a durable run, use a
 direct Superpowers launch in the current worktree.
@@ -32,6 +32,9 @@ python3 scripts/cpe.py run \
 python3 scripts/cpe.py resume --run-id RUN_ID
 python3 scripts/cpe.py resume --run-id RUN_ID --retry-blocked
 python3 scripts/cpe.py resume --run-id RUN_ID --retry-failed
+python3 scripts/cpe.py recover-ledger --run-id RUN_ID \
+  --sha256 EXACT_INVALID_LEDGER_SHA256 \
+  --authority-profile local-implementation-with-evidence-approvals
 python3 scripts/cpe.py inspect --run-id RUN_ID
 ```
 
@@ -83,6 +86,16 @@ resume. An unknown blocked run requires `--retry-blocked`; a failed run requires
 `--retry-failed`. A timeout may resume only while its bounded launch and wall
 time budgets allow it; an unchanged timeout stops without a follow-up timeout
 policy.
+
+If a failed run's latest terminal fact is exactly
+`execution_ledger_invalid`, `recover-ledger` can quarantine only the exact
+caller-digested invalid ledger under the run root. It rejects valid ledgers,
+symlinks, changed digests, accepted ledger history, non-matching failures, and
+busy runs. The named authority profile is then recorded durably and transmitted
+only on the resumed run; it authorizes local implementation, checkpoint
+commits, and evidence-gated approval decisions inside the saved CPE worktree.
+It does not authorize outside-worktree writes or remote actions. Resume the
+same run with `--retry-failed` after recovery.
 
 The launcher records classified transport outcomes without retaining raw
 provider messages. `provider_usage_blocked`, `provider_auth_blocked`, and

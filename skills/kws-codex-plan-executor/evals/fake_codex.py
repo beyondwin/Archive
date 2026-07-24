@@ -29,6 +29,7 @@ SCENARIOS = {
     "timeout_without_progress",
     "timeout_with_completed_result",
     "timeout_with_malformed_ledger",
+    "malformed_ledger_then_completed",
     "timeout_with_ledger_deletion",
     "timeout_with_ledger_rewrite",
     "completed_with_grandchild",
@@ -410,7 +411,10 @@ def main() -> int:
             "workflow_receipt": workflow_receipt(worktree, head, plan_id),
         }
         wait_for_launcher_timeout(result_path, payload)
-    elif scenario == "timeout_with_malformed_ledger":
+    elif scenario in {
+        "timeout_with_malformed_ledger",
+        "malformed_ledger_then_completed",
+    } and attempt == 1:
         evidence = worktree / ".superpowers" / "sdd"
         evidence.mkdir(parents=True, exist_ok=True)
         (evidence / ".gitignore").write_text("*\n", encoding="utf-8")
@@ -421,6 +425,16 @@ def main() -> int:
             result_path,
             checkpoint_payload(plan_id, head, scenario, attempt),
         )
+    elif scenario == "malformed_ledger_then_completed":
+        schema_path = Path(marker(prompt, "EXECUTION_LEDGER_SCHEMA"))
+        if not schema_path.is_file():
+            raise SystemExit("execution ledger schema was not supplied")
+        if marker(prompt, "RUN_AUTHORITY_PROFILE") != (
+            "local-implementation-with-evidence-approvals"
+        ):
+            raise SystemExit("implementation authority profile was not supplied")
+        head = commit_plan(worktree, plan_id)
+        status = "completed"
     elif scenario == "timeout_with_ledger_deletion":
         if attempt == 1:
             head = commit_plan(worktree, plan_id, "-progress")

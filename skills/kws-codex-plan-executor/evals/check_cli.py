@@ -121,8 +121,17 @@ class SequentialCliTest(unittest.TestCase):
         self.assertNotIn("export", source)
         result = self.command("--help")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("{run,resume,inspect,verify}", result.stdout)
+        self.assertIn("{run,resume,inspect,recover-ledger,verify}", result.stdout)
         self.assertNotIn("export", result.stdout)
+
+    def test_recover_ledger_requires_exact_digest_and_authority_profile(self) -> None:
+        help_result = self.command("recover-ledger", "--help")
+        self.assertEqual(0, help_result.returncode, help_result.stderr)
+        self.assertIn("--run-id", help_result.stdout)
+        self.assertIn("--sha256", help_result.stdout)
+        self.assertIn("--authority-profile", help_result.stdout)
+        missing = self.command("recover-ledger", "--run-id", "missing")
+        self.assertEqual(1, missing.returncode)
 
     def test_output_schema_is_strict_structured_output_compatible(self) -> None:
         schema = json.loads(
@@ -340,7 +349,7 @@ class SequentialCliTest(unittest.TestCase):
                 self.assertIn(ownership, document)
                 normalized = " ".join(document.split()).lower()
                 for phrase in (
-                    "Version 2.1.0",
+                    "Version 2.1.1",
                     "format 3",
                     "direct Superpowers launch",
                     "one reused isolated worktree",
@@ -353,6 +362,8 @@ class SequentialCliTest(unittest.TestCase):
                     "same HEAD",
                     "fail closed",
                     "integration=not_observed",
+                    "execution_ledger_invalid",
+                    "local-implementation-with-evidence-approvals",
                 ):
                     self.assertIn(phrase.lower(), normalized)
                 self.assertIn(
