@@ -569,8 +569,17 @@ The real candidate canary ran with `danger-full-access`, approval policy
 `never`, and the effective installed `CODEX_HOME`. It completed implementation,
 helper verification, and structured finalization with zero approval requests,
 kept the candidate clean, and reached `ready_for_integration` at
-`1773ba770e2b69d975675762cd3b466592a30dd6`. Archive product refs did not change
-during the canary, and no merge, push, or deploy occurred.
+`1773ba770e2b69d975675762cd3b466592a30dd6`.
+
+A bounded read-only audit of provider tool calls and Archive reflogs found no
+Archive mutation or integration performed by the canary provider. The assigned
+Archive branch advanced only through controller-approved Task 5 commits:
+`ca65e964` before the initial provider launch, `c3a30f61` between the failed
+finalization and the successful same-run continuation, and `861886ae` after the
+canary to record this evidence. No canary-issued product-ref update, merge,
+push, or deploy was observed. The earlier before/after ref hashes used different
+serializations and span the intentional branch advance, so they are not claimed
+as byte-identical all-ref snapshots.
 
 The canonical final deterministic gate is:
 
