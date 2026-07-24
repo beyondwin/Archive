@@ -1363,3 +1363,48 @@ unsealed dirty state that no supported recovery path can adopt.
 This is a durable-recovery contract gap in `kws-codex-plan-runner` 1.0.0 and
 should be fixed before relying on the runner for long mutation-heavy provider
 sessions.
+
+## Remediation closeout (2026-07-25)
+
+**Status:** resolved for new runs and for the one narrowly provable historical
+repair shape.
+
+The original forensic evidence remains unchanged. The implemented behavior is
+defined by the [approved remediation design](../superpowers/specs/2026-07-24-codex-plan-runner-incident-remediation-design.md),
+the [core-correctness plan](../superpowers/plans/2026-07-24-codex-plan-runner-core-correctness.md),
+and the [permission/recovery plan](../superpowers/plans/2026-07-24-codex-plan-runner-permission-recovery.md).
+The implementation range is inclusive from `3c93a09e` through `c3a30f61`.
+
+Focused regressions cover checkpoint-before-result validation for invalid,
+malformed, oversized, transport, and permission outcomes; exact dirty
+checkpoint resume; branch/product-ref drift rejection; safe fresh-root
+recovery; and CAS-bound `unsealed-provider-partial` repair with semantic claims
+discarded. Coverage lives in `evals/test_engine.py`,
+`evals/test_storage.py`, `evals/test_provider.py`, and
+`evals/test_recovery.py`.
+
+The disposable candidate canary sealed the post-provider clean HEAD, helper
+verification receipt, and final verification set before structured review.
+After a focused output-schema compatibility fix, the same preserved run
+finalized successfully with no findings or obligations and reached
+`ready_for_integration` at
+`1773ba770e2b69d975675762cd3b466592a30dd6`.
+
+The canonical final deterministic gate is:
+
+```bash
+bun run agent:verify -- --base "$MERGE_BASE" --head "$CANDIDATE_HEAD"
+```
+
+The reported historical run
+`2026-07-24-calm-craft-responsive-reference-integ-21fbe848-7ed4-428c-8698-f1dac1eb565c`
+was inspected read-only at revision `29`. It is a legacy failed state without a
+sealed Git identity, and its recorded worktree no longer exists. Both repair
+contracts require that exact worktree, common directory, branch, ancestry,
+refs, inputs, and attempt evidence to remain provable. Therefore no safe
+`repair` command applies; the state was left untouched.
+
+The deliberate residual boundary is unchanged: arbitrary dirty work is never
+adopted. Historical partial repair is available only for one recorded
+incomplete implementation or review-fix attempt whose exact current Git
+identity and all other proofs still match.

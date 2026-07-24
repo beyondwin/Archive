@@ -1204,3 +1204,36 @@ Passing the identity explicitly and validating the resulting commit range is
 the minimum correctness-preserving solution. Copying the full global config,
 relying on provider prompts, or accepting Git's hostname fallback would leave
 the incident unresolved.
+
+## Remediation closeout (2026-07-25)
+
+**Status:** resolved within the approved lightweight boundary.
+
+The original forensic record above remains unchanged. The implemented contract
+is defined by the [approved remediation design](../superpowers/specs/2026-07-24-codex-plan-runner-incident-remediation-design.md),
+the [core-correctness plan](../superpowers/plans/2026-07-24-codex-plan-runner-core-correctness.md),
+and the [permission/recovery plan](../superpowers/plans/2026-07-24-codex-plan-runner-permission-recovery.md).
+The implementation range is inclusive from `3c93a09e` through `c3a30f61`.
+
+Focused regressions cover configured identity capture and bounds, child
+environment sealing, signing suppression, candidate author/committer
+validation, immutable-state tamper rejection, and initial/resumed provider
+identity reuse in `evals/test_git_ops.py`, `evals/test_storage.py`,
+`evals/test_provider.py`, and `evals/test_engine.py`.
+
+The disposable candidate canary completed one SDD task and produced commit
+`1773ba770e2b69d975675762cd3b466592a30dd6` with both author and committer
+`Candidate Runner Canary <candidate-runner-canary@example.test>`. Finalization
+reviewed that same clean HEAD with no findings or open obligations, and the run
+reached `ready_for_integration`. No merge, push, or deploy occurred.
+
+The canonical final deterministic gate is:
+
+```bash
+bun run agent:verify -- --base "$MERGE_BASE" --head "$CANDIDATE_HEAD"
+```
+
+The deliberate residual boundary remains narrow: the runner does not copy the
+operator's full Git configuration and does not infer alternate authors from
+ambient variables. A future alternate-author workflow requires a separate
+explicit contract.
