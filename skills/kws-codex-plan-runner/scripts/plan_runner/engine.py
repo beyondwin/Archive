@@ -17,7 +17,13 @@ from typing import Any
 
 from .contracts import ExitCode, TASK_STATUSES, canonical_json, sha256_json
 from .evidence import EvidenceStore
-from .git_ops import GitWorkspace, WorktreeObservation
+from .git_ops import (
+    GitIdentity,
+    GitWorkspace,
+    WorktreeObservation,
+    configured_git_identity,
+    validate_commit_identities,
+)
 from .helper import HelperDescriptor, HelperServer
 from .provider import CodexAdapter, ProviderOutcome, ProviderRequest
 from .recovery import (
@@ -270,9 +276,10 @@ class PlanRunner:
                 if not path.is_absolute():
                     raise ValueError("all input and workspace paths must be absolute")
             runtime = self._require_runtime()
+            git_identity = configured_git_identity(workspace)
         except RuntimeUnavailable as error:
             return self._runtime_blocked(str(error))
-        except (OSError, ValueError, TypeError) as error:
+        except (OSError, RuntimeError, ValueError, TypeError) as error:
             self._emit_error("invalid_invocation", error)
             return int(ExitCode.INVALID)
 
@@ -291,6 +298,7 @@ class PlanRunner:
                 "input_snapshot_digest": input_digest,
                 "git_common_dir": str(common_dir),
                 "protected_refs": _protected_refs(workspace, branch),
+                "git_identity": git_identity.as_dict(),
             }
             store = StateStore.create(
                 root=root,
@@ -820,6 +828,9 @@ class PlanRunner:
             request = ProviderRequest(
                 worktree=workspace.worktree,
                 git_common_dir=workspace._common_dir,
+                git_identity=GitIdentity.from_mapping(
+                    state["immutable_config"]["git_identity"]
+                ),
                 prompt=prompt
                 + "\nEXECUTION_PACKET="
                 + canonical_json(packet).decode("utf-8"),
@@ -1450,9 +1461,21 @@ class PlanRunner:
         result = outcome.result
         if not isinstance(result, Mapping):
             return self._integrity_failure(store, "missing implementation result")
+        state = store.snapshot()
         observation = workspace.require_clean_ancestor(
-            store.snapshot()["repository"]["source_commit"]
+            state["repository"]["source_commit"]
         )
+        try:
+            validate_commit_identities(
+                workspace.worktree,
+                state["repository"]["source_commit"],
+                observation.head,
+                GitIdentity.from_mapping(
+                    state["immutable_config"]["git_identity"]
+                ),
+            )
+        except RuntimeError as error:
+            return self._integrity_failure(store, str(error))
         if result.get("head_commit") != observation.head:
             return self._integrity_failure(store, "implementation HEAD mismatch")
         ledger = self._validated_task_ledger(result.get("task_ledger"))
@@ -1460,7 +1483,6 @@ class PlanRunner:
         obligations = result.get("open_obligation_ids")
         if not isinstance(obligations, list) or obligations:
             return self._integrity_failure(store, "implementation obligations remain")
-        state = store.snapshot()
         result_artifact = store.put_artifact(
             "provider_result", dict(result)
         )
@@ -1938,6 +1960,17 @@ class PlanRunner:
             candidate = workspace.require_clean_ancestor(
                 state["repository"]["source_commit"]
             )
+            try:
+                validate_commit_identities(
+                    workspace.worktree,
+                    state["repository"]["source_commit"],
+                    candidate.head,
+                    GitIdentity.from_mapping(
+                        state["immutable_config"]["git_identity"]
+                    ),
+                )
+            except RuntimeError as error:
+                return self._integrity_failure(store, str(error))
             self._require_git_contract(state, workspace)
             outcome = self._completed_review_outcome(store, candidate.head)
             if outcome is None:
@@ -2558,6 +2591,17 @@ class PlanRunner:
             observation = workspace.require_clean_ancestor(
                 current_state["repository"]["source_commit"]
             )
+            try:
+                validate_commit_identities(
+                    workspace.worktree,
+                    current_state["repository"]["source_commit"],
+                    observation.head,
+                    GitIdentity.from_mapping(
+                        current_state["immutable_config"]["git_identity"]
+                    ),
+                )
+            except RuntimeError as error:
+                return self._integrity_failure(store, str(error))
             if (
                 not isinstance(result, Mapping)
                 or result.get("head_commit") != observation.head

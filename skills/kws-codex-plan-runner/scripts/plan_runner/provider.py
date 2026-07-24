@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from .git_ops import sanitized_child_env
+from .git_ops import GitIdentity, sanitized_child_env
 from .helper import HelperDescriptor
 from .process import (
     _anchored_group,
@@ -77,6 +77,7 @@ _RESULT_STATUSES = frozenset({"implemented", "blocked", "failed", "reviewed"})
 class ProviderRequest:
     worktree: Path
     git_common_dir: Path
+    git_identity: GitIdentity
     prompt: str
     output_schema: Path
     output_path: Path
@@ -183,6 +184,7 @@ class CodexAdapter:
             provider_auth_prefixes=self._provider_auth_prefixes,
             remotes=self._remotes,
             run_id=self._run_id,
+            git_identity=request.git_identity,
         )
         isolated_home = request.output_path.parent / ".codex-child-home"
         isolated_config = isolated_home / ".config"
