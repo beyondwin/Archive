@@ -25,6 +25,10 @@ SDD_RELATIVE_PATHS = (
     Path("skills/subagent-driven-development/scripts/sdd-workspace"),
     Path("skills/subagent-driven-development/scripts/task-brief"),
     Path("skills/subagent-driven-development/scripts/review-package"),
+    Path("skills/subagent-driven-development/implementer-prompt.md"),
+    Path("skills/subagent-driven-development/task-reviewer-prompt.md"),
+    Path("skills/subagent-driven-development/re-review-prompt.md"),
+    Path("skills/requesting-code-review/code-reviewer.md"),
 )
 
 
@@ -86,7 +90,17 @@ class CodexProviderTest(unittest.TestCase):
     def make_codex_home(self, path, *, auth=True, sdd=True):
         path.mkdir()
         if auth:
-            (path / "auth.json").write_text("fake-auth-marker\n", encoding="utf-8")
+            (path / "auth.json").write_text(
+                json.dumps(
+                    {
+                        "auth_mode": "apikey",
+                        "last_refresh": None,
+                        "OPENAI_API_KEY": "fake-file-api-key",
+                        "tokens": None,
+                    }
+                ),
+                encoding="utf-8",
+            )
         if sdd:
             for relative in SDD_RELATIVE_PATHS:
                 target = path / relative
@@ -380,6 +394,89 @@ class CodexProviderTest(unittest.TestCase):
                 self.assertEqual(outcome.provider_code, provider_code)
                 self.assertFalse(self.log.exists())
 
+    def test_arbitrary_prefixed_api_key_does_not_satisfy_auth_preflight(self):
+        (self.codex_home / "auth.json").unlink()
+        environment = self.environment("initial")
+        environment.pop("OPENAI_API_KEY")
+        environment["OPENAI_UNUSED_API_KEY"] = "not-a-supported-route"
+
+        outcome = self.adapter(source_env=environment).launch(
+            self.request(), RecordingLease()
+        )
+
+        self.assertEqual(outcome.kind, "blocked")
+        self.assertEqual(outcome.provider_code, "provider_auth_blocked")
+        self.assertFalse(self.log.exists())
+
+    def test_file_auth_requires_structurally_usable_api_key_or_token(self):
+        environment = self.environment("initial")
+        environment.pop("OPENAI_API_KEY")
+        auth_path = self.codex_home / "auth.json"
+        unusable_documents = (
+            "not-json",
+            json.dumps(
+                {
+                    "auth_mode": "chatgpt",
+                    "last_refresh": None,
+                    "OPENAI_API_KEY": "",
+                    "tokens": {
+                        "access_token": "",
+                        "account_id": "account-only-is-not-auth",
+                        "id_token": "",
+                        "refresh_token": "",
+                    },
+                }
+            ),
+        )
+        for document in unusable_documents:
+            with self.subTest(document=document[:16]):
+                auth_path.write_text(document, encoding="utf-8")
+                outcome = self.adapter(source_env=environment).launch(
+                    self.request(), RecordingLease()
+                )
+                self.assertEqual(outcome.kind, "blocked")
+                self.assertEqual(outcome.provider_code, "provider_auth_blocked")
+                self.assertFalse(self.log.exists())
+
+        auth_path.write_text(
+            json.dumps(
+                {
+                    "auth_mode": "chatgpt",
+                    "last_refresh": None,
+                    "OPENAI_API_KEY": None,
+                    "tokens": {
+                        "access_token": "fake-access-token",
+                        "account_id": "fake-account",
+                        "id_token": None,
+                        "refresh_token": "fake-refresh-token",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        outcome = self.adapter(source_env=environment).launch(
+            self.request(), RecordingLease()
+        )
+        self.assertEqual(outcome.kind, "implemented")
+
+    def test_missing_sdd_prompt_or_reviewer_template_blocks_before_launch(self):
+        prompt_members = SDD_RELATIVE_PATHS[4:]
+        for index, relative in enumerate(prompt_members):
+            with self.subTest(relative=str(relative)):
+                home = self.root / f"missing-prompt-{index}"
+                self.make_codex_home(home)
+                (home / relative).unlink()
+                environment = self.environment("initial")
+                environment["CODEX_HOME"] = str(home)
+                outcome = self.adapter(source_env=environment).launch(
+                    self.request(), RecordingLease()
+                )
+                self.assertEqual(outcome.kind, "blocked")
+                self.assertEqual(
+                    outcome.provider_code, "provider_capability_blocked"
+                )
+                self.assertFalse(self.log.exists())
+
     def test_child_does_not_copy_codex_home_into_runner_state(self):
         private_markers = {
             "config.toml": "operator-config-secret",
@@ -518,6 +615,14 @@ class CodexProviderTest(unittest.TestCase):
         unavailable = self.launch("unavailable")
         self.assertEqual(unavailable.kind, "transport_failed")
         self.assertEqual(unavailable.provider_code, "provider_unavailable")
+
+    def test_top_level_and_turn_failed_auth_messages_are_stably_classified(self):
+        for scenario in ("auth-message-error", "auth-turn-failed"):
+            with self.subTest(scenario=scenario):
+                outcome = self.launch(scenario)
+                self.assertEqual(outcome.kind, "blocked")
+                self.assertEqual(outcome.provider_code, "provider_auth_blocked")
+                self.assertNotIn("invalid api key", outcome.stderr_tail.lower())
 
     def test_classifies_resume_transport_and_context_outcomes_for_engine(self):
         cases = {

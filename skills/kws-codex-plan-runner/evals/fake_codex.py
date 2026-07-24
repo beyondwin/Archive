@@ -18,6 +18,10 @@ SDD_RELATIVE_PATHS = (
     Path("skills/subagent-driven-development/scripts/sdd-workspace"),
     Path("skills/subagent-driven-development/scripts/task-brief"),
     Path("skills/subagent-driven-development/scripts/review-package"),
+    Path("skills/subagent-driven-development/implementer-prompt.md"),
+    Path("skills/subagent-driven-development/task-reviewer-prompt.md"),
+    Path("skills/subagent-driven-development/re-review-prompt.md"),
+    Path("skills/requesting-code-review/code-reviewer.md"),
 )
 
 
@@ -294,6 +298,15 @@ def _generic_main(argv: list[str], prompt: str, sequence_path: Path) -> int:
         session_id=session_id,
     )
     _emit({"type": "thread.started", "thread_id": session_id})
+    if action == "top-level-auth-error":
+        _emit({"type": "turn.started", "turn_id": f"turn-{action_index + 1}"})
+        _emit(
+            {
+                "type": "error",
+                "message": "401 Unauthorized: invalid api key fake-secret-value",
+            }
+        )
+        return 1
     if action in {"stalled", "dirty-stalled"}:
         if action == "dirty-stalled":
             Path("partial-provider-edit.txt").write_text(
@@ -435,6 +448,24 @@ def main() -> int:
         return 1
     if scenario == "context-overflow":
         _emit({"type": "error", "error": {"code": "context_window_exceeded"}})
+        return 1
+    if scenario == "auth-message-error":
+        _emit(
+            {
+                "type": "error",
+                "message": "401 Unauthorized: invalid api key fake-secret-value",
+            }
+        )
+        return 1
+    if scenario == "auth-turn-failed":
+        _emit(
+            {
+                "type": "turn.failed",
+                "error": {
+                    "message": "Authentication failed: token expired fake-secret-value"
+                },
+            }
+        )
         return 1
     if scenario in {"auth-blocked", "auth-then-unknown", "usage-blocked", "unavailable"}:
         codes = {

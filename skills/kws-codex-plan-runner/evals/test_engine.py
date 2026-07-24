@@ -31,12 +31,26 @@ SDD_RELATIVE_PATHS = (
     Path("skills/subagent-driven-development/scripts/sdd-workspace"),
     Path("skills/subagent-driven-development/scripts/task-brief"),
     Path("skills/subagent-driven-development/scripts/review-package"),
+    Path("skills/subagent-driven-development/implementer-prompt.md"),
+    Path("skills/subagent-driven-development/task-reviewer-prompt.md"),
+    Path("skills/subagent-driven-development/re-review-prompt.md"),
+    Path("skills/requesting-code-review/code-reviewer.md"),
 )
 
 
 def make_codex_home(path: Path) -> None:
     path.mkdir()
-    (path / "auth.json").write_text("fake-auth-marker\n", encoding="utf-8")
+    (path / "auth.json").write_text(
+        json.dumps(
+            {
+                "auth_mode": "apikey",
+                "last_refresh": None,
+                "OPENAI_API_KEY": "fake-file-api-key",
+                "tokens": None,
+            }
+        ),
+        encoding="utf-8",
+    )
     for relative in SDD_RELATIVE_PATHS:
         target = path / relative
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -924,6 +938,61 @@ class EngineTest(unittest.TestCase):
                     (decision["action"], decision["reason_code"]),
                     expected,
                 )
+
+    def test_top_level_auth_error_blocks_without_retry_or_worktree_mutation(self):
+        codex_home = self.root / "auth-error-codex-home"
+        make_codex_home(codex_home)
+        fake_bin = self.root / "auth-error-bin"
+        fake_bin.mkdir()
+        fake = SKILL_ROOT / "evals" / "fake_codex.py"
+        fake.chmod(fake.stat().st_mode | 0o100)
+        (fake_bin / "codex").symlink_to(fake)
+        sequence = self.root / "auth-error-sequence.json"
+        sequence.write_text(
+            json.dumps(
+                {
+                    "protocol_version": 1,
+                    "actions": ["top-level-auth-error"],
+                    "next_index": 0,
+                }
+            ),
+            encoding="utf-8",
+        )
+        launch_log = self.root / "auth-error-launches.jsonl"
+        environment = {
+            "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+            "CODEX_HOME": str(codex_home),
+            "OPENAI_API_KEY": "test-token",
+            "PLAN_RUNNER_FAKE_SEQUENCE": str(sequence),
+            "PLAN_RUNNER_FAKE_LOG": str(launch_log),
+        }
+        runner = PlanRunner(
+            self.paths,
+            runtime_checker=runtime_identity,
+            output=self.output.append,
+            environment=environment,
+        )
+
+        code = runner.create_run(
+            specs=self.specs,
+            plans=self.plans[:1],
+            workspace=self.source,
+            stall_seconds=30,
+            sandbox="workspace-write",
+            model=None,
+        )
+
+        self.assertEqual(code, ExitCode.BLOCKED)
+        self.assertEqual(git("rev-parse", "HEAD", cwd=self.source), self.starting_head)
+        self.assertEqual(git("status", "--porcelain", cwd=self.source), "")
+        launches = launch_log.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(launches), 1)
+        state = self.state()
+        self.assertEqual(state["failure"]["reason_code"], "provider_auth_blocked")
+        self.assertEqual(
+            git("status", "--porcelain", cwd=Path(state["repository"]["worktree"])),
+            "",
+        )
 
     def test_runtime_paths_are_immutable(self):
         with self.assertRaises(dataclasses.FrozenInstanceError):
