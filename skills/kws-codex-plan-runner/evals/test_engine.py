@@ -409,6 +409,376 @@ class EngineTest(unittest.TestCase):
         )
         return dataclasses.asdict(workspace.observe())
 
+    def create_paused_run(
+        self,
+        *,
+        specs=None,
+        plans=None,
+        sandbox="workspace-write",
+        model=None,
+    ):
+        with mock.patch.object(
+            PlanRunner, "_execute", return_value=int(ExitCode.RESUMABLE)
+        ):
+            code = self.runner().create_run(
+                specs=self.specs if specs is None else specs,
+                plans=self.plans[:1] if plans is None else plans,
+                workspace=self.source,
+                stall_seconds=30,
+                sandbox=sandbox,
+                model=model,
+            )
+        self.assertEqual(code, ExitCode.RESUMABLE)
+        return self.state()
+
+    def matching_response(self):
+        response = json.loads(self.output[-1])
+        self.assertIn(
+            response["reason"],
+            {"matching_run_exists", "matching_run_unproven"},
+        )
+        return response
+
+    def test_same_inputs_with_different_sandbox_or_model_are_equivalent(self):
+        first = self.create_paused_run(sandbox="workspace-write", model="model-a")
+
+        with mock.patch.object(
+            PlanRunner, "_execute", return_value=int(ExitCode.RESUMABLE)
+        ):
+            code = self.runner().create_run(
+                specs=self.specs,
+                plans=self.plans[:1],
+                workspace=self.source,
+                stall_seconds=999,
+                sandbox="danger-full-access",
+                model="model-b",
+            )
+
+        self.assertEqual(code, ExitCode.RESUMABLE)
+        response = self.matching_response()
+        self.assertEqual(response["reason"], "matching_run_exists")
+        self.assertEqual(response["run_id"], first["run_id"])
+        self.assertEqual(response["status"], "resumable")
+        self.assertEqual(response["branch"], first["repository"]["branch"])
+        self.assertEqual(response["worktree"], first["repository"]["worktree"])
+        self.assertEqual(
+            response["recommended_action"],
+            "./skills/kws-codex-plan-runner/scripts/runner resume "
+            f"--run-id {first['run_id']}",
+        )
+        self.assertEqual(len(list(self.paths.state_home.iterdir())), 1)
+        self.assertEqual(len(list(self.paths.worktree_home.iterdir())), 1)
+
+    def test_same_files_in_different_order_are_not_equivalent(self):
+        first = self.create_paused_run(plans=self.plans)
+
+        with mock.patch.object(
+            PlanRunner, "_execute", return_value=int(ExitCode.RESUMABLE)
+        ):
+            code = self.runner().create_run(
+                specs=self.specs,
+                plans=list(reversed(self.plans)),
+                workspace=self.source,
+                stall_seconds=30,
+                sandbox="workspace-write",
+                model=None,
+            )
+
+        self.assertEqual(code, ExitCode.RESUMABLE)
+        states = [
+            StateStore.open(path).snapshot()
+            for path in self.paths.state_home.iterdir()
+        ]
+        self.assertEqual(len(states), 2)
+        self.assertEqual(len({state["run_id"] for state in states}), 2)
+        self.assertEqual(
+            len(
+                {
+                    state["immutable_config"]["execution_intent_digest"]
+                    for state in states
+                }
+            ),
+            2,
+        )
+        self.assertNotEqual(
+            first["immutable_config"]["execution_intent_digest"],
+            next(
+                state["immutable_config"]["execution_intent_digest"]
+                for state in states
+                if state["run_id"] != first["run_id"]
+            ),
+        )
+
+    def test_concurrent_equivalent_creation_admits_at_most_one_run(self):
+        barrier = threading.Barrier(2)
+
+        def synchronize(stage):
+            if stage == "intent_admission_ready":
+                barrier.wait(timeout=5)
+
+        self.engine_event_hook = synchronize
+        runners = [self.runner(), self.runner()]
+        results = []
+        failures = []
+
+        def invoke(runner):
+            try:
+                results.append(
+                    runner.create_run(
+                        specs=self.specs,
+                        plans=self.plans[:1],
+                        workspace=self.source,
+                        stall_seconds=30,
+                        sandbox="workspace-write",
+                        model=None,
+                    )
+                )
+            except BaseException as error:
+                failures.append(error)
+
+        with mock.patch.object(
+            PlanRunner, "_execute", return_value=int(ExitCode.RESUMABLE)
+        ):
+            threads = [threading.Thread(target=invoke, args=(runner,)) for runner in runners]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=10)
+
+        self.assertFalse(failures, failures)
+        self.assertTrue(all(not thread.is_alive() for thread in threads))
+        self.assertEqual(results, [ExitCode.RESUMABLE, ExitCode.RESUMABLE])
+        run_roots = list(self.paths.state_home.iterdir())
+        self.assertEqual(len(run_roots), 1)
+        state = StateStore.open(run_roots[0]).snapshot()
+        self.assertEqual(len(list(self.paths.worktree_home.iterdir())), 1)
+        self.assertEqual(
+            git(
+                "for-each-ref",
+                "--format=%(refname)",
+                "refs/heads/codex-plan/",
+                cwd=self.source,
+            ).splitlines(),
+            [f"refs/heads/{state['repository']['branch']}"],
+        )
+        matching = [
+            json.loads(line)
+            for line in self.output
+            if json.loads(line).get("reason") == "matching_run_exists"
+        ]
+        self.assertEqual(len(matching), 1)
+        self.assertEqual(matching[0]["run_id"], state["run_id"])
+
+    def test_refusal_names_existing_run_and_exact_next_command(self):
+        initial = self.create_paused_run()
+        run_root = self.paths.state_home / initial["run_id"]
+        runner_path = "./skills/kws-codex-plan-runner/scripts/runner"
+        cases = (
+            ("running", None, ExitCode.RESUMABLE, "inspect"),
+            ("recovering", None, ExitCode.RESUMABLE, "inspect"),
+            ("resumable", None, ExitCode.RESUMABLE, "resume"),
+            (
+                "blocked",
+                {"reason_code": "host_permission_blocked", "detail": "filesystem"},
+                ExitCode.BLOCKED,
+                "blocked",
+            ),
+            (
+                "failed",
+                {"reason_code": "recovery_exhausted", "detail": "strategies exhausted"},
+                ExitCode.FAILED,
+                "retry_failed",
+            ),
+            (
+                "failed",
+                {
+                    "reason_code": "state_integrity_failed",
+                    "detail": "only volatile refs changed",
+                    "repair_kind": "volatile-codex-turn-refs",
+                },
+                ExitCode.INTEGRITY,
+                "repair",
+            ),
+            (
+                "failed",
+                {
+                    "reason_code": "state_integrity_failed",
+                    "detail": "provider partial needs evidence adoption",
+                    "repair_kind": "unsealed-provider-partial",
+                    "attempt_id": "attempt-7",
+                },
+                ExitCode.INTEGRITY,
+                "repair_partial",
+            ),
+            ("ready_for_integration", None, ExitCode.READY, "inspect"),
+        )
+
+        for status, failure, expected_code, action_kind in cases:
+            with self.subTest(status=status, action_kind=action_kind):
+                store = StateStore.open(run_root)
+                state = store.snapshot()
+                state["status"] = status
+                state["failure"] = failure
+                state = store.commit(state)
+                run_id = state["run_id"]
+                expected_actions = {
+                    "inspect": f"{runner_path} inspect --run-id {run_id}",
+                    "resume": f"{runner_path} resume --run-id {run_id}",
+                    "blocked": (
+                        "fix the named blocker, then "
+                        f"{runner_path} resume --run-id {run_id} --retry-blocked"
+                    ),
+                    "retry_failed": (
+                        f"{runner_path} resume --run-id {run_id} "
+                        "--retry-failed --strategy-note TEXT"
+                    ),
+                    "repair": (
+                        f"{runner_path} repair --run-id {run_id} "
+                        f"--expected-revision {state['revision']} "
+                        "--repair-kind volatile-codex-turn-refs "
+                        "--strategy-note TEXT"
+                    ),
+                    "repair_partial": (
+                        f"{runner_path} repair --run-id {run_id} "
+                        f"--expected-revision {state['revision']} "
+                        "--repair-kind unsealed-provider-partial "
+                        "--strategy-note TEXT --attempt-id attempt-7"
+                    ),
+                }
+                self.output.clear()
+
+                code = self.runner().create_run(
+                    specs=self.specs,
+                    plans=self.plans[:1],
+                    workspace=self.source,
+                    stall_seconds=30,
+                    sandbox="danger-full-access",
+                    model="different-model",
+                )
+
+                self.assertEqual(code, expected_code)
+                response = self.matching_response()
+                self.assertEqual(response["reason"], "matching_run_exists")
+                self.assertEqual(response["run_id"], run_id)
+                self.assertEqual(response["status"], status)
+                self.assertEqual(response["branch"], state["repository"]["branch"])
+                self.assertEqual(response["worktree"], state["repository"]["worktree"])
+                self.assertEqual(
+                    response["recommended_action"],
+                    expected_actions[action_kind],
+                )
+
+    def test_failed_or_ready_equivalent_run_is_not_replayed(self):
+        initial = self.create_paused_run()
+        run_root = self.paths.state_home / initial["run_id"]
+        cases = (
+            (
+                {"reason_code": "recovery_exhausted", "detail": "retryable"},
+                ExitCode.FAILED,
+                "matching_run_exists",
+            ),
+            (
+                {
+                    "reason_code": "state_integrity_failed",
+                    "detail": "known volatile ref drift",
+                    "repair_kind": "volatile-codex-turn-refs",
+                },
+                ExitCode.INTEGRITY,
+                "matching_run_exists",
+            ),
+            (
+                {"reason_code": "state_integrity_failed", "detail": "unknown drift"},
+                ExitCode.INTEGRITY,
+                "matching_run_unproven",
+            ),
+            (None, ExitCode.READY, "matching_run_exists"),
+        )
+
+        for failure, expected_code, reason in cases:
+            with self.subTest(failure=failure):
+                store = StateStore.open(run_root)
+                state = store.snapshot()
+                state["status"] = (
+                    "ready_for_integration" if failure is None else "failed"
+                )
+                state["failure"] = failure
+                store.commit(state)
+                before_refs = git(
+                    "for-each-ref",
+                    "--format=%(refname) %(objectname)",
+                    cwd=self.source,
+                )
+                self.output.clear()
+
+                code = self.runner().create_run(
+                    specs=self.specs,
+                    plans=self.plans[:1],
+                    workspace=self.source,
+                    stall_seconds=30,
+                    sandbox="workspace-write",
+                    model=None,
+                )
+
+                self.assertEqual(code, expected_code)
+                self.assertEqual(self.matching_response()["reason"], reason)
+                self.assertEqual(len(list(self.paths.state_home.iterdir())), 1)
+                self.assertEqual(len(list(self.paths.worktree_home.iterdir())), 1)
+                self.assertEqual(
+                    git(
+                        "for-each-ref",
+                        "--format=%(refname) %(objectname)",
+                        cwd=self.source,
+                    ),
+                    before_refs,
+                )
+
+    def test_matching_tampered_root_fails_closed(self):
+        initial = self.create_paused_run()
+        run_root = self.paths.state_home / initial["run_id"]
+        state_path = run_root / "state.json"
+        tampered = json.loads(state_path.read_text(encoding="utf-8"))
+        tampered["state_digest"] = "0" * 64
+        state_path.write_text(
+            json.dumps(tampered, sort_keys=True, separators=(",", ":")),
+            encoding="utf-8",
+        )
+        before_refs = git(
+            "for-each-ref", "--format=%(refname) %(objectname)", cwd=self.source
+        )
+        self.output.clear()
+
+        with (
+            mock.patch.object(StateStore, "create") as create_state,
+            mock.patch.object(GitWorkspace, "create") as create_worktree,
+        ):
+            code = self.runner().create_run(
+                specs=self.specs,
+                plans=self.plans[:1],
+                workspace=self.source,
+                stall_seconds=30,
+                sandbox="danger-full-access",
+                model="different-model",
+            )
+
+        self.assertEqual(code, ExitCode.INTEGRITY)
+        response = self.matching_response()
+        self.assertEqual(response["reason"], "matching_run_unproven")
+        self.assertEqual(response["run_id"], initial["run_id"])
+        self.assertEqual(response["status"], "invalid")
+        self.assertEqual(response["branch"], initial["repository"]["branch"])
+        self.assertEqual(response["worktree"], initial["repository"]["worktree"])
+        self.assertEqual(
+            response["recommended_action"], "preserve evidence and stop"
+        )
+        create_state.assert_not_called()
+        create_worktree.assert_not_called()
+        self.assertEqual(len(list(self.paths.state_home.iterdir())), 1)
+        self.assertEqual(len(list(self.paths.worktree_home.iterdir())), 1)
+        self.assertEqual(
+            git("for-each-ref", "--format=%(refname) %(objectname)", cwd=self.source),
+            before_refs,
+        )
+
     def test_dirty_invalid_result_is_checkpointed_before_failure(self):
         implementation_launches = 0
 

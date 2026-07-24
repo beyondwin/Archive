@@ -37,7 +37,16 @@ from .recovery import (
     strategy_note_digest,
 )
 from .runtime import RuntimeIdentity, RuntimeUnavailable, require_compatible_runtime
-from .storage import ArtifactRef, RunLock, StateStore, atomic_private_write
+from .storage import (
+    ArtifactRef,
+    IntentLock,
+    IntentMatch,
+    RunLock,
+    StateStore,
+    atomic_private_write,
+    execution_intent_digest,
+    find_execution_intent,
+)
 
 
 IMPLEMENTATION_PROMPT = """Read the execution packet and immutable source documents.
@@ -111,6 +120,10 @@ _CHECKPOINT_FAILURE_FIELDS = (
     "partial_mode",
     "next_strategy",
     "previous_failed_strategy",
+)
+_RUNNER_COMMAND = "./skills/kws-codex-plan-runner/scripts/runner"
+_REPAIR_KINDS = frozenset(
+    {"volatile-codex-turn-refs", "unsealed-provider-partial"}
 )
 
 
@@ -331,42 +344,62 @@ class PlanRunner:
             self._emit_error("invalid_invocation", error)
             return int(ExitCode.INVALID)
 
-        run_id = _run_id(ordered_plans[0])
-        branch = f"codex-plan/{run_id}"
-        worktree = self.paths.worktree_home / run_id
-        root = self.paths.state_home / run_id
+        root: Path | None = None
+        store: StateStore | None = None
         try:
             starting_commit = _source_head(workspace)
             common_dir = _git_common_dir(workspace)
-            input_digest = _input_digest(ordered_specs, ordered_plans)
-            immutable_config = {
-                "stall_seconds": float(stall_seconds),
-                "sandbox": sandbox,
-                "model": model,
-                "input_snapshot_digest": input_digest,
-                "git_common_dir": str(common_dir),
-                "protected_refs": protected_refs(workspace, branch),
-                "volatile_ref_policy_version": VOLATILE_REF_POLICY_VERSION,
-                "git_identity": git_identity.as_dict(),
-            }
-            store = StateStore.create(
-                root=root,
-                provider="codex",
-                run_id=run_id,
-                source_repository=workspace,
-                source_commit=starting_commit,
-                worktree=worktree,
-                branch=branch,
+            intent_digest = execution_intent_digest(
+                source_common_dir=common_dir,
+                starting_commit=starting_commit,
                 specs=ordered_specs,
                 plans=ordered_plans,
-                immutable_config=immutable_config,
-                runner_runtime=_runtime_document(runtime),
             )
-            # The runtime identity is now durable. No worktree or provider
-            # mutation occurs before this point.
-            GitWorkspace.create(workspace, worktree, branch)
+            lock_home = self.paths.state_home.with_name(
+                f".{self.paths.state_home.name}-intent-locks"
+            )
+            self._event("intent_admission_ready")
+            with IntentLock(lock_home, intent_digest):
+                matching = find_execution_intent(
+                    self.paths.state_home, intent_digest
+                )
+                if matching is not None:
+                    return self._refuse_matching_run(matching)
+
+                run_id = _run_id(ordered_plans[0])
+                branch = f"codex-plan/{run_id}"
+                worktree = self.paths.worktree_home / run_id
+                root = self.paths.state_home / run_id
+                input_digest = _input_digest(ordered_specs, ordered_plans)
+                immutable_config = {
+                    "stall_seconds": float(stall_seconds),
+                    "sandbox": sandbox,
+                    "model": model,
+                    "input_snapshot_digest": input_digest,
+                    "execution_intent_digest": intent_digest,
+                    "git_common_dir": str(common_dir),
+                    "protected_refs": protected_refs(workspace, branch),
+                    "volatile_ref_policy_version": VOLATILE_REF_POLICY_VERSION,
+                    "git_identity": git_identity.as_dict(),
+                }
+                store = StateStore.create(
+                    root=root,
+                    provider="codex",
+                    run_id=run_id,
+                    source_repository=workspace,
+                    source_commit=starting_commit,
+                    worktree=worktree,
+                    branch=branch,
+                    specs=ordered_specs,
+                    plans=ordered_plans,
+                    immutable_config=immutable_config,
+                    runner_runtime=_runtime_document(runtime),
+                )
+                # The runtime identity is now durable. No worktree or provider
+                # mutation occurs before this point.
+                GitWorkspace.create(workspace, worktree, branch)
         except (OSError, ValueError, TypeError) as error:
-            if root.exists():
+            if root is not None and root.exists():
                 try:
                     store = StateStore.open(root)
                     state = store.snapshot()
@@ -380,7 +413,131 @@ class PlanRunner:
                     pass
             self._emit_error("state_integrity_failed", error)
             return int(ExitCode.INTEGRITY)
+        if store is None:
+            self._emit_error("internal_error", "run admission produced no state")
+            return int(ExitCode.INTERNAL)
         return self._execute(store)
+
+    def _refuse_matching_run(self, match: IntentMatch) -> int:
+        state = match.state
+        if state is None:
+            self._emit_matching_run(
+                reason="matching_run_unproven",
+                run_id=match.run_id,
+                status="invalid",
+                branch=match.branch,
+                worktree=match.worktree,
+                recommended_action="preserve evidence and stop",
+                detail=match.invalid_detail,
+            )
+            return int(ExitCode.INTEGRITY)
+
+        run_id = state["run_id"]
+        status = state["status"]
+        repository = state["repository"]
+        branch = repository["branch"]
+        worktree = repository["worktree"]
+        reason = "matching_run_exists"
+        detail: object | None = None
+        if status in {"running", "recovering", "ready_for_integration"}:
+            action = f"{_RUNNER_COMMAND} inspect --run-id {run_id}"
+            code = (
+                ExitCode.READY
+                if status == "ready_for_integration"
+                else ExitCode.RESUMABLE
+            )
+        elif status == "resumable":
+            action = f"{_RUNNER_COMMAND} resume --run-id {run_id}"
+            code = ExitCode.RESUMABLE
+        elif status == "blocked":
+            action = (
+                "fix the named blocker, then "
+                f"{_RUNNER_COMMAND} resume --run-id {run_id} --retry-blocked"
+            )
+            code = ExitCode.BLOCKED
+        elif status == "failed":
+            failure = state.get("failure")
+            reason_code = (
+                failure.get("reason_code")
+                if isinstance(failure, Mapping)
+                else None
+            )
+            repair_kind = (
+                failure.get("repair_kind")
+                if isinstance(failure, Mapping)
+                else None
+            )
+            attempt_id = (
+                failure.get("attempt_id")
+                if isinstance(failure, Mapping)
+                else None
+            )
+            if (
+                reason_code == "state_integrity_failed"
+                and repair_kind in _REPAIR_KINDS
+                and (
+                    repair_kind != "unsealed-provider-partial"
+                    or isinstance(attempt_id, str)
+                    and attempt_id
+                )
+            ):
+                action = (
+                    f"{_RUNNER_COMMAND} repair --run-id {run_id} "
+                    f"--expected-revision {state['revision']} "
+                    f"--repair-kind {repair_kind} --strategy-note TEXT"
+                )
+                if repair_kind == "unsealed-provider-partial":
+                    action += f" --attempt-id {attempt_id}"
+                code = ExitCode.INTEGRITY
+            elif reason_code == "state_integrity_failed":
+                reason = "matching_run_unproven"
+                action = "preserve evidence and stop"
+                detail = failure.get("detail") if isinstance(failure, Mapping) else None
+                code = ExitCode.INTEGRITY
+            else:
+                action = (
+                    f"{_RUNNER_COMMAND} resume --run-id {run_id} "
+                    "--retry-failed --strategy-note TEXT"
+                )
+                code = ExitCode.FAILED
+        else:
+            reason = "matching_run_unproven"
+            action = "preserve evidence and stop"
+            code = ExitCode.INTEGRITY
+
+        self._emit_matching_run(
+            reason=reason,
+            run_id=run_id,
+            status=status,
+            branch=branch,
+            worktree=worktree,
+            recommended_action=action,
+            detail=detail,
+        )
+        return int(code)
+
+    def _emit_matching_run(
+        self,
+        *,
+        reason: str,
+        run_id: object,
+        status: object,
+        branch: object,
+        worktree: object,
+        recommended_action: str,
+        detail: object | None = None,
+    ) -> None:
+        response = {
+            "reason": reason,
+            "run_id": str(run_id)[:128],
+            "status": str(status)[:64],
+            "branch": str(branch)[:256],
+            "worktree": str(worktree)[:1024],
+            "recommended_action": recommended_action[:2048],
+        }
+        if detail is not None:
+            response["detail"] = str(detail)[:512]
+        self._output(json.dumps(response, sort_keys=True))
 
     def resume(
         self,

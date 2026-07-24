@@ -10,7 +10,7 @@ import re
 import stat
 import uuid
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from .contracts import (
@@ -37,6 +37,8 @@ _RUN_ID = re.compile(
 )
 _ARTIFACT_KIND = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
+_MAX_INTENT_SCAN_ROOTS = 4096
+_MAX_PEEK_STATE_BYTES = 2 * 1024 * 1024
 _STATE_KEYS = {
     "format_version",
     "contract_version",
@@ -99,6 +101,16 @@ class ArtifactRef:
             "digest": self.digest,
             "relative_path": self.relative_path,
         }
+
+
+@dataclass(frozen=True)
+class IntentMatch:
+    run_id: str
+    status: str
+    branch: str
+    worktree: str
+    state: dict[str, object] | None
+    invalid_detail: str | None = None
 
 
 def atomic_private_write(path: Path, payload: bytes, mode: int = 0o600) -> None:
@@ -224,6 +236,67 @@ def _read_utf8_regular(path: Path) -> tuple[Path, bytes]:
     return path.absolute(), payload
 
 
+def execution_intent_digest(
+    *,
+    source_common_dir: Path,
+    starting_commit: str,
+    specs: Sequence[Path],
+    plans: Sequence[Path],
+) -> str:
+    require_full_sha(starting_commit)
+    common_dir = Path(source_common_dir)
+    if not common_dir.is_absolute():
+        raise ValueError("source common directory must be absolute")
+    _reject_symlink_components(common_dir)
+    try:
+        common_dir = common_dir.resolve(strict=True)
+    except OSError as error:
+        raise ValueError("source common directory is unavailable") from error
+    if not common_dir.is_dir():
+        raise ValueError("source common directory must be a directory")
+    if not specs or not plans:
+        raise ValueError("at least one spec and one plan are required")
+
+    inputs: list[dict[str, object]] = []
+    for role, paths in (("spec", specs), ("plan", plans)):
+        for order, path in enumerate(paths):
+            _source, payload = _read_utf8_regular(Path(path))
+            inputs.append(
+                {
+                    "role": role,
+                    "order": order,
+                    "sha256": hashlib.sha256(payload).hexdigest(),
+                }
+            )
+    return _execution_intent_digest_from_records(
+        source_common_dir=common_dir,
+        starting_commit=starting_commit,
+        inputs=inputs,
+    )
+
+
+def _execution_intent_digest_from_records(
+    *,
+    source_common_dir: Path,
+    starting_commit: str,
+    inputs: Sequence[Mapping[str, object]],
+) -> str:
+    return sha256_json(
+        {
+            "source_common_dir": str(source_common_dir),
+            "starting_commit": starting_commit,
+            "inputs": [
+                {
+                    "role": item["role"],
+                    "order": item["order"],
+                    "sha256": item["sha256"],
+                }
+                for item in inputs
+            ],
+        }
+    )
+
+
 def _validate_run_id(run_id: object) -> str:
     if not isinstance(run_id, str) or _RUN_ID.fullmatch(run_id) is None:
         raise ValueError("run ID must be a sanitized slug plus a UUIDv4")
@@ -334,6 +407,9 @@ def _validate_state(
     if not isinstance(state["immutable_config"], dict):
         raise ValueError("immutable config is invalid")
     GitIdentity.from_mapping(state["immutable_config"].get("git_identity"))
+    intent_digest = state["immutable_config"].get("execution_intent_digest")
+    if intent_digest is not None:
+        require_digest(intent_digest)
     if not isinstance(state["runner_runtime"], dict):
         raise ValueError("runner runtime is invalid")
 
@@ -418,6 +494,24 @@ def _validate_state(
             plan_inputs.append(item)
     if role_orders["spec"] < 1 or role_orders["plan"] < 1:
         raise ValueError("at least one spec and one plan are required")
+    if intent_digest is not None:
+        common_dir = state["immutable_config"].get("git_common_dir")
+        if not isinstance(common_dir, str) or not Path(common_dir).is_absolute():
+            raise ValueError("immutable Git common directory is invalid")
+        expected_intent = _execution_intent_digest_from_records(
+            source_common_dir=Path(common_dir),
+            starting_commit=repository["source_commit"],
+            inputs=[
+                {
+                    "role": item["role"],
+                    "order": item["input_order"],
+                    "sha256": item["sha256"],
+                }
+                for item in inputs
+            ],
+        )
+        if intent_digest != expected_intent:
+            raise ValueError("execution intent digest mismatch")
     if len(plans) != len(plan_inputs):
         raise ValueError("plan state count does not match plan inputs")
     for position, (plan, source) in enumerate(zip(plans, plan_inputs, strict=True)):
@@ -551,6 +645,27 @@ class StateStore:
                     raise ValueError("duplicate input paths are not allowed")
                 seen.add(source)
                 prepared.append((role, order, source, payload))
+
+        sealed_intent = immutable_config.get("execution_intent_digest")
+        if sealed_intent is not None:
+            require_digest(sealed_intent)
+            common_dir = immutable_config.get("git_common_dir")
+            if not isinstance(common_dir, str) or not Path(common_dir).is_absolute():
+                raise ValueError("immutable Git common directory is invalid")
+            current_intent = _execution_intent_digest_from_records(
+                source_common_dir=Path(common_dir),
+                starting_commit=source_commit,
+                inputs=[
+                    {
+                        "role": role,
+                        "order": order,
+                        "sha256": hashlib.sha256(payload).hexdigest(),
+                    }
+                    for role, order, _source, payload in prepared
+                ],
+            )
+            if current_intent != sealed_intent:
+                raise ValueError("input changed while admitting execution intent")
 
         root.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         _require_private_directory(root.parent)
@@ -755,3 +870,110 @@ class RunLock:
             finally:
                 os.close(descriptor)
         return False
+
+
+class IntentLock:
+    def __init__(self, lock_home: Path, intent_digest: str) -> None:
+        require_digest(intent_digest)
+        self.lock_home = Path(lock_home).absolute()
+        self.path = self.lock_home / f"{intent_digest}.lock"
+        self._descriptor: int | None = None
+
+    def __enter__(self) -> IntentLock:
+        self.lock_home.mkdir(mode=0o700, parents=True, exist_ok=True)
+        _require_private_directory(self.lock_home)
+        _reject_symlink_components(self.path, boundary=self.lock_home)
+        try:
+            descriptor = os.open(
+                str(self.path),
+                os.O_RDWR
+                | os.O_CREAT
+                | getattr(os, "O_CLOEXEC", 0)
+                | getattr(os, "O_NOFOLLOW", 0),
+                0o600,
+            )
+        except OSError as error:
+            raise ValueError("intent lock must be a private regular file") from error
+        try:
+            metadata = os.fstat(descriptor)
+            if not stat.S_ISREG(metadata.st_mode):
+                raise ValueError("intent lock must be a private regular file")
+            if metadata.st_uid != os.getuid():
+                raise ValueError("intent lock has the wrong owner")
+            os.fchmod(descriptor, 0o600)
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+        except BaseException:
+            os.close(descriptor)
+            raise
+        self._descriptor = descriptor
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> bool:
+        descriptor = self._descriptor
+        self._descriptor = None
+        if descriptor is not None:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+            finally:
+                os.close(descriptor)
+        return False
+
+
+def find_execution_intent(
+    state_home: Path, intent_digest: str
+) -> IntentMatch | None:
+    require_digest(intent_digest)
+    state_home = Path(state_home).absolute()
+    if not state_home.exists():
+        return None
+    _require_private_directory(state_home)
+    candidates = sorted(state_home.iterdir(), key=lambda path: path.name)
+    if len(candidates) > _MAX_INTENT_SCAN_ROOTS:
+        raise ValueError("bounded execution-intent scan limit exceeded")
+
+    matching: list[IntentMatch] = []
+    for root in candidates:
+        if _RUN_ID.fullmatch(root.name) is None:
+            continue
+        try:
+            _require_private_directory(root)
+            state_path = root / "state.json"
+            metadata = _require_private_regular(state_path, "run state")
+            if metadata.st_size > _MAX_PEEK_STATE_BYTES:
+                continue
+            raw_state = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            continue
+        if not isinstance(raw_state, dict):
+            continue
+        config = raw_state.get("immutable_config")
+        if (
+            not isinstance(config, dict)
+            or config.get("execution_intent_digest") != intent_digest
+        ):
+            continue
+
+        repository = raw_state.get("repository")
+        branch = repository.get("branch") if isinstance(repository, dict) else None
+        worktree = (
+            repository.get("worktree") if isinstance(repository, dict) else None
+        )
+        run_id = raw_state.get("run_id")
+        status = raw_state.get("status")
+        identity = IntentMatch(
+            run_id=run_id if isinstance(run_id, str) else root.name,
+            status=status if isinstance(status, str) else "invalid",
+            branch=branch if isinstance(branch, str) else "",
+            worktree=worktree if isinstance(worktree, str) else "",
+            state=None,
+        )
+        try:
+            state = StateStore.open(root).snapshot()
+        except (OSError, ValueError) as error:
+            matching.append(replace(identity, invalid_detail=str(error)[:512]))
+        else:
+            matching.append(replace(identity, state=state))
+
+    if len(matching) > 1:
+        raise ValueError("multiple runs claim the same execution intent")
+    return matching[0] if matching else None
