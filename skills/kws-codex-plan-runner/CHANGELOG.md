@@ -17,6 +17,18 @@
   residual boundary.
 - Uses `bun run agent:verify -- --base MERGE_BASE --head CANDIDATE_HEAD` as the
   final repository gate; live Codex canaries remain separate evidence.
+- Requires every prior plan handoff HEAD to remain an ancestor of the current
+  candidate and strips Git routing variables from controller and provider
+  subprocesses.
+- Requires recorded process-group and descendant-PID quiescence before partial
+  repair, and recognizes exact structured sandbox errors without free-text
+  permission matching.
+- Adds audited same-run `execution_profile_transition` records for explicitly
+  authorized sandbox/model changes, legacy volatile-ref drift repair guidance,
+  and the `provider_capability_blocked` taxonomy entry.
+- Verifies the Superpowers v6.2.0 public `sdd-workspace`, `task-brief`, and
+  `review-package` helper interfaces without depending on private workspace
+  layout.
 
 ## 1.0.0 - 2026-07-23
 

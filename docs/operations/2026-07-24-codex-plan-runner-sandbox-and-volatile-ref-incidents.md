@@ -593,3 +593,50 @@ silently escalates it: autonomous mutation uses explicitly authorized
 `danger-full-access`, while workspace-write capability failure stops before
 product edits. Volatile treatment remains limited to literal capture and
 checkpoint prefixes; no other `refs/codex/*` namespace is ignored.
+
+## Whole-review hardening addendum (2026-07-25)
+
+Follow-up commits `9b8c14ad` and `95d4d23e` tighten this boundary without
+adding approval loops. Structured `sandbox_denied`, or `EPERM`/`EACCES` paired
+with a recognized sandbox capability, normalizes to
+`sandbox_capability_blocked`; free-text permission matching is not used.
+Provider-runtime capability gaps are separately reported as
+`provider_capability_blocked`.
+
+An explicitly authorized retry may remain on the same logical run while
+changing the effective profile:
+
+```bash
+./scripts/runner resume --run-id RUN_ID \
+  --retry-blocked --sandbox danger-full-access \
+  --strategy-note "workspace-write capability is blocked; use authorized full access"
+```
+
+The immutable initial profile is retained. The runner seals an
+`execution_profile_transition`, starts a fresh provider session, and rejects
+unchanged, unauthorized, or tampered transitions before launch.
+
+The public Superpowers v6.2.0 helper surface was also smoke-tested against the
+existing disposable canary root only; no new provider workflow was launched.
+The exact commands and results were:
+
+```text
+/bin/bash /Users/kws/.codex/skills/subagent-driven-development/scripts/sdd-workspace \
+  /private/var/folders/01/pttq8zy57654cfd1zm1ps7jm0000gn/T/plan-runner-real-canary-MdxUqM/inputs/plan.md
+=> /private/var/folders/01/pttq8zy57654cfd1zm1ps7jm0000gn/T/plan-runner-real-canary-MdxUqM/home/.codex/worktrees/plan-runner/plan-8cb5dab2-10ba-49b3-885d-7133ed3c4f01/.superpowers/sdd/plan
+
+/bin/bash /Users/kws/.codex/skills/subagent-driven-development/scripts/task-brief \
+  /private/var/folders/01/pttq8zy57654cfd1zm1ps7jm0000gn/T/plan-runner-real-canary-MdxUqM/inputs/plan.md 1
+=> wrote .../.superpowers/sdd/plan/task-1-brief.md: 10 lines
+
+/bin/bash /Users/kws/.codex/skills/subagent-driven-development/scripts/review-package \
+  /private/var/folders/01/pttq8zy57654cfd1zm1ps7jm0000gn/T/plan-runner-real-canary-MdxUqM/inputs/plan.md \
+  11aef38 1773ba7
+=> wrote .../.superpowers/sdd/plan/review-11aef38..1773ba7.diff: 1 commit(s), 835 bytes
+```
+
+The review package represented exactly `11aef38..1773ba7`, one commit
+(`1773ba7 test: prove candidate runner canary`), and only `canary.txt` plus
+`test_canary.py`. After inspection, the exact plan-scoped helper directory was
+removed only after a non-symlink check; `.superpowers/sdd` retained its existing
+`.gitignore`.

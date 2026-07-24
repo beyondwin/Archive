@@ -1408,3 +1408,17 @@ The deliberate residual boundary is unchanged: arbitrary dirty work is never
 adopted. Historical partial repair is available only for one recorded
 incomplete implementation or review-fix attempt whose exact current Git
 identity and all other proofs still match.
+
+## Whole-review hardening addendum (2026-07-25)
+
+Follow-up runtime commit `9b8c14ad` makes process quiescence part of those
+proofs. Provider attempts durably record the controller/helper PID, provider
+PID and process-group ID, and observed descendant PIDs as soon as they become
+available. Historical `unsealed-provider-partial` repair now fails closed when
+that process evidence is missing or when any recorded process/group remains
+live; it never adopts a tree while an old provider may still mutate it.
+
+Focused provider regressions prove the process callback is persisted during
+the attempt, not only after provider exit. Storage rejects malformed process
+evidence, and engine regressions cover missing historical evidence, a live
+group, and a quiescent group.

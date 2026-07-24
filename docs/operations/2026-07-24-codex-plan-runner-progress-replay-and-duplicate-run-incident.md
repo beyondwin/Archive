@@ -823,3 +823,25 @@ successor canary. The supported recovery surface is equivalent-run refusal,
 ordinary same-run resume/retry, and only
 `volatile-codex-turn-refs` or `unsealed-provider-partial` repair when every
 load-bearing proof matches.
+
+## Whole-review hardening addendum (2026-07-25)
+
+Follow-up commits `1248ab56` and `95d4d23e` close the remaining continuity
+gaps while retaining the deliberately small same-run model:
+
+- every durable prior-plan handoff HEAD must remain an ancestor of the accepted
+  current candidate, so a later plan cannot reset or drop earlier work;
+- an authorized blocked or failed retry can change the effective sandbox or
+  model without creating another logical run;
+- the initial immutable profile remains unchanged and each effective change is
+  sealed as an `execution_profile_transition` with the triggering failure and
+  strategy-note digest;
+- a transition always starts a fresh provider session, and a missing, changed,
+  unauthorized, or tampered transition fails before provider launch;
+- legacy state with no volatile-ref policy stays readable while observations
+  match; recognized volatile-only drift receives the exact current observation
+  and revision-guarded repair action instead of silent reinterpretation.
+
+Focused regressions include a two-plan case that deliberately resets or drops
+plan 1 before reporting plan 2, same-run full-access/model transition and
+tamper cases, and overlapping partial-plus-volatile repair ordering.
