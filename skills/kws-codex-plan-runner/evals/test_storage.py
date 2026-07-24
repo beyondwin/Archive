@@ -163,11 +163,32 @@ class StateStoreTest(unittest.TestCase):
             artifacts_before,
         )
 
-        artifact = store.put_repair_artifact(
+        artifact, created = store.prepare_repair_artifact(
             expected_revision=before["revision"],
             payload={"repair_kind": "volatile-codex-turn-refs"},
         )
+        self.assertTrue(created)
         self.assertEqual(artifact.kind, "repair_audit")
+        self.assertTrue(store.referenced_artifact(artifact.as_dict()).is_file())
+
+        store.rollback_repair_artifact(artifact, created=created)
+        self.assertFalse(
+            store.root.joinpath(artifact.relative_path).exists()
+        )
+
+    def test_repair_artifact_rollback_never_deletes_preexisting_content(self):
+        store = self.create_store()
+        payload = {"repair_kind": "unsealed-provider-partial"}
+        preexisting = store.put_artifact("repair_audit", payload)
+
+        artifact, created = store.prepare_repair_artifact(
+            expected_revision=store.snapshot()["revision"],
+            payload=payload,
+        )
+        self.assertEqual(artifact, preexisting)
+        self.assertFalse(created)
+
+        store.rollback_repair_artifact(artifact, created=created)
         self.assertTrue(store.referenced_artifact(artifact.as_dict()).is_file())
 
     def test_fault_windows_reopen_previous_then_next_complete_revision(self):

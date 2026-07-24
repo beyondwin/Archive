@@ -551,6 +551,9 @@ class PlanRunner:
             workspace = self._open_repair_workspace(state)
         except (TypeError, ValueError):
             return None
+        partial = self._eligible_partial_repair(state, workspace)
+        if partial is not None:
+            return ("unsealed-provider-partial", partial)
         try:
             self._repair_evidence(
                 state,
@@ -560,7 +563,11 @@ class PlanRunner:
             )
             return ("volatile-codex-turn-refs", None)
         except (TypeError, ValueError):
-            pass
+            return None
+
+    def _eligible_partial_repair(
+        self, state: Mapping[str, object], workspace: GitWorkspace
+    ) -> str | None:
         attempts = state.get("attempts")
         if not isinstance(attempts, list):
             return None
@@ -579,7 +586,7 @@ class PlanRunner:
                     repair_kind="unsealed-provider-partial",
                     attempt_id=attempt_id,
                 )
-                return ("unsealed-provider-partial", attempt_id)
+                return attempt_id
             except (TypeError, ValueError):
                 continue
         return None
@@ -871,55 +878,96 @@ class PlanRunner:
                     "strategy_note": note,
                     **evidence["audit"],
                 }
-                audit = store.put_repair_artifact(
+                audit, audit_created = store.prepare_repair_artifact(
                     expected_revision=expected_revision,
                     payload=audit_payload,
                 )
-                next_state = store.snapshot()
-                if repair_kind == "unsealed-provider-partial":
-                    selected = self._require_attempt(next_state, str(attempt_id))
-                    for name in (
-                        "result",
-                        "result_artifact",
-                        "result_validated",
-                        "task_ledger",
-                        "open_obligation_ids",
-                        "summary",
-                        "verification_set_digest",
-                        "review_artifact",
+                try:
+                    self._event("repair_audit_prepared")
+                    if (
+                        store.snapshot() != state
+                        or StateStore.open(run_root).snapshot() != state
                     ):
-                        selected.pop(name, None)
-                    selected.update(
-                        {
-                            "completed": True,
-                            "outcome": "adopted_untrusted_partial",
-                            "provider_code": "historical_repair",
-                            "post_provider_worktree": evidence["observation"],
-                            "repair_audit_artifact": audit.as_dict(),
-                        }
+                        raise ValueError(
+                            "repair evidence changed before state CAS: state drift"
+                        )
+                    try:
+                        current_evidence = self._repair_evidence(
+                            state,
+                            workspace,
+                            repair_kind=repair_kind,
+                            attempt_id=attempt_id,
+                        )
+                    except (TypeError, ValueError) as error:
+                        raise ValueError(
+                            "repair evidence changed before state CAS: "
+                            f"{error}"
+                        ) from error
+                    if current_evidence != evidence:
+                        raise ValueError(
+                            "repair evidence changed before state CAS"
+                        )
+
+                    next_state = store.snapshot()
+                    if repair_kind == "unsealed-provider-partial":
+                        selected = self._require_attempt(
+                            next_state, str(attempt_id)
+                        )
+                        for name in (
+                            "result",
+                            "result_artifact",
+                            "result_validated",
+                            "task_ledger",
+                            "open_obligation_ids",
+                            "summary",
+                            "verification_set_digest",
+                            "review_artifact",
+                        ):
+                            selected.pop(name, None)
+                        selected.update(
+                            {
+                                "completed": True,
+                                "outcome": "adopted_untrusted_partial",
+                                "provider_code": "historical_repair",
+                                "post_provider_worktree": evidence["observation"],
+                                "repair_audit_artifact": audit.as_dict(),
+                            }
+                        )
+                    if audit.as_dict() not in next_state["artifact_refs"]:
+                        next_state["artifact_refs"].append(audit.as_dict())
+                    next_state["status"] = "resumable"
+                    next_state["failure"] = {
+                        "reason_code": "incident_repaired",
+                        "repair_kind": repair_kind,
+                        "operator_strategy_note": note,
+                        "repair_audit_artifact": audit.as_dict(),
+                        "repaired_revision": expected_revision + 1,
+                        "next_strategy": "fresh_root_full_diff",
+                        "next_session_action": "fresh_session",
+                    }
+                    if repair_kind == "unsealed-provider-partial":
+                        next_state["failure"].update(
+                            {
+                                "partial_worktree": evidence["observation"],
+                                "partial_attempt_id": attempt_id,
+                                "partial_mode": evidence["mode"],
+                                "adopted_untrusted_partial": True,
+                            }
+                        )
+                    next_state["revision"] = expected_revision + 1
+                    self._require_git_contract(
+                        next_state,
+                        workspace,
+                        store=store,
                     )
-                if audit.as_dict() not in next_state["artifact_refs"]:
-                    next_state["artifact_refs"].append(audit.as_dict())
-                next_state["status"] = "resumable"
-                next_state["failure"] = {
-                    "reason_code": "incident_repaired",
-                    "repair_kind": repair_kind,
-                    "operator_strategy_note": note,
-                    "repair_audit_artifact": audit.as_dict(),
-                    "next_strategy": "fresh_root_full_diff",
-                    "next_session_action": "fresh_session",
-                }
-                if repair_kind == "unsealed-provider-partial":
-                    next_state["failure"].update(
-                        {
-                            "partial_worktree": evidence["observation"],
-                            "partial_attempt_id": attempt_id,
-                            "partial_mode": evidence["mode"],
-                            "adopted_untrusted_partial": True,
-                        }
+                    committed = store.commit(next_state)
+                except BaseException:
+                    store.rollback_repair_artifact(
+                        audit,
+                        created=audit_created,
                     )
-                store.commit(next_state)
-                self._emit_summary(store.snapshot())
+                    raise
+                self._emit_summary(committed)
                 return int(ExitCode.RESUMABLE)
         except FileNotFoundError as error:
             self._emit_error("unknown_run", error)
@@ -1012,6 +1060,11 @@ class PlanRunner:
 
         observation_payload = dataclasses.asdict(observation)
         if repair_kind == "volatile-codex-turn-refs":
+            if self._eligible_partial_repair(state, workspace) is not None:
+                raise ValueError(
+                    "overlapping partial repair proof failed: "
+                    "eligible dirty partial must be repaired first"
+                )
             if "volatile_ref_policy_version" in config:
                 raise ValueError("historical volatile policy proof failed")
             recorded_observation = failure.get("worktree_observation")
@@ -1132,7 +1185,7 @@ class PlanRunner:
                     Path(repository["worktree"]),
                     repository["branch"],
                 )
-                self._require_git_contract(state, workspace)
+                self._require_git_contract(state, workspace, store=store)
                 self._reconcile_completed_attempt(store, workspace)
                 state = store.snapshot()
                 while state["current_plan_index"] < len(state["plans"]):
@@ -1155,7 +1208,11 @@ class PlanRunner:
             return int(ExitCode.INTERNAL)
 
     def _require_git_contract(
-        self, state: Mapping[str, object], workspace: GitWorkspace
+        self,
+        state: Mapping[str, object],
+        workspace: GitWorkspace,
+        *,
+        store: StateStore | None = None,
     ) -> WorktreeObservation:
         config = state["immutable_config"]
         if str(workspace._common_dir) != config.get("git_common_dir"):
@@ -1175,9 +1232,105 @@ class PlanRunner:
             if isinstance(failure, Mapping)
             else None
         )
+        if (
+            isinstance(failure, Mapping)
+            and failure.get("adopted_untrusted_partial") is True
+        ):
+            if store is None:
+                raise ValueError("repair audit store is unavailable")
+            self._require_adopted_partial_audit(
+                store,
+                state,
+                observation,
+            )
         if sealed_partial is not None or not observation.clean:
             self._require_sealed_partial_worktree(state, observation)
         return observation
+
+    @staticmethod
+    def _require_adopted_partial_audit(
+        store: StateStore,
+        state: Mapping[str, object],
+        observation: WorktreeObservation,
+    ) -> None:
+        failure = state.get("failure")
+        if not isinstance(failure, Mapping):
+            raise ValueError("repair audit failure proof failed")
+        attempt_id = failure.get("partial_attempt_id")
+        attempts = state.get("attempts")
+        attempt = next(
+            (
+                item
+                for item in reversed(attempts)
+                if isinstance(item, Mapping)
+                and item.get("attempt_id") == attempt_id
+            ),
+            None,
+        ) if isinstance(attempts, list) else None
+        reference = failure.get("repair_audit_artifact")
+        if (
+            not isinstance(attempt, Mapping)
+            or not isinstance(reference, Mapping)
+            or reference.get("kind") != "repair_audit"
+            or reference != attempt.get("repair_audit_artifact")
+            or reference not in state.get("artifact_refs", [])
+        ):
+            raise ValueError("repair audit reference proof failed")
+        payload = _artifact_payload(store, reference)
+        expected_keys = {
+            "contract_version",
+            "run_id",
+            "expected_revision",
+            "repair_kind",
+            "strategy_note",
+            "attempt_id",
+            "mode",
+            "plan_index",
+            "recorded_stable_refs",
+            "current_stable_refs",
+            "adopted_observation",
+            "discarded_semantic_claims",
+        }
+        if not isinstance(payload, Mapping) or set(payload) != expected_keys:
+            raise ValueError("repair audit contract proof failed")
+        repaired_revision = failure.get("repaired_revision")
+        if (
+            payload.get("contract_version") != 1
+            or payload.get("run_id") != state.get("run_id")
+            or payload.get("repair_kind") != "unsealed-provider-partial"
+            or type(payload.get("expected_revision")) is not int
+            or type(repaired_revision) is not int
+            or payload["expected_revision"] + 1 != repaired_revision
+            or state.get("revision", 0) < repaired_revision
+            or payload.get("strategy_note")
+            != failure.get("operator_strategy_note")
+        ):
+            raise ValueError("repair audit revision proof failed")
+        if (
+            payload.get("attempt_id") != attempt_id
+            or payload.get("attempt_id") != attempt.get("attempt_id")
+        ):
+            raise ValueError("repair audit attempt proof failed")
+        if (
+            payload.get("mode") != failure.get("partial_mode")
+            or payload.get("mode") != attempt.get("mode")
+            or payload.get("plan_index") != attempt.get("plan_index")
+        ):
+            raise ValueError("repair audit mode proof failed")
+        observed = dataclasses.asdict(observation)
+        if (
+            payload.get("adopted_observation") != observed
+            or failure.get("partial_worktree") != observed
+            or attempt.get("post_provider_worktree") != observed
+            or payload.get("discarded_semantic_claims") is not True
+        ):
+            raise ValueError("repair audit observation proof failed")
+        stable_refs = _sealed_protected_refs(state["immutable_config"])
+        if (
+            payload.get("recorded_stable_refs") != stable_refs
+            or payload.get("current_stable_refs") != stable_refs
+        ):
+            raise ValueError("repair audit stable ref proof failed")
 
     @staticmethod
     def _require_sealed_partial_worktree(
@@ -1281,7 +1434,7 @@ class PlanRunner:
             }
         )
         store.commit(state)
-        observation = self._require_git_contract(state, workspace)
+        observation = self._require_git_contract(state, workspace, store=store)
         session_id = self._implementation_session(state, index)
         outcome = self._launch(
             store,
@@ -1964,6 +2117,20 @@ class PlanRunner:
                 "partial_worktree",
                 "partial_attempt_id",
                 "partial_mode",
+            ):
+                failure.pop(name, None)
+            state["failure"] = failure
+        if (
+            isinstance(state.get("failure"), Mapping)
+            and state["failure"].get("adopted_untrusted_partial") is True
+        ):
+            failure = dict(state["failure"])
+            for name in (
+                "adopted_untrusted_partial",
+                "repair_audit_artifact",
+                "repaired_revision",
+                "repair_kind",
+                "operator_strategy_note",
             ):
                 failure.pop(name, None)
             state["failure"] = failure
@@ -2798,7 +2965,7 @@ class PlanRunner:
                 )
             except RuntimeError as error:
                 return self._integrity_failure(store, str(error))
-            self._require_git_contract(state, workspace)
+            self._require_git_contract(state, workspace, store=store)
             outcome = self._completed_review_outcome(store, candidate.head)
             if outcome is None:
                 failure = state.get("failure")
@@ -3134,7 +3301,7 @@ class PlanRunner:
         candidate_head: str,
     ) -> int | None:
         state = store.snapshot()
-        self._require_git_contract(state, workspace)
+        self._require_git_contract(state, workspace, store=store)
         if workspace.observe().head != candidate_head:
             return self._integrity_failure(
                 store, "finalization changed the candidate HEAD"
@@ -3379,7 +3546,7 @@ class PlanRunner:
                 )
         else:
             raise ValueError("final verification declaration is invalid")
-        self._require_git_contract(state, workspace)
+        self._require_git_contract(state, workspace, store=store)
         if workspace.observe().head != candidate_head:
             raise ValueError("candidate HEAD changed during finalization")
         return receipt_refs

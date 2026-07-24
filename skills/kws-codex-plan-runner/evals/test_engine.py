@@ -521,6 +521,47 @@ class EngineTest(unittest.TestCase):
 
         return self.rewrite_run_state(historical_failure)
 
+    def make_overlapping_repair_state(self):
+        state = self.make_partial_repair_state()
+        worktree = Path(state["repository"]["worktree"])
+        volatile_ref = "refs/codex/turn-diffs/checkpoints/overlap"
+        git("update-ref", volatile_ref, self.starting_head, cwd=worktree)
+        recorded_refs = {
+            line.split("\t", 1)[0]: line.split("\t", 1)[1]
+            for line in git(
+                "for-each-ref", "--format=%(refname)%09%(objectname)", cwd=worktree
+            ).splitlines()
+            if line and not line.startswith(
+                f"refs/heads/{state['repository']['branch']}\t"
+            )
+        }
+        observation = self.worktree_observation(state)
+
+        def make_legacy_overlap(candidate):
+            candidate["immutable_config"].pop("volatile_ref_policy_version", None)
+            candidate["immutable_config"]["protected_refs"] = recorded_refs
+            candidate["failure"]["worktree_observation"] = observation
+
+        state = self.rewrite_run_state(make_legacy_overlap)
+        changed = subprocess.run(
+            ["git", "hash-object", "-w", "--stdin"],
+            cwd=worktree,
+            input="overlap replacement\n",
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        git("update-ref", volatile_ref, changed, cwd=worktree)
+        return state
+
+    @staticmethod
+    def artifact_files(run_root):
+        return sorted(
+            path.relative_to(run_root).as_posix()
+            for path in (run_root / "artifacts").rglob("*")
+            if path.is_file()
+        )
+
     def matching_response(self):
         response = json.loads(self.output[-1])
         self.assertIn(
@@ -3848,6 +3889,216 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(repaired["failure"]["next_session_action"], "fresh_session")
         self.assertEqual(len(self.adapter_values), adapter_count)
         self.assertEqual(self.git_surface(repaired), before_git)
+        workspace = self.runner()._open_repair_workspace(repaired)
+        self.runner()._require_git_contract(
+            repaired,
+            workspace,
+            store=StateStore.open(root),
+        )
+        with mock.patch.object(
+            PlanRunner,
+            "_execute_current_plan",
+            return_value=int(ExitCode.RESUMABLE),
+        ) as execute_current:
+            resumed = self.runner().resume(
+                repaired["run_id"],
+                retry_blocked=False,
+                retry_failed=False,
+                strategy_note=None,
+            )
+        self.assertEqual(resumed, ExitCode.RESUMABLE)
+        execute_current.assert_called_once()
+
+    def test_overlapping_repair_evidence_prefers_partial_and_rejects_volatile(self):
+        state = self.make_overlapping_repair_state()
+        root = self.paths.state_home / state["run_id"]
+        state_before = (root / "state.json").read_bytes()
+        artifacts_before = self.artifact_files(root)
+        self.output.clear()
+
+        duplicate = self.runner().create_run(
+            specs=self.specs,
+            plans=self.plans[:1],
+            workspace=self.source,
+            stall_seconds=30,
+            sandbox="danger-full-access",
+            model=None,
+        )
+        self.assertEqual(duplicate, ExitCode.INTEGRITY)
+        self.assertIn(
+            "--repair-kind unsealed-provider-partial",
+            self.matching_response()["recommended_action"],
+        )
+
+        self.output.clear()
+        refused = self.runner().repair(
+            state["run_id"],
+            expected_revision=state["revision"],
+            repair_kind="volatile-codex-turn-refs",
+            strategy_note="do not discard the eligible dirty partial",
+            attempt_id=None,
+        )
+        self.assertEqual(refused, ExitCode.INTEGRITY)
+        self.assertIn(
+            "overlapping partial repair proof failed",
+            json.loads(self.output[-1])["detail"],
+        )
+        self.assertEqual((root / "state.json").read_bytes(), state_before)
+        self.assertEqual(self.artifact_files(root), artifacts_before)
+
+        accepted = self.runner().repair(
+            state["run_id"],
+            expected_revision=state["revision"],
+            repair_kind="unsealed-provider-partial",
+            strategy_note="fresh root inspects the complete dirty diff",
+            attempt_id="attempt-partial",
+        )
+        self.assertEqual(accepted, ExitCode.RESUMABLE)
+        repaired_store = StateStore.open(root)
+        repaired = repaired_store.snapshot()
+        workspace = self.runner()._open_repair_workspace(repaired)
+        self.runner()._require_git_contract(
+            repaired,
+            workspace,
+            store=repaired_store,
+        )
+
+    def test_adopted_partial_rejects_a_different_valid_repair_audit(self):
+        state = self.make_partial_repair_state()
+        root = self.paths.state_home / state["run_id"]
+        code = self.runner().repair(
+            state["run_id"],
+            expected_revision=state["revision"],
+            repair_kind="unsealed-provider-partial",
+            strategy_note="fresh root inspects the complete diff",
+            attempt_id="attempt-partial",
+        )
+        self.assertEqual(code, ExitCode.RESUMABLE)
+        store = StateStore.open(root)
+        repaired = store.snapshot()
+        observation = self.worktree_observation(repaired)
+        substitute = store.put_artifact(
+            "repair_audit",
+            {
+                "contract_version": 1,
+                "run_id": repaired["run_id"],
+                "expected_revision": repaired["failure"]["repaired_revision"] - 1,
+                "repair_kind": "unsealed-provider-partial",
+                "strategy_note": repaired["failure"]["operator_strategy_note"],
+                "attempt_id": "different-attempt",
+                "mode": "implementation",
+                "plan_index": 0,
+                "recorded_stable_refs": repaired["immutable_config"]["protected_refs"],
+                "current_stable_refs": repaired["immutable_config"]["protected_refs"],
+                "adopted_observation": observation,
+                "discarded_semantic_claims": True,
+            },
+        )
+        candidate = store.snapshot()
+        candidate["artifact_refs"].append(substitute.as_dict())
+        candidate["failure"]["repair_audit_artifact"] = substitute.as_dict()
+        candidate["attempts"][-1]["repair_audit_artifact"] = substitute.as_dict()
+        store.commit(candidate)
+        tampered = StateStore.open(root)
+        workspace = self.runner()._open_repair_workspace(tampered.snapshot())
+
+        with self.assertRaisesRegex(ValueError, "repair audit attempt proof failed"):
+            self.runner()._require_git_contract(
+                tampered.snapshot(),
+                workspace,
+                store=tampered,
+            )
+
+    def test_repair_rechecks_git_evidence_after_audit_preparation(self):
+        state = self.make_partial_repair_state()
+        root = self.paths.state_home / state["run_id"]
+        state_before = (root / "state.json").read_bytes()
+        artifacts_before = self.artifact_files(root)
+
+        def mutate_after_audit(stage):
+            if stage == "repair_audit_prepared":
+                Path(state["repository"]["worktree"]).joinpath(
+                    "late-drift.txt"
+                ).write_text("late drift\n", encoding="utf-8")
+
+        self.engine_event_hook = mutate_after_audit
+        code = self.runner().repair(
+            state["run_id"],
+            expected_revision=state["revision"],
+            repair_kind="unsealed-provider-partial",
+            strategy_note="fresh root inspects the complete diff",
+            attempt_id="attempt-partial",
+        )
+
+        self.assertEqual(code, ExitCode.INTEGRITY)
+        self.assertIn(
+            "repair evidence changed before state CAS",
+            json.loads(self.output[-1])["detail"],
+        )
+        self.assertEqual((root / "state.json").read_bytes(), state_before)
+        self.assertEqual(self.artifact_files(root), artifacts_before)
+
+    def test_repair_commit_fault_rolls_back_only_new_audit_artifact(self):
+        for preexisting in (False, True):
+            with self.subTest(preexisting=preexisting):
+                self.tearDown()
+                self.setUp()
+                state = self.make_partial_repair_state()
+                root = self.paths.state_home / state["run_id"]
+                runner = self.runner()
+                store = StateStore.open(root)
+                workspace = runner._open_repair_workspace(state)
+                evidence = runner._repair_evidence(
+                    state,
+                    workspace,
+                    repair_kind="unsealed-provider-partial",
+                    attempt_id="attempt-partial",
+                )
+                payload = {
+                    "contract_version": 1,
+                    "run_id": state["run_id"],
+                    "expected_revision": state["revision"],
+                    "repair_kind": "unsealed-provider-partial",
+                    "strategy_note": "fresh root inspects the complete diff",
+                    **evidence["audit"],
+                }
+                prior = (
+                    store.put_artifact("repair_audit", payload)
+                    if preexisting
+                    else None
+                )
+                state_before = (root / "state.json").read_bytes()
+                artifacts_before = self.artifact_files(root)
+                git_before = self.git_surface(state)
+                real_open = StateStore.open
+
+                def faulting_open(path):
+                    opened = real_open(path)
+
+                    def fail_before_replace(stage):
+                        if stage == storage_module.BEFORE_STATE_REPLACE:
+                            raise RuntimeError("injected repair CAS fault")
+
+                    opened._fault_injector = fail_before_replace
+                    return opened
+
+                with mock.patch.object(
+                    StateStore, "open", side_effect=faulting_open
+                ):
+                    code = runner.repair(
+                        state["run_id"],
+                        expected_revision=state["revision"],
+                        repair_kind="unsealed-provider-partial",
+                        strategy_note="fresh root inspects the complete diff",
+                        attempt_id="attempt-partial",
+                    )
+
+                self.assertEqual(code, ExitCode.INTEGRITY)
+                self.assertEqual((root / "state.json").read_bytes(), state_before)
+                self.assertEqual(self.artifact_files(root), artifacts_before)
+                self.assertEqual(self.git_surface(state), git_before)
+                if prior is not None:
+                    self.assertTrue(root.joinpath(prior.relative_path).is_file())
 
     def test_repair_rejects_stale_revision_without_state_or_artifact_write(self):
         state = self.make_partial_repair_state()
