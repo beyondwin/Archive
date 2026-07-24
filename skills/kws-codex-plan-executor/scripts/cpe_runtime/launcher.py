@@ -481,6 +481,8 @@ class CodexLauncher:
         current_commit: str,
         recovery_path: Path | None,
         execution_ledger: Path | None = None,
+        execution_ledger_schema: Path | None = None,
+        authority_profile: str | None = None,
         verification_helper_descriptor: Path | None = None,
     ) -> str:
         lines = [
@@ -491,19 +493,33 @@ class CodexLauncher:
             f"STARTING_COMMIT: {starting_commit}",
             f"CURRENT_COMMIT: {current_commit}",
             f"EXECUTION_LEDGER: {execution_ledger or 'unavailable'}",
+            f"EXECUTION_LEDGER_SCHEMA: {execution_ledger_schema or 'unavailable'}",
+            f"RUN_AUTHORITY_PROFILE: {authority_profile or 'unavailable'}",
             f"VERIFICATION_HELPER_DESCRIPTOR: {verification_helper_descriptor or 'unavailable'}",
             "SPECIFICATIONS:",
         ]
         lines.extend(f"- {path}" for path in spec_paths)
         if recovery_path is not None:
             lines.append(f"RECOVERY_CAPSULE: {recovery_path}")
-        lines.extend(
-            [
-                "",
-                "Follow repository AGENTS.md from root through the edited subtree.",
-                "Use Superpowers. Ordinary agents reuse this worktree; create another only when the approved plan explicitly requires cross-revision comparison.",
-                "Return only the fixed schema object as the final response. Do not merge, push, deploy, or modify files outside the worktree.",
-            ]
+        lines.extend([
+            "",
+            "Follow repository AGENTS.md from root through the edited subtree.",
+            "Use Superpowers. Ordinary agents reuse this worktree; create another only when the approved plan explicitly requires cross-revision comparison.",
+        ])
+        if execution_ledger is not None and execution_ledger_schema is not None:
+            lines.append(
+                "Record execution events only as JSONL objects conforming to "
+                "EXECUTION_LEDGER_SCHEMA at EXECUTION_LEDGER."
+            )
+        if authority_profile == "local-implementation-with-evidence-approvals":
+            lines.append(
+                "The local-implementation-with-evidence-approvals authority "
+                "profile authorizes implementation, local checkpoint commits, "
+                "and evidence-gated approval decisions inside this worktree only."
+            )
+        lines.append(
+            "Return only the fixed schema object as the final response. "
+            "Do not merge, push, deploy, or modify files outside the worktree."
         )
         return "\n".join(lines) + "\n"
 
@@ -522,6 +538,8 @@ class CodexLauncher:
         recovery_path: Path | None = None,
         sandbox_mode: str,
         execution_ledger: Path | None = None,
+        execution_ledger_schema: Path | None = None,
+        authority_profile: str | None = None,
         verification_helper_descriptor: Path | None = None,
     ) -> LaunchResult:
         """Launch one attempt using caller-owned paths and the held run lock."""
@@ -534,6 +552,8 @@ class CodexLauncher:
                 current_commit=current_commit,
                 recovery_path=recovery_path,
                 execution_ledger=execution_ledger,
+                execution_ledger_schema=execution_ledger_schema,
+                authority_profile=authority_profile,
                 verification_helper_descriptor=verification_helper_descriptor,
             ),
             result_path=result_path,

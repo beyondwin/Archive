@@ -1,6 +1,6 @@
 # KWS Codex Plan Executor
 
-Version 2.1.0 publishes format 3 run state for CPE, a small local harness for
+Version 2.1.1 publishes format 3 run state for CPE, a small local harness for
 approved Superpowers implementation plans. It keeps ordered input snapshots,
 one reused isolated worktree, durable run facts, and a bounded resume boundary.
 It is not a product orchestrator or a replacement for Superpowers.
@@ -40,6 +40,9 @@ python3 scripts/cpe.py run --plan /abs/plan.md --workspace /abs/repository \
 python3 scripts/cpe.py resume --run-id RUN_ID
 python3 scripts/cpe.py resume --run-id RUN_ID --retry-blocked
 python3 scripts/cpe.py resume --run-id RUN_ID --retry-failed
+python3 scripts/cpe.py recover-ledger --run-id RUN_ID \
+  --sha256 EXACT_INVALID_LEDGER_SHA256 \
+  --authority-profile local-implementation-with-evidence-approvals
 python3 scripts/cpe.py inspect --run-id RUN_ID
 ```
 
@@ -68,6 +71,17 @@ An unknown blocked run is retried only with `--retry-blocked`; a failed run is
 retried only with `--retry-failed`. A timeout can continue only within its
 bounded launch and wall-time limits; an unchanged timeout stops without a
 follow-up timeout policy.
+
+An `execution_ledger_invalid` failure has one explicit recovery path.
+`recover-ledger` accepts the exact SHA-256 of the currently invalid ledger,
+holds the run lock, rejects symlinks, valid ledgers, changed digests, accepted
+ledger history, and unrelated terminal failures, then atomically quarantines
+the file under the private run root. It also records the explicit local
+implementation authority profile. A subsequent same-run `--retry-failed`
+launch receives the execution-ledger schema plus that durable authority fact.
+The profile is limited to implementation, local checkpoint commits, and
+evidence-gated approvals inside the saved CPE worktree; outside-worktree and
+remote actions remain prohibited.
 
 Transport outcomes are factual and bounded. Provider conditions are classified
 as `provider_usage_blocked`, `provider_auth_blocked`, or
