@@ -112,6 +112,15 @@ class GitWorkspaceTest(unittest.TestCase):
                 "GIT_CONFIG_NOSYSTEM": "0",
                 "GIT_CONFIG_SYSTEM": "/tmp/ambient-system-config",
                 "GIT_CONFIG_VALUE_0": "true",
+                "GIT_DIR": "/tmp/ambient.git",
+                "GIT_WORK_TREE": "/tmp/ambient-worktree",
+                "GIT_INDEX_FILE": "/tmp/ambient-index",
+                "GIT_OBJECT_DIRECTORY": "/tmp/ambient-objects",
+                "GIT_ALTERNATE_OBJECT_DIRECTORIES": "/tmp/ambient-alternates",
+                "GIT_COMMON_DIR": "/tmp/ambient-common",
+                "GIT_NAMESPACE": "ambient",
+                "GIT_CEILING_DIRECTORIES": "/tmp",
+                "GIT_DISCOVERY_ACROSS_FILESYSTEM": "1",
             },
             provider_auth_prefixes=("OPENAI_",),
             remotes=("origin",),
@@ -123,6 +132,18 @@ class GitWorkspaceTest(unittest.TestCase):
         self.assertEqual(env["GIT_AUTHOR_EMAIL"], "sealed@example.test")
         self.assertEqual(env["GIT_COMMITTER_NAME"], "Sealed Name")
         self.assertEqual(env["GIT_COMMITTER_EMAIL"], "sealed@example.test")
+        for name in (
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_INDEX_FILE",
+            "GIT_OBJECT_DIRECTORY",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+            "GIT_COMMON_DIR",
+            "GIT_NAMESPACE",
+            "GIT_CEILING_DIRECTORIES",
+            "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+        ):
+            self.assertNotIn(name, env)
         self.assertEqual(env["GIT_TERMINAL_PROMPT"], "0")
         self.assertEqual(env["GCM_INTERACTIVE"], "Never")
         self.assertEqual(env["GIT_CONFIG_COUNT"], "5")
@@ -148,6 +169,65 @@ class GitWorkspaceTest(unittest.TestCase):
             self.assertNotIn(inherited, env)
         self.assertEqual(env["GIT_CONFIG_GLOBAL"], os.devnull)
         self.assertEqual(env["GIT_CONFIG_NOSYSTEM"], "1")
+
+    def test_controller_git_ignores_ambient_repository_routing(self):
+        other = self.root / "other"
+        init_repository(other)
+        git("config", "user.name", "Other Identity", cwd=other)
+        git("config", "user.email", "other@example.test", cwd=other)
+        routed = {
+            "GIT_DIR": str(other / ".git"),
+            "GIT_WORK_TREE": str(other),
+            "GIT_INDEX_FILE": str(other / ".git" / "index"),
+        }
+
+        with mock.patch.dict(os.environ, routed):
+            self.assertEqual(
+                git_ops.configured_git_identity(self.source),
+                sealed_identity(),
+            )
+            workspace = self.create()
+            self.assertEqual(workspace.observe().head, self.start)
+
+    def test_candidate_identity_rejects_author_only_and_committer_only_drift(self):
+        workspace = self.create()
+        cases = (
+            (
+                {
+                    "GIT_AUTHOR_NAME": "Wrong Author",
+                    "GIT_AUTHOR_EMAIL": "wrong-author@example.test",
+                    "GIT_COMMITTER_NAME": "Runner Test",
+                    "GIT_COMMITTER_EMAIL": "runner@example.test",
+                },
+                "author-only.txt",
+            ),
+            (
+                {
+                    "GIT_AUTHOR_NAME": "Runner Test",
+                    "GIT_AUTHOR_EMAIL": "runner@example.test",
+                    "GIT_COMMITTER_NAME": "Wrong Committer",
+                    "GIT_COMMITTER_EMAIL": "wrong-committer@example.test",
+                },
+                "committer-only.txt",
+            ),
+        )
+        for environment, marker_name in cases:
+            with self.subTest(marker=marker_name):
+                git("reset", "--hard", self.start, cwd=self.worktree)
+                marker = self.worktree / marker_name
+                marker.write_text("identity drift\n", encoding="utf-8")
+                git("add", marker.name, cwd=self.worktree)
+                commit_env = dict(os.environ)
+                commit_env.update(environment)
+                git("commit", "-m", marker_name, cwd=self.worktree, env=commit_env)
+                candidate = git("rev-parse", "HEAD", cwd=self.worktree).stdout.decode().strip()
+                with self.assertRaisesRegex(RuntimeError, "commit identity mismatch"):
+                    git_ops.validate_commit_identities(
+                        self.worktree,
+                        self.start,
+                        candidate,
+                        sealed_identity(),
+                    )
 
     def test_child_git_ignores_inherited_global_config_behavior(self):
         workspace = self.create()

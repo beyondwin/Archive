@@ -96,7 +96,13 @@ class ScriptedAdapter:
         self.owner = owner
         self.helper = helper
 
-    def launch(self, request, _lease, on_session_id=None):
+    def launch(
+        self,
+        request,
+        _lease,
+        on_session_id=None,
+        on_process_observation=None,
+    ):
         self.owner.leases.append(_lease)
         packet = json.loads(request.prompt.split("\nEXECUTION_PACKET=", 1)[1])
         self.owner.packets.append(packet)
@@ -2562,6 +2568,69 @@ class EngineTest(unittest.TestCase):
             ["implementation", "implementation", "finalization"],
         )
         self.assertEqual(len({item["session_id"] for item in state["sessions"]}), 3)
+
+    def test_later_plan_cannot_drop_prior_plan_handoff_commit(self):
+        first_handoff = None
+
+        def reset_second_plan(_adapter, request, packet, _session_id):
+            nonlocal first_handoff
+            if packet["mode"] != "implementation":
+                return None
+            if packet["current_plan"]["index"] == 0:
+                return None
+            first_handoff = git("rev-parse", "HEAD", cwd=request.worktree)
+            git("reset", "--hard", self.starting_head, cwd=request.worktree)
+            marker = request.worktree / "replacement-plan-1.txt"
+            marker.write_text("replacement only\n", encoding="utf-8")
+            git("add", marker.name, cwd=request.worktree)
+            git(
+                "-c",
+                "user.name=Engine Test",
+                "-c",
+                "user.email=engine@example.test",
+                "commit",
+                "-m",
+                "replace prior plan history",
+                cwd=request.worktree,
+            )
+            head = git("rev-parse", "HEAD", cwd=request.worktree)
+            return ProviderOutcome(
+                "implemented",
+                0,
+                _session_id,
+                {
+                    "status": "implemented",
+                    "head_commit": head,
+                    "summary": "replacement",
+                    "task_ledger": [],
+                    "open_obligation_ids": [],
+                    "failure_signature": None,
+                    "strategy_note": None,
+                    "blocker": None,
+                },
+                None,
+                {},
+                (),
+                "",
+            )
+
+        self.outcome_hook = reset_second_plan
+        code = self.runner().create_run(
+            specs=self.specs,
+            plans=self.plans,
+            workspace=self.source,
+            stall_seconds=30,
+            sandbox="workspace-write",
+            model=None,
+        )
+
+        self.assertEqual(code, ExitCode.INTEGRITY)
+        self.assertIsNotNone(first_handoff)
+        state = self.state()
+        self.assertEqual(state["plans"][0]["status"], "implemented")
+        self.assertNotEqual(state["plans"][1]["status"], "implemented")
+        self.assertEqual(state["failure"]["reason_code"], "state_integrity_failed")
+        self.assertIn("plan handoff", state["failure"]["detail"])
 
     def test_review_findings_use_distinct_fresh_fix_packet_then_new_final_head(self):
         self.review_findings_once = True

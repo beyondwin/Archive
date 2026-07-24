@@ -5,7 +5,6 @@ import json
 import os
 import re
 import signal
-import subprocess
 import sys
 import threading
 import time
@@ -23,6 +22,7 @@ from .git_ops import (
     VOLATILE_REF_POLICY_VERSION,
     WorktreeObservation,
     configured_git_identity,
+    git_text,
     is_volatile_ref,
     protected_refs,
     validate_commit_identities,
@@ -188,17 +188,7 @@ def _run_id(first_plan: Path) -> str:
 
 
 def _git_text(workspace: Path, *arguments: str) -> str:
-    result = subprocess.run(
-        ["git", *arguments],
-        cwd=workspace,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout).strip()
-        raise ValueError(detail or f"git {' '.join(arguments)} failed")
-    return result.stdout.strip()
+    return git_text(workspace, *arguments)
 
 
 def _source_head(workspace: Path) -> str:
@@ -2516,6 +2506,7 @@ class PlanRunner:
         observation = workspace.require_clean_ancestor(
             state["repository"]["source_commit"]
         )
+        self._require_plan_history(store, workspace, observation.head)
         try:
             validate_commit_identities(
                 workspace.worktree,
@@ -3026,6 +3017,10 @@ class PlanRunner:
                 state["repository"]["source_commit"]
             )
             try:
+                self._require_plan_history(store, workspace, candidate.head)
+            except ValueError as error:
+                return self._integrity_failure(store, str(error))
+            try:
                 validate_commit_identities(
                     workspace.worktree,
                     state["repository"]["source_commit"],
@@ -3215,6 +3210,29 @@ class PlanRunner:
             store.commit(state)
             self._emit_summary(store.snapshot())
             return int(ExitCode.READY)
+
+    @staticmethod
+    def _require_plan_history(
+        store: StateStore,
+        workspace: GitWorkspace,
+        candidate_head: str,
+    ) -> None:
+        state = store.snapshot()
+        for reference in state["artifact_refs"]:
+            if (
+                not isinstance(reference, Mapping)
+                or reference.get("kind") != "plan_handoff"
+            ):
+                continue
+            payload = _artifact_payload(store, reference)
+            handoff_head = (
+                payload.get("head_commit")
+                if isinstance(payload, Mapping)
+                else None
+            )
+            if not isinstance(handoff_head, str):
+                raise ValueError("plan handoff artifact is invalid")
+            workspace.require_ancestor(handoff_head, candidate_head)
 
     @staticmethod
     def _completed_review_outcome(
