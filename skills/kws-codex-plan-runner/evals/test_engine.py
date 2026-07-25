@@ -167,7 +167,12 @@ class ScriptedAdapter:
                                 "deadline_seconds": 10,
                             }],
                         },
-                        "prior_set_digests": packet["prior_verification_sets"],
+                        "prior_set_digests": (
+                            [] if self.owner.prior_set_override == "drop"
+                            else list(reversed(packet["prior_verification_sets"]))
+                            if self.owner.prior_set_override == "reverse"
+                            else packet["prior_verification_sets"]
+                        ),
                         "is_final_plan": packet["is_final_plan"],
                     },
                 },
@@ -184,6 +189,8 @@ class ScriptedAdapter:
                     "payload": {"candidate_head": head, "set_digest": digest, "command_index": 0, "deadline_seconds": 10},
                 },
             )
+            if self.owner.after_implementation_hook is not None:
+                self.owner.after_implementation_hook(self, request, packet, session_id, head)
             result = {
                 "status": "implemented",
                 "head_commit": head,
@@ -194,124 +201,7 @@ class ScriptedAdapter:
             return ProviderOutcome(
                 "implemented", 0, session_id, result, None, {}, (), ""
             )
-        if packet["mode"] == "final_review_fix":
-            marker = request.worktree / "review-fix.txt"
-            if not marker.exists():
-                marker.write_text("review fixed\n", encoding="utf-8")
-                git("add", marker.name, cwd=request.worktree)
-                git(
-                    "-c",
-                    "user.name=Engine Test",
-                    "-c",
-                    "user.email=engine@example.test",
-                    "commit",
-                    "-m",
-                    "fix final review findings",
-                    cwd=request.worktree,
-                )
-            head = git("rev-parse", "HEAD", cwd=request.worktree)
-            return ProviderOutcome(
-                "implemented",
-                0,
-                session_id,
-                {
-                    "status": "implemented",
-                    "head_commit": head,
-                    "summary": "review findings fixed",
-                    "task_ledger": (
-                        packet["task_ledger"]
-                        if self.owner.review_fix_ledger_override is None
-                        else list(self.owner.review_fix_ledger_override)
-                    ),
-                    "open_obligation_ids": [],
-                    "failure_signature": None,
-                    "strategy_note": "fix only bundled review findings",
-                    "blocker": None,
-                },
-                None,
-                {},
-                (),
-                "",
-            )
-
-        head = packet["candidate_head"]
-        digest = packet.get("sealed_verification_set_digest")
-        if digest is None:
-            final_set = {
-                "kind": "commands",
-                "candidate_head": head,
-                "commands": [
-                    {
-                        "command_id": "final-smoke",
-                        "command_role": "final",
-                        "argv": [sys.executable, "-c", "print('ok')"],
-                        "cwd": ".",
-                        "input_digest": "a" * 64,
-                        "deadline_seconds": 10,
-                    }
-                ],
-            }
-            envelope = {
-                "protocol_version": self.helper.protocol_version,
-                "run_id": packet["run_id"],
-                "nonce": self.helper.nonce,
-                "operation": "declare_final_set",
-                "payload": {"candidate_head": head, "final_set": final_set},
-            }
-            declaration = helper_client(
-                self.helper.socket_path, self.helper.nonce, envelope
-            )
-            digest = declaration["artifact"]["digest"]
-            envelope = {
-                "protocol_version": self.helper.protocol_version,
-                "run_id": packet["run_id"],
-                "nonce": self.helper.nonce,
-                "operation": "verify_final",
-                "payload": {
-                    "candidate_head": head,
-                    "set_digest": digest,
-                    "command_index": 0,
-                    "deadline_seconds": 10,
-                },
-            }
-            helper_client(self.helper.socket_path, self.helper.nonce, envelope)
-        if self.owner.after_final_hook is not None:
-            outcome = self.owner.after_final_hook(
-                self, request, packet, session_id, digest
-            )
-            if outcome is not None:
-                return outcome
-        findings = []
-        if self.owner.review_findings_once:
-            self.owner.review_findings_once = False
-            findings = [
-                {
-                    "id": "R1",
-                    "severity": "Important",
-                    "summary": "fix final review issue",
-                    "evidence": "review evidence",
-                }
-            ]
-        elif self.owner.minor_findings_once:
-            self.owner.minor_findings_once = False
-            findings = [
-                {
-                    "id": "R-minor",
-                    "severity": "Minor",
-                    "summary": "allowed polish item",
-                    "evidence": "review evidence",
-                }
-            ]
-        result = {
-            "status": "reviewed",
-            "review_head": head,
-            "verification_set_digest": digest,
-            "open_findings": findings,
-            "open_obligation_ids": [],
-            "no_applicable_verification_approved": False,
-            "summary": "whole branch reviewed",
-        }
-        return ProviderOutcome("reviewed", 0, session_id, result, None, {}, (), "")
+        raise AssertionError(f"unexpected provider mode: {packet['mode']}")
 
 
 class SimulatedCrash(BaseException):
@@ -347,6 +237,8 @@ class EngineTest(unittest.TestCase):
         self.review_fix_ledger_override = None
         self.after_final_hook = None
         self.engine_event_hook = None
+        self.prior_set_override = None
+        self.after_implementation_hook = None
 
     def tearDown(self):
         self.temporary.cleanup()
@@ -500,8 +392,61 @@ class EngineTest(unittest.TestCase):
             specs=self.specs, plans=self.plans[:1], workspace=self.source,
             stall_seconds=30, sandbox="workspace-write", model=None,
         )
-        self.assertEqual(code, ExitCode.FAILED)
+        self.assertEqual(code, ExitCode.FAILED, [self.output, self.state().get("failure")])
         self.assertNotIn("task_ledger", self.state())
+
+    def test_active_recovery_resumes_then_uses_fresh_session_then_exhausts(self):
+        def transport(_adapter, _request, _packet, session_id):
+            return ProviderOutcome("failed", 1, session_id, None, "transport_closed", {}, (), "")
+
+        self.outcome_hook = transport
+        code = self.runner().create_run(
+            specs=self.specs, plans=self.plans[:1], workspace=self.source,
+            stall_seconds=30, sandbox="workspace-write", model=None,
+        )
+        self.assertEqual(code, ExitCode.FAILED, [self.output, self.state().get("failure")])
+        self.assertEqual(len(self.requests), 3)
+        self.assertIsNone(self.requests[0].session_id)
+        self.assertEqual(self.requests[1].session_id, str(uuid.UUID(int=1)))
+        self.assertIsNone(self.requests[2].session_id)
+        self.assertEqual(self.state()["failure"]["reason_code"], "recovery_exhausted")
+
+    def test_launch_lease_starts_at_current_monotonic_time(self):
+        self.assertEqual(self.run_two_plan_success(), ExitCode.READY)
+        self.assertTrue(self.leases)
+        self.assertTrue(all(not lease.expired(time.monotonic()) for lease in self.leases))
+
+    def test_final_union_rejects_incomplete_runner_owned_prior_sets(self):
+        self.prior_set_override = "drop"
+        code = self.run_two_plan_success()
+        self.assertEqual(code, ExitCode.INTEGRITY)
+        self.assertEqual(self.state()["plans"][0]["status"], "implemented")
+        self.assertNotEqual(self.state()["plans"][1]["status"], "implemented")
+
+    def test_final_union_rejects_reordered_runner_owned_prior_sets(self):
+        third_plan = self.root / "plan-c.md"
+        third_plan.write_text("plan-c\n", encoding="utf-8")
+        self.prior_set_override = "reverse"
+        code = self.runner().create_run(
+            specs=self.specs, plans=[*self.plans, third_plan], workspace=self.source,
+            stall_seconds=30, sandbox="workspace-write", model=None,
+        )
+        self.assertEqual(code, ExitCode.INTEGRITY)
+        self.assertEqual(self.state()["plans"][0]["status"], "implemented")
+        self.assertEqual(self.state()["plans"][1]["status"], "implemented")
+        self.assertNotEqual(self.state()["plans"][2]["status"], "implemented")
+
+    def test_protected_ref_drift_after_provider_handoff_fails_closed(self):
+        def drift(_adapter, request, _packet, _session_id, head):
+            git("update-ref", "refs/tags/provider-drift", head, cwd=request.worktree)
+
+        self.after_implementation_hook = drift
+        code = self.runner().create_run(
+            specs=self.specs, plans=self.plans[:1], workspace=self.source,
+            stall_seconds=30, sandbox="workspace-write", model=None,
+        )
+        self.assertEqual(code, ExitCode.INTEGRITY)
+        self.assertEqual(self.state()["failure"]["reason_code"], "state_integrity_failed")
 
     def test_version_one_is_inspect_only(self):
         self.run_two_plan_success()

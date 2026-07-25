@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -13,7 +14,7 @@ from .evidence import EvidenceStore
 from .git_ops import GitIdentity, GitWorkspace, configured_git_identity, protected_refs, validate_commit_identities
 from .helper import HelperDescriptor, HelperServer
 from .provider import CodexAdapter, ProviderOutcome, ProviderRequest
-from .recovery import ActivityLease, ProgressSnapshot, RecoveryPolicy
+from .recovery import ActivityLease, ProgressSnapshot, RecoveryPolicy, strategy_note_digest
 from .runtime import RuntimeIdentity, RuntimeUnavailable, require_compatible_runtime
 from .storage import RunLock, StateStore
 
@@ -177,7 +178,7 @@ class PlanRunner:
             self._fail_closed(store, error)
             return int(ExitCode.INTEGRITY)
 
-    def _execute_plan(self, store: StateStore, workspace: GitWorkspace) -> int | None:
+    def _execute_plan(self, store: StateStore, workspace: GitWorkspace, *, session_id: str | None = None) -> int | None:
         state = store.snapshot()
         index = state["current_plan_index"]
         plan = state["plans"][index]
@@ -185,7 +186,7 @@ class PlanRunner:
         plan["status"] = "running"
         state["status"] = "running"
         store.commit(state)
-        outcome = self._launch(store, workspace, index, observation.head)
+        outcome = self._launch(store, workspace, index, observation.head, session_id=session_id)
         if outcome.kind == "blocked":
             state = store.snapshot()
             state["status"] = "blocked"
@@ -202,10 +203,10 @@ class PlanRunner:
             return int(ExitCode.INTEGRITY)
         return None
 
-    def _launch(self, store: StateStore, workspace: GitWorkspace, index: int, head: str) -> ProviderOutcome:
+    def _launch(self, store: StateStore, workspace: GitWorkspace, index: int, head: str, *, session_id: str | None = None) -> ProviderOutcome:
         state = store.snapshot()
         evidence = EvidenceStore(store, workspace, self._environment)
-        lease = ActivityLease(float(state["immutable_config"]["stall_seconds"]), 0.0)
+        lease = ActivityLease(float(state["immutable_config"]["stall_seconds"]), time.monotonic())
         client_argv = (str(Path(sys.executable).resolve()), str(self.paths.runner_script.resolve()), "_helper")
         with HelperServer(run_id=state["run_id"], worktree=workspace.worktree, evidence_store=evidence,
                           client_argv=client_argv, state_store=store) as helper:
@@ -216,7 +217,7 @@ class PlanRunner:
                 prompt=IMPLEMENTATION_PROMPT + "\nEXECUTION_PACKET=" + canonical_json(packet).decode(),
                 output_schema=(self.paths.skill_root / "templates" / "plan-result.schema.json").resolve(),
                 output_path=store.root / f".provider-{uuid.uuid4().hex}.json",
-                sandbox=state["immutable_config"]["sandbox"], model=state["immutable_config"].get("model"),
+                sandbox=state["immutable_config"]["sandbox"], model=state["immutable_config"].get("model"), session_id=session_id,
             )
             adapter = self._adapter(state["run_id"], helper.descriptor, workspace)
             outcome = adapter.launch(request, lease, on_session_id=lambda session: self._record_session(store, index, session, head))
@@ -246,6 +247,8 @@ class PlanRunner:
         assert isinstance(result, Mapping)
         state = store.snapshot()
         observation = workspace.require_clean_ancestor(state["repository"]["source_commit"])
+        if workspace.protected_refs() != state["immutable_config"]["protected_refs"]:
+            raise ValueError("protected refs changed during provider execution")
         if result["head_commit"] != observation.head:
             raise ValueError("implementation HEAD mismatch")
         validate_commit_identities(workspace.worktree, state["repository"]["source_commit"], observation.head, GitIdentity.from_mapping(state["immutable_config"]["git_identity"]))
@@ -268,7 +271,7 @@ class PlanRunner:
         state["failure"] = None
         store.commit(state)
 
-    def _recover(self, store: StateStore, workspace: GitWorkspace, outcome: ProviderOutcome, index: int) -> int:
+    def _recover(self, store: StateStore, workspace: GitWorkspace, outcome: ProviderOutcome, index: int) -> int | None:
         state = store.snapshot()
         progress = self._progress(state, workspace)
         failure = state.get("failure") if isinstance(state.get("failure"), Mapping) else {}
@@ -281,11 +284,16 @@ class PlanRunner:
              "command_identity": None, "candidate_head": workspace.observe().head, "input_digest": state["immutable_config"]["input_snapshot_digest"],
              "interruption": outcome.kind, "strategy_note": "resume same plan", "progress": progress},
         )
-        state["status"] = "failed"
+        sequence = list(failure.get("failure_sequence", []))
+        sequence.append({"failure_signature": decision.failure_signature, "strategy_note_digest": strategy_note_digest("resume same plan"), "fresh_session_attempted": decision.session_action == "fresh_session"})
+        next_strategy = {"explicit_resume": "resume_root", "fresh_session": "fresh_root"}.get(decision.session_action, "block")
+        state["status"] = decision.run_status
         state["failure"] = {"reason_code": decision.reason_code, "failure_signature": decision.failure_signature,
-                            "failure_sequence": [{"failure_signature": decision.failure_signature, "fresh_session_attempted": decision.session_action == "fresh_session"}],
-                            "next_strategy": "block", "next_session_action": "none"}
+                            "failure_sequence": sequence, "next_strategy": next_strategy, "next_session_action": decision.session_action}
         store.commit(state)
+        if decision.action == "recover":
+            resume_session = outcome.session_id if decision.session_action == "explicit_resume" else None
+            return self._execute_plan(store, workspace, session_id=resume_session)
         self._emit_summary(store.snapshot())
         return int(ExitCode.FAILED)
 
