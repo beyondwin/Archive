@@ -1208,17 +1208,22 @@ def _write_runner_documents(root: Path) -> tuple[list[Path], list[Path]]:
     )
     plans[0].write_text(
         "# Plan 1: alpha\n\n"
-        "Implement only this plan. Create `behaviors.py` with `alpha()` "
-        "returning `alpha`. Create deterministic unittest coverage for alpha. "
+        "## Task 1\n\n"
+        "Create `behaviors.py` with `alpha()` returning `alpha` and deterministic "
+        "unittest coverage.\n\n"
+        "## Task 2\n\n"
         "Run the focused test, commit the implementation, and report every task "
         "done through the runner protocol. Do not implement beta yet.\n",
         encoding="utf-8",
     )
     plans[1].write_text(
         "# Plan 2: beta\n\n"
-        "Implement only this plan after preserving alpha. Add `beta()` returning "
-        "`beta` and deterministic unittest coverage. Run all unittests, commit "
-        "the implementation, and report every task done. For finalization declare "
+        "## Task 1\n\n"
+        "After preserving alpha, add `beta()` returning `beta` and deterministic "
+        "unittest coverage.\n\n"
+        "## Task 2\n\n"
+        "Run all unittests, commit the implementation, and report every task "
+        "done. For finalization declare "
         f"`{Path(sys.executable).resolve()} -m unittest -v` as the complete "
         "required verification set and perform the whole-branch review.\n",
         encoding="utf-8",
@@ -1310,12 +1315,12 @@ def _contains_workflow_state(value: object) -> bool:
 
 
 def _scenario_command_identity(value: object) -> bytes | None:
-    if not isinstance(value, Mapping) or set(value) != {
-        "argv",
-        "cwd",
-        "input_digest",
-        "deadline_seconds",
-    }:
+    if not isinstance(value, Mapping):
+        return None
+    required = {"argv", "cwd", "input_digest", "deadline_seconds"}
+    if not required.issubset(value) or not set(value).issubset(
+        required | {"command_id", "command_role"}
+    ):
         return None
     argv = value.get("argv")
     if (
@@ -1330,7 +1335,7 @@ def _scenario_command_identity(value: object) -> bytes | None:
         or value["deadline_seconds"] <= 0
     ):
         return None
-    return _canonical_json(value)
+    return _canonical_json({key: value[key] for key in sorted(required)})
 
 
 def validate_multi_plan_ownership_scenario(
@@ -1846,7 +1851,173 @@ def _runner_environment(provider: str, home: Path) -> dict[str, str]:
     return env
 
 
-def probe_runner(provider: str) -> dict[str, object]:
+def _artifact_with_digest(
+    run_root: Path,
+    state: Mapping[str, Any],
+    kind: str,
+    digest: str,
+) -> tuple[Mapping[str, Any], Mapping[str, Any]]:
+    matches = [
+        ref
+        for ref in _references(state, kind)
+        if ref.get("digest") == digest
+    ]
+    if len(matches) != 1:
+        raise CanaryError(f"{kind}_missing")
+    return matches[0], _artifact_from_ref(run_root, matches[0])
+
+
+def _ownership_evidence_from_run(
+    *,
+    state: Mapping[str, Any],
+    run_root: Path,
+    worktree: Path,
+    plans: Sequence[Path],
+    project_resumed_sessions: bool = False,
+) -> dict[str, object]:
+    plan_records = state.get("plans")
+    repository = state.get("repository")
+    if (
+        not isinstance(plan_records, list)
+        or len(plan_records) != 2
+        or not isinstance(repository, Mapping)
+    ):
+        raise CanaryError("plans_not_implemented")
+    labels = [
+        re.findall(r"^## (Task [12])$", path.read_text(encoding="utf-8"), re.MULTILINE)
+        for path in plans
+    ]
+    handoffs: list[dict[str, object]] = []
+    plan_sets_by_index: dict[int, dict[str, object]] = {}
+    for index, plan in enumerate(plan_records):
+        if not isinstance(plan, Mapping) or not isinstance(
+            plan.get("handoff_digest"), str
+        ):
+            raise CanaryError("handoff_evidence_missing")
+        handoff_ref, handoff_value = _artifact_with_digest(
+            run_root,
+            state,
+            "plan_handoff",
+            plan["handoff_digest"],
+        )
+        handoffs.append({"digest": handoff_ref["digest"], **dict(handoff_value)})
+        plan_set_digest = (
+            handoff_value.get("verification_set_digest")
+            if index == 0
+            else None
+        )
+        if isinstance(plan_set_digest, str):
+            plan_ref, plan_value = _artifact_with_digest(
+                run_root, state, "plan_verification_set", plan_set_digest
+            )
+            plan_sets_by_index[index] = {
+                "digest": plan_ref["digest"],
+                **dict(plan_value),
+            }
+    for reference in _references(state, "plan_verification_set"):
+        value = _artifact_from_ref(run_root, reference)
+        index = value.get("plan_index")
+        if index in (0, 1):
+            plan_sets_by_index[int(index)] = {
+                "digest": reference["digest"],
+                **dict(value),
+            }
+    if set(plan_sets_by_index) != {0, 1}:
+        raise CanaryError("verification_set_invalid")
+    final_digest = handoffs[-1].get("verification_set_digest")
+    if not isinstance(final_digest, str):
+        raise CanaryError("verification_set_invalid")
+    run_ref, run_value = _artifact_with_digest(
+        run_root, state, "run_verification_set", final_digest
+    )
+    run_set = {"digest": run_ref["digest"], **dict(run_value)}
+    observed_head = _git(worktree, "rev-parse", "HEAD")
+    final_commands = run_set.get("commands")
+    if not isinstance(final_commands, list):
+        raise CanaryError("verification_set_invalid")
+    receipts: list[dict[str, object]] = []
+    for reference in _references(state, "verification_receipt"):
+        receipt = _artifact_from_ref(run_root, reference)
+        identity = receipt.get("identity")
+        if (
+            not isinstance(identity, Mapping)
+            or identity.get("candidate_head") != observed_head
+            or receipt.get("outcome") != "success"
+            or receipt.get("exit_code") != 0
+        ):
+            continue
+        matching = next(
+            (
+                command
+                for command in final_commands
+                if isinstance(command, Mapping)
+                and command.get("argv") == identity.get("argv")
+                and command.get("input_digest") == identity.get("input_digest")
+                and isinstance(command.get("cwd"), str)
+                and identity.get("cwd")
+                == str((worktree / command["cwd"]).resolve())
+            ),
+            None,
+        )
+        if matching is not None:
+            receipts.append(
+                {
+                    "candidate_head": observed_head,
+                    "command": matching,
+                    "outcome": "success",
+                    "exit_code": 0,
+                }
+            )
+    first_head = handoffs[0].get("head_commit")
+    ancestry = False
+    if isinstance(first_head, str):
+        check = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", first_head, observed_head],
+            cwd=worktree,
+            check=False,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=30,
+        )
+        ancestry = check.returncode == 0
+    projected_state = dict(state)
+    if project_resumed_sessions:
+        sessions = state.get("sessions")
+        selected: list[Mapping[str, Any]] = []
+        if isinstance(sessions, list):
+            for index in (0, 1):
+                matching = [
+                    session
+                    for session in sessions
+                    if isinstance(session, Mapping)
+                    and session.get("mode") == "implementation"
+                    and session.get("plan_index") == index
+                    and session.get("health") == "healthy"
+                ]
+                if matching:
+                    selected.append(dict(matching[0]))
+        projected_state["sessions"] = selected
+    return {
+        "plan_labels": labels,
+        "source_head": repository.get("source_commit"),
+        "observed_head": observed_head,
+        "porcelain": _git(worktree, "status", "--porcelain=v1"),
+        "prior_handoff_is_ancestor": ancestry,
+        "state": projected_state,
+        "plan_handoffs": handoffs,
+        "plan_verification_sets": [
+            plan_sets_by_index[0],
+            plan_sets_by_index[1],
+        ],
+        "run_verification_set": run_set,
+        "verification_receipts": receipts,
+    }
+
+
+def probe_runner(
+    provider: str, *, scenario_mode: str = "runner"
+) -> dict[str, object]:
     started = time.monotonic()
     with tempfile.TemporaryDirectory(prefix=f"{provider}-runner-canary-") as raw:
         root = Path(raw).resolve(strict=True)
@@ -1863,7 +2034,7 @@ def probe_runner(provider: str) -> dict[str, object]:
             )
             return normalized_result(
                 provider=provider,
-                mode="runner",
+                mode=scenario_mode,
                 status="blocked",
                 provider_version=None,
                 session_action="not_started",
@@ -1874,7 +2045,7 @@ def probe_runner(provider: str) -> dict[str, object]:
         if unavailable:
             return normalized_result(
                 provider=provider,
-                mode="runner",
+                mode=scenario_mode,
                 status="blocked",
                 provider_version=None,
                 session_action="not_started",
@@ -1885,7 +2056,7 @@ def probe_runner(provider: str) -> dict[str, object]:
         if provider == "claude" and not claude_auth_available(root, runner_env):
             return normalized_result(
                 provider=provider,
-                mode="runner",
+                mode=scenario_mode,
                 status="blocked",
                 provider_version=version,
                 session_action="not_started",
@@ -1941,7 +2112,7 @@ def probe_runner(provider: str) -> dict[str, object]:
                 )
                 return normalized_result(
                     provider=provider,
-                    mode="runner",
+                    mode=scenario_mode,
                     status="blocked",
                     provider_version=version,
                     session_action="not_completed",
@@ -1968,7 +2139,7 @@ def probe_runner(provider: str) -> dict[str, object]:
                 )
                 return normalized_result(
                     provider=provider,
-                    mode="runner",
+                    mode=scenario_mode,
                     status="failed",
                     provider_version=version,
                     session_action="not_completed",
@@ -1983,16 +2154,29 @@ def probe_runner(provider: str) -> dict[str, object]:
             worktree = Path(state["repository"]["worktree"])
             observed = _git(worktree, "rev-parse", "HEAD")
             porcelain = _git(worktree, "status", "--porcelain=v1")
-            valid, reason, candidate = validate_runner_state(
-                state, observed_head=observed, porcelain=porcelain
-            )
-            if not valid or candidate is None:
-                raise CanaryError(reason or "runner_state_invalid")
-            valid, reason = validate_runner_artifacts(
-                state, state_root, worktree, candidate
-            )
-            if not valid:
-                raise CanaryError(reason or "final_evidence_invalid")
+            if scenario_mode == "ownership":
+                evidence = _ownership_evidence_from_run(
+                    state=state,
+                    run_root=state_root,
+                    worktree=worktree,
+                    plans=plans,
+                )
+                valid, reason, candidate = (
+                    validate_multi_plan_ownership_scenario(evidence)
+                )
+                if not valid or candidate is None:
+                    raise CanaryError(reason or "ownership_evidence_invalid")
+            else:
+                valid, reason, candidate = validate_runner_state(
+                    state, observed_head=observed, porcelain=porcelain
+                )
+                if not valid or candidate is None:
+                    raise CanaryError(reason or "runner_state_invalid")
+                valid, reason = validate_runner_artifacts(
+                    state, state_root, worktree, candidate
+                )
+                if not valid:
+                    raise CanaryError(reason or "final_evidence_invalid")
             before = hashlib.sha256((state_root / "state.json").read_bytes()).hexdigest()
             inspect = run_bounded(
                 [str(runner), "inspect", "--run-id", run_id],
@@ -2016,10 +2200,14 @@ def probe_runner(provider: str) -> dict[str, object]:
                 raise CanaryError("inspect_facts_mismatch")
             return normalized_result(
                 provider=provider,
-                mode="runner",
+                mode=scenario_mode,
                 status="passed",
                 provider_version=version,
-                session_action="distinct_plan_and_final_sessions",
+                session_action=(
+                    "two_fresh_plan_sessions"
+                    if scenario_mode == "ownership"
+                    else "distinct_plan_and_final_sessions"
+                ),
                 final_head=candidate,
                 elapsed=time.monotonic() - started,
             )
@@ -2031,7 +2219,7 @@ def probe_runner(provider: str) -> dict[str, object]:
             )
             return normalized_result(
                 provider=provider,
-                mode="runner",
+                mode=scenario_mode,
                 status="failed",
                 provider_version=version,
                 session_action="not_completed",
@@ -2041,22 +2229,569 @@ def probe_runner(provider: str) -> dict[str, object]:
             )
 
 
-def _scenario_mode(
-    result: Mapping[str, object], mode: str
+def _write_interruption_documents(
+    root: Path,
+) -> tuple[list[Path], list[Path]]:
+    docs = root / "immutable-inputs"
+    docs.mkdir()
+    specs = [docs / "01-product.md", docs / "02-verification.md"]
+    plans = [docs / "01-alpha.md", docs / "02-interruption.md"]
+    specs[0].write_text(
+        "# Interruption canary product spec\n\n"
+        "The repository must finish with committed `alpha()` and `beta()` "
+        "functions returning their names and deterministic unittest coverage.\n",
+        encoding="utf-8",
+    )
+    specs[1].write_text(
+        "# Interruption canary verification spec\n\n"
+        "Use only the Python standard library. Preserve an existing dirty "
+        "checkpoint exactly across controller interruption. The final required "
+        f"command is `{Path(sys.executable).resolve()} -m unittest -v`. "
+        "Never merge, push, deploy, or modify source repository refs.\n",
+        encoding="utf-8",
+    )
+    plans[0].write_text(
+        "# Plan 1: alpha\n\n"
+        "## Task 1\n\n"
+        "Create `behaviors.py` with `alpha()` returning `alpha` and add its "
+        "deterministic unittest.\n\n"
+        "## Task 2\n\n"
+        "Run the focused test and commit the complete plan.\n",
+        encoding="utf-8",
+    )
+    plans[1].write_text(
+        "# Plan 2: interrupted beta\n\n"
+        "## Task 1\n\n"
+        "Create `resume-marker.txt` containing exactly `task 1 complete`, add "
+        "and commit it by itself. Do not start Task 2 before that commit.\n\n"
+        "## Task 2\n\n"
+        "Create untracked `dirty-checkpoint.txt` containing exactly "
+        "`resume this exact checkpoint`. Before staging or committing that file, "
+        "run `/bin/sleep 300` in the foreground. If the controller interrupts "
+        "the command and later resumes this same session, do not recreate, "
+        "rewrite, stage, clean, or restore the existing dirty file. Continue "
+        "from it: add `beta()` returning `beta`, add deterministic unittest "
+        "coverage, include the unchanged checkpoint file in the final commit, "
+        "run all unittests, and complete the plan. Declare "
+        f"`{Path(sys.executable).resolve()} -m unittest -v` as the complete "
+        "final verification set and perform the whole-branch review.\n",
+        encoding="utf-8",
+    )
+    for path in (*specs, *plans):
+        path.chmod(0o400)
+    return specs, plans
+
+
+def _runner_argv(
+    provider: str,
+    runner: Path,
+    command: str,
+    *,
+    workspace: Path | None = None,
+    specs: Sequence[Path] = (),
+    plans: Sequence[Path] = (),
+    run_id: str | None = None,
+) -> list[str]:
+    if provider not in {"codex", "claude"}:
+        raise CanaryError("interruption_scenario_invalid")
+    argv = [str(runner), command]
+    if command == "run":
+        for spec in specs:
+            argv.extend(("--spec", str(spec)))
+        for plan in plans:
+            argv.extend(("--plan", str(plan)))
+        if workspace is None:
+            raise CanaryError("interruption_scenario_invalid")
+        argv.extend(("--workspace", str(workspace)))
+    elif command == "resume":
+        if not isinstance(run_id, str):
+            raise CanaryError("interruption_scenario_invalid")
+        argv.extend(("--run-id", run_id))
+    else:
+        raise CanaryError("interruption_scenario_invalid")
+    return argv
+
+
+def _process_table() -> list[tuple[int, int, int, str]]:
+    result = subprocess.run(
+        ["ps", "-axo", "pid=,ppid=,pgid=,stat="],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if result.returncode != 0:
+        raise CanaryError("process_observation_failed")
+    rows: list[tuple[int, int, int, str]] = []
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if len(fields) < 4:
+            continue
+        try:
+            rows.append(
+                (int(fields[0]), int(fields[1]), int(fields[2]), fields[3])
+            )
+        except ValueError:
+            continue
+    return rows
+
+
+def _descendant_groups(controller_pid: int) -> set[int]:
+    rows = _process_table()
+    children: dict[int, list[int]] = {}
+    pgids: dict[int, int] = {}
+    for pid, parent, pgid, _status in rows:
+        children.setdefault(parent, []).append(pid)
+        pgids[pid] = pgid
+    pending = list(children.get(controller_pid, []))
+    descendants: set[int] = set()
+    while pending:
+        pid = pending.pop()
+        if pid in descendants:
+            continue
+        descendants.add(pid)
+        pending.extend(children.get(pid, []))
+    return {
+        pgids[pid]
+        for pid in descendants
+        if pgids.get(pid, 0) > 0 and pgids[pid] != controller_pid
+    }
+
+
+def _process_group_quiescent(pgid: int) -> bool:
+    return not any(
+        row_pgid == pgid and not status.startswith("Z")
+        for _pid, _parent, row_pgid, status in _process_table()
+    )
+
+
+def _cleanup_process_groups(pgids: set[int]) -> None:
+    for pgid in sorted(pgids):
+        if _process_group_quiescent(pgid):
+            continue
+        try:
+            os.killpg(pgid, signal.SIGTERM)
+        except ProcessLookupError:
+            continue
+    deadline = time.monotonic() + TERM_GRACE_SECONDS
+    while time.monotonic() < deadline and any(
+        not _process_group_quiescent(pgid) for pgid in pgids
+    ):
+        time.sleep(0.05)
+    for pgid in sorted(pgids):
+        if _process_group_quiescent(pgid):
+            continue
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+
+def _load_latest_run(
+    home: Path, provider: str
+) -> tuple[Path, dict[str, Any]] | None:
+    state_home = home / f".{provider}" / "plan-runner"
+    candidates = sorted(
+        state_home.glob("*/state.json"),
+        key=lambda path: path.stat().st_mtime_ns,
+        reverse=True,
+    )
+    for path in candidates:
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            continue
+        if isinstance(value, dict):
+            return path.parent, value
+    return None
+
+
+def _interruption_boundary(
+    home: Path,
+    provider: str,
+    controller: subprocess.Popen[str],
+    observed_groups: set[int],
+) -> tuple[Path, dict[str, Any], Path]:
+    deadline = time.monotonic() + COMMAND_DEADLINE_SECONDS
+    while time.monotonic() < deadline:
+        if controller.poll() is not None:
+            raise CanaryError("interruption_boundary_not_reached")
+        observed_groups.update(_descendant_groups(controller.pid))
+        loaded = _load_latest_run(home, provider)
+        if loaded is None:
+            time.sleep(0.1)
+            continue
+        run_root, state = loaded
+        repository = state.get("repository")
+        plans = state.get("plans")
+        sessions = state.get("sessions")
+        attempts = state.get("attempts")
+        if (
+            not isinstance(repository, Mapping)
+            or not isinstance(plans, list)
+            or len(plans) != 2
+            or not isinstance(sessions, list)
+            or not isinstance(attempts, list)
+            or state.get("current_plan_index") != 1
+            or not isinstance(plans[0], Mapping)
+            or plans[0].get("status") != "implemented"
+        ):
+            time.sleep(0.1)
+            continue
+        worktree_value = repository.get("worktree")
+        if not isinstance(worktree_value, str):
+            time.sleep(0.1)
+            continue
+        worktree = Path(worktree_value)
+        if not worktree.is_dir():
+            time.sleep(0.1)
+            continue
+        healthy = [
+            session
+            for session in sessions
+            if isinstance(session, Mapping)
+            and session.get("mode") == "implementation"
+            and session.get("plan_index") == 1
+            and session.get("health") == "healthy"
+            and isinstance(session.get("session_id"), str)
+        ]
+        current_attempts = [
+            attempt
+            for attempt in attempts
+            if isinstance(attempt, Mapping)
+            and attempt.get("mode") == "implementation"
+            and attempt.get("plan_index") == 1
+            and attempt.get("completed") is False
+        ]
+        for attempt in current_attempts:
+            pgid = attempt.get("provider_pgid")
+            if isinstance(pgid, int) and pgid > 0:
+                observed_groups.add(pgid)
+        marker_committed = (
+            subprocess.run(
+                ["git", "cat-file", "-e", "HEAD:resume-marker.txt"],
+                cwd=worktree,
+                check=False,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=30,
+            ).returncode
+            == 0
+        )
+        dirty = _git(worktree, "status", "--porcelain=v1")
+        if (
+            healthy
+            and (current_attempts or observed_groups)
+            and observed_groups
+            and marker_committed
+            and "dirty-checkpoint.txt" in dirty
+        ):
+            return run_root, state, worktree
+        time.sleep(0.1)
+    raise CanaryError("interruption_boundary_deadline")
+
+
+def _interrupt_controller(
+    controller: subprocess.Popen[str], provider_groups: set[int]
+) -> CommandResult:
+    os.kill(controller.pid, signal.SIGINT)
+    try:
+        stdout, stderr = controller.communicate(timeout=60)
+        timed_out = False
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        stdout, stderr = _terminate_and_reap(controller)
+    quiescent = all(_process_group_quiescent(pgid) for pgid in provider_groups)
+    if not quiescent:
+        _cleanup_process_groups(provider_groups)
+    result = CommandResult(
+        controller.returncode,
+        (stdout or "")[-STREAM_LIMIT:],
+        (stderr or "")[-STREAM_LIMIT:],
+        timed_out,
+    )
+    if not quiescent:
+        raise CanaryError("provider_process_group_not_quiescent")
+    return result
+
+
+def _run_interrupted_once(
+    *,
+    provider: str,
+    root: Path,
+    runner: Path,
+    environment: Mapping[str, str],
+    drift: bool,
 ) -> dict[str, object]:
-    remapped = dict(result)
-    remapped["mode"] = mode
-    if len(json.dumps(remapped, sort_keys=True)) > RESULT_LIMIT:
-        raise CanaryError("normalized_result_too_large")
-    return remapped
+    workspace = root / "source"
+    _create_repository(workspace)
+    specs, plans = _write_interruption_documents(root)
+    controller = subprocess.Popen(
+        _runner_argv(
+            provider,
+            runner,
+            "run",
+            workspace=workspace,
+            specs=specs,
+            plans=plans,
+        ),
+        cwd=str(root),
+        env=dict(environment),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        shell=False,
+        start_new_session=True,
+    )
+    provider_groups: set[int] = set()
+    try:
+        run_root, _state_before, worktree = (
+            _interruption_boundary(
+                Path(environment["HOME"]),
+                provider,
+                controller,
+                provider_groups,
+            )
+        )
+        interruption = _interrupt_controller(controller, provider_groups)
+    except BaseException:
+        if controller.poll() is None:
+            _terminate_and_reap(controller)
+        _cleanup_process_groups(provider_groups)
+        raise
+    loaded = _load_latest_run(Path(environment["HOME"]), provider)
+    if loaded is None or loaded[0] != run_root:
+        raise CanaryError("interrupted_state_missing")
+    _run_root, interrupted_state = loaded
+    failure = interrupted_state.get("failure")
+    checkpoint = (
+        failure.get("partial_worktree")
+        if isinstance(failure, Mapping)
+        else None
+    )
+    if (
+        interruption.timed_out
+        or interruption.returncode != 2
+        or interrupted_state.get("status") != "resumable"
+        or not isinstance(checkpoint, Mapping)
+        or checkpoint.get("clean") is not False
+    ):
+        raise CanaryError("interrupted_run_not_resumable")
+    sessions_before = interrupted_state.get("sessions")
+    plans_before = interrupted_state.get("plans")
+    attempts_before = interrupted_state.get("attempts")
+    if (
+        not isinstance(sessions_before, list)
+        or not isinstance(plans_before, list)
+        or not isinstance(attempts_before, list)
+        or len(plans_before) != 2
+        or not isinstance(plans_before[0], Mapping)
+    ):
+        raise CanaryError("interrupted_state_invalid")
+    recorded = [
+        session
+        for session in sessions_before
+        if isinstance(session, Mapping)
+        and session.get("mode") == "implementation"
+        and session.get("plan_index") == 1
+        and session.get("health") == "healthy"
+        and isinstance(session.get("session_id"), str)
+    ]
+    if not recorded:
+        raise CanaryError("recorded_healthy_session_missing")
+    first_handoff = plans_before[0].get("handoff_digest")
+    first_sessions_before = sum(
+        1
+        for session in sessions_before
+        if isinstance(session, Mapping)
+        and session.get("mode") == "implementation"
+        and session.get("plan_index") == 0
+    )
+    porcelain_before = _git(worktree, "status", "--porcelain=v1")
+    if checkpoint.get("head") != _git(worktree, "rev-parse", "HEAD"):
+        raise CanaryError("dirty_checkpoint_changed")
+    if drift:
+        (worktree / "drift.txt").write_text(
+            "drift after sealed checkpoint\n", encoding="utf-8"
+        )
+    porcelain_at_resume = _git(worktree, "status", "--porcelain=v1")
+    resume = run_bounded(
+        _runner_argv(
+            provider,
+            runner,
+            "resume",
+            run_id=interrupted_state["run_id"],
+        ),
+        cwd=root,
+        timeout=RUNNER_DEADLINE_SECONDS,
+        env=environment,
+    )
+    loaded_after = _load_latest_run(Path(environment["HOME"]), provider)
+    if loaded_after is None or loaded_after[0] != run_root:
+        raise CanaryError("resumed_state_missing")
+    _run_root, final_state = loaded_after
+    attempts_after = final_state.get("attempts")
+    sessions_after = final_state.get("sessions")
+    if not isinstance(attempts_after, list) or not isinstance(sessions_after, list):
+        raise CanaryError("resumed_state_invalid")
+    if drift:
+        drift_detail = (resume.stdout + " " + resume.stderr).lower()
+        return {
+            "drift_rejected": (
+                resume.returncode in {65, 70} and "dirty" in drift_detail
+            ),
+            "drift_reason_code": "dirty_checkpoint_drift",
+            "provider_launch_count_before_drift": len(attempts_before),
+            "provider_launch_count_after_drift": len(attempts_after),
+        }
+    if resume.returncode != 0 or final_state.get("status") != "ready_for_integration":
+        raise CanaryError("interruption_resume_failed")
+    final_recorded = [
+        session
+        for session in sessions_after
+        if isinstance(session, Mapping)
+        and session.get("mode") == "implementation"
+        and session.get("plan_index") == 1
+        and session.get("health") == "healthy"
+        and session.get("session_id") == recorded[-1]["session_id"]
+    ]
+    resumed_attempts = attempts_after[len(attempts_before) :]
+    resumed_recorded_session = (
+        bool(resumed_attempts)
+        and isinstance(resumed_attempts[0], Mapping)
+        and resumed_attempts[0].get("session_action") == "resume_root"
+    )
+    ownership = _ownership_evidence_from_run(
+        state=final_state,
+        run_root=run_root,
+        worktree=worktree,
+        plans=plans,
+        project_resumed_sessions=True,
+    )
+    return {
+        "sigint_sent": True,
+        "provider_process_group_quiescent": True,
+        "interrupted_status": interrupted_state["status"],
+        "interrupted_checkpoint": dict(checkpoint),
+        "resume_checkpoint": (
+            dict(checkpoint)
+            if porcelain_at_resume == porcelain_before and porcelain_before
+            else None
+        ),
+        "recorded_session": dict(recorded[-1]),
+        "resume_session_id": (
+            final_recorded[-1]["session_id"]
+            if final_recorded and resumed_recorded_session
+            else None
+        ),
+        "completed_first_handoff_before": first_handoff,
+        "completed_first_handoff_after": (
+            final_state["plans"][0].get("handoff_digest")
+            if isinstance(final_state.get("plans"), list)
+            and isinstance(final_state["plans"][0], Mapping)
+            else None
+        ),
+        "first_plan_session_count_before": first_sessions_before,
+        "first_plan_session_count_after": sum(
+            1
+            for session in sessions_after
+            if isinstance(session, Mapping)
+            and session.get("mode") == "implementation"
+            and session.get("plan_index") == 0
+        ),
+        "final_ownership": ownership,
+    }
+
+
+def _probe_interruption_live(provider: str) -> dict[str, object]:
+    started = time.monotonic()
+    with tempfile.TemporaryDirectory(
+        prefix=f"{provider}-interruption-canary-"
+    ) as raw:
+        root = Path(raw).resolve(strict=True)
+        primary = root / "resume"
+        drift = root / "drift"
+        primary.mkdir()
+        drift.mkdir()
+        primary_home = primary / "operator-home"
+        drift_home = drift / "operator-home"
+        primary_home.mkdir(mode=0o700)
+        drift_home.mkdir(mode=0o700)
+        version: str | None = None
+        try:
+            primary_env = _runner_environment(provider, primary_home)
+            drift_env = _runner_environment(provider, drift_home)
+            version, unavailable = _provider_version(
+                provider, primary, primary_env
+            )
+            if unavailable:
+                raise CanaryError(unavailable)
+            if (
+                provider == "claude"
+                and not claude_auth_available(primary, primary_env)
+            ):
+                raise CanaryError("provider_auth_blocked")
+            runner = (
+                REPO_ROOT
+                / f"skills/kws-{provider}-plan-runner/scripts/runner"
+            )
+            evidence = _run_interrupted_once(
+                provider=provider,
+                root=primary,
+                runner=runner,
+                environment=primary_env,
+                drift=False,
+            )
+            evidence.update(
+                _run_interrupted_once(
+                    provider=provider,
+                    root=drift,
+                    runner=runner,
+                    environment=drift_env,
+                    drift=True,
+                )
+            )
+            valid, reason, head = validate_interruption_resume_scenario(
+                evidence
+            )
+            if not valid or head is None:
+                raise CanaryError(reason or "interruption_evidence_invalid")
+            return normalized_result(
+                provider=provider,
+                mode="interruption",
+                status="passed",
+                provider_version=version,
+                session_action="sigint_then_recorded_resume",
+                final_head=head,
+                elapsed=time.monotonic() - started,
+            )
+        except (CanaryError, OSError, ValueError, KeyError, json.JSONDecodeError) as error:
+            reason = (
+                error.reason_code
+                if isinstance(error, CanaryError)
+                else "interruption_probe_failed"
+            )
+            status = "blocked" if reason in BLOCKED_REASON_CODES else "failed"
+            return normalized_result(
+                provider=provider,
+                mode="interruption",
+                status=status,
+                provider_version=version,
+                session_action="not_completed",
+                final_head=None,
+                elapsed=time.monotonic() - started,
+                reason_code=reason,
+            )
 
 
 def probe_ownership(provider: str) -> dict[str, object]:
-    return _scenario_mode(probe_runner(provider), "ownership")
+    return probe_runner(provider, scenario_mode="ownership")
 
 
 def probe_interruption(provider: str) -> dict[str, object]:
-    return _scenario_mode(probe_session(provider), "interruption")
+    return _probe_interruption_live(provider)
 
 
 def _parser() -> argparse.ArgumentParser:

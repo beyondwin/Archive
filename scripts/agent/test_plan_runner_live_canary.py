@@ -560,6 +560,176 @@ class IsolationTests(unittest.TestCase):
 
 
 class SessionAndRunnerOutcomeTests(unittest.TestCase):
+    @staticmethod
+    def _put_scenario_artifact(run_root, kind, value):
+        raw_value = json.dumps(
+            value, sort_keys=True, separators=(",", ":")
+        ).encode()
+        digest = hashlib.sha256(raw_value).hexdigest()
+        relative = Path("artifacts") / kind / f"{digest}.json"
+        path = run_root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(raw_value)
+        return {
+            "kind": kind,
+            "digest": digest,
+            "relative_path": str(relative),
+        }
+
+    def _collect_ownership_scenario(self, root):
+        worktree = root / "worktree"
+        source_head = canary._create_repository(worktree)
+        _specs, plans = canary._write_runner_documents(root)
+        (worktree / "plan-0.txt").write_text("alpha\n", encoding="utf-8")
+        canary._git(worktree, "add", "plan-0.txt")
+        canary._git(worktree, "commit", "-m", "plan 0")
+        first_head = canary._git(worktree, "rev-parse", "HEAD")
+        (worktree / "plan-1.txt").write_text("beta\n", encoding="utf-8")
+        canary._git(worktree, "add", "plan-1.txt")
+        canary._git(worktree, "commit", "-m", "plan 1")
+        final_head = canary._git(worktree, "rev-parse", "HEAD")
+        run_root = root / "run"
+        run_root.mkdir()
+        first_command = {
+            "command_id": "first",
+            "command_role": "handoff",
+            "argv": ["/usr/bin/true"],
+            "cwd": ".",
+            "input_digest": "a" * 64,
+            "deadline_seconds": 30,
+        }
+        second_command = {
+            "command_id": "second",
+            "command_role": "handoff",
+            "argv": ["/usr/bin/false", "--version"],
+            "cwd": ".",
+            "input_digest": "b" * 64,
+            "deadline_seconds": 30,
+        }
+        plan_refs = [
+            self._put_scenario_artifact(
+                run_root,
+                "plan_verification_set",
+                {
+                    "kind": "commands",
+                    "candidate_head": first_head,
+                    "plan_index": 0,
+                    "commands": [first_command],
+                },
+            ),
+            self._put_scenario_artifact(
+                run_root,
+                "plan_verification_set",
+                {
+                    "kind": "commands",
+                    "candidate_head": final_head,
+                    "plan_index": 1,
+                    "commands": [first_command, second_command],
+                },
+            ),
+        ]
+        run_set_ref = self._put_scenario_artifact(
+            run_root,
+            "run_verification_set",
+            {
+                "kind": "commands",
+                "candidate_head": final_head,
+                "plan_set_digests": [
+                    plan_refs[0]["digest"],
+                    plan_refs[1]["digest"],
+                ],
+                "commands": [first_command, second_command],
+            },
+        )
+        handoff_refs = [
+            self._put_scenario_artifact(
+                run_root,
+                "plan_handoff",
+                {
+                    "plan_index": 0,
+                    "head_commit": first_head,
+                    "summary": "first",
+                    "verification_set_digest": plan_refs[0]["digest"],
+                },
+            ),
+            self._put_scenario_artifact(
+                run_root,
+                "plan_handoff",
+                {
+                    "plan_index": 1,
+                    "head_commit": final_head,
+                    "summary": "second",
+                    "verification_set_digest": run_set_ref["digest"],
+                },
+            ),
+        ]
+        receipt_refs = []
+        for command in (first_command, second_command):
+            receipt_refs.append(
+                self._put_scenario_artifact(
+                    run_root,
+                    "verification_receipt",
+                    {
+                        "identity": {
+                            "argv": command["argv"],
+                            "cwd": str(worktree.resolve()),
+                            "input_digest": command["input_digest"],
+                            "candidate_head": final_head,
+                        },
+                        "outcome": "success",
+                        "exit_code": 0,
+                    },
+                )
+            )
+        state = {
+            "format_version": 2,
+            "contract_version": 2,
+            "status": "ready_for_integration",
+            "integration": "not_observed",
+            "repository": {
+                "source_commit": source_head,
+                "worktree": str(worktree),
+            },
+            "plans": [
+                {
+                    "status": "implemented",
+                    "handoff_digest": handoff_refs[0]["digest"],
+                },
+                {
+                    "status": "implemented",
+                    "handoff_digest": handoff_refs[1]["digest"],
+                },
+            ],
+            "sessions": [
+                {
+                    "mode": "implementation",
+                    "plan_index": 0,
+                    "session_id": "session-a",
+                    "health": "healthy",
+                },
+                {
+                    "mode": "implementation",
+                    "plan_index": 1,
+                    "session_id": "session-b",
+                    "health": "healthy",
+                },
+            ],
+            "attempts": [],
+            "artifact_refs": [
+                *plan_refs,
+                run_set_ref,
+                *handoff_refs,
+                *receipt_refs,
+            ],
+            "failure": None,
+        }
+        return canary._ownership_evidence_from_run(
+            state=state,
+            run_root=run_root,
+            worktree=worktree,
+            plans=plans,
+        )
+
     def _assert_launcher_accepts_scenario_mode(self, mode):
         launcher = SCRIPT_DIR / "plan-runner-live-canary"
         with tempfile.TemporaryDirectory() as raw:
@@ -609,6 +779,214 @@ class SessionAndRunnerOutcomeTests(unittest.TestCase):
                 capture.read_text(encoding="utf-8").splitlines(),
                 ["--provider", "all", "--mode", mode],
             )
+
+    def _assert_fake_runner_process_quiesces(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            pgid_path = root / "provider-pgid"
+            runner = root / "fake-runner.py"
+            runner.write_text(
+                f"#!{sys.executable}\n"
+                "import os, pathlib, signal, subprocess, sys, time\n"
+                "provider = subprocess.Popen("
+                "['/bin/sleep', '300'], start_new_session=True)\n"
+                "pathlib.Path(sys.argv[1]).write_text(str(provider.pid))\n"
+                "def stop(_signum, _frame):\n"
+                "    try:\n"
+                "        os.killpg(provider.pid, signal.SIGTERM)\n"
+                "    except ProcessLookupError:\n"
+                "        pass\n"
+                "    provider.wait(timeout=5)\n"
+                "    raise SystemExit(2)\n"
+                "signal.signal(signal.SIGINT, stop)\n"
+                "while True:\n"
+                "    time.sleep(0.05)\n",
+                encoding="utf-8",
+            )
+            controller = subprocess.Popen(
+                [sys.executable, str(runner), str(pgid_path)],
+                cwd=root,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                start_new_session=True,
+            )
+            deadline = time.monotonic() + 5
+            while not pgid_path.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertTrue(pgid_path.exists())
+            provider_pgid = int(pgid_path.read_text(encoding="utf-8"))
+            result = canary._interrupt_controller(
+                controller, {provider_pgid}
+            )
+            self.assertEqual(result.returncode, 2)
+            self.assertFalse(result.timed_out)
+            self.assertTrue(canary._process_group_quiescent(provider_pgid))
+
+    def _exercise_interrupted_cycle_orchestration(
+        self, final_ownership, checkpoint
+    ):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            runner = root / "fake-runner.py"
+            runner.write_text(
+                f"#!{sys.executable}\n"
+                "import os, pathlib, signal, subprocess, sys, time\n"
+                "provider = subprocess.Popen("
+                "['/bin/sleep', '300'], start_new_session=True)\n"
+                "pathlib.Path(os.environ['FAKE_PROVIDER_PGID']).write_text("
+                "str(provider.pid))\n"
+                "def stop(_signum, _frame):\n"
+                "    try:\n"
+                "        os.killpg(provider.pid, signal.SIGTERM)\n"
+                "    except ProcessLookupError:\n"
+                "        pass\n"
+                "    provider.wait(timeout=5)\n"
+                "    raise SystemExit(2)\n"
+                "signal.signal(signal.SIGINT, stop)\n"
+                "while True:\n"
+                "    time.sleep(0.05)\n",
+                encoding="utf-8",
+            )
+            runner.chmod(0o755)
+
+            def cycle(drift):
+                cycle_root = root / ("drift" if drift else "resume")
+                cycle_root.mkdir()
+                home = cycle_root / "operator-home"
+                home.mkdir()
+                pgid_path = cycle_root / "provider-pgid"
+                state_holder = {}
+                run_root = cycle_root / "run"
+                run_root.mkdir()
+
+                def boundary(_home, _provider, controller, groups):
+                    deadline = time.monotonic() + 5
+                    while (
+                        not pgid_path.exists()
+                        and time.monotonic() < deadline
+                    ):
+                        time.sleep(0.01)
+                    self.assertTrue(pgid_path.exists())
+                    groups.add(int(pgid_path.read_text(encoding="utf-8")))
+                    worktree = cycle_root / "source"
+                    (worktree / "resume-marker.txt").write_text(
+                        "task 1 complete\n", encoding="utf-8"
+                    )
+                    canary._git(worktree, "add", "resume-marker.txt")
+                    canary._git(worktree, "commit", "-m", "task 1")
+                    (worktree / "dirty-checkpoint.txt").write_text(
+                        "resume this exact checkpoint\n", encoding="utf-8"
+                    )
+                    head = canary._git(worktree, "rev-parse", "HEAD")
+                    sealed = {**checkpoint, "head": head, "clean": False}
+                    interrupted = {
+                        "run_id": "fake-run",
+                        "status": "resumable",
+                        "failure": {"partial_worktree": sealed},
+                        "plans": [
+                            {
+                                "status": "implemented",
+                                "handoff_digest": "3" * 64,
+                            },
+                            {"status": "running", "handoff_digest": None},
+                        ],
+                        "sessions": [
+                            {
+                                "mode": "implementation",
+                                "plan_index": 0,
+                                "session_id": "first",
+                                "health": "healthy",
+                            },
+                            {
+                                "mode": "implementation",
+                                "plan_index": 1,
+                                "session_id": "healthy-session",
+                                "health": "healthy",
+                            },
+                        ],
+                        "attempts": [
+                            {
+                                "mode": "implementation",
+                                "plan_index": 1,
+                                "completed": True,
+                            }
+                        ],
+                    }
+                    final = json.loads(json.dumps(interrupted))
+                    if not drift:
+                        final["status"] = "ready_for_integration"
+                        final["failure"] = None
+                        final["plans"][1] = {
+                            "status": "implemented",
+                            "handoff_digest": "4" * 64,
+                        }
+                        final["sessions"].append(
+                            {
+                                "mode": "implementation",
+                                "plan_index": 1,
+                                "session_id": "healthy-session",
+                                "health": "healthy",
+                            }
+                        )
+                        final["attempts"].append(
+                            {
+                                "mode": "implementation",
+                                "plan_index": 1,
+                                "completed": True,
+                                "session_action": "resume_root",
+                            }
+                        )
+                    state_holder["states"] = [interrupted, final]
+                    return run_root, interrupted, worktree
+
+                def load_state(_home, _provider):
+                    states = state_holder["states"]
+                    return run_root, states.pop(0) if len(states) > 1 else states[0]
+
+                resume_result = canary.CommandResult(
+                    65 if drift else 0,
+                    "dirty worktree identity is not sealed" if drift else "",
+                    "",
+                    False,
+                )
+                environment = {
+                    "HOME": str(home),
+                    "PATH": os.environ["PATH"],
+                    "FAKE_PROVIDER_PGID": str(pgid_path),
+                }
+                with (
+                    mock.patch.object(
+                        canary, "_interruption_boundary", side_effect=boundary
+                    ),
+                    mock.patch.object(
+                        canary, "_load_latest_run", side_effect=load_state
+                    ),
+                    mock.patch.object(
+                        canary, "run_bounded", return_value=resume_result
+                    ),
+                    mock.patch.object(
+                        canary,
+                        "_ownership_evidence_from_run",
+                        return_value=final_ownership,
+                    ),
+                ):
+                    return canary._run_interrupted_once(
+                        provider="codex",
+                        root=cycle_root,
+                        runner=runner,
+                        environment=environment,
+                        drift=drift,
+                    )
+
+            combined = cycle(False)
+            combined.update(cycle(True))
+            valid, reason, head = canary.validate_interruption_resume_scenario(
+                combined
+            )
+            self.assertTrue(valid, reason)
+            self.assertEqual(head, final_ownership["observed_head"])
 
     @staticmethod
     def _ownership_scenario():
@@ -729,10 +1107,11 @@ class SessionAndRunnerOutcomeTests(unittest.TestCase):
 
     def test_multi_plan_ownership_scenario(self):
         self._assert_launcher_accepts_scenario_mode("ownership")
-        evidence = self._ownership_scenario()
+        with tempfile.TemporaryDirectory() as raw:
+            evidence = self._collect_ownership_scenario(Path(raw))
         self.assertEqual(
             canary.validate_multi_plan_ownership_scenario(evidence),
-            (True, None, "c" * 40),
+            (True, None, evidence["observed_head"]),
         )
 
         mutations = {
@@ -775,10 +1154,11 @@ class SessionAndRunnerOutcomeTests(unittest.TestCase):
 
         providers = []
 
-        def fake_probe(provider):
+        def fake_probe(provider, **kwargs):
             providers.append(provider)
-            valid, reason, head = canary.validate_multi_plan_ownership_scenario(
-                self._ownership_scenario()
+            self.assertEqual(kwargs, {"scenario_mode": "ownership"})
+            valid, reason, head = (
+                canary.validate_multi_plan_ownership_scenario(evidence)
             )
             self.assertTrue(valid, reason)
             return canary.normalized_result(
@@ -811,6 +1191,9 @@ class SessionAndRunnerOutcomeTests(unittest.TestCase):
 
     def test_interruption_resume_scenario(self):
         self._assert_launcher_accepts_scenario_mode("interruption")
+        self._assert_fake_runner_process_quiesces()
+        with tempfile.TemporaryDirectory() as raw:
+            final_ownership = self._collect_ownership_scenario(Path(raw))
         checkpoint = {
             "head": "b" * 40,
             "branch": "codex-plan/canary",
@@ -834,15 +1217,18 @@ class SessionAndRunnerOutcomeTests(unittest.TestCase):
             "completed_first_handoff_after": "3" * 64,
             "first_plan_session_count_before": 1,
             "first_plan_session_count_after": 1,
-            "final_ownership": self._ownership_scenario(),
+            "final_ownership": final_ownership,
             "drift_rejected": True,
             "drift_reason_code": "dirty_checkpoint_drift",
             "provider_launch_count_before_drift": 3,
             "provider_launch_count_after_drift": 3,
         }
+        self._exercise_interrupted_cycle_orchestration(
+            final_ownership, checkpoint
+        )
         self.assertEqual(
             canary.validate_interruption_resume_scenario(evidence),
-            (True, None, "c" * 40),
+            (True, None, final_ownership["observed_head"]),
         )
 
         mutations = {
@@ -883,28 +1269,50 @@ class SessionAndRunnerOutcomeTests(unittest.TestCase):
                 self.assertFalse(valid)
                 self.assertIsInstance(reason, str)
 
-        providers = []
+        cycles = []
 
-        def fake_probe(provider):
-            providers.append(provider)
-            valid, reason, head = canary.validate_interruption_resume_scenario(
-                evidence
-            )
-            self.assertTrue(valid, reason)
-            return canary.normalized_result(
-                provider=provider,
-                mode="interruption",
-                status="passed",
-                provider_version=f"{provider}-test",
-                session_action="sigint_then_recorded_resume",
-                final_head=head,
-                elapsed=0,
-            )
+        def fake_cycle(**kwargs):
+            cycles.append((kwargs["provider"], kwargs["drift"]))
+            if kwargs["drift"]:
+                return {
+                    key: evidence[key]
+                    for key in (
+                        "drift_rejected",
+                        "drift_reason_code",
+                        "provider_launch_count_before_drift",
+                        "provider_launch_count_after_drift",
+                    )
+                }
+            return {
+                key: evidence[key]
+                for key in evidence
+                if not key.startswith("drift_")
+                and not key.startswith("provider_launch_count_")
+            }
 
         with (
             mock.patch.object(canary, "require_runtime"),
             mock.patch.object(
-                canary, "probe_session", side_effect=fake_probe
+                canary,
+                "_runner_environment",
+                side_effect=lambda _provider, home: {
+                    "HOME": str(home),
+                    "PATH": os.environ["PATH"],
+                },
+            ),
+            mock.patch.object(
+                canary,
+                "_provider_version",
+                side_effect=lambda provider, _root, _env: (
+                    f"{provider}-test",
+                    None,
+                ),
+            ),
+            mock.patch.object(
+                canary, "claude_auth_available", return_value=True
+            ),
+            mock.patch.object(
+                canary, "_run_interrupted_once", side_effect=fake_cycle
             ),
             mock.patch("sys.stdout", new_callable=io.StringIO) as output,
         ):
@@ -912,7 +1320,15 @@ class SessionAndRunnerOutcomeTests(unittest.TestCase):
                 ["--provider", "all", "--mode", "interruption"]
             )
         self.assertEqual(code, 0)
-        self.assertEqual(providers, ["codex", "claude"])
+        self.assertEqual(
+            cycles,
+            [
+                ("codex", False),
+                ("codex", True),
+                ("claude", False),
+                ("claude", True),
+            ],
+        )
         values = [json.loads(line) for line in output.getvalue().splitlines()]
         self.assertEqual(
             [(value["provider"], value["mode"]) for value in values],
