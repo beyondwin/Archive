@@ -20,6 +20,9 @@
   candidate, and worktree identity.
 - Adds provider-backed `ownership` and `interruption` canaries for the
   `2.0.0` release gate.
+- Lets disposable canaries reuse an already-authorized macOS Keychain OAuth
+  credential while bypassing stale AgentLens shims; provider children preserve
+  that OAuth credential but continue to remove nested session credentials.
 - Version 1 state is inspect-only. Active execution requires Version 2.
 
 ## 1.0.0 - 2026-07-23

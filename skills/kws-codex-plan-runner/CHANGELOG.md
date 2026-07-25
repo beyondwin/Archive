@@ -21,6 +21,9 @@
   candidate, and worktree identity.
 - Adds provider-backed `ownership` and `interruption` canaries for the
   `2.0.0` release gate.
+- Keeps the operator's effective `CODEX_HOME` visible in those disposable
+  canaries so both existing authentication and the required public SDD
+  capabilities remain available without copying provider state.
 - Version 1 state is inspect-only. Active execution requires Version 2.
 
 ## 1.1.0 - 2026-07-25

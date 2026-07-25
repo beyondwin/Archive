@@ -452,46 +452,114 @@ class ProcessAndParserTests(unittest.TestCase):
 
 
 class IsolationTests(unittest.TestCase):
-    def test_codex_auth_is_copied_to_private_disposable_home_only(self):
+    def test_codex_preserves_effective_home_for_auth_and_sdd_capabilities(self):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             operator = root / "operator"
             isolated = root / "isolated"
-            (operator / ".codex").mkdir(parents=True)
-            auth = operator / ".codex/auth.json"
+            codex_home = operator / "effective-codex-home"
+            skill = codex_home / "skills/subagent-driven-development/SKILL.md"
+            skill.parent.mkdir(parents=True)
+            skill.write_text("capability", encoding="utf-8")
+            auth = codex_home / "auth.json"
             auth.write_text('{"token":"secret"}', encoding="utf-8")
             auth.chmod(0o600)
             env = canary.isolated_provider_environment(
                 "codex",
                 isolated,
                 operator_home=operator,
-                source_env={"PATH": "/usr/bin:/bin", "OPENAI_API_KEY": "env-secret"},
+                source_env={
+                    "PATH": "/usr/bin:/bin",
+                    "CODEX_HOME": str(codex_home),
+                    "OPENAI_API_KEY": "env-secret",
+                },
             )
-            copied = isolated / ".codex/auth.json"
             self.assertEqual(env["HOME"], str(isolated))
-            self.assertEqual(env["CODEX_HOME"], str(isolated / ".codex"))
-            self.assertEqual(copied.read_text(encoding="utf-8"), '{"token":"secret"}')
-            self.assertEqual(stat.S_IMODE(copied.stat().st_mode), 0o600)
+            self.assertEqual(env["CODEX_HOME"], str(codex_home))
             self.assertEqual(auth.read_text(encoding="utf-8"), '{"token":"secret"}')
-            self.assertFalse((isolated / ".codex/history.jsonl").exists())
+            self.assertEqual(skill.read_text(encoding="utf-8"), "capability")
+            self.assertFalse((isolated / ".codex").exists())
+
+    def test_codex_rejects_non_absolute_effective_home(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            for configured in ("relative-codex-home", "~/codex-home"):
+                with self.subTest(configured=configured):
+                    with self.assertRaises(canary.CanaryError) as raised:
+                        canary.isolated_provider_environment(
+                            "codex",
+                            root / configured.replace("/", "-"),
+                            operator_home=root / "operator",
+                            source_env={
+                                "HOME": str(root / "operator"),
+                                "PATH": "/usr/bin:/bin",
+                                "CODEX_HOME": configured,
+                            },
+                        )
+                    self.assertEqual(
+                        raised.exception.reason_code,
+                        "provider_auth_blocked",
+                    )
 
     def test_claude_uses_empty_disposable_config_and_preserves_env_auth(self):
         with tempfile.TemporaryDirectory() as raw:
             isolated = Path(raw) / "isolated"
-            env = canary.isolated_provider_environment(
-                "claude",
-                isolated,
-                operator_home=Path(raw) / "operator",
-                source_env={
-                    "PATH": "/usr/bin:/bin",
-                    "ANTHROPIC_API_KEY": "env-secret",
-                },
-            )
+            with mock.patch.object(
+                canary, "_claude_keychain_oauth_token"
+            ) as keychain:
+                env = canary.isolated_provider_environment(
+                    "claude",
+                    isolated,
+                    operator_home=Path(raw) / "operator",
+                    source_env={
+                        "PATH": "/usr/bin:/bin",
+                        "ANTHROPIC_API_KEY": "env-secret",
+                    },
+                )
             config = isolated / ".claude"
             self.assertEqual(env["HOME"], str(isolated))
             self.assertEqual(env["CLAUDE_CONFIG_DIR"], str(config))
             self.assertEqual(env["ANTHROPIC_API_KEY"], "env-secret")
             self.assertEqual(list(config.iterdir()), [])
+            keychain.assert_not_called()
+
+    def test_claude_uses_keychain_oauth_and_bypasses_agentlens_shim(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            operator = root / "operator"
+            isolated = root / "isolated"
+            shim = operator / ".agentlens/shims"
+            source_path = os.pathsep.join(
+                (str(shim), "/opt/homebrew/bin", "/usr/bin")
+            )
+            with mock.patch.object(
+                canary,
+                "_claude_keychain_oauth_token",
+                return_value="oauth-secret",
+            ) as keychain:
+                env = canary.isolated_provider_environment(
+                    "claude",
+                    isolated,
+                    operator_home=operator,
+                    source_env={
+                        "HOME": str(operator),
+                        "GITHUB_TOKEN": "unrelated-secret",
+                        "PATH": source_path,
+                        "USER": "operator",
+                    },
+                )
+            self.assertEqual(
+                env["PATH"],
+                os.pathsep.join(("/opt/homebrew/bin", "/usr/bin")),
+            )
+            self.assertEqual(env["CLAUDE_CODE_OAUTH_TOKEN"], "oauth-secret")
+            self.assertEqual(env["CLAUDE_CONFIG_DIR"], str(isolated / ".claude"))
+            keychain.assert_called_once()
+            self.assertEqual(
+                keychain.call_args.args[0]["HOME"],
+                str(operator),
+            )
+            self.assertNotIn("GITHUB_TOKEN", keychain.call_args.args[0])
 
     def test_claude_without_isolated_env_auth_blocks_before_provider_session(self):
         with (

@@ -4,7 +4,6 @@ import unittest
 from pathlib import Path
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
-REPO_ROOT = SKILL_ROOT.parents[1]
 sys.path.insert(0, str(SKILL_ROOT / "scripts"))
 
 from plan_runner.contracts import (  # noqa: E402
@@ -99,21 +98,13 @@ class ContractVocabularyTest(unittest.TestCase):
         self.assertEqual(RUNNER_RUNTIME_CONTRACT["requires_python"], ">=3.13,<3.14")
         self.assertEqual({item.name.lower(): int(item) for item in ExitCode}["ready"], 0)
 
-    def test_versioned_contract_seals_the_volatile_ref_policy(self):
-        fixture = json.loads(
-            (REPO_ROOT / "scripts/agent/fixtures/plan-runner-contract-v1.json")
-            .read_text(encoding="utf-8")
+    def test_provider_local_contract_seals_the_volatile_ref_policy(self):
+        self.assertEqual(VOLATILE_REF_POLICY_VERSION, 1)
+        prefixes = (
+            "refs/codex/turn-diffs/captures/",
+            "refs/codex/turn-diffs/checkpoints/",
         )
-        policy = fixture["volatile_ref_policy"]
-        self.assertEqual(VOLATILE_REF_POLICY_VERSION, policy["version"])
-        self.assertEqual(
-            [
-                "refs/codex/turn-diffs/captures/",
-                "refs/codex/turn-diffs/checkpoints/",
-            ],
-            policy["prefixes"],
-        )
-        for prefix in policy["prefixes"]:
+        for prefix in prefixes:
             with self.subTest(prefix=prefix):
                 self.assertTrue(is_volatile_ref(f"{prefix}candidate"))
         for protected in (
