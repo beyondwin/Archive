@@ -401,7 +401,7 @@ class StateStoreTest(unittest.TestCase):
                 "completed": True,
                 "outcome": "failed",
                 "post_provider_worktree": checkpoint,
-                "next_strategy": "fresh_root_full_diff",
+                "next_strategy": "fresh_root",
                 "previous_failed_strategy": None,
             }
         )
@@ -410,7 +410,7 @@ class StateStoreTest(unittest.TestCase):
             "partial_worktree": checkpoint,
             "partial_attempt_id": state["attempts"][-1]["attempt_id"],
             "partial_mode": "implementation",
-            "next_strategy": "fresh_root_full_diff",
+            "next_strategy": "fresh_root",
         }
         store.commit(state)
         self.assertEqual(

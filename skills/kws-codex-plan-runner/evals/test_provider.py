@@ -25,10 +25,6 @@ SDD_RELATIVE_PATHS = (
     Path("skills/subagent-driven-development/scripts/sdd-workspace"),
     Path("skills/subagent-driven-development/scripts/task-brief"),
     Path("skills/subagent-driven-development/scripts/review-package"),
-    Path("skills/subagent-driven-development/implementer-prompt.md"),
-    Path("skills/subagent-driven-development/task-reviewer-prompt.md"),
-    Path("skills/subagent-driven-development/re-review-prompt.md"),
-    Path("skills/requesting-code-review/code-reviewer.md"),
 )
 
 
@@ -147,10 +143,21 @@ class CodexProviderTest(unittest.TestCase):
         return json.loads(self.log.read_text(encoding="utf-8").splitlines()[-1])
 
     def test_private_sdd_layout_is_not_capability_contract(self):
-        for relative in SDD_RELATIVE_PATHS[4:]:
-            (self.codex_home / relative).unlink()
+        private_paths = (
+            Path("skills/subagent-driven-development/implementer-prompt.md"),
+            Path("skills/subagent-driven-development/task-reviewer-prompt.md"),
+            Path("skills/subagent-driven-development/re-review-prompt.md"),
+            Path("skills/requesting-code-review/code-reviewer.md"),
+        )
+        self.assertTrue(
+            all(
+                not (self.codex_home / relative).exists()
+                for relative in private_paths
+            )
+        )
         outcome = self.launch("initial")
         self.assertEqual(outcome.kind, "implemented")
+        self.assertTrue(self.record()["sdd_capabilities_visible"])
 
 
     def test_builds_exact_initial_argv_without_implicit_session_flags(self):
@@ -491,11 +498,10 @@ class CodexProviderTest(unittest.TestCase):
         )
         self.assertEqual(outcome.kind, "implemented")
 
-    def test_missing_sdd_prompt_or_reviewer_template_blocks_before_launch(self):
-        prompt_members = SDD_RELATIVE_PATHS[4:]
-        for index, relative in enumerate(prompt_members):
+    def test_each_public_sdd_capability_is_required_before_launch(self):
+        for index, relative in enumerate(SDD_RELATIVE_PATHS):
             with self.subTest(relative=str(relative)):
-                home = self.root / f"missing-prompt-{index}"
+                home = self.root / f"missing-public-capability-{index}"
                 self.make_codex_home(home)
                 (home / relative).unlink()
                 environment = self.environment("initial")
