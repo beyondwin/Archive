@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import os
 import stat
@@ -26,6 +27,7 @@ from cpe_runtime.state import DocumentSource, RunStore
 
 
 SESSION_ID = "11111111-1111-4111-8111-111111111111"
+NEW_SESSION_ID = "22222222-2222-4222-8222-222222222222"
 ControllerAction = Callable[[ControllerRequest], str | None]
 
 
@@ -43,6 +45,8 @@ class FakeController:
         self.process_class = "completed"
         self.exit_code = 0
         self.resume_capsule: ResumeCapsule | None = None
+        self.outcomes: list[ControllerOutcome] = []
+        self.suppress_session_callback = False
 
     @staticmethod
     def _run_id(prompt: str) -> str:
@@ -85,6 +89,16 @@ class FakeController:
 
         on_process_started(4242, 4242)
         self.callback_states.append(self._opened_state(run_id))
+        if self.outcomes:
+            outcome = self.outcomes.pop(0)
+            if (
+                request.session_id is None
+                and outcome.session_id is not None
+                and not self.suppress_session_callback
+            ):
+                on_session_id(outcome.session_id)
+                self.callback_states.append(self._opened_state(run_id))
+            return outcome
         on_session_id(SESSION_ID)
         self.callback_states.append(self._opened_state(run_id))
 
@@ -214,6 +228,477 @@ class RuntimeContractTests(unittest.TestCase):
 
     def read_handoff(self, run_id: str) -> dict[str, object]:
         return json.loads(self.handoff_path(run_id).read_text(encoding="utf-8"))
+
+    def completed(self) -> TerminalEnvelope:
+        return TerminalEnvelope("completed", self.base, None, None)
+
+    def interrupted(
+        self,
+        note: str = "Continue from the existing Superpowers and Git state.",
+    ) -> TerminalEnvelope:
+        return TerminalEnvelope(
+            "interrupted",
+            self.base,
+            ResumeCapsule(
+                self.base,
+                "a" * 64,
+                note,
+                ("notes/evidence.txt",),
+            ),
+            None,
+        )
+
+    def outcome(
+        self,
+        process_class: str,
+        *,
+        terminal: TerminalEnvelope | None,
+        session_id: str | None = SESSION_ID,
+    ) -> ControllerOutcome:
+        provider_code = None
+        normalized_class = process_class
+        exit_code = 0 if process_class == "completed" else 1
+        if process_class == "session_unavailable":
+            normalized_class = "failed"
+            provider_code = "session_unavailable"
+        elif process_class in {"auth", "quota", "provider_unavailable"}:
+            normalized_class = "blocked"
+            provider_code = process_class
+        elif process_class == "transport":
+            normalized_class = "failed"
+            provider_code = "transport"
+        elif process_class == "generic_nonzero":
+            normalized_class = "failed"
+            provider_code = "unknown"
+            exit_code = 7
+        elif process_class == "timeout":
+            normalized_class = "interrupted"
+            provider_code = "transport"
+            exit_code = 124
+        elif process_class == "interrupted":
+            exit_code = 130
+        return ControllerOutcome(
+            session_id,
+            exit_code,
+            normalized_class,
+            terminal,
+            provider_code,
+        )
+
+    def create_interrupted_run(
+        self,
+        note: str = "Continue from the existing Superpowers and Git state.",
+    ) -> str:
+        self.controller.claim = "interrupted"
+        self.controller.process_class = "interrupted"
+        self.controller.exit_code = 130
+        self.controller.resume_capsule = self.interrupted(note).resume_capsule
+        result = self.run_once()
+        self.controller.requests.clear()
+        self.controller.callback_states.clear()
+        return str(result["run_id"])
+
+    def create_generation_one_interrupted_run(self) -> str:
+        run_id = self.create_interrupted_run()
+        self.controller.outcomes = [
+            self.outcome("session_unavailable", terminal=None),
+            self.outcome(
+                "interrupted",
+                terminal=self.interrupted(),
+                session_id=NEW_SESSION_ID,
+            ),
+        ]
+        result = self.runtime.resume(run_id=run_id)
+        self.assertEqual(result["status"], "interrupted")
+        self.controller.requests.clear()
+        self.controller.callback_states.clear()
+        return run_id
+
+    def write_legacy_state(
+        self,
+        *,
+        format_version: int,
+        run_id: str | None = None,
+    ) -> Path:
+        selected = run_id or f"cpe-{format_version:016x}"
+        root = self.codex_home / "orchestrator" / selected
+        root.mkdir(parents=True)
+        state = root / "state.json"
+        state.write_text(
+            json.dumps({"format_version": format_version, "opaque": {"task": "legacy"}}),
+            encoding="utf-8",
+        )
+        (root / "evidence.bin").write_bytes(b"legacy evidence\x00")
+        return state
+
+    @staticmethod
+    def hash_tree(root: Path) -> str:
+        digest = hashlib.sha256()
+        for path in sorted(root.rglob("*")):
+            metadata = path.lstat()
+            digest.update(str(path.relative_to(root)).encode("utf-8"))
+            digest.update(f"{metadata.st_mode}:{metadata.st_size}:{metadata.st_mtime_ns}".encode())
+            if path.is_file():
+                digest.update(path.read_bytes())
+        return digest.hexdigest()
+
+    def test_resume_uses_saved_session_before_any_fallback(self) -> None:
+        run_id = self.create_interrupted_run()
+        original = self.store(run_id).state.controller_session_id
+        self.controller.outcomes = [
+            self.outcome("completed", terminal=self.completed(), session_id=original),
+        ]
+
+        result = self.runtime.resume(run_id=run_id)
+
+        self.assertEqual(result["status"], "handed_off")
+        self.assertEqual(self.controller.requests[-1].session_id, original)
+        self.assertEqual(self.store(run_id).state.controller_generation, 0)
+        self.assertFalse(self.store(run_id).state.fresh_fallback_used)
+
+    def test_explicit_missing_session_allows_one_fresh_fallback(self) -> None:
+        run_id = self.create_interrupted_run()
+        self.controller.outcomes = [
+            self.outcome("session_unavailable", terminal=None),
+            self.outcome(
+                "completed",
+                terminal=self.completed(),
+                session_id=NEW_SESSION_ID,
+            ),
+        ]
+
+        result = self.runtime.resume(run_id=run_id)
+
+        self.assertEqual(result["status"], "handed_off")
+        self.assertIsNotNone(self.controller.requests[0].session_id)
+        self.assertIsNone(self.controller.requests[1].session_id)
+        state = self.store(run_id).state
+        self.assertEqual(state.controller_generation, 1)
+        self.assertTrue(state.fresh_fallback_used)
+
+    def test_second_session_loss_blocks_without_launching_generation_two(self) -> None:
+        run_id = self.create_generation_one_interrupted_run()
+        self.controller.outcomes = [
+            self.outcome(
+                "session_unavailable",
+                terminal=None,
+                session_id=NEW_SESSION_ID,
+            ),
+        ]
+
+        result = self.runtime.resume(run_id=run_id)
+
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(len(self.controller.requests), 1)
+        self.assertEqual(self.store(run_id).state.controller_generation, 1)
+
+    def test_legacy_inspect_is_byte_for_byte_read_only(self) -> None:
+        legacy = self.write_legacy_state(format_version=3)
+        before = self.hash_tree(legacy.parent)
+
+        result = self.runtime.inspect(run_id=legacy.parent.name)
+
+        after = self.hash_tree(legacy.parent)
+        self.assertEqual(result["status"], "legacy_read_only")
+        self.assertEqual(result["format_version"], 3)
+        self.assertEqual(after, before)
+
+    def test_initial_session_loss_does_not_trigger_fallback(self) -> None:
+        self.controller.outcomes = [
+            self.outcome(
+                "session_unavailable",
+                terminal=None,
+                session_id=None,
+            ),
+        ]
+
+        result = self.run_once()
+
+        self.assertNotEqual(result["status"], "handed_off")
+        self.assertEqual(len(self.controller.requests), 1)
+        state = self.store(str(result["run_id"])).state
+        self.assertEqual(state.controller_generation, 0)
+        self.assertFalse(state.fresh_fallback_used)
+
+    def test_blocked_auth_and_quota_do_not_guess_credentials_or_fallback(self) -> None:
+        for provider_code in ("auth", "quota"):
+            with self.subTest(provider_code=provider_code):
+                run_id = self.create_interrupted_run()
+                self.controller.outcomes = [
+                    self.outcome(provider_code, terminal=None),
+                ]
+
+                result = self.runtime.resume(run_id=run_id)
+
+                self.assertEqual(result["status"], "blocked")
+                self.assertEqual(len(self.controller.requests), 1)
+                self.assertEqual(self.controller.requests[0].mode, "resume")
+                state = self.store(run_id).state
+                self.assertEqual(state.controller_generation, 0)
+                self.assertFalse(state.fresh_fallback_used)
+
+    def test_other_failure_classes_never_trigger_fresh_fallback(self) -> None:
+        cases = (
+            ("provider_unavailable", "blocked"),
+            ("generic_nonzero", "failed"),
+            ("invalid_envelope", "interrupted"),
+            ("timeout", "interrupted"),
+        )
+        for process_class, expected_status in cases:
+            with self.subTest(process_class=process_class):
+                run_id = self.create_interrupted_run()
+                self.controller.outcomes = [
+                    self.outcome(process_class, terminal=None),
+                ]
+
+                result = self.runtime.resume(run_id=run_id)
+
+                self.assertEqual(result["status"], expected_status)
+                self.assertEqual(len(self.controller.requests), 1)
+                state = self.store(run_id).state
+                self.assertEqual(state.controller_generation, 0)
+                self.assertFalse(state.fresh_fallback_used)
+
+    def test_transport_failure_requires_an_explicit_resume_for_next_launch(self) -> None:
+        run_id = self.create_interrupted_run()
+        self.controller.outcomes = [
+            self.outcome("transport", terminal=None),
+        ]
+
+        first = self.runtime.resume(run_id=run_id)
+
+        self.assertEqual(first["status"], "interrupted")
+        self.assertEqual(len(self.controller.requests), 1)
+        self.controller.outcomes = [
+            self.outcome("completed", terminal=self.completed()),
+        ]
+
+        second = self.runtime.resume(run_id=run_id)
+
+        self.assertEqual(second["status"], "handed_off")
+        self.assertEqual(len(self.controller.requests), 2)
+        self.assertEqual(self.store(run_id).state.controller_generation, 0)
+
+    def test_transport_interruption_preserves_capsule_for_later_fallback(self) -> None:
+        note = "PRESERVE-OPAQUE-CAPSULE"
+        run_id = self.create_interrupted_run(note)
+        self.controller.outcomes = [self.outcome("transport", terminal=None)]
+
+        self.runtime.resume(run_id=run_id)
+
+        self.assertEqual(self.store(run_id).state.resume_capsule["note"], note)
+        self.controller.outcomes = [
+            self.outcome("session_unavailable", terminal=None),
+            self.outcome(
+                "completed",
+                terminal=self.completed(),
+                session_id=NEW_SESSION_ID,
+            ),
+        ]
+
+        result = self.runtime.resume(run_id=run_id)
+
+        self.assertEqual(result["status"], "handed_off")
+        self.assertIn(note, self.controller.requests[-1].prompt)
+
+    def test_fallback_prompt_preserves_contract_and_bounded_recovery_facts(self) -> None:
+        note = "OPAQUE-CAPSULE-NOTE"
+        run_id = self.create_interrupted_run(note)
+        before = self.store(run_id)
+        worktree = Path(before.manifest.worktree)
+        (worktree / "current-status.tmp").write_text("current\n", encoding="utf-8")
+        current_status = subprocess.run(
+            [
+                "git",
+                "status",
+                "--porcelain=v1",
+                "-z",
+                "--untracked-files=all",
+            ],
+            cwd=worktree,
+            check=True,
+            capture_output=True,
+        ).stdout
+        current_status_digest = hashlib.sha256(current_status).hexdigest()
+        self.assertNotEqual(current_status_digest, before.state.status_digest)
+        self.controller.outcomes = [
+            self.outcome("session_unavailable", terminal=None),
+            self.outcome(
+                "completed",
+                terminal=self.completed(),
+                session_id=NEW_SESSION_ID,
+            ),
+        ]
+
+        result = self.runtime.resume(run_id=run_id)
+
+        self.assertEqual(result["status"], "handed_off")
+        fallback = self.controller.requests[1]
+        self.assertEqual(fallback.mode, "fallback")
+        self.assertEqual(fallback.generation, 1)
+        self.assertIsNone(fallback.session_id)
+        self.assertEqual(fallback.worktree, Path(before.manifest.worktree))
+        self.assertEqual(fallback.sandbox, before.manifest.sandbox)
+        self.assertEqual(fallback.git_identity, before.manifest.git_identity)
+        for record in before.manifest.documents:
+            self.assertIn(record.snapshot_path, fallback.prompt)
+        for fact in (
+            before.manifest.branch,
+            before.manifest.worktree,
+            before.manifest.base_commit,
+            before.state.last_observed_head,
+            current_status_digest,
+            note,
+            '"process_class":"session_unavailable"',
+            '"provider_code":"session_unavailable"',
+        ):
+            self.assertIn(fact, fallback.prompt)
+        for forbidden in (
+            "completed_task_ids",
+            "current_task_id",
+            "final_review",
+            "verification",
+        ):
+            self.assertNotIn(forbidden, fallback.prompt)
+
+    def test_healthy_same_session_resume_ignores_capsule(self) -> None:
+        note = "DO-NOT-SEND-ON-HEALTHY-RESUME"
+        run_id = self.create_interrupted_run(note)
+        self.controller.outcomes = [
+            self.outcome("completed", terminal=self.completed()),
+        ]
+
+        result = self.runtime.resume(run_id=run_id)
+
+        self.assertEqual(result["status"], "handed_off")
+        self.assertEqual(self.controller.requests[0].mode, "resume")
+        self.assertNotIn(note, self.controller.requests[0].prompt)
+
+    def test_generation_one_session_replaces_generation_zero_after_callback(self) -> None:
+        run_id = self.create_interrupted_run()
+        self.controller.outcomes = [
+            self.outcome("session_unavailable", terminal=None),
+            self.outcome(
+                "interrupted",
+                terminal=self.interrupted(),
+                session_id=NEW_SESSION_ID,
+            ),
+        ]
+
+        result = self.runtime.resume(run_id=run_id)
+
+        self.assertEqual(result["status"], "interrupted")
+        self.assertIsNone(self.controller.callback_states[-2].controller_session_id)
+        self.assertEqual(
+            self.controller.callback_states[-2].controller_generation,
+            1,
+        )
+        self.assertEqual(
+            self.controller.callback_states[-1].controller_session_id,
+            NEW_SESSION_ID,
+        )
+        self.assertEqual(
+            self.store(run_id).state.controller_session_id,
+            NEW_SESSION_ID,
+        )
+
+    def test_generation_one_outcome_session_is_not_saved_without_callback(self) -> None:
+        run_id = self.create_interrupted_run()
+        self.controller.suppress_session_callback = True
+        self.controller.outcomes = [
+            self.outcome("session_unavailable", terminal=None),
+            self.outcome(
+                "interrupted",
+                terminal=self.interrupted(),
+                session_id=NEW_SESSION_ID,
+            ),
+        ]
+
+        result = self.runtime.resume(run_id=run_id)
+
+        self.assertEqual(result["status"], "interrupted")
+        state = self.store(run_id).state
+        self.assertEqual(state.controller_generation, 1)
+        self.assertIsNone(state.controller_session_id)
+
+    def test_repeated_explicit_resumes_never_create_generation_two(self) -> None:
+        run_id = self.create_generation_one_interrupted_run()
+        for _attempt in range(2):
+            self.controller.outcomes = [
+                self.outcome(
+                    "session_unavailable",
+                    terminal=None,
+                    session_id=NEW_SESSION_ID,
+                ),
+            ]
+            result = self.runtime.resume(run_id=run_id)
+            self.assertEqual(result["status"], "blocked")
+
+        self.assertEqual(len(self.controller.requests), 2)
+        self.assertTrue(
+            all(request.generation == 1 for request in self.controller.requests),
+        )
+        state = self.store(run_id).state
+        self.assertEqual(state.controller_generation, 1)
+        self.assertTrue(state.fresh_fallback_used)
+
+    def test_v5_inspect_is_strict_read_only_and_does_not_create_a_lock(self) -> None:
+        run_id = self.create_interrupted_run()
+        store = self.store(run_id)
+        store.lock_path.unlink()
+        before = (
+            store.manifest_path.read_bytes(),
+            store.state_path.read_bytes(),
+            store.manifest_path.stat().st_mtime_ns,
+            store.state_path.stat().st_mtime_ns,
+        )
+
+        result = self.runtime.inspect(run_id=run_id)
+
+        after = (
+            store.manifest_path.read_bytes(),
+            store.state_path.read_bytes(),
+            store.manifest_path.stat().st_mtime_ns,
+            store.state_path.stat().st_mtime_ns,
+        )
+        self.assertEqual(result["format_version"], 5)
+        self.assertEqual(result["status"], "interrupted")
+        self.assertEqual(after, before)
+        self.assertFalse(store.lock_path.exists())
+
+    def test_legacy_formats_one_through_four_are_read_only(self) -> None:
+        for format_version in range(1, 5):
+            with self.subTest(format_version=format_version):
+                legacy = self.write_legacy_state(format_version=format_version)
+                before = self.hash_tree(legacy.parent)
+
+                result = self.runtime.inspect(run_id=legacy.parent.name)
+
+                self.assertEqual(
+                    result,
+                    {
+                        "status": "legacy_read_only",
+                        "format_version": format_version,
+                        "run_root": str(legacy.parent.resolve()),
+                        "recommended_action": (
+                            "preserve artifacts; use explicit --adopt-worktree "
+                            "for continuation"
+                        ),
+                    },
+                )
+                self.assertEqual(self.hash_tree(legacy.parent), before)
+
+    def test_invalid_v5_fails_without_using_a_legacy_run(self) -> None:
+        run_id = self.create_interrupted_run()
+        store = self.store(run_id)
+        legacy = self.write_legacy_state(format_version=3, run_id=run_id)
+        before = self.hash_tree(legacy.parent)
+        store.state_path.write_text('{"format_version":5}', encoding="utf-8")
+
+        with self.assertRaisesRegex(ValueError, "format-5 state"):
+            self.runtime.inspect(run_id=run_id)
+
+        self.assertEqual(self.hash_tree(legacy.parent), before)
 
     def test_run_passes_all_opaque_documents_to_one_controller_in_order(self) -> None:
         result = self.run_once()

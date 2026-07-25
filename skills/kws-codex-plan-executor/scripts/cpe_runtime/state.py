@@ -23,10 +23,12 @@ SHA256 = re.compile(r"^[0-9a-f]{64}$")
 MAX_RESUME_NOTE_BYTES = 2048
 MAX_EVIDENCE_REFS = 16
 _MAX_PERSISTED_JSON_BYTES = 16 * 1024 * 1024
+_MAX_LEGACY_STATE_BYTES = 64 * 1024
 _MANIFEST_ERROR = "format-5 manifest is invalid"
 _STATE_ERROR = "format-5 state is invalid"
 _RESUME_ERROR = "resume capsule is invalid"
 _UNAVAILABLE_ERROR = "format-5 run state is unavailable"
+_LEGACY_ERROR = "legacy run state is unavailable"
 _RESUME_KEYS = ("head_commit", "worktree_status_digest", "note", "evidence_refs")
 def _require(condition: bool, error: str) -> None:
     if not condition:
@@ -54,7 +56,8 @@ def _require_utf8_bytes(value: object, *, maximum: int, name: str, minimum: int 
     return value
 def _json_bytes(payload: Mapping[str, object]) -> bytes:
     return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-def _read_private_json(path: Path) -> object:
+def _read_private_json(path: Path, maximum: int = _MAX_PERSISTED_JSON_BYTES,
+                       error: str = _UNAVAILABLE_ERROR) -> object:
     no_follow = getattr(os, "O_NOFOLLOW", None)
     _require(isinstance(no_follow, int) and no_follow != 0, _UNAVAILABLE_ERROR)
     descriptor: int | None = None
@@ -63,19 +66,28 @@ def _read_private_json(path: Path) -> object:
         metadata = os.fstat(descriptor)
         _require(
             stat.S_ISREG(metadata.st_mode)
-            and metadata.st_size <= _MAX_PERSISTED_JSON_BYTES,
-            _UNAVAILABLE_ERROR,
+            and metadata.st_size <= maximum,
+            error,
         )
         with os.fdopen(descriptor, "rb", closefd=True) as stream:
             descriptor = None
-            payload = stream.read(_MAX_PERSISTED_JSON_BYTES + 1)
-        _require(len(payload) <= _MAX_PERSISTED_JSON_BYTES, _UNAVAILABLE_ERROR)
+            payload = stream.read(maximum + 1)
+        _require(len(payload) <= maximum, error)
         return json.loads(payload.decode("utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError, RecursionError) as exc:
-        raise ValueError(_UNAVAILABLE_ERROR) from exc
+        raise ValueError(error) from exc
     finally:
         if descriptor is not None:
             os.close(descriptor)
+def read_legacy_format(codex_home: Path, run_id: str) -> tuple[int, Path]:
+    """Read only the root version from the exact bounded legacy state path."""
+    _require(isinstance(codex_home, Path) and _matches(run_id, RUN_ID), _LEGACY_ERROR)
+    root = codex_home.resolve() / "orchestrator" / run_id
+    payload = _read_private_json(root / "state.json", _MAX_LEGACY_STATE_BYTES, _LEGACY_ERROR)
+    _require(isinstance(payload, dict), _LEGACY_ERROR)
+    version = payload.get("format_version")
+    _require(_integer(version) and version in (1, 2, 3, 4), _LEGACY_ERROR)
+    return version, root
 def _write_all(descriptor: int, payload: bytes) -> None:
     remaining = memoryview(payload)
     while remaining:

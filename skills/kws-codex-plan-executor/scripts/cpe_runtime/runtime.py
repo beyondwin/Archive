@@ -1,6 +1,6 @@
 """One durable CPE run around one Superpowers root controller."""
 from __future__ import annotations
-import os, secrets, subprocess
+import json, os, secrets, subprocess
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,7 +11,8 @@ from .git import (
     _common_repository, _git, adopt_worktree, capture_git_identity, create_worktree,
     observe_git, require_ancestor,
 )
-from .state import DocumentSource, RunManifest, RunState, RunStore, snapshot_documents
+from .state import (DocumentSource, RunManifest, RunState, RunStore,
+                    read_legacy_format, snapshot_documents)
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 def new_run_id() -> str:
@@ -46,6 +47,22 @@ def render_initial_prompt(
     lines += [f"DOCUMENT_{item.order:03d}={item.snapshot_path}"
               for item in manifest.documents]
     return "\n".join(lines) + "\n"
+def render_resume_prompt(manifest: RunManifest, *, manifest_path: Path,
+                         git_common_dir: Path, schema_path: Path) -> str:
+    initial = render_initial_prompt(
+        manifest, manifest_path=manifest_path, git_common_dir=git_common_dir, schema_path=schema_path)
+    return initial + "CONTINUITY=same saved controller session; continue from Superpowers and Git\n"
+def render_fallback_prompt(manifest: RunManifest, *, manifest_path: Path,
+                           git_common_dir: Path, schema_path: Path, head: str,
+                           status_digest: str, capsule: object, failure: object) -> str:
+    recovery = json.dumps(
+        {"resume_capsule": capsule, "failure": failure}, sort_keys=True, separators=(",", ":"))
+    initial = render_initial_prompt(
+        manifest, manifest_path=manifest_path, git_common_dir=git_common_dir, schema_path=schema_path)
+    return initial + (
+        "CONTINUITY=one fresh controller after explicit saved-session loss\n"
+        f"CURRENT_HEAD={head}\nCURRENT_STATUS_DIGEST={status_digest}\n"
+        f"BOUNDED_RECOVERY={recovery}\n")
 def _save(store: RunStore, state: RunState, **changes: object) -> RunState:
     state = replace(state, updated_at=utc_now(), **changes)
     store.save_state(state); return state
@@ -69,6 +86,13 @@ def _capsule(outcome: ControllerOutcome) -> dict[str, object] | None:
     return {"head_commit": value.head_commit, "worktree_status_digest": value.worktree_status_digest,
         "note": value.note, "evidence_refs": list(value.evidence_refs),
     }
+def _session_unavailable(outcome: ControllerOutcome) -> bool:
+    return (outcome.process_class == "session_unavailable" or
+            outcome.provider_code == "session_unavailable")
+def _assignment(manifest: RunManifest) -> WorktreeAssignment:
+    repository, worktree = Path(manifest.source_repository), Path(manifest.worktree)
+    return WorktreeAssignment(repository, worktree, manifest.branch,
+                              manifest.base_commit, _common_repository(repository)[1])
 class CpeRuntime:
     def __init__(
         self, *, codex_home: Path | None = None, worktree_root: Path | None = None,
@@ -119,41 +143,94 @@ class CpeRuntime:
                     branch=assignment.branch, path_claimed=True,
                 )
             raise
-        return self._launch(store, assignment)
-    def _launch(
-        self, store: RunStore, assignment: WorktreeAssignment,
-    ) -> dict[str, object]:
+        return self._launch(store, assignment, mode="initial", session_id=None)
+    def resume(self, *, run_id: str) -> dict[str, object]:
+        store = RunStore.open(self.codex_home, run_id)
+        session_id = store.state.controller_session_id
+        if session_id is None:
+            return {"status": "blocked", "run_id": run_id, "reason": "saved_session_unavailable"}
+        return self._launch(store, _assignment(store.manifest),
+                            mode="resume", session_id=session_id)
+    def inspect(self, *, run_id: str) -> dict[str, object]:
+        v5_root = RunStore._run_root(self.codex_home, run_id)
+        if os.path.lexists(v5_root):
+            store = RunStore.open(self.codex_home, run_id)
+            return {"format_version": 5, "run_id": run_id, **store.state.to_payload()}
+        version, root = read_legacy_format(self.codex_home, run_id)
+        return {"status": "legacy_read_only", "format_version": version,
+            "run_root": str(root), "recommended_action":
+            "preserve artifacts; use explicit --adopt-worktree for continuation"}
+    def _launch(self, store: RunStore, assignment: WorktreeAssignment, *,
+                mode: str, session_id: str | None) -> dict[str, object]:
         with store.lock() as lock:
-            state = _save(store, store.state, status="running")
+            state = store.state
             def persist(**changes: object) -> None:
                 nonlocal state
                 state = _save(store, state, **changes)
-            request = ControllerRequest(
-                "initial", assignment.worktree, assignment.git_common_dir,
-                store.manifest.sandbox,
-                render_initial_prompt(
-                    store.manifest, manifest_path=store.manifest_path,
-                    git_common_dir=assignment.git_common_dir,
-                    schema_path=self.schema_path,
-                ),
-                self.schema_path, None, 0, store.manifest.git_identity, lock.fileno(),
-            )
-            try:
-                outcome = self.controller.launch(
-                    request,
-                    on_session_id=lambda value: persist(controller_session_id=value),
-                    on_process_started=lambda pid, group: persist(
-                        active_pid=pid, active_process_group=group),
-                )
-            except KeyboardInterrupt:
-                return self._launch_error(store, state, assignment, "interrupted")
-            except Exception:
-                return self._launch_error(store, state, assignment, "failed")
-            return self._finish(store, state, assignment, outcome)
-    def _launch_error(
-        self, store: RunStore, state: RunState, assignment: WorktreeAssignment,
-        status: str,
-    ) -> dict[str, object]:
+            common = {"manifest_path": store.manifest_path,
+                      "git_common_dir": assignment.git_common_dir, "schema_path": self.schema_path}
+            renderer = render_initial_prompt if mode == "initial" else render_resume_prompt
+            prompt = renderer(store.manifest, **common)
+            def invoke(launch_mode: str, saved_session: str | None, generation: int,
+                       launch_prompt: str) -> ControllerOutcome | dict[str, object]:
+                persist(status="running")
+                request = ControllerRequest(
+                    launch_mode, assignment.worktree, assignment.git_common_dir,
+                    store.manifest.sandbox, launch_prompt, self.schema_path,
+                    saved_session, generation, store.manifest.git_identity, lock.fileno())
+                try:
+                    return self.controller.launch(
+                        request, on_session_id=lambda value: persist(controller_session_id=value),
+                        on_process_started=lambda pid, group: persist(
+                            active_pid=pid, active_process_group=group))
+                except KeyboardInterrupt:
+                    return self._launch_error(store, state, assignment, "interrupted")
+                except Exception:
+                    return self._launch_error(store, state, assignment, "failed")
+            launched = invoke(mode, session_id, state.controller_generation, prompt)
+            if isinstance(launched, dict): return launched
+            outcome = launched
+            if not (mode == "resume" and session_id is not None
+                    and _session_unavailable(outcome)):
+                return self._finish(store, state, assignment, outcome)
+            if state.fresh_fallback_used or state.controller_generation == 1:
+                return self._block_session_unavailable(store, state, assignment, outcome)
+            facts = observe_git(assignment.worktree)
+            terminal = outcome.terminal
+            state = _save(
+                store, state, status="interrupted", controller_session_id=None,
+                controller_generation=1, fresh_fallback_used=True,
+                active_pid=None, active_process_group=None,
+                last_observed_head=facts.head, tracked_clean=facts.tracked_clean,
+                untracked_present=facts.untracked_present, status_digest=facts.status_digest,
+                last_process_class="session_unavailable", last_exit_code=outcome.exit_code,
+                blocker=terminal.blocker if terminal is not None else None)
+            failure = {
+                "process_class": "session_unavailable",
+                "provider_code": outcome.provider_code,
+                "blocker": terminal.blocker if terminal is not None else None}
+            fallback_prompt = render_fallback_prompt(
+                store.manifest, **common, head=facts.head,
+                status_digest=facts.status_digest, capsule=state.resume_capsule,
+                failure=failure)
+            launched = invoke("fallback", None, 1, fallback_prompt)
+            if isinstance(launched, dict): return launched
+            if _session_unavailable(launched):
+                return self._block_session_unavailable(store, state, assignment, launched)
+            return self._finish(store, state, assignment, launched)
+    def _block_session_unavailable(self, store: RunStore, state: RunState, assignment: WorktreeAssignment,
+                                   outcome: ControllerOutcome) -> dict[str, object]:
+        facts, terminal = observe_git(assignment.worktree), outcome.terminal
+        _save(
+            store, state, status="blocked", active_pid=None,
+            active_process_group=None, last_observed_head=facts.head,
+            tracked_clean=facts.tracked_clean,
+            untracked_present=facts.untracked_present, status_digest=facts.status_digest,
+            last_process_class="session_unavailable", last_exit_code=outcome.exit_code,
+            blocker=terminal.blocker if terminal is not None else None)
+        return {"status": "blocked", "run_id": store.manifest.run_id, "reason": "session_unavailable"}
+    def _launch_error(self, store: RunStore, state: RunState,
+                      assignment: WorktreeAssignment, status: str) -> dict[str, object]:
         changes: dict[str, object] = {
             "status": status, "active_pid": None, "active_process_group": None,
             "last_process_class": status, "last_exit_code": None,
@@ -178,14 +255,17 @@ class CpeRuntime:
         except ValueError:
             return self._launch_error(store, state, assignment, "failed")
         terminal = outcome.terminal
-        status = {"blocked": "blocked", "failed": "failed"}.get(
-            outcome.process_class, "interrupted")
+        status = (
+            "blocked" if outcome.process_class == "blocked" else
+            "failed" if outcome.process_class == "failed"
+            and outcome.provider_code != "transport" else "interrupted"
+        )
         state = _save(
             store, state, status=status, active_pid=None, active_process_group=None,
             last_observed_head=facts.head, tracked_clean=facts.tracked_clean,
             untracked_present=facts.untracked_present, status_digest=facts.status_digest,
             last_process_class=outcome.process_class, last_exit_code=outcome.exit_code,
-            resume_capsule=_capsule(outcome),
+            resume_capsule=_capsule(outcome) or state.resume_capsule,
             blocker=terminal.blocker if terminal is not None else None,
         )
         if outcome.process_class != "completed" or terminal is None:

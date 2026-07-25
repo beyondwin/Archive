@@ -23,6 +23,7 @@ from cpe_runtime.state import (
     RunManifest,
     RunState,
     RunStore,
+    read_legacy_format,
     snapshot_documents,
     validate_resume_capsule,
 )
@@ -113,6 +114,17 @@ class StateContractTests(unittest.TestCase):
 
     def valid_state_payload(self) -> dict[str, object]:
         return self.state().to_payload()
+
+    def write_legacy_payload(
+        self,
+        run_id: str,
+        payload: object,
+    ) -> Path:
+        root = self.codex_home / "orchestrator" / run_id
+        root.mkdir(parents=True)
+        state = root / "state.json"
+        state.write_text(json.dumps(payload), encoding="utf-8")
+        return state
 
     def test_snapshots_opaque_documents_in_global_order(self) -> None:
         records = snapshot_documents(
@@ -398,6 +410,67 @@ class StateContractTests(unittest.TestCase):
         non_ascii = dict(valid, note="가" * 683)
         with self.assertRaisesRegex(ValueError, "resume capsule"):
             validate_resume_capsule(non_ascii)
+
+    def test_legacy_reader_uses_only_root_format_and_preserves_bytes(self) -> None:
+        for format_version in range(1, 5):
+            with self.subTest(format_version=format_version):
+                run_id = f"cpe-{format_version:016x}"
+                state = self.write_legacy_payload(
+                    run_id,
+                    {
+                        "format_version": format_version,
+                        "nested": {"format_version": 99},
+                        "opaque": ["legacy", {"tasks": ["unparsed"]}],
+                    },
+                )
+                before = (
+                    state.read_bytes(),
+                    stat.S_IMODE(state.stat().st_mode),
+                    state.stat().st_mtime_ns,
+                )
+
+                detected, run_root = read_legacy_format(self.codex_home, run_id)
+
+                after = (
+                    state.read_bytes(),
+                    stat.S_IMODE(state.stat().st_mode),
+                    state.stat().st_mtime_ns,
+                )
+                self.assertEqual(detected, format_version)
+                self.assertEqual(run_root, state.parent.resolve())
+                self.assertEqual(after, before)
+
+    def test_legacy_reader_rejects_symlink_oversize_and_non_root_version(self) -> None:
+        external = self.base / "external-legacy.json"
+        external.write_text('{"format_version":3}', encoding="utf-8")
+        symlink_id = "cpe-1000000000000000"
+        symlink_root = self.codex_home / "orchestrator" / symlink_id
+        symlink_root.mkdir(parents=True)
+        (symlink_root / "state.json").symlink_to(external)
+        oversize_id = "cpe-2000000000000000"
+        self.write_legacy_payload(
+            oversize_id,
+            {"format_version": 3, "padding": "x" * (64 * 1024)},
+        )
+        nested_id = "cpe-3000000000000000"
+        self.write_legacy_payload(nested_id, {"nested": {"format_version": 3}})
+        exact_path_id = "cpe-4000000000000000"
+        nested_root = (
+            self.codex_home
+            / "orchestrator"
+            / exact_path_id
+            / "nested"
+        )
+        nested_root.mkdir(parents=True)
+        (nested_root / "state.json").write_text(
+            '{"format_version":3}',
+            encoding="utf-8",
+        )
+
+        for run_id in (symlink_id, oversize_id, nested_id, exact_path_id):
+            with self.subTest(run_id=run_id):
+                with self.assertRaisesRegex(ValueError, "legacy run state"):
+                    read_legacy_format(self.codex_home, run_id)
 
 
 if __name__ == "__main__":
