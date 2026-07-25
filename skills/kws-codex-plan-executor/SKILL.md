@@ -1,28 +1,34 @@
 ---
 name: kws-codex-plan-executor
-description: Use when approved Superpowers implementation plans must run in fixed order and survive process interruption.
+description: Use when one approved Superpowers execution contract needs a durable local Codex worktree and session-resume boundary.
 metadata:
-  version: "2.1.1"
-  updated_at: "2026-07-24"
+  version: "3.0.0"
+  updated_at: "2026-07-25"
 ---
 
 # KWS Codex Plan Executor
 
-Release metadata remains at 2.1.1 until the Task 7 publication rewrite. The
-active cutover runtime is a thin local durability boundary for one
-caller-supplied Superpowers execution contract. For bounded work that does not
-need a durable run, use a direct Superpowers launch in the current worktree.
+Use direct Superpowers in the current worktree when bounded work fits one
+controller session. Use CPE when one execution contract needs a durable local
+Codex run ID, immutable inputs, one worktree, and process or session continuity.
+CPE is not a product orchestrator and does not replace Superpowers.
 
-## Ownership And Launch Boundary
+## One Contract, Opaque Inputs
 
-CPE maintains one execution environment and verifies submitted facts.
-Superpowers decides what work and verification are correct.
+CPE accepts multiple documents through repeated `--document` options. It
+snapshots their exact bytes in caller order and passes them to one selected
+Superpowers skill. The documents are opaque: CPE assigns no document roles,
+creates no plan queue, and performs no document review. Unfamiliar structure,
+extensions, or repeated basenames do not create CPE workflow meaning.
 
-CPE snapshots the submitted documents, creates one reused isolated worktree, and
-launches Codex directly into Superpowers in that worktree. The launcher passes
-paths and current Git facts, but does not compile a plan or choose a task,
-review, fix, test, subagent, commit, or release workflow. Resume uses the same
-worktree and immutable document bundle.
+Superpowers owns document interpretation, implementation, testing, review,
+commits, and engineering completion. CPE maintains only the immutable bundle,
+Git/worktree identity, controller transport, bounded resume facts, and local
+handoff.
+
+New runs persist format-5 state under public contract 3.
+
+## Run, Resume, Inspect
 
 ```bash
 python3 scripts/cpe.py run \
@@ -36,34 +42,52 @@ python3 scripts/cpe.py inspect --run-id RUN_ID
 The active CPE commands are exactly `run`, `resume`, and `inspect`.
 `run` defaults to `workspace-write`.
 `danger-full-access` is an explicit immutable run-creation opt-in.
-
-The accepted `danger-full-access` residual risk is that writes outside the
-worktree are not fully observable or reversible; prompt and remote prohibitions
-plus Git gates remain, but are not a sandbox substitute. The child prompt also
-prohibits merge, push, deploy, and writes outside its worktree; that is a guard,
-not proof of complete containment.
-
-## Controller-Owned Completion And Resume
+The selected `--superpowers-skill` is required and immutable; supported values
+are `subagent-driven-development` and `executing-plans`.
 
 Superpowers owns engineering completion; CPE only reports a mechanical
 `handed_off`, `failed`, `blocked`, or `interrupted` status.
 CPE has no public retry, recovery, or verification command.
 
-`resume --run-id RUN_ID` uses the saved controller session first. Only an
-explicit saved-session-unavailable result permits one fresh controller
-fallback. `inspect` is read-only, including for recognized legacy state.
-CPE never selects product verification or claims merge, push, deployment,
-publication, or product acceptance.
+## Continuity And Handoff
 
-## Local Installation And Verification
+An explicit `resume` performs same-session resume against the unchanged run,
+worktree, document bundle, sandbox, and selected skill. Only a recognized
+saved-session-unavailable outcome permits one fresh fallback. Generation one
+is final; CPE never creates a second fallback.
+
+A successful local result is mechanical `handed_off`. Its receipt records
+`integration=not_observed`; it does not claim product acceptance, integration,
+merge, push, deployment, publication, or any other remote action.
+
+`inspect` is read-only. Recognized old roots return `legacy_read_only` and stay
+untouched. Continuing their work requires an explicit new v3 run with
+`--adopt-worktree /abs/worktree --base COMMIT`; CPE never converts the old run.
+
+## Safety Boundary
+
+CPE is local-only and prohibits remote actions. It targets POSIX process groups
+and advisory locks. The default sandbox limits writes, but neither it nor
+prompts defend against a malicious same-UID process or direct operator
+tampering. With explicit `danger-full-access`, writes outside the worktree may
+be neither observable nor reversible. No prompt or Git check substitutes for
+host isolation.
+
+## Installation And Evidence
 
 The tracked `skills/kws-codex-plan-executor/` directory is the source of truth.
 Install it for Codex and Claude Code with symlinks from `skills/README.md`; do
 not copy this skill into either tool directory and do not edit Superpowers
 upstream.
 
-For a behavior change, add a focused deterministic eval first. The complete
-local gate is `./evals/run.sh`; use it only at the final clean revision after
-the externally owned integration review. During a change, run the focused test
-and applicable static checks. Evals are sequential, network-free,
-credential-free, and model-free.
+Offline verification is deterministic, network-free, credential-free, and
+model-free:
+
+```bash
+./evals/run.sh
+```
+
+Real-provider evidence is separate and opt-in. `evals/live_canary.py` refuses
+before creating temporary artifacts unless `CPE_LIVE_CANARY=1`; run its three
+named scenarios only when live access and preserved temporary evidence are
+explicitly intended. Offline checks never invoke those scenarios.
