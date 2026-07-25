@@ -2,7 +2,8 @@
 
 **Date:** 2026-07-25
 
-**Status:** Approved design
+**Status:** Implemented through the v3.0.0 public contract and opt-in canary
+harness; final offline and live release evidence remains pending
 
 **Repository:** `/Users/kws/source/private/Archive`
 

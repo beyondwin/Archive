@@ -1,35 +1,39 @@
 # KWS Codex Plan Executor
 
-Release metadata remains at 2.1.1 until the Task 7 publication rewrite. The
-active cutover runtime is a small local durability boundary for one
-caller-supplied Superpowers execution contract. It keeps ordered document
-snapshots, one reused isolated worktree, durable run facts, and a bounded
-resume boundary. It is not a product orchestrator or a replacement for
-Superpowers.
+Version 3.0.0 is a small, local durability capsule for one execution contract.
+Use direct Superpowers when bounded work fits one controller session. Use CPE
+when that contract needs immutable inputs, one stable worktree, a durable run
+ID, and Codex process or session continuity.
 
-## Ownership And Installation
+## Boundary
 
-CPE maintains one execution environment and verifies submitted facts.
-Superpowers decides what work and verification are correct.
+CPE accepts multiple documents through repeated `--document` options. It
+preserves exact bytes and caller order, including repeated basenames and
+unfamiliar structures. Inputs are opaque: there is no document review, role
+assignment, plan queue, content linting, or cross-document approval in CPE.
 
-The runner performs a direct Superpowers launch inside its one reused isolated
-worktree. It supplies immutable submitted inputs and factual execution context;
-Superpowers owns plan interpretation, implementation, tests, reviews, fixes,
-subagents, commits, and engineering completion. Resume retains the same
-worktree and immutable document bundle.
+One explicitly selected Superpowers skill owns interpretation, implementation,
+testing, review, commits, and engineering completion. CPE owns only the
+document bundle, local Git/worktree identity, controller transport, bounded
+resume facts, and mechanical handoff.
+
+New runs persist format-5 state under public contract 3.
 
 This tracked directory is the release source of truth. Install the source of
 truth with the Codex and Claude Code symlinks in [`../README.md`](../README.md).
 Do not copy the skill into tool directories and do not modify Superpowers
 upstream.
 
-## Requirements And Commands
+## Requirements
 
 - Python 3 standard library
 - Git
 - `codex` on `PATH`
-- a Git workspace, one or more absolute readable document paths, and an
-  explicitly selected supported Superpowers skill
+- POSIX advisory locks and process groups
+- a Git workspace with repository-local or otherwise effective Git identity
+- absolute readable document paths
+
+## Commands
 
 ```bash
 python3 scripts/cpe.py run \
@@ -43,30 +47,21 @@ python3 scripts/cpe.py inspect --run-id RUN_ID
 The active CPE commands are exactly `run`, `resume`, and `inspect`.
 `run` defaults to `workspace-write`.
 `danger-full-access` is an explicit immutable run-creation opt-in.
+The required `--superpowers-skill` is immutable and accepts
+`subagent-driven-development` or `executing-plans`.
 
-With `danger-full-access`, writes outside the worktree are not fully observable
-or reversible. The controller environment and prompt prohibit remote actions
-and outside-worktree writes, while Git gates retain local evidence; those
-controls are not a sandbox substitute.
+## Resume And Local Handoff
 
-## Execution And Resume Contract
-
-Documents are byte-snapshotted before launch and passed to one selected
-Superpowers controller in caller order. CPE does not assign roles, compile a
-plan, or reconstruct workflow semantics.
+`resume --run-id RUN_ID` performs same-session resume first, using the same
+run, worktree, documents, sandbox, Git identity, and selected skill. Only an
+explicit saved-session-unavailable outcome permits one fresh fallback. The
+generation can advance from zero to one once and never to generation two.
 
 Superpowers owns engineering completion; CPE only reports a mechanical
 `handed_off`, `failed`, `blocked`, or `interrupted` status.
 CPE has no public retry, recovery, or verification command.
 
-`resume --run-id RUN_ID` uses the saved controller session first. Only an
-explicit saved-session-unavailable result permits one fresh controller
-fallback. `inspect` is read-only for both active format-5 and recognized legacy
-state.
-
-## Mechanical Handoff
-
-A successful local handoff records branch, saved worktree, base and observed
+A `handed_off` receipt records branch, saved worktree, base and observed
 HEAD, tracked and untracked status facts, controller session generation, and
 `integration=not_observed`. It never claims merge, push, deployment,
 publication, or product acceptance.
@@ -75,12 +70,23 @@ Run state lives under
 `${CODEX_HOME:-~/.codex}/cpe-v3/runs/<run-id>/`; a linked worktree normally
 lives under `${CODEX_HOME:-~/.codex}/worktrees/`.
 
-## Verify
+## Legacy And Security
 
-Add or update a focused deterministic eval before changing the public contract.
-During implementation, run the exact affected tests and static checks. At the
-final clean revision, after the externally owned integration review, run the
-complete local gate once:
+`inspect` is read-only. A recognized older root returns `legacy_read_only`.
+Continuation requires a distinct v3 run with explicit
+`--adopt-worktree /abs/worktree --base COMMIT`; the older root remains
+untouched and is never converted.
+
+CPE is local-only and prohibits remote actions. It targets POSIX hosts. A
+same-UID controller can still tamper with accessible files, and direct operator
+changes are outside CPE's threat model. With explicit `danger-full-access`,
+writes outside the worktree may be neither observable nor reversible.
+Worktree checks and prompt restrictions are not a sandbox substitute.
+
+## Offline And Opt-In Live Evidence
+
+Offline verification is sequential, network-free, credential-free, and
+model-free:
 
 ```bash
 ./evals/run.sh
@@ -88,8 +94,17 @@ python3 -m py_compile scripts/cpe.py scripts/cpe_runtime/*.py evals/*.py
 bash -n evals/run.sh
 ```
 
-The deterministic evals are sequential, network-free, credential-free, and
-model-free.
+Real-provider canaries are separate and opt-in:
+
+```bash
+CPE_LIVE_CANARY=1 python3 evals/live_canary.py --scenario sdd-multi-document
+CPE_LIVE_CANARY=1 python3 evals/live_canary.py --scenario session-loss
+CPE_LIVE_CANARY=1 python3 evals/live_canary.py --scenario legacy-adoption
+```
+
+Without the exact environment opt-in, the harness exits before creating a
+temporary repository or run. Successful roots and bounded receipts are
+preserved for operator inspection. Offline gates do not invoke live canaries.
 
 ## Tracked Inventory
 
@@ -98,6 +113,7 @@ README.md
 SKILL.md
 evals/check_architecture.py
 evals/fake_codex.py
+evals/live_canary.py
 evals/run.sh
 evals/test_cli.py
 evals/test_controller.py

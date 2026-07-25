@@ -50,6 +50,23 @@ SEMANTIC_PATTERNS = {
     "migrate_run": re.compile(r"migrate(?:_|-)?run", re.IGNORECASE),
 }
 PUBLIC_COMMANDS = {"run", "resume", "inspect"}
+REQUIRED_PUBLIC_PHRASES = {
+    "one execution contract",
+    "multiple documents",
+    "no document review",
+    "same-session resume",
+    "one fresh fallback",
+    "workspace-write",
+    "handed_off",
+    "legacy_read_only",
+    "integration=not_observed",
+}
+REQUIRED_SKILL_METADATA = re.compile(
+    r'^metadata:\n'
+    r'  version: "3\.0\.0"\n'
+    r'  updated_at: "2026-07-25"$',
+    re.MULTILINE,
+)
 CURRENT_PUBLIC_PHRASES = (
     "The active CPE commands are exactly `run`, `resume`, and `inspect`.",
     "`run` defaults to `workspace-write`.",
@@ -70,6 +87,18 @@ STALE_PUBLIC_PATTERNS = {
     "verify command": re.compile(r"`?verify`?\s+command", re.IGNORECASE),
     "completed status": re.compile(r"`completed`", re.IGNORECASE),
     "checkpointed status": re.compile(r"`checkpointed`", re.IGNORECASE),
+}
+FORBIDDEN_ACTIVE_FEATURES = {
+    "completed": re.compile(r"\bcompleted\b", re.IGNORECASE),
+    "checkpointed": re.compile(r"\bcheckpointed\b", re.IGNORECASE),
+    "verify": re.compile(r"\bverify\b", re.IGNORECASE),
+    "recover-ledger": re.compile(r"\brecover-ledger\b", re.IGNORECASE),
+    "task evidence": re.compile(r"\btask(?:[_ -]+)evidence\b", re.IGNORECASE),
+    "review evidence": re.compile(r"\breview(?:[_ -]+)evidence\b", re.IGNORECASE),
+    "migration": re.compile(
+        r"\bmigrat(?:e|es|ed|ing|ion|ions)\b",
+        re.IGNORECASE,
+    ),
 }
 CPE_COMMAND = re.compile(
     r"(?<![\w/])(?:[^\s`'\"<>]+/)*scripts/cpe\.py"
@@ -138,6 +167,7 @@ def active_contract_text(text: str) -> str:
 
 def check(root: Path = ROOT) -> list[str]:
     errors: list[str] = []
+    release_root = root.name == "kws-codex-plan-executor"
     scripts_root = root / "scripts"
     paths = production_python(root)
     production_inventory = {
@@ -242,6 +272,31 @@ def check(root: Path = ROOT) -> list[str]:
         for stale_name, pattern in STALE_PUBLIC_PATTERNS.items():
             if pattern.search(active_text):
                 errors.append(f"stale active contract in {name}: {stale_name}")
+        if release_root:
+            normalized_public = " ".join(text.casefold().split())
+            for phrase in sorted(REQUIRED_PUBLIC_PHRASES):
+                if phrase not in normalized_public:
+                    errors.append(
+                        f"required public phrase missing in {name}: {phrase}"
+                    )
+            for feature, pattern in FORBIDDEN_ACTIVE_FEATURES.items():
+                if pattern.search(active_text):
+                    errors.append(
+                        f"active CPE feature advertised in {name}: {feature}"
+                    )
+    if release_root:
+        skill_text = (root / "SKILL.md").read_text(encoding="utf-8")
+        frontmatter_end = skill_text.find("\n---\n", 4)
+        frontmatter = (
+            skill_text[4:frontmatter_end]
+            if skill_text.startswith("---\n") and frontmatter_end >= 0
+            else ""
+        )
+        if REQUIRED_SKILL_METADATA.search(frontmatter) is None:
+            errors.append(
+                'SKILL.md metadata must set version: "3.0.0" and '
+                'updated_at: "2026-07-25"'
+            )
     return errors
 
 
