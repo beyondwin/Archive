@@ -67,6 +67,7 @@ class ParityInvariantTest(unittest.TestCase):
     def assert_ready_outcome_survives_hostile_git_environment(
         self,
         provider: str,
+        additional_hostile: dict[str, str] | None = None,
     ) -> None:
         fixture = json.loads(PARITY.FIXTURE.read_text(encoding="utf-8"))
         scenario = next(
@@ -110,6 +111,8 @@ class ParityInvariantTest(unittest.TestCase):
             "GIT_COMMON_DIR": str(self.root / "hostile-common"),
             "GIT_CEILING_DIRECTORIES": str(self.root),
         }
+        if additional_hostile is not None:
+            hostile.update(additional_hostile)
         with mock.patch.dict(os.environ, hostile):
             try:
                 actual = PARITY.run_provider(
@@ -145,6 +148,35 @@ class ParityInvariantTest(unittest.TestCase):
 
     def test_claude_disposable_setup_ignores_hostile_git_environment(self) -> None:
         self.assert_ready_outcome_survives_hostile_git_environment("claude")
+
+    def assert_hostile_git_template_is_ignored(self, provider: str) -> None:
+        template = self.root / "hostile-template"
+        hooks = template / "hooks"
+        hooks.mkdir(parents=True)
+        marker = self.root / "hostile-hook-ran"
+        hook = hooks / "pre-commit"
+        hook.write_text(
+            "#!/bin/sh\n"
+            'printf "hostile hook executed\\n" > "$PARITY_HOSTILE_HOOK_MARKER"\n'
+            "exit 99\n",
+            encoding="utf-8",
+        )
+        hook.chmod(0o700)
+
+        self.assert_ready_outcome_survives_hostile_git_environment(
+            provider,
+            {
+                "GIT_TEMPLATE_DIR": str(template),
+                "PARITY_HOSTILE_HOOK_MARKER": str(marker),
+            },
+        )
+        self.assertFalse(marker.exists())
+
+    def test_codex_disposable_setup_ignores_hostile_git_template(self) -> None:
+        self.assert_hostile_git_template_is_ignored("codex")
+
+    def test_claude_disposable_setup_ignores_hostile_git_template(self) -> None:
+        self.assert_hostile_git_template_is_ignored("claude")
 
     def test_recovery_reports_only_the_external_root_action(self) -> None:
         healthy = [
