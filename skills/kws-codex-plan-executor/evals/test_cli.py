@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import io
 import json
+import shutil
+import subprocess
 import sys
+import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -270,6 +273,225 @@ class CliContractTests(unittest.TestCase):
         self.assertEqual(exit_code, 1)
         self.assertEqual(payload["status"], "failed")
         self.assertNotEqual(payload["status"], "completed")
+
+
+class ArchitectureGuardTests(unittest.TestCase):
+    CURRENT_PUBLIC_PHRASES = (
+        "The active CPE commands are exactly `run`, `resume`, and `inspect`.",
+        "`run` defaults to `workspace-write`.",
+        "`danger-full-access` is an explicit immutable run-creation opt-in.",
+        "Superpowers owns engineering completion; CPE only reports a mechanical "
+        "`handed_off`, `failed`, `blocked`, or `interrupted` status.",
+        "CPE has no public retry, recovery, or verification command.",
+    )
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory(prefix="cpe-architecture-")
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.runtime = self.root / "scripts" / "cpe_runtime"
+        self.templates = self.root / "templates"
+        self.evals = self.root / "evals"
+        self.runtime.mkdir(parents=True)
+        self.templates.mkdir()
+        self.evals.mkdir()
+        (self.root / "scripts" / "cpe.py").write_text(
+            "import subprocess\n"
+            "def invoke():\n"
+            "    return subprocess.run(['true'], shell=False)\n",
+            encoding="utf-8",
+        )
+        for name in (
+            "__init__.py",
+            "state.py",
+            "git.py",
+            "controller.py",
+            "runtime.py",
+        ):
+            (self.runtime / name).write_text(
+                '"""Expected fixture module."""\n',
+                encoding="utf-8",
+            )
+        (self.templates / "terminal-envelope.schema.json").write_text(
+            "{}\n",
+            encoding="utf-8",
+        )
+        self.write_public_docs()
+
+    def write_public_docs(self, *, omit: str | None = None) -> None:
+        statements = [
+            phrase for phrase in self.CURRENT_PUBLIC_PHRASES if phrase != omit
+        ]
+        commands = (
+            "```bash\n"
+            "python3 scripts/cpe.py run --document /abs/doc "
+            "--workspace /abs/repo --superpowers-skill executing-plans\n"
+            "python3 scripts/cpe.py resume --run-id RUN_ID\n"
+            "python3 scripts/cpe.py inspect --run-id RUN_ID\n"
+            "python3 -m py_compile scripts/cpe.py scripts/cpe_runtime/*.py\n"
+            "```\n"
+        )
+        text = "# Fixture\n\n" + "\n\n".join(statements) + "\n\n" + commands
+        text = text.replace(
+            "reports a mechanical `handed_off`",
+            "reports a mechanical\n`handed_off`",
+        )
+        for name in ("SKILL.md", "README.md"):
+            (self.root / name).write_text(text, encoding="utf-8")
+
+    def run_guard(self) -> subprocess.CompletedProcess[str]:
+        shutil.copyfile(
+            ROOT / "evals" / "check_architecture.py",
+            self.evals / "check_architecture.py",
+        )
+        return subprocess.run(
+            [sys.executable, str(self.evals / "check_architecture.py")],
+            cwd=self.root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+
+    def assert_guard_fails(self, *markers: str) -> None:
+        result = self.run_guard()
+        self.assertEqual(
+            result.returncode,
+            1,
+            f"guard unexpectedly passed\nstdout={result.stdout}\nstderr={result.stderr}",
+        )
+        for marker in markers:
+            self.assertIn(marker, result.stdout)
+
+    def test_expected_inventory_and_literal_shell_false_pass(self) -> None:
+        for name in ("SKILL.md", "README.md"):
+            with (self.root / name).open("a", encoding="utf-8") as document:
+                document.write(
+                    "\nHistorical releases had broader workflow commands, "
+                    "but no callable example is retained here.\n"
+                )
+
+        result = self.run_guard()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_guard_rejects_broad_semantic_tokens_case_and_quote_robustly(self) -> None:
+        cases = (
+            "task_id = 'T1'",
+            "COMPLETED_TASK = True",
+            "final_review = {}",
+            "Finding = 'important'",
+            "OBLIGATION = 'open'",
+            "mode = 'verification'",
+            'mode = "Verification"',
+        )
+        path = self.runtime / "runtime.py"
+        baseline = path.read_text(encoding="utf-8")
+        for source in cases:
+            with self.subTest(source=source):
+                path.write_text(baseline + source + "\n", encoding="utf-8")
+                self.assert_guard_fails("forbidden semantic token")
+        path.write_text(baseline, encoding="utf-8")
+
+    def test_guard_recurses_and_applies_all_checks_to_nested_production(self) -> None:
+        nested = self.runtime / "nested"
+        nested.mkdir()
+        (nested / "escape.py").write_text(
+            "import third_party\n"
+            "from cpe_runtime import runner\n"
+            "TASK_ID = 'nested'\n"
+            + "# padding\n" * 448,
+            encoding="utf-8",
+        )
+        schema = self.templates / "nested" / "escape.json"
+        schema.parent.mkdir()
+        schema.write_text('{"Finding": "hidden"}\n', encoding="utf-8")
+
+        self.assert_guard_fails(
+            "runtime inventory mismatch",
+            "template inventory mismatch",
+            "forbidden semantic token",
+            "non-stdlib import",
+            "deleted-module import",
+            "module line limit exceeded",
+        )
+
+    def test_guard_enforces_the_complete_recursive_script_inventory(self) -> None:
+        extra = self.root / "scripts" / "escape.py"
+        extra.write_text(
+            "import third_party\n"
+            "import subprocess\n"
+            "TASK_ID = 'outside-runtime'\n"
+            "subprocess.run(['true'], shell=1)\n",
+            encoding="utf-8",
+        )
+        self.assert_guard_fails(
+            "production Python inventory mismatch",
+            "forbidden semantic token",
+            "non-stdlib import",
+            "shell keyword must be literal False",
+        )
+
+        extra.unlink()
+        (self.root / "scripts" / "cpe.py").unlink()
+        self.assert_guard_fails("production Python inventory mismatch")
+
+    def test_guard_rejects_inline_and_console_old_cpe_commands(self) -> None:
+        with (self.root / "SKILL.md").open("a", encoding="utf-8") as skill:
+            skill.write(
+                "\nDo not call `python3 scripts/cpe.py verify --run-id OLD`.\n"
+            )
+        with (self.root / "README.md").open("a", encoding="utf-8") as readme:
+            readme.write(
+                "\n```console\n"
+                "$ python3 scripts/cpe.py recover-ledger --run-id OLD\n"
+                "```\n"
+            )
+
+        self.assert_guard_fails(
+            "active commands mismatch in SKILL.md",
+            "active commands mismatch in README.md",
+        )
+
+    def test_guard_rejects_any_nonliteral_false_shell_keyword(self) -> None:
+        (self.root / "scripts" / "cpe.py").write_text(
+            "import subprocess\n"
+            "def invoke(shell_mode):\n"
+            "    subprocess.run(['true'], shell=1)\n"
+            "    subprocess.run(['true'], shell=shell_mode)\n",
+            encoding="utf-8",
+        )
+
+        result = self.run_guard()
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(
+            result.stdout.count("shell keyword must be literal False"),
+            2,
+            result.stdout,
+        )
+
+    def test_guard_requires_current_public_cutover_statements(self) -> None:
+        missing = self.CURRENT_PUBLIC_PHRASES[1]
+        self.write_public_docs(omit=missing)
+
+        self.assert_guard_fails("current contract missing in SKILL.md")
+
+    def test_guard_rejects_stale_active_v2_contract_statements(self) -> None:
+        stale = (
+            "\nThe run defaults to `danger-full-access` with "
+            "`--controller-slice-seconds 1200`. Use `--retry-blocked`, "
+            "`--retry-failed`, and `recover-ledger`; CPE statuses are "
+            "`completed` and `checkpointed`.\n"
+        )
+        for name in ("SKILL.md", "README.md"):
+            with (self.root / name).open("a", encoding="utf-8") as document:
+                document.write(stale)
+
+        self.assert_guard_fails(
+            "stale active contract in SKILL.md",
+            "stale active contract in README.md",
+        )
 
 
 if __name__ == "__main__":

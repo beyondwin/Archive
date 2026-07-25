@@ -9,13 +9,20 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-RUNTIME_ROOT = ROOT / "scripts" / "cpe_runtime"
 EXPECTED_RUNTIME = {
     "__init__.py",
     "state.py",
     "git.py",
     "controller.py",
     "runtime.py",
+}
+EXPECTED_PRODUCTION_PYTHON = {
+    "cpe.py",
+    "cpe_runtime/__init__.py",
+    "cpe_runtime/controller.py",
+    "cpe_runtime/git.py",
+    "cpe_runtime/runtime.py",
+    "cpe_runtime/state.py",
 }
 EXPECTED_TEMPLATES = {"terminal-envelope.schema.json"}
 DELETED_MODULES = {
@@ -28,24 +35,61 @@ DELETED_MODULES = {
     "runner",
     "verification",
 }
-FORBIDDEN = {
-    "current_plan_index",
-    "completed_task_ids",
-    "current_task_id",
-    "fix_round",
-    "final_review_head",
-    "open_finding_ids",
-    "open_obligation_ids",
-    '"verification"',
-    "migrate-run",
+SEMANTIC_PATTERNS = {
+    "task_id": re.compile(r"task_id", re.IGNORECASE),
+    "completed_task": re.compile(r"completed_task", re.IGNORECASE),
+    "current_plan_index": re.compile(r"current_plan_index", re.IGNORECASE),
+    "fix_round": re.compile(r"fix_round", re.IGNORECASE),
+    "final_review": re.compile(r"final_review", re.IGNORECASE),
+    "finding": re.compile(r"finding", re.IGNORECASE),
+    "obligation": re.compile(r"obligation", re.IGNORECASE),
+    "quoted verification": re.compile(
+        r"(?P<quote>['\"])verification(?P=quote)",
+        re.IGNORECASE,
+    ),
+    "migrate-run": re.compile(r"migrate-run", re.IGNORECASE),
 }
 PUBLIC_COMMANDS = {"run", "resume", "inspect"}
+CURRENT_PUBLIC_PHRASES = (
+    "The active CPE commands are exactly `run`, `resume`, and `inspect`.",
+    "`run` defaults to `workspace-write`.",
+    "`danger-full-access` is an explicit immutable run-creation opt-in.",
+    "Superpowers owns engineering completion; CPE only reports a mechanical "
+    "`handed_off`, `failed`, `blocked`, or `interrupted` status.",
+    "CPE has no public retry, recovery, or verification command.",
+)
+STALE_PUBLIC_PATTERNS = {
+    "danger-full-access default": re.compile(
+        r"defaults?\s+to\s+`?danger-full-access",
+        re.IGNORECASE,
+    ),
+    "controller slice": re.compile(r"--controller-slice-seconds"),
+    "retry blocked": re.compile(r"--retry-blocked"),
+    "retry failed": re.compile(r"--retry-failed"),
+    "recover ledger": re.compile(r"\brecover-ledger\b", re.IGNORECASE),
+    "verify command": re.compile(r"`?verify`?\s+command", re.IGNORECASE),
+    "completed status": re.compile(r"`completed`", re.IGNORECASE),
+    "checkpointed status": re.compile(r"`checkpointed`", re.IGNORECASE),
+}
+CPE_COMMAND = re.compile(
+    r"(?<![\w/])(?:(?:python3|python)\s+(?:\./)?scripts/cpe\.py|"
+    r"(?:\./)scripts/cpe\.py)\s+([a-z][a-z-]*)",
+    re.IGNORECASE,
+)
 PRODUCTION_LIMIT = 1500
 MODULE_LIMIT = 450
 
 
-def production_python() -> list[Path]:
-    return [ROOT / "scripts" / "cpe.py", *sorted(RUNTIME_ROOT.glob("*.py"))]
+def runtime_python(root: Path) -> list[Path]:
+    return sorted((root / "scripts" / "cpe_runtime").rglob("*.py"))
+
+
+def production_python(root: Path = ROOT) -> list[Path]:
+    return sorted((root / "scripts").rglob("*.py"))
+
+
+def production_schemas(root: Path) -> list[Path]:
+    return sorted((root / "templates").rglob("*.json"))
 
 
 def absolute_import_roots(tree: ast.AST) -> set[str]:
@@ -62,7 +106,7 @@ def imported_deleted_modules(tree: ast.AST) -> set[str]:
     found: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
-            names = (alias.name for alias in node.names)
+            names = [alias.name for alias in node.names]
         elif isinstance(node, ast.ImportFrom):
             names = [node.module] if node.module else []
             if node.level or node.module == "cpe_runtime":
@@ -70,47 +114,70 @@ def imported_deleted_modules(tree: ast.AST) -> set[str]:
         else:
             continue
         for name in names:
-            if name is None:
-                continue
-            found.update(set(name.split(".")) & DELETED_MODULES)
+            if name is not None:
+                found.update(set(name.split(".")) & DELETED_MODULES)
     return found
 
 
 def active_commands(document: Path) -> set[str]:
-    text = document.read_text(encoding="utf-8")
-    blocks = re.findall(r"```(?:bash|sh|shell)?\n(.*?)```", text, re.DOTALL)
-    commands: set[str] = set()
-    pattern = re.compile(
-        r"(?:^|\n)\s*(?:python3\s+)?(?:\./)?scripts/cpe\.py\s+([a-z][a-z-]*)"
+    return {
+        command.casefold()
+        for command in CPE_COMMAND.findall(document.read_text(encoding="utf-8"))
+    }
+
+
+def active_contract_text(text: str) -> str:
+    paragraphs = re.split(r"\n\s*\n", text)
+    return "\n\n".join(
+        paragraph
+        for paragraph in paragraphs
+        if "historical" not in paragraph.casefold()
     )
-    for block in blocks:
-        commands.update(pattern.findall(block))
-    return commands
 
 
-def check() -> list[str]:
+def check(root: Path = ROOT) -> list[str]:
     errors: list[str] = []
-    runtime_inventory = {path.name for path in RUNTIME_ROOT.glob("*.py")}
+    scripts_root = root / "scripts"
+    paths = production_python(root)
+    production_inventory = {
+        path.relative_to(scripts_root).as_posix() for path in paths
+    }
+    if production_inventory != EXPECTED_PRODUCTION_PYTHON:
+        errors.append(
+            "production Python inventory mismatch: "
+            f"expected={sorted(EXPECTED_PRODUCTION_PYTHON)} "
+            f"actual={sorted(production_inventory)}"
+        )
+
+    runtime_root = root / "scripts" / "cpe_runtime"
+    runtime_inventory = {
+        path.relative_to(runtime_root).as_posix()
+        for path in runtime_python(root)
+    }
     if runtime_inventory != EXPECTED_RUNTIME:
         errors.append(
             "runtime inventory mismatch: "
             f"expected={sorted(EXPECTED_RUNTIME)} actual={sorted(runtime_inventory)}"
         )
-    templates = {path.name for path in (ROOT / "templates").glob("*.json")}
-    if templates != EXPECTED_TEMPLATES:
+    template_root = root / "templates"
+    schemas = production_schemas(root)
+    template_inventory = {
+        path.relative_to(template_root).as_posix() for path in schemas
+    }
+    if template_inventory != EXPECTED_TEMPLATES:
         errors.append(
             "template inventory mismatch: "
-            f"expected={sorted(EXPECTED_TEMPLATES)} actual={sorted(templates)}"
+            f"expected={sorted(EXPECTED_TEMPLATES)} "
+            f"actual={sorted(template_inventory)}"
         )
 
-    paths = production_python()
-    schema = ROOT / "templates" / "terminal-envelope.schema.json"
-    searchable = [*paths, schema]
-    for path in searchable:
+    for path in [*paths, *schemas]:
         text = path.read_text(encoding="utf-8")
-        for token in sorted(FORBIDDEN):
-            if token in text:
-                errors.append(f"forbidden token {token!r}: {path.relative_to(ROOT)}")
+        for name, pattern in SEMANTIC_PATTERNS.items():
+            if pattern.search(text):
+                errors.append(
+                    f"forbidden semantic token {name!r}: {path.relative_to(root)}"
+                )
 
     total = 0
     stdlib = sys.stdlib_module_names
@@ -120,34 +187,37 @@ def check() -> list[str]:
         total += lines
         if lines > MODULE_LIMIT:
             errors.append(
-                f"module line limit exceeded: {path.relative_to(ROOT)}={lines}"
+                f"module line limit exceeded: {path.relative_to(root)}={lines}"
             )
         try:
             tree = ast.parse(text, filename=str(path))
         except SyntaxError as exc:
-            errors.append(f"invalid Python: {path.relative_to(ROOT)}: {exc}")
+            errors.append(f"invalid Python: {path.relative_to(root)}: {exc}")
             continue
         external = absolute_import_roots(tree) - stdlib - {"cpe_runtime"}
         if external:
             errors.append(
-                f"non-stdlib import: {path.relative_to(ROOT)}={sorted(external)}"
+                f"non-stdlib import: {path.relative_to(root)}={sorted(external)}"
             )
         deleted = imported_deleted_modules(tree)
         if deleted:
             errors.append(
-                f"deleted-module import: {path.relative_to(ROOT)}={sorted(deleted)}"
+                f"deleted-module import: {path.relative_to(root)}={sorted(deleted)}"
             )
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
             for keyword in node.keywords:
-                if (
-                    keyword.arg == "shell"
-                    and isinstance(keyword.value, ast.Constant)
-                    and keyword.value.value is True
-                ):
+                if keyword.arg != "shell":
+                    continue
+                literal_false = (
+                    isinstance(keyword.value, ast.Constant)
+                    and keyword.value.value is False
+                )
+                if not literal_false:
                     errors.append(
-                        f"shell=True is forbidden: {path.relative_to(ROOT)}:{node.lineno}"
+                        "shell keyword must be literal False: "
+                        f"{path.relative_to(root)}:{node.lineno}"
                     )
     if total > PRODUCTION_LIMIT:
         errors.append(
@@ -155,12 +225,22 @@ def check() -> list[str]:
         )
 
     for name in ("SKILL.md", "README.md"):
-        commands = active_commands(ROOT / name)
+        document = root / name
+        text = document.read_text(encoding="utf-8")
+        commands = active_commands(document)
         if commands != PUBLIC_COMMANDS:
             errors.append(
                 f"active commands mismatch in {name}: "
                 f"expected={sorted(PUBLIC_COMMANDS)} actual={sorted(commands)}"
             )
+        normalized = " ".join(text.split())
+        for phrase in CURRENT_PUBLIC_PHRASES:
+            if " ".join(phrase.split()) not in normalized:
+                errors.append(f"current contract missing in {name}: {phrase}")
+        active_text = active_contract_text(text)
+        for stale_name, pattern in STALE_PUBLIC_PATTERNS.items():
+            if pattern.search(active_text):
+                errors.append(f"stale active contract in {name}: {stale_name}")
     return errors
 
 
@@ -171,9 +251,12 @@ def main() -> int:
             print(f"FAIL {error}")
         return 1
     paths = production_python()
-    counts = {path.relative_to(ROOT).as_posix(): len(
-        path.read_text(encoding="utf-8").splitlines()
-    ) for path in paths}
+    counts = {
+        path.relative_to(ROOT).as_posix(): len(
+            path.read_text(encoding="utf-8").splitlines()
+        )
+        for path in paths
+    }
     print(
         "PASS architecture "
         f"modules={len(paths)} total_lines={sum(counts.values())} "
