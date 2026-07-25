@@ -13,6 +13,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Callable
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
@@ -573,6 +574,82 @@ class RuntimeContractTests(unittest.TestCase):
         self.assertEqual(result["status"], "handed_off")
         self.assertEqual(self.controller.requests[0].mode, "resume")
         self.assertNotIn(note, self.controller.requests[0].prompt)
+
+    def test_completed_resume_ignores_auxiliary_session_unavailable_code(self) -> None:
+        run_id = self.create_interrupted_run()
+        self.controller.outcomes = [
+            ControllerOutcome(
+                SESSION_ID,
+                0,
+                "completed",
+                self.completed(),
+                "session_unavailable",
+            ),
+        ]
+
+        result = self.runtime.resume(run_id=run_id)
+
+        self.assertEqual(result["status"], "handed_off")
+        self.assertEqual(len(self.controller.requests), 1)
+        state = self.store(run_id).state
+        self.assertEqual(state.controller_generation, 0)
+        self.assertFalse(state.fresh_fallback_used)
+
+    def test_generation_zero_observation_failure_fails_closed_before_fallback(self) -> None:
+        run_id = self.create_interrupted_run()
+        original_session = self.store(run_id).state.controller_session_id
+        self.controller.outcomes = [
+            self.outcome("session_unavailable", terminal=None),
+        ]
+
+        with patch(
+            "cpe_runtime.runtime.observe_git",
+            side_effect=ValueError("observation unavailable"),
+        ):
+            try:
+                result = self.runtime.resume(run_id=run_id)
+            except ValueError as exc:
+                self.fail(f"observation failure escaped: {exc}")
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(len(self.controller.requests), 1)
+        state = self.store(run_id).state
+        self.assertEqual(state.status, "failed")
+        self.assertIsNone(state.active_pid)
+        self.assertIsNone(state.active_process_group)
+        self.assertEqual(state.controller_session_id, original_session)
+        self.assertEqual(state.controller_generation, 0)
+        self.assertFalse(state.fresh_fallback_used)
+
+    def test_generation_one_observation_failure_fails_closed_while_blocking(self) -> None:
+        run_id = self.create_generation_one_interrupted_run()
+        generation_one_session = self.store(run_id).state.controller_session_id
+        self.controller.outcomes = [
+            self.outcome(
+                "session_unavailable",
+                terminal=None,
+                session_id=NEW_SESSION_ID,
+            ),
+        ]
+
+        with patch(
+            "cpe_runtime.runtime.observe_git",
+            side_effect=ValueError("observation unavailable"),
+        ):
+            try:
+                result = self.runtime.resume(run_id=run_id)
+            except ValueError as exc:
+                self.fail(f"observation failure escaped: {exc}")
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(len(self.controller.requests), 1)
+        state = self.store(run_id).state
+        self.assertEqual(state.status, "failed")
+        self.assertIsNone(state.active_pid)
+        self.assertIsNone(state.active_process_group)
+        self.assertEqual(state.controller_session_id, generation_one_session)
+        self.assertEqual(state.controller_generation, 1)
+        self.assertTrue(state.fresh_fallback_used)
 
     def test_generation_one_session_replaces_generation_zero_after_callback(self) -> None:
         run_id = self.create_interrupted_run()
