@@ -363,8 +363,10 @@ class CodexController:
             forwarded[label] = MAX_LIVE_OUTPUT_BYTES
 
     def _terminate(self, process: subprocess.Popen[bytes]) -> None:
+        if process.returncode is not None:
+            return
         group = process.pid
-        exited = process.returncode is not None or os.waitid(
+        exited = os.waitid(
             os.P_PID, group, os.WEXITED | os.WNOHANG | os.WNOWAIT,
         ) is not None
         try:
