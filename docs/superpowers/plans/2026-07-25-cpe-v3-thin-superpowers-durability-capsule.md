@@ -1669,7 +1669,7 @@ Expected: clean candidate, all gates green, Critical 0, Important 0.
 
 **Files:**
 - No source edits expected.
-- Preserve the three user-owned untracked incident reports in `/Users/kws/source/private/Archive/docs/operations/`.
+- Preserve the three user-owned incident reports in `/Users/kws/source/private/Archive/docs/operations/` byte-for-byte. They are tracked on the current `main`; if their tracked status changes again before execution, preservation still takes precedence.
 
 **Interfaces:**
 - Consumes: Task 8 clean candidate and review.
@@ -1690,7 +1690,8 @@ shasum -a 256 \
 ```
 
 Record the three hashes in the execution report. Do not add, edit, move, or
-delete those files.
+delete those files, and do not resolve candidate conflicts by changing their
+content.
 
 - [ ] **Step 2: Integrate any concurrently advanced main into the candidate**
 
