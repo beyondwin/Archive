@@ -527,6 +527,8 @@ class RunStore:
         except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise ValueError("format-5 run state is unavailable") from exc
         manifest = cls._manifest_from_payload(cls.validate_manifest_payload(manifest_payload))
+        if manifest.run_id != run_id:
+            raise ValueError("format-5 run identity is invalid")
         state = cls._state_from_payload(cls.validate_state_payload(state_payload))
         cls._validate_document_snapshots(run_root, manifest)
         return cls(run_root, manifest, state)

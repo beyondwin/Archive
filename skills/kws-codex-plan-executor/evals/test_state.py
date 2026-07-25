@@ -188,6 +188,15 @@ class StateContractTests(unittest.TestCase):
         self.assertEqual(store.root, self.root.resolve())
         self.assertEqual(RunStore.open(self.codex_home, self.run_id).state, state)
 
+    def test_open_rejects_manifest_for_a_different_run_id(self) -> None:
+        store = self.create_store()
+        payload = json.loads(store.manifest_path.read_text(encoding="utf-8"))
+        payload["run_id"] = "cpe-fedcba9876543210"
+        store.manifest_path.chmod(0o600)
+        store.manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "run identity"):
+            RunStore.open(self.codex_home, self.run_id)
+
     def test_manifest_validator_rejects_missing_and_additional_fields(self) -> None:
         payload = self.manifest(self.snapshot_one_document()).to_payload()
         for invalid in (
