@@ -11,12 +11,20 @@ from pathlib import Path
 
 from .contracts import ExitCode, canonical_json, sha256_json
 from .evidence import EvidenceStore
-from .git_ops import GitIdentity, GitWorkspace, configured_git_identity, protected_refs, validate_commit_identities
+from .git_ops import GitIdentity, GitWorkspace, VOLATILE_REF_POLICY_VERSION, configured_git_identity, protected_refs, validate_commit_identities
 from .helper import HelperDescriptor, HelperServer
 from .provider import CodexAdapter, ProviderOutcome, ProviderRequest
 from .recovery import ActivityLease, ProgressSnapshot, RecoveryPolicy, strategy_note_digest
 from .runtime import RuntimeIdentity, RuntimeUnavailable, require_compatible_runtime
-from .storage import RunLock, StateStore
+from .storage import (
+    IntentLock,
+    IntentMatch,
+    RunLock,
+    StateStore,
+    execution_intent_digest,
+    find_execution_intent,
+    write_intent_admission,
+)
 
 
 IMPLEMENTATION_PROMPT = """Read the execution packet and immutable source documents.
@@ -33,6 +41,7 @@ _AUTHORITY_BLOCKERS = frozenset({
     "provider_capability_blocked", "provider_unavailable",
     "provider_usage_blocked", "sandbox_capability_blocked",
 })
+_RUNNER_COMMAND = "./skills/kws-codex-plan-runner/scripts/runner"
 
 
 @dataclass(frozen=True)
@@ -64,8 +73,14 @@ class PlanRunner:
         self._event_hook = event_hook
         self._recovery = RecoveryPolicy()
 
+    def _event(self, stage: str) -> None:
+        if self._event_hook is not None:
+            self._event_hook(stage)
+
     def create_run(self, *, specs: Sequence[Path], plans: Sequence[Path], workspace: Path,
                    stall_seconds: float, sandbox: str, model: str | None = None) -> int:
+        store: StateStore | None = None
+        root: Path | None = None
         try:
             runtime = self._runtime()
             if not specs or not plans or sandbox not in {"workspace-write", "danger-full-access"}:
@@ -77,30 +92,181 @@ class PlanRunner:
                 raise ValueError("inputs must be absolute")
             identity = configured_git_identity(source)
             source_head = self._git_head(source)
-            run_id = f"{self._slug(Path(plans[0]).stem)}-{uuid.uuid4()}"
-            root = self.paths.state_home / run_id
-            branch = f"codex-plan/{run_id}"
-            worktree_path = self.paths.worktree_home / run_id
             common_dir = self._git_common_dir(source)
-            store = StateStore.create(
-                root=root, provider="codex", run_id=run_id, source_repository=source,
-                source_commit=source_head, worktree=worktree_path, branch=branch,
-                specs=[Path(path) for path in specs], plans=[Path(path) for path in plans],
-                immutable_config={
-                    "stall_seconds": float(stall_seconds), "sandbox": sandbox, "model": model,
-                    "git_identity": identity.as_dict(), "git_common_dir": str(common_dir),
-                    "protected_refs": protected_refs(source, branch),
-                    "input_snapshot_digest": self._input_digest(specs, plans),
-                }, runner_runtime=self._runtime_document(runtime),
+            ordered_specs = tuple(Path(path) for path in specs)
+            ordered_plans = tuple(Path(path) for path in plans)
+            intent_digest = execution_intent_digest(
+                source_common_dir=common_dir,
+                starting_commit=source_head,
+                specs=ordered_specs,
+                plans=ordered_plans,
             )
-            GitWorkspace.create(source, worktree_path, branch)
+            lock_home = self.paths.state_home.with_name(
+                f".{self.paths.state_home.name}-intent-locks"
+            )
+            self._event("intent_admission_ready")
+            with IntentLock(lock_home, intent_digest):
+                matching = find_execution_intent(
+                    self.paths.state_home, intent_digest
+                )
+                if matching is not None:
+                    return self._refuse_matching_run(matching)
+
+                run_id = f"{self._slug(ordered_plans[0].stem)}-{uuid.uuid4()}"
+                root = self.paths.state_home / run_id
+                branch = f"codex-plan/{run_id}"
+                worktree_path = self.paths.worktree_home / run_id
+                write_intent_admission(
+                    lock_home=lock_home,
+                    intent_digest=intent_digest,
+                    run_id=run_id,
+                    run_root=root,
+                    branch=branch,
+                    worktree=worktree_path,
+                )
+                store = StateStore.create(
+                    root=root, provider="codex", run_id=run_id,
+                    source_repository=source, source_commit=source_head,
+                    worktree=worktree_path, branch=branch,
+                    specs=ordered_specs, plans=ordered_plans,
+                    immutable_config={
+                        "stall_seconds": float(stall_seconds),
+                        "sandbox": sandbox,
+                        "model": model,
+                        "git_identity": identity.as_dict(),
+                        "git_common_dir": str(common_dir),
+                        "protected_refs": protected_refs(source, branch),
+                        "volatile_ref_policy_version":
+                            VOLATILE_REF_POLICY_VERSION,
+                        "input_snapshot_digest":
+                            self._input_digest(ordered_specs, ordered_plans),
+                        "execution_intent_digest": intent_digest,
+                    },
+                    runner_runtime=self._runtime_document(runtime),
+                )
+                GitWorkspace.create(source, worktree_path, branch)
             return self._execute(store)
         except RuntimeUnavailable as error:
             self._emit_error(str(error), "required managed Python runtime is unavailable")
             return int(ExitCode.BLOCKED)
-        except (OSError, RuntimeError, ValueError) as error:
+        except (OSError, RuntimeError, ValueError, TypeError) as error:
+            if root is not None and root.exists():
+                try:
+                    failed = StateStore.open(root)
+                    state = failed.snapshot()
+                    state["status"] = "failed"
+                    state["failure"] = {
+                        "reason_code": "state_integrity_failed",
+                        "detail": str(error)[:512],
+                        "next_strategy": "block",
+                        "next_session_action": "none",
+                    }
+                    failed.commit(state)
+                except (OSError, ValueError):
+                    pass
+                self._emit_error("state_integrity_failed", error)
+                return int(ExitCode.INTEGRITY)
+            if root is not None:
+                self._emit_error("state_integrity_failed", error)
+                return int(ExitCode.INTEGRITY)
             self._emit_error("invalid_invocation", error)
             return int(ExitCode.INVALID)
+
+    def _refuse_matching_run(self, match: IntentMatch) -> int:
+        state = match.state
+        if state is None:
+            self._emit_matching_run(
+                reason="matching_run_unproven",
+                run_id=match.run_id,
+                status="invalid",
+                branch=match.branch,
+                worktree=match.worktree,
+                recommended_action="preserve evidence and stop",
+                detail=match.invalid_detail,
+            )
+            return int(ExitCode.INTEGRITY)
+
+        run_id = state["run_id"]
+        status = state["status"]
+        repository = state["repository"]
+        reason = "matching_run_exists"
+        detail: object | None = None
+        if status in {"running", "recovering", "ready_for_integration"}:
+            action = f"{_RUNNER_COMMAND} inspect --run-id {run_id}"
+            code = (
+                ExitCode.READY
+                if status == "ready_for_integration"
+                else ExitCode.RESUMABLE
+            )
+        elif status == "resumable":
+            action = f"{_RUNNER_COMMAND} resume --run-id {run_id}"
+            code = ExitCode.RESUMABLE
+        elif status == "blocked":
+            action = (
+                "fix the named blocker, then "
+                f"{_RUNNER_COMMAND} resume --run-id {run_id} --retry-blocked"
+            )
+            code = ExitCode.BLOCKED
+        elif status == "failed" and self._is_retryable_failed_state(
+            state.get("failure")
+        ):
+            action = (
+                f"{_RUNNER_COMMAND} resume --run-id {run_id} "
+                "--retry-failed --strategy-note TEXT"
+            )
+            code = ExitCode.FAILED
+        else:
+            reason = "matching_run_unproven"
+            action = "preserve evidence and stop"
+            failure = state.get("failure")
+            detail = (
+                failure.get("detail")
+                if isinstance(failure, Mapping)
+                else None
+            )
+            code = ExitCode.INTEGRITY
+        self._emit_matching_run(
+            reason=reason,
+            run_id=run_id,
+            status=status,
+            branch=repository["branch"],
+            worktree=repository["worktree"],
+            recommended_action=action,
+            detail=detail,
+        )
+        return int(code)
+
+    @staticmethod
+    def _is_retryable_failed_state(failure: object) -> bool:
+        return (
+            isinstance(failure, Mapping)
+            and failure.get("reason_code") == "recovery_exhausted"
+            and failure.get("next_strategy")
+            in {"fresh_root", "resume_root", "block"}
+        )
+
+    def _emit_matching_run(
+        self,
+        *,
+        reason: str,
+        run_id: object,
+        status: object,
+        branch: object,
+        worktree: object,
+        recommended_action: str,
+        detail: object | None = None,
+    ) -> None:
+        response = {
+            "reason": reason,
+            "run_id": str(run_id)[:128],
+            "status": str(status)[:64],
+            "branch": str(branch)[:256],
+            "worktree": str(worktree)[:1024],
+            "recommended_action": recommended_action[:2048],
+        }
+        if detail is not None:
+            response["detail"] = str(detail)[:512]
+        self._output(json.dumps(response, sort_keys=True))
 
     def resume(self, run_id: str, *, retry_blocked: bool, retry_failed: bool,
                strategy_note: str | None, sandbox: str | None = None, model: str | None = None) -> int:
@@ -361,7 +527,18 @@ class PlanRunner:
     @staticmethod
     def _git_common_dir(path: Path) -> Path:
         import subprocess
-        return Path(subprocess.run(["git", "rev-parse", "--git-common-dir"], cwd=path, check=True, capture_output=True, text=True).stdout.strip()).resolve()
+        value = Path(
+            subprocess.run(
+                ["git", "rev-parse", "--git-common-dir"],
+                cwd=path,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+        )
+        if not value.is_absolute():
+            value = path / value
+        return value.resolve(strict=True)
 
     def _emit_summary(self, state: Mapping[str, object]) -> None:
         self._output(json.dumps({"run_id": state["run_id"], "status": state["status"], "integration": state["integration"], "current_plan_index": state["current_plan_index"], "plan_count": len(state["plans"])}, sort_keys=True))

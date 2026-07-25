@@ -18,10 +18,6 @@ SDD_RELATIVE_PATHS = (
     Path("skills/subagent-driven-development/scripts/sdd-workspace"),
     Path("skills/subagent-driven-development/scripts/task-brief"),
     Path("skills/subagent-driven-development/scripts/review-package"),
-    Path("skills/subagent-driven-development/implementer-prompt.md"),
-    Path("skills/subagent-driven-development/task-reviewer-prompt.md"),
-    Path("skills/subagent-driven-development/re-review-prompt.md"),
-    Path("skills/requesting-code-review/code-reviewer.md"),
 )
 
 
