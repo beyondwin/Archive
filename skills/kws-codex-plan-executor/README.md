@@ -32,17 +32,10 @@ upstream.
 
 ```bash
 python3 scripts/cpe.py run \
-  --spec /abs/spec-a.md --spec /abs/spec-b.md \
-  --plan /abs/plan-01.md --plan /abs/plan-02.md \
-  --workspace /abs/repository
-python3 scripts/cpe.py run --plan /abs/plan.md --workspace /abs/repository \
-  --sandbox workspace-write --controller-slice-seconds 1800
+  --document /abs/design.md --document /abs/implementation.md \
+  --workspace /abs/repository \
+  --superpowers-skill subagent-driven-development
 python3 scripts/cpe.py resume --run-id RUN_ID
-python3 scripts/cpe.py resume --run-id RUN_ID --retry-blocked
-python3 scripts/cpe.py resume --run-id RUN_ID --retry-failed
-python3 scripts/cpe.py recover-ledger --run-id RUN_ID \
-  --sha256 EXACT_INVALID_LEDGER_SHA256 \
-  --authority-profile local-implementation-with-evidence-approvals
 python3 scripts/cpe.py inspect --run-id RUN_ID
 ```
 
@@ -94,14 +87,9 @@ transcript. None of these facts lets CPE choose the semantic recovery work.
 ## Caller-Selected Verification
 
 CPE never selects or runs a full suite by itself. The approved plan or
-Superpowers selects verification. CPE's `verify` command only executes the
-exact submitted argv, without shell expansion or a hidden suite selection:
-
-```bash
-python3 scripts/cpe.py verify --run-id RUN_ID --command-id unit \
-  --phase task --input-digest SHA256 --mutable-input-policy immutable \
-  --cwd /abs/worktree -- python3 -m unittest
-```
+Superpowers selects verification. CPE's historical `verify` command only
+executed the exact submitted argv, without shell expansion or a hidden suite
+selection.
 
 The supplied argv, cwd, `HEAD`, sanitized execution environment, executable
 identity, input digest, and mutable-input policy are the execution identity.

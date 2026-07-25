@@ -1,19 +1,23 @@
 #!/usr/bin/env python3
-"""Run, resume, recover, or inspect ordered Superpowers implementation plans."""
+"""Run, resume, or inspect one durable Superpowers execution contract."""
 
 from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import sys
 from pathlib import Path
 from typing import Sequence
 
-from cpe_runtime.runner import SequentialRunner
+from cpe_runtime.runtime import CpeRuntime
+from cpe_runtime.state import DocumentSource
 
-
-EXIT_CODES = {"completed": 0, "failed": 1, "blocked": 2, "checkpointed": 3}
+EXIT_CODES = {
+    "handed_off": 0,
+    "failed": 1,
+    "blocked": 2,
+    "interrupted": 3,
+}
 
 
 class CliUsageError(ValueError):
@@ -24,69 +28,47 @@ class JsonArgumentParser(argparse.ArgumentParser):
     def error(self, message: str) -> None:
         raise CliUsageError(message)
 
+    def parse_args(
+        self,
+        args: Sequence[str] | None = None,
+        namespace: argparse.Namespace | None = None,
+    ) -> argparse.Namespace:
+        parsed = super().parse_args(args, namespace)
+        if parsed.command == "run" and (
+            (parsed.adopt_worktree is None) != (parsed.base is None)
+        ):
+            self.error("--adopt-worktree and --base must be supplied together")
+        return parsed
 
-def absolute_path(value: str) -> Path:
+
+def absolute_path(value: str) -> str:
     path = Path(value).expanduser()
     if not path.is_absolute():
         raise argparse.ArgumentTypeError("path must be absolute")
-    return path
+    return str(path)
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = JsonArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-
     run = commands.add_parser("run")
-    run.add_argument("--spec", action="append", type=absolute_path, default=[])
-    run.add_argument("--plan", action="append", type=absolute_path, required=True)
+    run.add_argument("--document", action="append", type=absolute_path, required=True)
     run.add_argument("--workspace", type=absolute_path, required=True)
     run.add_argument(
-        "--sandbox",
-        choices=("danger-full-access", "workspace-write"),
-        default="danger-full-access",
+        "--superpowers-skill",
+        choices=("subagent-driven-development", "executing-plans"),
+        required=True,
     )
     run.add_argument(
-        "--controller-slice-seconds",
-        type=int,
-        default=1200,
+        "--sandbox",
+        choices=("workspace-write", "danger-full-access"),
+        default="workspace-write",
     )
-
-    resume = commands.add_parser("resume")
-    resume.add_argument("--run-id", required=True)
-    retry = resume.add_mutually_exclusive_group()
-    retry.add_argument("--retry-blocked", action="store_true")
-    retry.add_argument("--retry-failed", action="store_true")
-
-    inspect = commands.add_parser("inspect")
-    inspect.add_argument("--run-id", required=True)
-
-    recover_ledger = commands.add_parser("recover-ledger")
-    recover_ledger.add_argument("--run-id", required=True)
-    recover_ledger.add_argument("--sha256", required=True)
-    recover_ledger.add_argument(
-        "--authority-profile",
-        choices=("local-implementation-with-evidence-approvals",),
-        required=True,
-    )
-
-    verify = commands.add_parser("verify")
-    verify.add_argument("--run-id", required=True)
-    verify.add_argument(
-        "--command-id", required=True,
-        help="observational command label; not part of execution identity",
-    )
-    verify.add_argument(
-        "--phase", choices=("task", "affected", "branch_final"), required=True,
-        help="requested phase observation; not part of execution identity",
-    )
-    verify.add_argument("--input-digest", required=True)
-    verify.add_argument(
-        "--mutable-input-policy",
-        choices=("immutable", "digest_complete", "always_execute"),
-        required=True,
-    )
-    verify.add_argument("--cwd", type=absolute_path, required=True)
-    verify.add_argument("argv", nargs=argparse.REMAINDER)
+    run.add_argument("--adopt-worktree", type=absolute_path)
+    run.add_argument("--base")
+    for name in ("resume", "inspect"):
+        command = commands.add_parser(name)
+        command.add_argument("--run-id", required=True)
     return parser
 
 
@@ -94,65 +76,46 @@ def _bounded_error(exc: BaseException) -> str:
     return (str(exc).strip() or type(exc).__name__)[:2000]
 
 
-def _emit(payload: dict[str, object], exit_code: int | None = None) -> int:
+def _emit(payload: dict[str, object], exit_code: int) -> int:
     print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
-    if exit_code is not None:
-        return exit_code
-    return EXIT_CODES.get(str(payload.get("status")), 1)
+    return exit_code
+
+
+def _emit_terminal(payload: dict[str, object]) -> int:
+    status = str(payload.get("status"))
+    if status not in EXIT_CODES:
+        raise ValueError(f"invalid CPE terminal status: {status}")
+    return _emit(payload, EXIT_CODES[status])
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     try:
-        raw_argv = list(sys.argv[1:] if argv is None else argv)
-        args = build_parser().parse_args(raw_argv)
-        runner = SequentialRunner()
+        args = build_parser().parse_args(sys.argv[1:] if argv is None else argv)
+        runtime = CpeRuntime()
         if args.command == "run":
-            result = runner.run(
-                workspace=args.workspace,
-                specs=args.spec,
-                plans=args.plan,
-                sandbox_mode=args.sandbox,
-                controller_slice_seconds=args.controller_slice_seconds,
+            documents = tuple(
+                DocumentSource(Path(path)) for path in args.document
             )
-            return _emit(result)
+            result = runtime.run(
+                workspace=Path(args.workspace),
+                documents=documents,
+                superpowers_skill=args.superpowers_skill,
+                sandbox=args.sandbox,
+                adopt_worktree_path=(
+                    Path(args.adopt_worktree) if args.adopt_worktree else None
+                ),
+                base=args.base,
+            )
+            return _emit_terminal(result)
         if args.command == "resume":
-            result = runner.resume(
-                run_id=args.run_id,
-                retry_blocked=args.retry_blocked,
-                retry_failed=args.retry_failed,
-            )
-            return _emit(result)
-        if args.command == "recover-ledger":
-            result = runner.recover_execution_ledger(
-                run_id=args.run_id,
-                ledger_sha256=args.sha256,
-                authority_profile=args.authority_profile,
-            )
-            return _emit(result, 0)
-        if args.command == "verify":
-            command_argv = list(args.argv)
-            if command_argv[:1] != ["--"]:
-                raise CliUsageError("verify requires -- before command argv")
-            command_argv = command_argv[1:]
-            if not command_argv:
-                raise CliUsageError("verify command argv must not be empty")
-            result = runner.verify(
-                run_id=args.run_id,
-                command_id=args.command_id,
-                phase=args.phase,
-                input_digest=args.input_digest,
-                mutable_input_policy=args.mutable_input_policy,
-                cwd=args.cwd,
-                argv=command_argv,
-            )
-            if result.get("status") == "uncached_command_required":
-                return _emit(result, 1)
-            return _emit(result, 0 if result.get("status") == "passed" else 1)
-        result = runner.inspect(run_id=args.run_id)
-        return _emit(result, 0)
+            return _emit_terminal(runtime.resume(run_id=args.run_id))
+        return _emit(runtime.inspect(run_id=args.run_id), 0)
     except KeyboardInterrupt:
-        return _emit({"status": "checkpointed", "error": "invocation interrupted"})
-    except (CliUsageError, OSError, RuntimeError, TypeError, ValueError, subprocess.SubprocessError) as exc:
+        return _emit(
+            {"status": "interrupted", "error": "invocation interrupted"},
+            EXIT_CODES["interrupted"],
+        )
+    except Exception as exc:
         return _emit({"status": "failed", "error": _bounded_error(exc)}, 1)
 
 

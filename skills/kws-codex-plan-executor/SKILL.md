@@ -27,14 +27,10 @@ cross-revision comparison.
 
 ```bash
 python3 scripts/cpe.py run \
-  --spec /abs/spec-a.md --plan /abs/plan-01.md \
-  --workspace /abs/repository
+  --document /abs/design.md --document /abs/implementation.md \
+  --workspace /abs/repository \
+  --superpowers-skill subagent-driven-development
 python3 scripts/cpe.py resume --run-id RUN_ID
-python3 scripts/cpe.py resume --run-id RUN_ID --retry-blocked
-python3 scripts/cpe.py resume --run-id RUN_ID --retry-failed
-python3 scripts/cpe.py recover-ledger --run-id RUN_ID \
-  --sha256 EXACT_INVALID_LEDGER_SHA256 \
-  --authority-profile local-implementation-with-evidence-approvals
 python3 scripts/cpe.py inspect --run-id RUN_ID
 ```
 
