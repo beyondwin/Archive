@@ -71,15 +71,10 @@ STALE_PUBLIC_PATTERNS = {
     "completed status": re.compile(r"`completed`", re.IGNORECASE),
     "checkpointed status": re.compile(r"`checkpointed`", re.IGNORECASE),
 }
-PYTHON_CPE_COMMAND = re.compile(
-    r"(?<![\w/])(?:python3|python)[ \t]+"
-    r"(?:[^\s`'\"<>]+/)*scripts/cpe\.py[ \t]+([a-z][a-z-]*)",
+CPE_COMMAND = re.compile(
+    r"(?<![\w/])(?:[^\s`'\"<>]+/)*scripts/cpe\.py"
+    r"(?:['\"])?[ \t]+([a-z][a-z-]*)(?![\w./-])",
     re.IGNORECASE,
-)
-DIRECT_CPE_COMMAND = re.compile(
-    r"(?:^[ \t]*(?:\$[ \t]*)?|(?<=`))"
-    r"(?:[^\s`'\"<>]+/)*scripts/cpe\.py[ \t]+([a-z][a-z-]*)",
-    re.IGNORECASE | re.MULTILINE,
 )
 PRODUCTION_LIMIT = 1500
 MODULE_LIMIT = 450
@@ -128,8 +123,7 @@ def active_commands(document: Path) -> set[str]:
     text = document.read_text(encoding="utf-8")
     return {
         command.casefold()
-        for pattern in (PYTHON_CPE_COMMAND, DIRECT_CPE_COMMAND)
-        for command in pattern.findall(text)
+        for command in CPE_COMMAND.findall(text)
     }
 
 

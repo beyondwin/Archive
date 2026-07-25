@@ -511,6 +511,53 @@ class ArchitectureGuardTests(unittest.TestCase):
             "active commands mismatch in README.md",
         )
 
+    def test_guard_rejects_all_prefixed_old_cpe_command_forms(self) -> None:
+        invocations = (
+            "$ /tmp/repo/skills/kws-codex-plan-executor/"
+            "scripts/cpe.py verify",
+            'python3 "skills/kws-codex-plan-executor/'
+            'scripts/cpe.py" verify',
+            "/usr/bin/python3 skills/kws-codex-plan-executor/"
+            "scripts/cpe.py verify",
+            "python3 -I skills/kws-codex-plan-executor/"
+            "scripts/cpe.py verify",
+            "$ env X=1 /tmp/repo/skills/kws-codex-plan-executor/"
+            "scripts/cpe.py verify",
+        )
+        for invocation in invocations:
+            with self.subTest(invocation=invocation):
+                self.write_public_docs()
+                with (self.root / "README.md").open(
+                    "a",
+                    encoding="utf-8",
+                ) as readme:
+                    readme.write(f"\n```console\n{invocation}\n```\n")
+                self.assert_guard_fails(
+                    "active commands mismatch in README.md",
+                )
+
+    def test_guard_allows_prefixed_current_cpe_command_forms(self) -> None:
+        invocations = (
+            "$ /tmp/repo/skills/kws-codex-plan-executor/"
+            "scripts/cpe.py run",
+            'python3 "skills/kws-codex-plan-executor/'
+            'scripts/cpe.py" resume',
+            "/usr/bin/python3 skills/kws-codex-plan-executor/"
+            "scripts/cpe.py inspect",
+            "python3 -I skills/kws-codex-plan-executor/"
+            "scripts/cpe.py run",
+            "$ env X=1 /tmp/repo/skills/kws-codex-plan-executor/"
+            "scripts/cpe.py resume",
+        )
+        block = "\n```console\n" + "\n".join(invocations) + "\n```\n"
+        for name in ("SKILL.md", "README.md"):
+            with (self.root / name).open("a", encoding="utf-8") as document:
+                document.write(block)
+
+        result = self.run_guard()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_guard_rejects_any_nonliteral_false_shell_keyword(self) -> None:
         (self.root / "scripts" / "cpe.py").write_text(
             "import subprocess\n"
