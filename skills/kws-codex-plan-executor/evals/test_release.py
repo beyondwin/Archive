@@ -52,7 +52,7 @@ def parse_frontmatter_metadata(skill: str) -> dict[str, str]:
     metadata_indexes = [
         index
         for index, line in enumerate(frontmatter_lines)
-        if re.match(r"^metadata\s*:", line)
+        if re.match(r"""^(?:metadata|'metadata'|"metadata")\s*:""", line)
     ]
     if len(metadata_indexes) != 1:
         raise AssertionError("SKILL.md frontmatter must contain one metadata mapping")
@@ -85,7 +85,23 @@ def markdown_section(document: str, level: str, heading: str) -> str:
 
 
 def without_html_comments(document: str) -> str:
-    return re.sub(r"<!--.*?-->", "", document, flags=re.DOTALL)
+    live_parts = []
+    cursor = 0
+    while True:
+        opener = document.find("<!--", cursor)
+        closer = document.find("-->", cursor)
+        if closer != -1 and (opener == -1 or closer < opener):
+            raise AssertionError("Markdown contains unbalanced HTML comments")
+        if opener == -1:
+            live_parts.append(document[cursor:])
+            return "".join(live_parts)
+        live_parts.append(document[cursor:opener])
+        closer = document.find("-->", opener + len("<!--"))
+        if closer == -1:
+            raise AssertionError("Markdown contains unbalanced HTML comments")
+        if document.find("<!--", opener + len("<!--"), closer) != -1:
+            raise AssertionError("Markdown contains unbalanced HTML comments")
+        cursor = closer + len("-->")
 
 
 def cpe_install_entries(section: str, home: str) -> list[str]:
@@ -178,6 +194,17 @@ class ReleaseContractTests(unittest.TestCase):
             (
                 '  updated_at: "2026-07-25"',
                 '  updated_at: "2026-07-25"\nmetadata: '
+                '{version: "9.9.9", updated_at: "2026-07-26"}',
+            ),
+            self.test_release_documents_use_the_same_version_and_date,
+        )
+
+    def test_release_check_rejects_quoted_frontmatter_metadata_mapping(self) -> None:
+        self.assert_check_rejects_mutation(
+            ROOT / "SKILL.md",
+            (
+                '  updated_at: "2026-07-25"',
+                '  updated_at: "2026-07-25"\n"metadata": '
                 '{version: "9.9.9", updated_at: "2026-07-26"}',
             ),
             self.test_release_documents_use_the_same_version_and_date,
@@ -278,6 +305,19 @@ class ReleaseContractTests(unittest.TestCase):
         self.assert_check_rejects_transform(
             REPOSITORY_ROOT / "skills" / "README.md",
             wrap_sections,
+            self.test_skills_catalog_advertises_cpe_as_its_own_local_contract,
+        )
+
+    def test_catalog_check_rejects_unclosed_comment_wrapping_required_content(
+        self,
+    ) -> None:
+        def wrap_required_content_to_eof(catalog: str) -> str:
+            start = catalog.index("## 포함된 스킬")
+            return catalog[:start] + "<!--\n" + catalog[start:]
+
+        self.assert_check_rejects_transform(
+            REPOSITORY_ROOT / "skills" / "README.md",
+            wrap_required_content_to_eof,
             self.test_skills_catalog_advertises_cpe_as_its_own_local_contract,
         )
 
