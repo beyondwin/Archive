@@ -59,7 +59,7 @@ def _read_private_json(path: Path) -> object:
     _require(isinstance(no_follow, int) and no_follow != 0, _UNAVAILABLE_ERROR)
     descriptor: int | None = None
     try:
-        descriptor = os.open(path, os.O_RDONLY | no_follow)
+        descriptor = os.open(path, os.O_RDONLY | no_follow | os.O_NONBLOCK)
         metadata = os.fstat(descriptor)
         _require(
             stat.S_ISREG(metadata.st_mode)
