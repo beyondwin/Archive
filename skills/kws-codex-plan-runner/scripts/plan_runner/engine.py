@@ -585,7 +585,12 @@ class PlanRunner:
         store.commit(state)
         if decision.action == "recover":
             resume_session = outcome.session_id if decision.session_action == "explicit_resume" else None
-            return self._execute_plan(store, workspace, session_id=resume_session)
+            return self._execute_plan(
+                store,
+                workspace,
+                session_id=resume_session,
+                resume_session=resume_session is not None,
+            )
         self._emit_summary(store.snapshot())
         return int(ExitCode.FAILED)
 

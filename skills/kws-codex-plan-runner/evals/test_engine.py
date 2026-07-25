@@ -270,6 +270,13 @@ class EngineTest(unittest.TestCase):
         self.outcome_hook = lambda _a, _r, _p, session: ProviderOutcome("failed", 1, session, None, "transport_closed", {}, (), "")
         self.assertEqual(self.create(self.plans[:1]), ExitCode.FAILED)
         self.assertEqual([request.session_id for request in self.requests], [None, str(uuid.UUID(int=1)), None])
+        self.assertEqual(
+            [
+                attempt["session_action"]
+                for attempt in self.state()["attempts"]
+            ],
+            ["fresh_root", "resume_root", "fresh_root"],
+        )
         self.assertEqual(self.state()["failure"]["reason_code"], "recovery_exhausted")
 
     def test_controller_stop_seals_exact_dirty_checkpoint_and_resume_attempt(self):
