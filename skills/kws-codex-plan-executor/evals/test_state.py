@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -216,6 +217,40 @@ class StateContractTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "run state is unavailable"):
             RunStore.open(self.codex_home, self.run_id)
+
+    def test_open_rejects_fifo_state_without_blocking(self) -> None:
+        store = self.create_store()
+        store.state_path.unlink()
+        os.mkfifo(store.state_path, mode=0o600)
+        child = (
+            "import sys\n"
+            "from pathlib import Path\n"
+            "sys.path.insert(0, sys.argv[1])\n"
+            "from cpe_runtime.state import RunStore\n"
+            "try:\n"
+            "    RunStore.open(Path(sys.argv[2]), sys.argv[3])\n"
+            "except ValueError:\n"
+            "    raise SystemExit(0)\n"
+            "raise SystemExit('FIFO state was accepted')\n"
+        )
+        try:
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    child,
+                    str(Path(__file__).resolve().parents[1] / "scripts"),
+                    str(self.codex_home),
+                    self.run_id,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=1.0,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            self.fail("RunStore.open blocked on a FIFO for 1.0 seconds")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
 
     def test_manifest_validator_rejects_missing_and_additional_fields(self) -> None:
         payload = self.manifest(self.snapshot_one_document()).to_payload()
