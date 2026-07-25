@@ -146,6 +146,8 @@ class CpeRuntime:
         return self._launch(store, assignment, mode="initial", session_id=None)
     def resume(self, *, run_id: str) -> dict[str, object]:
         store = RunStore.open(self.codex_home, run_id)
+        if store.state.status == "handed_off":
+            return {"status": "blocked", "run_id": run_id, "reason": "run_already_handed_off"}
         session_id = store.state.controller_session_id
         if session_id is None:
             return {"status": "blocked", "run_id": run_id, "reason": "saved_session_unavailable"}
