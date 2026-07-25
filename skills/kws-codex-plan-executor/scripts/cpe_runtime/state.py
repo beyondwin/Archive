@@ -22,9 +22,11 @@ SHA40 = re.compile(r"^[0-9a-f]{40}$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 MAX_RESUME_NOTE_BYTES = 2048
 MAX_EVIDENCE_REFS = 16
+_MAX_PERSISTED_JSON_BYTES = 16 * 1024 * 1024
 _MANIFEST_ERROR = "format-5 manifest is invalid"
 _STATE_ERROR = "format-5 state is invalid"
 _RESUME_ERROR = "resume capsule is invalid"
+_UNAVAILABLE_ERROR = "format-5 run state is unavailable"
 _RESUME_KEYS = ("head_commit", "worktree_status_digest", "note", "evidence_refs")
 def _require(condition: bool, error: str) -> None:
     if not condition:
@@ -52,6 +54,28 @@ def _require_utf8_bytes(value: object, *, maximum: int, name: str, minimum: int 
     return value
 def _json_bytes(payload: Mapping[str, object]) -> bytes:
     return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+def _read_private_json(path: Path) -> object:
+    no_follow = getattr(os, "O_NOFOLLOW", None)
+    _require(isinstance(no_follow, int) and no_follow != 0, _UNAVAILABLE_ERROR)
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(path, os.O_RDONLY | no_follow)
+        metadata = os.fstat(descriptor)
+        _require(
+            stat.S_ISREG(metadata.st_mode)
+            and metadata.st_size <= _MAX_PERSISTED_JSON_BYTES,
+            _UNAVAILABLE_ERROR,
+        )
+        with os.fdopen(descriptor, "rb", closefd=True) as stream:
+            descriptor = None
+            payload = stream.read(_MAX_PERSISTED_JSON_BYTES + 1)
+        _require(len(payload) <= _MAX_PERSISTED_JSON_BYTES, _UNAVAILABLE_ERROR)
+        return json.loads(payload.decode("utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError, RecursionError) as exc:
+        raise ValueError(_UNAVAILABLE_ERROR) from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
 def _write_all(descriptor: int, payload: bytes) -> None:
     remaining = memoryview(payload)
     while remaining:
@@ -201,14 +225,20 @@ class RunLock:
         self.path, self.shared, self.descriptor = path, shared, None
     def __enter__(self) -> "RunLock":
         self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        self.descriptor = os.open(self.path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
-        if not stat.S_ISREG(os.fstat(self.descriptor).st_mode):
-            os.close(self.descriptor)
-            self.descriptor = None
-            raise ValueError("run lock must be a regular file")
-        os.fchmod(self.descriptor, 0o600)
-        operation = fcntl.LOCK_SH if self.shared else fcntl.LOCK_EX
-        fcntl.flock(self.descriptor, operation | fcntl.LOCK_NB)
+        descriptor = os.open(self.path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        self.descriptor = descriptor
+        try:
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                raise ValueError("run lock must be a regular file")
+            os.fchmod(descriptor, 0o600)
+            operation = fcntl.LOCK_SH if self.shared else fcntl.LOCK_EX
+            fcntl.flock(descriptor, operation | fcntl.LOCK_NB)
+        except BaseException:
+            try:
+                os.close(descriptor)
+            finally:
+                self.descriptor = None
+            raise
         return self
     def fileno(self) -> int:
         if self.descriptor is None:
@@ -311,11 +341,8 @@ class RunStore:
         run_root = cls._run_root(codex_home, run_id)
         _require(not run_root.is_symlink() and run_root.is_dir(), "format-5 run root is unavailable")
         run_root = run_root.resolve(strict=True)
-        try:
-            manifest_payload = json.loads((run_root / "manifest.json").read_text(encoding="utf-8"))
-            state_payload = json.loads((run_root / "state.json").read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise ValueError("format-5 run state is unavailable") from exc
+        manifest_payload = _read_private_json(run_root / "manifest.json")
+        state_payload = _read_private_json(run_root / "state.json")
         manifest = cls._manifest_from_payload(cls.validate_manifest_payload(manifest_payload))
         _require(manifest.run_id == run_id, "format-5 run identity is invalid")
         state = cls._state_from_payload(cls.validate_state_payload(state_payload))
