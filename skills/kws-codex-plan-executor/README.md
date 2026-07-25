@@ -1,6 +1,7 @@
 # KWS Codex Plan Executor
 
-Version 3.0.0 is a small, local durability capsule for one execution contract.
+Version 3.0.0 — 2026-07-25 is a small, local durability capsule for one
+execution contract.
 Use direct Superpowers when bounded work fits one controller session. Use CPE
 when that contract needs immutable inputs, one stable worktree, a durable run
 ID, and Codex process or session continuity.
@@ -109,6 +110,8 @@ preserved for operator inspection. Offline gates do not invoke live canaries.
 ## Tracked Inventory
 
 ```text
+AGENTS.md
+CHANGELOG.md
 README.md
 SKILL.md
 evals/check_architecture.py
@@ -118,6 +121,8 @@ evals/run.sh
 evals/test_cli.py
 evals/test_controller.py
 evals/test_git.py
+evals/test_live_canary.py
+evals/test_release.py
 evals/test_runtime.py
 evals/test_state.py
 scripts/cpe.py
