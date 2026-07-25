@@ -376,5 +376,7 @@ class RunStore:
         _require(isinstance(payload, Mapping), "handoff is invalid")
         atomic_private_write(self.handoff_path, _json_bytes(dict(payload)), 0o600)
         return self.handoff_path
+    def read_handoff(self) -> object:
+        return _read_private_json(self.handoff_path, 64 * 1024, "handoff is invalid")
     def lock(self, shared: bool = False) -> RunLock:
         return RunLock(self.lock_path, shared=shared)

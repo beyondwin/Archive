@@ -56,6 +56,10 @@ worktree, document bundle, sandbox, and selected skill. Only a recognized
 saved-session-unavailable outcome permits one fresh fallback. Generation one
 is final; CPE never creates a second fallback.
 
+Before launching a controller, `resume` reconciles a strictly valid handoff
+left by interruption between receipt publication and terminal state save.
+Malformed, mismatched, or stale orphan handoffs fail closed.
+
 A successful local result is mechanical `handed_off`. Its receipt records
 `integration=not_observed`; it does not claim product acceptance, integration,
 merge, push, deployment, publication, or any other remote action.

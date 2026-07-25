@@ -317,6 +317,29 @@ class RuntimeContractTests(unittest.TestCase):
         self.controller.callback_states.clear()
         return run_id
 
+    def create_orphan_handoff(self) -> str:
+        real_write = RunStore.write_handoff
+        runs_root = self.codex_home / "cpe-v3" / "runs"
+        before = set(runs_root.iterdir()) if runs_root.exists() else set()
+
+        def crash_after_write(store: RunStore, payload: dict[str, object]) -> Path:
+            real_write(store, payload)
+            raise KeyboardInterrupt("simulated parent interruption after handoff write")
+
+        with patch.object(
+            RunStore,
+            "write_handoff",
+            autospec=True,
+            side_effect=crash_after_write,
+        ):
+            with self.assertRaisesRegex(KeyboardInterrupt, "simulated parent"):
+                self.run_once()
+        run_roots = set(runs_root.iterdir()) - before
+        self.assertEqual(len(run_roots), 1)
+        self.controller.requests.clear()
+        self.controller.callback_states.clear()
+        return run_roots.pop().name
+
     def resume_after_competing_state_change(
         self,
         run_id: str,
@@ -395,6 +418,149 @@ class RuntimeContractTests(unittest.TestCase):
         self.assertEqual(self.controller.requests[-1].session_id, original)
         self.assertEqual(self.store(run_id).state.controller_generation, 0)
         self.assertFalse(self.store(run_id).state.fresh_fallback_used)
+
+    def test_resume_reconciles_valid_orphan_handoff_without_controller_launch(self) -> None:
+        run_id = self.create_orphan_handoff()
+        store = self.store(run_id)
+        worktree = Path(store.manifest.worktree)
+        self.assertEqual(store.state.status, "interrupted")
+        handoff_before = store.handoff_path.read_bytes()
+        head_before = self.git_at(worktree, "rev-parse", "HEAD")
+        status_before = self.git_at(
+            worktree,
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=all",
+        )
+
+        result = self.runtime.resume(run_id=run_id)
+
+        self.assertEqual(
+            result,
+            {
+                "status": "handed_off",
+                "run_id": run_id,
+                "handoff_path": str(store.handoff_path),
+            },
+        )
+        self.assertEqual(self.controller.requests, [])
+        self.assertEqual(self.store(run_id).state.status, "handed_off")
+        self.assertEqual(store.handoff_path.read_bytes(), handoff_before)
+        self.assertEqual(self.git_at(worktree, "rev-parse", "HEAD"), head_before)
+        self.assertEqual(
+            self.git_at(
+                worktree,
+                "status",
+                "--porcelain=v1",
+                "-z",
+                "--untracked-files=all",
+            ),
+            status_before,
+        )
+
+    def test_resume_rejects_malformed_or_mismatched_orphan_handoff(self) -> None:
+        run_id = self.create_orphan_handoff()
+        store = self.store(run_id)
+        worktree = Path(store.manifest.worktree)
+        original = self.read_handoff(run_id)
+        state_before = store.state_path.read_bytes()
+        mismatches = {
+            "run_id": "cpe-0000000000000000",
+            "branch": "codex/wrong",
+            "saved_worktree": f"{worktree}-other",
+            "base_commit": "f" * 40,
+            "observed_head": "f" * 40,
+            "tracked_clean": False,
+            "untracked_present": not original["untracked_present"],
+            "controller_session_id": NEW_SESSION_ID,
+            "controller_generation": 1,
+        }
+        cases = [("malformed", b"{")]
+        cases += [
+            (name, json.dumps({**original, name: value}).encode("utf-8"))
+            for name, value in mismatches.items()
+        ]
+        for name, handoff_bytes in cases:
+            with self.subTest(name=name):
+                store.handoff_path.write_bytes(handoff_bytes)
+                handoff_before = store.handoff_path.read_bytes()
+                head_before = self.git_at(worktree, "rev-parse", "HEAD")
+
+                with self.assertRaisesRegex(ValueError, "handoff"):
+                    self.runtime.resume(run_id=run_id)
+
+                self.assertEqual(self.controller.requests, [])
+                self.assertEqual(store.state_path.read_bytes(), state_before)
+                self.assertEqual(store.handoff_path.read_bytes(), handoff_before)
+                self.assertEqual(self.git_at(worktree, "rev-parse", "HEAD"), head_before)
+
+    def test_resume_rejects_stale_orphan_handoff_without_controller_launch(self) -> None:
+        run_id = self.create_orphan_handoff()
+        store = self.store(run_id)
+        worktree = Path(store.manifest.worktree)
+        (worktree / "tracked.txt").write_text("advanced\n", encoding="utf-8")
+        self.git_at(worktree, "add", "tracked.txt")
+        self.git_at(worktree, "commit", "-q", "-m", "advance after handoff")
+        state_before = store.state_path.read_bytes()
+        handoff_before = store.handoff_path.read_bytes()
+        head_before = self.git_at(worktree, "rev-parse", "HEAD")
+
+        with self.assertRaisesRegex(ValueError, "handoff"):
+            self.runtime.resume(run_id=run_id)
+
+        self.assertEqual(self.controller.requests, [])
+        self.assertEqual(store.state_path.read_bytes(), state_before)
+        self.assertEqual(store.handoff_path.read_bytes(), handoff_before)
+        self.assertEqual(self.git_at(worktree, "rev-parse", "HEAD"), head_before)
+
+    def test_resume_rejects_orphan_when_only_status_digest_changed(self) -> None:
+        def add_untracked(request: ControllerRequest) -> str:
+            (request.worktree / "before.tmp").write_text("untracked\n", encoding="utf-8")
+            return self.git_at(request.worktree, "rev-parse", "HEAD")
+
+        self.controller.action = add_untracked
+        run_id = self.create_orphan_handoff()
+        store = self.store(run_id)
+        worktree = Path(store.manifest.worktree)
+        (worktree / "before.tmp").rename(worktree / "after.tmp")
+        state_before = store.state_path.read_bytes()
+        handoff_before = store.handoff_path.read_bytes()
+        head_before = self.git_at(worktree, "rev-parse", "HEAD")
+
+        with self.assertRaisesRegex(ValueError, "handoff"):
+            self.runtime.resume(run_id=run_id)
+
+        self.assertEqual(self.controller.requests, [])
+        self.assertEqual(store.state_path.read_bytes(), state_before)
+        self.assertEqual(store.handoff_path.read_bytes(), handoff_before)
+        self.assertEqual(self.git_at(worktree, "rev-parse", "HEAD"), head_before)
+
+    def test_resume_rejects_symlink_or_nonregular_orphan_handoff(self) -> None:
+        for name in ("symlink", "fifo"):
+            with self.subTest(name=name):
+                run_id = self.create_orphan_handoff()
+                store = self.store(run_id)
+                state_before = store.state_path.read_bytes()
+                handoff_before = store.handoff_path.read_bytes()
+                store.handoff_path.unlink()
+                external = self.temp / f"{run_id}-external-handoff.json"
+                if name == "symlink":
+                    external.write_bytes(handoff_before)
+                    store.handoff_path.symlink_to(external)
+                else:
+                    os.mkfifo(store.handoff_path)
+
+                with self.assertRaisesRegex(ValueError, "handoff"):
+                    self.runtime.resume(run_id=run_id)
+
+                self.assertEqual(self.controller.requests, [])
+                self.assertEqual(store.state_path.read_bytes(), state_before)
+                if name == "symlink":
+                    self.assertTrue(store.handoff_path.is_symlink())
+                    self.assertEqual(external.read_bytes(), handoff_before)
+                else:
+                    self.assertTrue(stat.S_ISFIFO(store.handoff_path.lstat().st_mode))
 
     def test_resume_rejects_handed_off_run_without_mutation_or_controller_launch(self) -> None:
         completed = self.run_once()

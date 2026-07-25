@@ -93,6 +93,38 @@ def _session_unavailable(outcome: ControllerOutcome) -> bool:
 def _assignment(manifest: RunManifest) -> WorktreeAssignment:
     repository, worktree = Path(manifest.source_repository), Path(manifest.worktree)
     return WorktreeAssignment(repository, worktree, manifest.branch, manifest.base_commit, _common_repository(repository)[1])
+def _orphan_handoff(store: RunStore, state: RunState,
+                    assignment: WorktreeAssignment) -> Path | None:
+    if not os.path.lexists(store.handoff_path): return None
+    payload = store.read_handoff()
+    try:
+        facts = observe_git(assignment.worktree)
+        require_ancestor(assignment.worktree, assignment.base_commit, facts.head)
+    except ValueError as exc:
+        raise ValueError("handoff is invalid") from exc
+    expected = {
+        "format_version": 1, "run_id": store.manifest.run_id,
+        "branch": assignment.branch, "saved_worktree": str(assignment.worktree),
+        "base_commit": assignment.base_commit, "observed_head": facts.head,
+        "tracked_clean": True, "untracked_present": facts.untracked_present,
+        "controller_claim": "completed",
+        "controller_session_id": state.controller_session_id,
+        "controller_generation": state.controller_generation,
+        "integration": "not_observed", "remote_actions_by_cpe": "none",
+    }
+    valid = (
+        type(payload) is dict and payload == expected
+        and all(type(payload[key]) is type(value) for key, value in expected.items())
+        and state.status == "interrupted" and state.controller_session_id is not None
+        and state.active_pid is None and state.active_process_group is None
+        and state.last_observed_head == facts.head and state.tracked_clean
+        and state.untracked_present == facts.untracked_present
+        and state.status_digest == facts.status_digest
+        and state.last_process_class == "completed" and state.last_exit_code == 0
+        and state.blocker is None and _current(assignment)
+    )
+    if not valid: raise ValueError("handoff is invalid")
+    return store.handoff_path
 class CpeRuntime:
     def __init__(
         self, *, codex_home: Path | None = None, worktree_root: Path | None = None,
@@ -169,6 +201,11 @@ class CpeRuntime:
                 if state.status == "handed_off":
                     return {"status": "blocked", "run_id": store.manifest.run_id,
                             "reason": "run_already_handed_off"}
+                handoff_path = _orphan_handoff(store, state, assignment)
+                if handoff_path is not None:
+                    _save(store, state, status="handed_off")
+                    return {"status": "handed_off", "run_id": store.manifest.run_id,
+                            "handoff_path": str(handoff_path)}
                 session_id = state.controller_session_id
                 if session_id is None:
                     return {"status": "blocked", "run_id": store.manifest.run_id,
