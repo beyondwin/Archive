@@ -12,7 +12,13 @@
         "implemented",
         "implemented"
       ],
+      "expected_handoff_heads": [
+        "bd543a5d1bb6df4281554f9203fbe5cb7092d603",
+        "f73c30696405350ab1ae7902906b14c2ef332a27"
+      ],
+      "expected_verification_set_digest": "efbbd878b2b01230cd635bf195785a177f97e1477a35cf0b1096d39ea0845755",
       "expected_required_receipt_count": 1,
+      "expected_session_action": null,
       "expected_integration": "not_observed",
       "expected_exit": 0
     },
@@ -26,9 +32,34 @@
         "running",
         "pending"
       ],
+      "expected_handoff_heads": [],
+      "expected_verification_set_digest": null,
       "expected_required_receipt_count": 0,
+      "expected_session_action": null,
       "expected_integration": "not_observed",
       "expected_exit": 3
+    },
+    {
+      "id": "healthy-resume",
+      "fake_sequence": [
+        "clean-interrupted",
+        "implemented",
+        "implemented"
+      ],
+      "expected_status": "ready_for_integration",
+      "expected_plan_statuses": [
+        "implemented",
+        "implemented"
+      ],
+      "expected_handoff_heads": [
+        "bd543a5d1bb6df4281554f9203fbe5cb7092d603",
+        "f73c30696405350ab1ae7902906b14c2ef332a27"
+      ],
+      "expected_verification_set_digest": "efbbd878b2b01230cd635bf195785a177f97e1477a35cf0b1096d39ea0845755",
+      "expected_required_receipt_count": 1,
+      "expected_integration": "not_observed",
+      "expected_session_action": "resume_root",
+      "expected_exit": 0
     },
     {
       "id": "stalled-fresh-strategy",
@@ -42,6 +73,11 @@
         "implemented",
         "implemented"
       ],
+      "expected_handoff_heads": [
+        "bd543a5d1bb6df4281554f9203fbe5cb7092d603",
+        "f73c30696405350ab1ae7902906b14c2ef332a27"
+      ],
+      "expected_verification_set_digest": "efbbd878b2b01230cd635bf195785a177f97e1477a35cf0b1096d39ea0845755",
       "expected_required_receipt_count": 1,
       "expected_integration": "not_observed",
       "expected_session_action": "fresh_root",
@@ -58,7 +94,10 @@
         "running",
         "pending"
       ],
+      "expected_handoff_heads": [],
+      "expected_verification_set_digest": null,
       "expected_required_receipt_count": 0,
+      "expected_session_action": null,
       "expected_integration": "not_observed",
       "expected_exit": 4
     }

@@ -58,6 +58,15 @@ def _load_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _canonical_json(value: object) -> bytes:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
 def _require_digest(value: object, label: str) -> str:
     if not isinstance(value, str) or SHA256.fullmatch(value) is None:
         raise ParityFailure(f"{label} digest is invalid")
@@ -260,7 +269,7 @@ def _validate_recovery_evidence(
     records: Sequence[Mapping[str, Any]],
 ) -> str | None:
     expected_action = {
-        "healthy-resume": "stalled",
+        "healthy-resume": "clean-interrupted",
         "stalled-fresh-strategy": "stalled",
     }.get(scenario_id)
     if expected_action is None:
@@ -327,8 +336,9 @@ def _external_outcome(
         )
         if handoff.get("plan_index") != index:
             raise ParityFailure("ordered plan handoff identity drift")
-        _require_head(handoff.get("head_commit"), "plan handoff")
-        handoff_heads.append(f"<git-head-{index}>")
+        handoff_heads.append(
+            _require_head(handoff.get("head_commit"), "plan handoff")
+        )
         accepted_digest = _require_digest(
             handoff.get("verification_set_digest"),
             "accepted verification set",
@@ -350,16 +360,48 @@ def _external_outcome(
         commands = accepted.get("commands", [])
         if not isinstance(commands, list):
             raise ParityFailure("accepted verification commands are invalid")
+        if accepted.get("candidate_head") != handoff_heads[-1]:
+            raise ParityFailure(
+                "accepted verification union does not bind the final handoff HEAD"
+            )
+        identities: set[bytes] = set()
+        for command in commands:
+            if not isinstance(command, Mapping):
+                raise ParityFailure("accepted verification command is invalid")
+            identity_fields = (
+                "argv",
+                "cwd",
+                "input_digest",
+                "deadline_seconds",
+            )
+            if any(field not in command for field in identity_fields):
+                raise ParityFailure(
+                    "accepted verification command identity is incomplete"
+                )
+            identity = _canonical_json(
+                {field: command[field] for field in identity_fields}
+            )
+            if identity in identities:
+                raise ParityFailure(
+                    "accepted verification union contains a duplicate"
+                )
+            identities.add(identity)
         required_receipt_count = len(commands)
+        accepted_digest = hashlib.sha256(
+            _canonical_json(
+                {
+                    "candidate_head": handoff_heads[-1],
+                    "commands": commands,
+                }
+            )
+        ).hexdigest()
 
     return {
         "exit": exit_code,
         "status": state["status"],
         "plan_statuses": [plan["status"] for plan in state["plans"]],
         "handoff_heads": handoff_heads,
-        "verification_set_digest": (
-            "<sha256>" if accepted_digest is not None else None
-        ),
+        "verification_set_digest": accepted_digest,
         "required_receipt_count": required_receipt_count,
         "session_action": session_action,
         "integration": state["integration"],
@@ -396,8 +438,8 @@ def _expected(scenario: Mapping[str, Any]) -> dict[str, Any]:
         "expected_plan_statuses": "plan_statuses",
         "expected_handoff_heads": "handoff_heads",
         "expected_verification_set_digest": "verification_set_digest",
-        "expected_session_action": "session_action",
         "expected_required_receipt_count": "required_receipt_count",
+        "expected_session_action": "session_action",
         "expected_integration": "integration",
     }
     return {
@@ -414,6 +456,18 @@ def _bounded_diff(expected: Any, actual: Any) -> str:
         sort_keys=True,
     )
     return document[:OUTPUT_LIMIT]
+
+
+def _require_expected_outcome(
+    provider: str,
+    expected: Mapping[str, Any],
+    actual: Mapping[str, Any],
+) -> None:
+    if dict(actual) != dict(expected):
+        raise ParityFailure(
+            f"{provider} expectation mismatch\n"
+            f"{_bounded_diff(expected, actual)}"
+        )
 
 
 def run_provider(
@@ -556,12 +610,7 @@ def main() -> int:
                         )
                     expected = _expected(scenario)
                     for provider, actual in results.items():
-                        subset = {key: actual.get(key) for key in expected}
-                        if subset != expected:
-                            raise ParityFailure(
-                                f"{provider} expectation mismatch\n"
-                                f"{_bounded_diff(expected, subset)}"
-                            )
+                        _require_expected_outcome(provider, expected, actual)
                     if results["codex"] != results["claude"]:
                         raise ParityFailure(
                             "provider outcome mismatch\n"

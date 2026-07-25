@@ -62,6 +62,10 @@ whole-branch review. The runner executes declared exact argv without a shell,
 applies deadlines, and seals receipts. Every required command and the review
 must accept one unchanged candidate HEAD.
 
+The final helper derives the exact ordered duplicate-free union of all sealed
+plan verification declarations at the final HEAD. The final handoff and
+accepted verification digest bind that run-level union.
+
 Do not merge, push, or deploy. Provider packets set
 `integration_policy=keep`; success records `integration=not_observed`.
 

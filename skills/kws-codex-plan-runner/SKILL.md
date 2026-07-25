@@ -108,6 +108,10 @@ succeed at the same candidate HEAD. The runner executes exact argv without a
 shell, applies deadlines, and invalidates evidence when the candidate HEAD
 changes.
 
+The final helper derives the exact ordered duplicate-free union of all sealed
+plan verification declarations at the final HEAD. The final handoff and
+accepted verification digest bind that run-level union.
+
 Do not merge, push, or deploy. Every provider packet sets
 `integration_policy=keep`; successful handoff records
 `integration=not_observed`. Processes running as the same-UID are not a security boundary;

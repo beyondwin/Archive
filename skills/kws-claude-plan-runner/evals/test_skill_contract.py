@@ -164,6 +164,23 @@ class SkillContractTests(unittest.TestCase):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, combined)
 
+    def test_public_contract_binds_the_final_run_verification_union(self) -> None:
+        for document in ("SKILL.md", "README.md"):
+            text = " ".join(
+                (SKILL_ROOT / document).read_text(encoding="utf-8").split()
+            )
+            with self.subTest(document=document):
+                self.assertIn(
+                    "exact ordered duplicate-free union of all sealed plan "
+                    "verification declarations at the final HEAD",
+                    text,
+                )
+                self.assertIn(
+                    "final handoff and accepted verification digest bind that "
+                    "run-level union",
+                    text,
+                )
+
 
 if __name__ == "__main__":
     unittest.main()
