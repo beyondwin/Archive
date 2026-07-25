@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -26,6 +27,17 @@ CPE_CLI = (SKILL_ROOT / "scripts" / "cpe.py").resolve(strict=True)
 MAX_OUTPUT_BYTES = 131_072
 MAX_JSON_BYTES = 1_048_576
 COMMAND_TIMEOUT_SECONDS = 1800
+DIAGNOSTIC_TAIL_BYTES = 192
+SECRET_PATTERNS = (
+    re.compile(r"\bsk-[A-Za-z0-9_-]{8,}\b"),
+    re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+"),
+    re.compile(
+        r"\b(?:api[_-]?key|access[_-]?token|token|secret|password)\b"
+        r"[\"']?\s*[:=]\s*"
+        r"(?:\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s\"',;]+)",
+        re.IGNORECASE,
+    ),
+)
 
 
 class CanaryError(RuntimeError):
@@ -102,6 +114,18 @@ def parse_last_json(output: bytes) -> dict[str, object]:
         ):
             return payload
     raise CanaryError("bounded CPE JSON result was not found")
+
+
+def diagnostic_stream(label: str, output: bytes) -> str:
+    """Describe bounded process output without retaining a transcript or secret."""
+    tail = output[-DIAGNOSTIC_TAIL_BYTES:].decode("utf-8", errors="replace")
+    for pattern in SECRET_PATTERNS:
+        tail = pattern.sub("[REDACTED]", tail)
+    return (
+        f"{label}_bytes={len(output)} "
+        f"{label}_sha256={hashlib.sha256(output).hexdigest()} "
+        f"{label}_tail={json.dumps(tail, ensure_ascii=True)}"
+    )
 
 
 def git(repository: Path, *arguments: str, check: bool = True) -> str:
@@ -334,7 +358,13 @@ def invoke_cpe(
         cwd=SKILL_ROOT,
         env=environment,
     )
-    require(result.returncode == expected_exit, "CPE CLI exit code was unexpected")
+    require(
+        result.returncode == expected_exit,
+        "CPE CLI exit code was unexpected: "
+        f"expected={expected_exit} actual={result.returncode}; "
+        f"{diagnostic_stream('stdout', result.stdout)}; "
+        f"{diagnostic_stream('stderr', result.stderr)}",
+    )
     return parse_last_json(result.stdout)
 
 

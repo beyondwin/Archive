@@ -313,7 +313,15 @@ class ArchitectureGuardTests(unittest.TestCase):
                 encoding="utf-8",
             )
         (self.templates / "terminal-envelope.schema.json").write_text(
-            "{}\n",
+            json.dumps(
+                {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["value"],
+                    "properties": {"value": {"type": "string"}},
+                }
+            )
+            + "\n",
             encoding="utf-8",
         )
         self.write_public_docs()
@@ -389,6 +397,38 @@ class ArchitectureGuardTests(unittest.TestCase):
         result = self.run_guard()
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_guard_rejects_structured_output_optional_properties(self) -> None:
+        (self.templates / "terminal-envelope.schema.json").write_text(
+            json.dumps(
+                {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["claim", "blocker"],
+                    "properties": {
+                        "claim": {"type": "string"},
+                        "resume_capsule": {"type": "object"},
+                        "blocker": {
+                            "type": ["object", "null"],
+                            "additionalProperties": False,
+                            "required": ["code"],
+                            "properties": {
+                                "code": {"type": "string"},
+                                "provider_code": {"type": "string"},
+                            },
+                        },
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        self.assert_guard_fails(
+            "structured output object must require every property",
+            "structured output optional field must allow null: resume_capsule",
+            "structured output optional field must allow null: provider_code",
+        )
 
     def test_guard_rejects_broad_semantic_tokens_case_and_quote_robustly(self) -> None:
         cases = (

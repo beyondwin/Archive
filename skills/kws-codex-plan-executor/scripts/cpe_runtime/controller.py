@@ -94,8 +94,6 @@ def _envelope(text: str) -> TerminalEnvelope:
     claim, head = _bounded(payload["claim"], 64, "terminal claim"), payload["head_commit"]
     _require(claim in TERMINAL_CLAIMS and isinstance(head, str) and bool(SHA40.fullmatch(head)),
              "terminal envelope is invalid")
-    _require(not any(key in payload and payload[key] is None for key in
-                     ("resume_capsule", "blocker")), "terminal envelope is invalid")
     capsule, blocker = _capsule(payload.get("resume_capsule")), _blocker(payload.get("blocker"))
     _require(not ((claim == "completed" and (capsule is not None or blocker is not None))
                   or (claim == "interrupted" and (capsule is None or blocker is not None))
