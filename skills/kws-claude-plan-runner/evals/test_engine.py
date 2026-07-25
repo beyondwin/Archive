@@ -8,6 +8,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
@@ -19,6 +20,10 @@ from plan_runner.engine import PlanRunner, RuntimePaths  # noqa: E402
 from plan_runner.helper import helper_client  # noqa: E402
 from plan_runner.provider import ProviderOutcome  # noqa: E402
 from plan_runner.runtime import RuntimeIdentity  # noqa: E402
+
+
+class SimulatedCrash(BaseException):
+    pass
 
 
 def git(*arguments: str, cwd: Path) -> str:
@@ -73,6 +78,9 @@ class ScriptedClaudeAdapter:
         session_id = request.session_id
         if on_session_id is not None:
             on_session_id(session_id)
+        if self.owner.crash_after_session_capture:
+            self.owner.crash_after_session_capture = False
+            raise SimulatedCrash("controller crashed after session capture")
         if self.owner.outcome_hook is not None:
             outcome = self.owner.outcome_hook(
                 self,
@@ -103,6 +111,28 @@ class ScriptedClaudeAdapter:
             prior_sets = []
         elif self.owner.prior_set_override == "reverse":
             prior_sets = list(reversed(prior_sets))
+        verification = (
+            {
+                "kind": "no_applicable_verification",
+                "candidate_head": head,
+                "rationale": f"plan {index} has no executable verification",
+            }
+            if self.owner.rationale_only
+            else {
+                "kind": "commands",
+                "candidate_head": head,
+                "commands": [
+                    {
+                        "command_id": f"handoff-{index}",
+                        "command_role": "handoff",
+                        "argv": [sys.executable, "-c", "pass"],
+                        "cwd": ".",
+                        "input_digest": "a" * 64,
+                        "deadline_seconds": 10,
+                    }
+                ],
+            }
+        )
         declaration = helper_client(
             self.helper.socket_path,
             self.helper.nonce,
@@ -114,42 +144,30 @@ class ScriptedClaudeAdapter:
                 "payload": {
                     "candidate_head": head,
                     "plan_index": index,
-                    "verification": {
-                        "kind": "commands",
-                        "candidate_head": head,
-                        "commands": [
-                            {
-                                "command_id": f"handoff-{index}",
-                                "command_role": "handoff",
-                                "argv": [sys.executable, "-c", "pass"],
-                                "cwd": ".",
-                                "input_digest": "a" * 64,
-                                "deadline_seconds": 10,
-                            }
-                        ],
-                    },
+                    "verification": verification,
                     "prior_set_digests": prior_sets,
                     "is_final_plan": packet["is_final_plan"],
                 },
             },
         )
         digest = declaration["artifact"]["digest"]
-        helper_client(
-            self.helper.socket_path,
-            self.helper.nonce,
-            {
-                "protocol_version": self.helper.protocol_version,
-                "run_id": packet["run_id"],
-                "nonce": self.helper.nonce,
-                "operation": "run_verification",
-                "payload": {
-                    "candidate_head": head,
-                    "set_digest": digest,
-                    "command_index": 0,
-                    "deadline_seconds": 10,
+        if not self.owner.rationale_only:
+            helper_client(
+                self.helper.socket_path,
+                self.helper.nonce,
+                {
+                    "protocol_version": self.helper.protocol_version,
+                    "run_id": packet["run_id"],
+                    "nonce": self.helper.nonce,
+                    "operation": "run_verification",
+                    "payload": {
+                        "candidate_head": head,
+                        "set_digest": digest,
+                        "command_index": 0,
+                        "deadline_seconds": 10,
+                    },
                 },
-            },
-        )
+            )
         if self.owner.after_implementation_hook is not None:
             self.owner.after_implementation_hook(
                 self,
@@ -199,6 +217,8 @@ class EngineTest(unittest.TestCase):
         self.outcome_hook = None
         self.prior_set_override = None
         self.after_implementation_hook = None
+        self.crash_after_session_capture = False
+        self.rationale_only = False
 
     def tearDown(self):
         self.temporary.cleanup()
@@ -465,6 +485,115 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(
             self.requests[0].session_id,
             self.requests[1].session_id,
+        )
+
+    def test_restart_after_session_capture_reuses_the_healthy_recorded_uuid(self):
+        self.crash_after_session_capture = True
+        with self.assertRaises(SimulatedCrash):
+            self.create_v2_run(self.plans[:1])
+        captured = self.current_state()["sessions"][0]["session_id"]
+
+        self.assertEqual(
+            self.runner().resume(
+                self.current_state()["run_id"],
+                retry_blocked=False,
+                retry_failed=False,
+                strategy_note=None,
+            ),
+            ExitCode.READY,
+        )
+        self.assertEqual(len(self.requests), 2)
+        self.assertTrue(self.requests[1].resume)
+        self.assertEqual(self.requests[1].session_id, captured)
+
+    def test_restart_reconciles_completed_result_without_relaunch(self):
+        with mock.patch.object(
+            PlanRunner,
+            "_accept_implemented",
+            side_effect=SimulatedCrash(
+                "controller crashed after durable provider completion"
+            ),
+        ):
+            with self.assertRaises(SimulatedCrash):
+                self.create_v2_run(self.plans[:1])
+        state = self.current_state()
+        self.assertTrue(state["attempts"][-1]["completed"])
+        self.assertIsNotNone(state["attempts"][-1]["result_artifact"])
+
+        self.assertEqual(
+            self.runner().resume(
+                state["run_id"],
+                retry_blocked=False,
+                retry_failed=False,
+                strategy_note=None,
+            ),
+            ExitCode.READY,
+        )
+        self.assertEqual(len(self.requests), 1)
+
+    def test_single_plan_all_rationale_run_closes_without_synthetic_command(self):
+        self.rationale_only = True
+        self.assertEqual(
+            self.create_v2_run(self.plans[:1]),
+            ExitCode.READY,
+        )
+        state = self.current_state()
+        run_sets = [
+            reference
+            for reference in state["artifact_refs"]
+            if reference["kind"] == "run_verification_set"
+        ]
+        self.assertEqual(len(run_sets), 1)
+        run_set = json.loads(
+            (
+                self.paths.state_home
+                / state["run_id"]
+                / run_sets[0]["relative_path"]
+            ).read_text(encoding="utf-8")
+        )
+        self.assertEqual(run_set["kind"], "no_applicable_verification")
+        self.assertNotIn("commands", run_set)
+        self.assertEqual(len(run_set["rationales"]), 1)
+
+    def test_multi_plan_all_rationale_run_preserves_ordered_provenance(self):
+        self.rationale_only = True
+        self.assertEqual(self.create_v2_run(), ExitCode.READY)
+        state = self.current_state()
+        run_ref = next(
+            reference
+            for reference in state["artifact_refs"]
+            if reference["kind"] == "run_verification_set"
+        )
+        run_set = json.loads(
+            (
+                self.paths.state_home
+                / state["run_id"]
+                / run_ref["relative_path"]
+            ).read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            run_set["plan_set_digests"],
+            [
+                json.loads(
+                    (
+                        self.paths.state_home
+                        / state["run_id"]
+                        / next(
+                            reference["relative_path"]
+                            for reference in state["artifact_refs"]
+                            if reference["kind"] == "plan_handoff"
+                            and reference["digest"]
+                            == plan["handoff_digest"]
+                        )
+                    ).read_text(encoding="utf-8")
+                )["verification_set_digest"]
+                for plan in state["plans"][:-1]
+            ]
+            + [run_set["rationales"][-1]["plan_set_digest"]],
+        )
+        self.assertEqual(
+            [item["plan_index"] for item in run_set["rationales"]],
+            [0, 1],
         )
 
     def test_launch_lease_starts_at_current_monotonic_time(self):

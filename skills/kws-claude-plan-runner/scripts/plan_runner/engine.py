@@ -487,6 +487,8 @@ class PlanRunner:
                     repository["branch"],
                 )
                 self._require_git(state, workspace)
+                self._reconcile_controller(store, workspace)
+                state = store.snapshot()
                 failure = (
                     state.get("failure")
                     if isinstance(state.get("failure"), Mapping)
@@ -902,7 +904,7 @@ class PlanRunner:
         outcome: ProviderOutcome,
     ) -> int | None:
         state = store.snapshot()
-        progress = self._progress(state, workspace)
+        progress = self._progress(store, workspace)
         prior_failure = (
             state.get("failure")
             if isinstance(state.get("failure"), Mapping)
@@ -1035,9 +1037,10 @@ class PlanRunner:
 
     def _progress(
         self,
-        state: Mapping[str, object],
+        store: StateStore,
         workspace: GitWorkspace,
     ) -> ProgressSnapshot:
+        state = store.snapshot()
         observed = workspace.observe()
         return ProgressSnapshot(
             sha256_json(
@@ -1046,11 +1049,11 @@ class PlanRunner:
                     "tree": observed.tree_digest,
                 }
             ),
-            tuple(
-                reference["digest"]
-                for reference in state["artifact_refs"]
-                if reference["kind"] == "verification_receipt"
-            ),
+            EvidenceStore(
+                store,
+                workspace,
+                self._environment,
+            ).successful_receipt_digests(),
             tuple(
                 plan["handoff_digest"]
                 for plan in state["plans"]
@@ -1069,7 +1072,10 @@ class PlanRunner:
             Path(state["repository"]["worktree"]),
             state["repository"]["branch"],
         )
-        progress = self._progress(state, workspace)
+        store = StateStore.open(
+            self.paths.state_home / state["run_id"]
+        )
+        progress = self._progress(store, workspace)
         return {
             "current_head": current_head,
             "git_tree_digest": progress.git_tree_digest,
@@ -1107,10 +1113,23 @@ class PlanRunner:
                     "root_attempt_id": attempt_id,
                 }
             )
-            store.commit(state)
+        attempt = next(
+            (
+                item
+                for item in reversed(state["attempts"])
+                if isinstance(item, dict)
+                and item.get("attempt_id") == attempt_id
+            ),
+            None,
+        )
+        if not isinstance(attempt, dict):
+            raise ValueError("captured session attempt is unavailable")
+        attempt["session_id"] = session_id
+        attempt["session_health"] = "healthy"
+        store.commit(state)
 
-    @staticmethod
     def _complete_attempt(
+        self,
         store: StateStore,
         attempt_id: str,
         outcome: ProviderOutcome,
@@ -1124,6 +1143,87 @@ class PlanRunner:
         attempt["completed"] = True
         attempt["outcome"] = outcome.kind
         attempt["provider_code"] = outcome.provider_code
+        attempt["return_code"] = outcome.return_code
+        attempt["session_id"] = outcome.session_id
+        attempt["result_artifact"] = None
+        if outcome.result is not None:
+            result_artifact = store.put_artifact(
+                "provider_result",
+                dict(outcome.result),
+            )
+            if result_artifact.as_dict() not in state["artifact_refs"]:
+                state["artifact_refs"].append(result_artifact.as_dict())
+            attempt["result_artifact"] = result_artifact.as_dict()
+        store.commit(state)
+
+    def _reconcile_controller(
+        self,
+        store: StateStore,
+        workspace: GitWorkspace,
+    ) -> None:
+        state = store.snapshot()
+        if state["current_plan_index"] >= len(state["plans"]):
+            return
+        attempts = state.get("attempts")
+        if not isinstance(attempts, list) or not attempts:
+            return
+        index = state["current_plan_index"]
+        attempt = next(
+            (
+                item
+                for item in reversed(attempts)
+                if isinstance(item, dict)
+                and item.get("mode") == "implementation"
+                and item.get("plan_index") == index
+                and item.get("reconciled") is None
+            ),
+            None,
+        )
+        if not isinstance(attempt, dict):
+            return
+        if attempt.get("completed") is not True:
+            session_id = attempt.get("session_id")
+            if not isinstance(session_id, str):
+                return
+            attempt["reconciled"] = "controller_not_live"
+            state["status"] = "resumable"
+            state["failure"] = {
+                "reason_code": "controller_transport_failed",
+                "failure_sequence": [],
+                "next_strategy": "resume_root",
+                "next_session_action": "resume_root",
+                "session_id": session_id,
+            }
+            store.commit(state)
+            return
+        if attempt.get("outcome") != "implemented":
+            return
+        result_reference = attempt.get("result_artifact")
+        if (
+            not isinstance(result_reference, Mapping)
+            or result_reference.get("kind") != "provider_result"
+        ):
+            raise ValueError("completed provider result is not durable")
+        result = _artifact_payload(store, result_reference)
+        outcome = ProviderOutcome(
+            "implemented",
+            attempt.get("return_code"),
+            attempt.get("session_id"),
+            result,
+            attempt.get("provider_code"),
+            {},
+            (),
+            "",
+        )
+        self._accept_implemented(store, workspace, index, outcome)
+        state = store.snapshot()
+        reconciled = next(
+            item
+            for item in reversed(state["attempts"])
+            if isinstance(item, dict)
+            and item.get("attempt_id") == attempt["attempt_id"]
+        )
+        reconciled["reconciled"] = "accepted_completed_result"
         store.commit(state)
 
     def _adapter(

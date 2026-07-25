@@ -97,6 +97,55 @@ class ExactEvidenceTest(unittest.TestCase):
         receipt = self.evidence.execute(timeout, candidate_head=self.start)
         self.assertEqual((receipt.outcome, receipt.exit_code), ("timed_out", None))
 
+    def test_recovery_progress_includes_only_identity_valid_success_receipts(self):
+        success = self.evidence.execute(
+            self.command(
+                [sys.executable, "-c", "pass"],
+                command_id="success",
+            ),
+            candidate_head=self.start,
+        )
+        failed = self.evidence.execute(
+            self.command(
+                [sys.executable, "-c", "raise SystemExit(9)"],
+                command_id="failed",
+            ),
+            candidate_head=self.start,
+        )
+        timed_out = self.evidence.execute(
+            self.command(
+                [sys.executable, "-c", "import time;time.sleep(10)"],
+                deadline=0.1,
+                command_id="timed-out",
+            ),
+            candidate_head=self.start,
+        )
+        invalid = self.state.put_artifact(
+            "verification_receipt",
+            {"outcome": "success", "identity_digest": "a" * 64},
+        )
+        state = self.state.snapshot()
+        state["artifact_refs"].append(invalid.as_dict())
+        self.state.commit(state)
+
+        self.assertEqual(
+            self.evidence.successful_receipt_digests(),
+            (success.artifact.digest,),
+        )
+        referenced = {
+            reference["digest"]
+            for reference in self.state.snapshot()["artifact_refs"]
+            if reference["kind"] == "verification_receipt"
+        }
+        self.assertTrue(
+            {
+                success.artifact.digest,
+                failed.artifact.digest,
+                timed_out.artifact.digest,
+                invalid.digest,
+            }.issubset(referenced)
+        )
+
     def test_identity_changes_with_head_environment_tree_or_command(self):
         base = self.command([sys.executable, "-c", "pass"])
         original = self.evidence.identity_digest(base, candidate_head=self.start)
