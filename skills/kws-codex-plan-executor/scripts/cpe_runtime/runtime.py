@@ -165,9 +165,14 @@ class CpeRuntime:
         with store.lock() as lock:
             store = RunStore.open(self.codex_home, store.manifest.run_id)
             state = store.state
-            if mode == "resume" and state.status == "handed_off":
-                return {"status": "blocked", "run_id": store.manifest.run_id,
-                        "reason": "run_already_handed_off"}
+            if mode == "resume":
+                if state.status == "handed_off":
+                    return {"status": "blocked", "run_id": store.manifest.run_id,
+                            "reason": "run_already_handed_off"}
+                session_id = state.controller_session_id
+                if session_id is None:
+                    return {"status": "blocked", "run_id": store.manifest.run_id,
+                            "reason": "saved_session_unavailable"}
             def persist(**changes: object) -> None:
                 nonlocal state
                 state = _save(store, state, **changes)

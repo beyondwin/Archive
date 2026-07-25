@@ -317,6 +317,43 @@ class RuntimeContractTests(unittest.TestCase):
         self.controller.callback_states.clear()
         return run_id
 
+    def resume_after_competing_state_change(
+        self,
+        run_id: str,
+        **changes: object,
+    ) -> tuple[dict[str, object], bytes]:
+        real_open = RunStore.open
+        authoritative_state: list[bytes] = []
+        open_count = 0
+
+        def open_around_competing_writer(
+            codex_home: Path,
+            selected_run_id: str,
+        ) -> RunStore:
+            nonlocal open_count
+            store = real_open(codex_home, selected_run_id)
+            open_count += 1
+            if open_count == 1:
+                competing_store = real_open(codex_home, selected_run_id)
+                with competing_store.lock():
+                    competing_store.save_state(
+                        replace(competing_store.state, **changes)
+                    )
+                    authoritative_state.append(
+                        competing_store.state_path.read_bytes()
+                    )
+            return store
+
+        with patch.object(
+            RunStore,
+            "open",
+            side_effect=open_around_competing_writer,
+        ):
+            result = self.runtime.resume(run_id=run_id)
+
+        self.assertEqual(len(authoritative_state), 1)
+        return result, authoritative_state[0]
+
     def write_legacy_state(
         self,
         *,
@@ -466,6 +503,64 @@ class RuntimeContractTests(unittest.TestCase):
             ),
             authoritative["status"],
         )
+
+    def test_resume_uses_authoritative_session_after_competing_generation_advance(
+        self,
+    ) -> None:
+        run_id = self.create_interrupted_run()
+        original_session = self.store(run_id).state.controller_session_id
+        self.assertEqual(original_session, SESSION_ID)
+        self.controller.outcomes = [
+            self.outcome(
+                "completed",
+                terminal=self.completed(),
+                session_id=NEW_SESSION_ID,
+            ),
+        ]
+        result, _authoritative_state = self.resume_after_competing_state_change(
+            run_id,
+            controller_session_id=NEW_SESSION_ID,
+            controller_generation=1,
+            fresh_fallback_used=True,
+        )
+        self.assertEqual(result["status"], "handed_off")
+        self.assertEqual(len(self.controller.requests), 1)
+        request = self.controller.requests[0]
+        self.assertEqual(request.mode, "resume")
+        self.assertEqual(request.session_id, NEW_SESSION_ID)
+        self.assertNotEqual(request.session_id, original_session)
+        self.assertEqual(request.generation, 1)
+        final_store = self.store(run_id)
+        self.assertEqual(final_store.state.status, "handed_off")
+        self.assertEqual(final_store.state.controller_session_id, NEW_SESSION_ID)
+        self.assertEqual(final_store.state.controller_generation, 1)
+        self.assertTrue(final_store.state.fresh_fallback_used)
+        handoff = self.read_handoff(run_id)
+        self.assertEqual(handoff["controller_session_id"], NEW_SESSION_ID)
+        self.assertEqual(handoff["controller_generation"], 1)
+
+    def test_resume_rechecks_authoritative_missing_session_before_launch(
+        self,
+    ) -> None:
+        run_id = self.create_interrupted_run()
+        result, authoritative_state = self.resume_after_competing_state_change(
+            run_id,
+            controller_session_id=None,
+        )
+        self.assertEqual(
+            result,
+            {
+                "status": "blocked",
+                "run_id": run_id,
+                "reason": "saved_session_unavailable",
+            },
+        )
+        self.assertEqual(self.controller.requests, [])
+        self.assertEqual(
+            self.store(run_id).state_path.read_bytes(),
+            authoritative_state,
+        )
+        self.assertFalse(self.handoff_path(run_id).exists())
 
     def test_explicit_missing_session_allows_one_fresh_fallback(self) -> None:
         run_id = self.create_interrupted_run()
