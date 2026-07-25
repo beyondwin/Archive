@@ -48,14 +48,17 @@ def parse_frontmatter_metadata(skill: str) -> dict[str, str]:
     )
     if frontmatter is None:
         raise AssertionError("SKILL.md must begin with bounded frontmatter")
-    metadata = re.search(
-        r"^metadata:\n(?P<fields>(?: {2}[^\n]+\n?)*)",
-        frontmatter.group("body"),
-        re.MULTILINE,
-    )
-    if metadata is None:
-        raise AssertionError("SKILL.md frontmatter must contain metadata")
-    fields = metadata.group("fields").splitlines()
+    frontmatter_lines = frontmatter.group("body").splitlines()
+    metadata_indexes = [
+        index for index, line in enumerate(frontmatter_lines) if line == "metadata:"
+    ]
+    if len(metadata_indexes) != 1:
+        raise AssertionError("SKILL.md frontmatter must contain one metadata mapping")
+    fields = []
+    for field in frontmatter_lines[metadata_indexes[0] + 1 :]:
+        if not field.startswith("  "):
+            break
+        fields.append(field)
     parsed: dict[str, str] = {}
     for field in fields:
         match = re.fullmatch(r'  (version|updated_at): "([^"]+)"', field)
@@ -67,15 +70,16 @@ def parse_frontmatter_metadata(skill: str) -> dict[str, str]:
     return parsed
 
 
-def markdown_section(document: str, heading: str) -> str:
-    section = re.search(
-        rf"^### {re.escape(heading)}\n(?P<body>.*?)(?=^### |\Z)",
-        document,
-        re.DOTALL | re.MULTILINE,
+def markdown_section(document: str, level: str, heading: str) -> str:
+    matches = list(
+        re.finditer(rf"^{re.escape(level)} {re.escape(heading)}\n", document, re.MULTILINE)
     )
-    if section is None:
-        raise AssertionError(f"missing catalog section: {heading}")
-    return section.group("body")
+    if len(matches) != 1:
+        raise AssertionError(f"expected one section: {heading}")
+    start = matches[0].end()
+    next_heading = re.search(rf"^{re.escape(level)} ", document[start:], re.MULTILINE)
+    end = start + next_heading.start() if next_heading is not None else len(document)
+    return document[start:end]
 
 
 def cpe_install_entries(section: str, home: str) -> list[str]:
@@ -84,6 +88,13 @@ def cpe_install_entries(section: str, home: str) -> list[str]:
         f"        {home}/kws-codex-plan-executor"
     )
     return re.findall(re.escape(command), section)
+
+
+def cpe_install_entry(home: str) -> str:
+    return (
+        'ln -sfn "$ARCHIVE_REPO/skills/kws-codex-plan-executor" \\\n'
+        f"        {home}/kws-codex-plan-executor"
+    )
 
 
 class ReleaseContractTests(unittest.TestCase):
@@ -103,6 +114,21 @@ class ReleaseContractTests(unittest.TestCase):
         finally:
             path.write_text(original, encoding="utf-8")
 
+    def assert_check_accepts_mutation(
+        self,
+        path: Path,
+        replacement: tuple[str, str],
+        check: object,
+    ) -> None:
+        original = path.read_text(encoding="utf-8")
+        before, after = replacement
+        self.assertIn(before, original)
+        try:
+            path.write_text(original.replace(before, after, 1), encoding="utf-8")
+            check()
+        finally:
+            path.write_text(original, encoding="utf-8")
+
     def test_release_check_rejects_body_version_comment_when_frontmatter_is_wrong(
         self,
     ) -> None:
@@ -111,6 +137,27 @@ class ReleaseContractTests(unittest.TestCase):
             (
                 '  version: "3.0.0"',
                 '  version: "9.9.9"\n\n<!-- version: "3.0.0" -->',
+            ),
+            self.test_release_documents_use_the_same_version_and_date,
+        )
+
+    def test_release_check_rejects_second_frontmatter_metadata_mapping(self) -> None:
+        self.assert_check_rejects_mutation(
+            ROOT / "SKILL.md",
+            (
+                '  updated_at: "2026-07-25"',
+                '  updated_at: "2026-07-25"\nmetadata:\n'
+                '  version: "9.9.9"\n  updated_at: "2026-07-26"',
+            ),
+            self.test_release_documents_use_the_same_version_and_date,
+        )
+
+    def test_release_check_accepts_distinct_historical_changelog_heading(self) -> None:
+        self.assert_check_accepts_mutation(
+            ROOT / "CHANGELOG.md",
+            (
+                "# Changelog\n",
+                "# Changelog\n\n## 2.9.0 - 2026-07-24\n\n- Historical release.\n",
             ),
             self.test_release_documents_use_the_same_version_and_date,
         )
@@ -151,6 +198,46 @@ class ReleaseContractTests(unittest.TestCase):
                     self.test_skills_catalog_advertises_cpe_as_its_own_local_contract,
                 )
 
+    def test_catalog_check_rejects_duplicate_provider_section(self) -> None:
+        self.assert_check_rejects_mutation(
+            REPOSITORY_ROOT / "skills" / "README.md",
+            (
+                "\n### 확인\n",
+                "\n### Codex (`~/.codex/skills/`)\n\n```bash\n"
+                'ln -sfn "$ARCHIVE_REPO/skills/kws-codex-plan-executor" \\\n'
+                "        ~/.codex/skills/kws-codex-plan-executor\n```\n\n"
+                "### 확인\n",
+            ),
+            self.test_skills_catalog_advertises_cpe_as_its_own_local_contract,
+        )
+
+    def test_catalog_check_rejects_comment_only_catalog_or_source_claims(self) -> None:
+        catalog = REPOSITORY_ROOT / "skills" / "README.md"
+        cases = (
+            (
+                "catalog row",
+                "| [`kws-codex-plan-executor`](./kws-codex-plan-executor/) | "
+                "하나의 승인된 Superpowers 실행 계약을 위한 Codex local durability "
+                "capsule. 순차 plan runner와 별도인 strict-thin "
+                "`run`/`resume`/`inspect` 계약입니다. |",
+                "<!-- [`kws-codex-plan-executor`](./kws-codex-plan-executor/) -->",
+            ),
+            (
+                "source-of-truth prose",
+                "CPE 3.0.0 source of truth is the tracked "
+                "`skills/kws-codex-plan-executor/` directory.",
+                "<!-- CPE 3.0.0 source of truth is the tracked "
+                "`skills/kws-codex-plan-executor/` directory. -->",
+            ),
+        )
+        for name, before, after in cases:
+            with self.subTest(name=name):
+                self.assert_check_rejects_mutation(
+                    catalog,
+                    (before, after),
+                    self.test_skills_catalog_advertises_cpe_as_its_own_local_contract,
+                )
+
     def test_release_documents_use_the_same_version_and_date(self) -> None:
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
@@ -169,11 +256,15 @@ class ReleaseContractTests(unittest.TestCase):
             [(VERSION, RELEASE_DATE)],
         )
         self.assertEqual(
-            re.findall(
-                r"^## ([0-9]+\.[0-9]+\.[0-9]+) - (\d{4}-\d{2}-\d{2})$",
-                changelog,
-                re.MULTILINE,
-            ),
+            [
+                heading
+                for heading in re.findall(
+                    r"^## ([0-9]+\.[0-9]+\.[0-9]+) - (\d{4}-\d{2}-\d{2})$",
+                    changelog,
+                    re.MULTILINE,
+                )
+                if heading[0] == VERSION
+            ],
             [(VERSION, RELEASE_DATE)],
         )
 
@@ -182,34 +273,47 @@ class ReleaseContractTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-        self.assertIn(
-            "[`kws-codex-plan-executor`](./kws-codex-plan-executor/)",
-            catalog,
+        catalog_rows = re.findall(
+            r"^\| \[`kws-codex-plan-executor`\]"
+            r"\(\./kws-codex-plan-executor/\) \| (?P<purpose>.+) \|$",
+            markdown_section(catalog, "##", "포함된 스킬"),
+            re.MULTILINE,
         )
-        self.assertIn(
-            "CPE 3.0.0 source of truth is the tracked "
-            "`skills/kws-codex-plan-executor/` directory.",
-            catalog,
+        self.assertEqual(
+            catalog_rows,
+            [
+                "하나의 승인된 Superpowers 실행 계약을 위한 Codex local "
+                "durability capsule. 순차 plan runner와 별도인 strict-thin "
+                "`run`/`resume`/`inspect` 계약입니다."
+            ],
+        )
+        self.assertEqual(
+            re.findall(
+                r"^`kws-codex-plan-executor`의 현재 릴리스는 `3\.0\.0`입니다\. "
+                r"CPE 3\.0\.0 source of truth is the tracked "
+                r"`skills/kws-codex-plan-executor/` directory\.$",
+                markdown_section(catalog, "##", "버전과 릴리스 상태"),
+                re.MULTILINE,
+            ),
+            [
+                "`kws-codex-plan-executor`의 현재 릴리스는 `3.0.0`입니다. "
+                "CPE 3.0.0 source of truth is the tracked "
+                "`skills/kws-codex-plan-executor/` directory."
+            ],
         )
         self.assertEqual(
             cpe_install_entries(
-                markdown_section(catalog, CLAUDE_HEADING),
+                markdown_section(catalog, "###", CLAUDE_HEADING),
                 "~/.claude/skills",
             ),
-            [
-                'ln -sfn "$ARCHIVE_REPO/skills/kws-codex-plan-executor" \\\n'
-                "        ~/.claude/skills/kws-codex-plan-executor"
-            ],
+            [cpe_install_entry("~/.claude/skills")],
         )
         self.assertEqual(
             cpe_install_entries(
-                markdown_section(catalog, CODEX_HEADING),
+                markdown_section(catalog, "###", CODEX_HEADING),
                 "~/.codex/skills",
             ),
-            [
-                'ln -sfn "$ARCHIVE_REPO/skills/kws-codex-plan-executor" \\\n'
-                "        ~/.codex/skills/kws-codex-plan-executor"
-            ],
+            [cpe_install_entry("~/.codex/skills")],
         )
 
     def test_readme_inventory_is_the_exact_tracked_release_tree(self) -> None:
