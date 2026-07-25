@@ -357,6 +357,49 @@ class RuntimeContractTests(unittest.TestCase):
         self.assertEqual(self.store(run_id).state.controller_generation, 0)
         self.assertFalse(self.store(run_id).state.fresh_fallback_used)
 
+    def test_resume_rejects_handed_off_run_without_mutation_or_controller_launch(self) -> None:
+        completed = self.run_once()
+        run_id = str(completed["run_id"])
+        store = self.store(run_id)
+        worktree = Path(store.manifest.worktree)
+        state_before = store.state_path.read_bytes()
+        handoff_before = store.handoff_path.read_bytes()
+        head_before = self.git_at(worktree, "rev-parse", "HEAD")
+        status_before = self.git_at(
+            worktree,
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=all",
+        )
+        self.controller.requests.clear()
+        self.controller.callback_states.clear()
+
+        result = self.runtime.resume(run_id=run_id)
+
+        self.assertEqual(
+            result,
+            {
+                "status": "blocked",
+                "run_id": run_id,
+                "reason": "run_already_handed_off",
+            },
+        )
+        self.assertEqual(self.controller.requests, [])
+        self.assertEqual(store.state_path.read_bytes(), state_before)
+        self.assertEqual(store.handoff_path.read_bytes(), handoff_before)
+        self.assertEqual(self.git_at(worktree, "rev-parse", "HEAD"), head_before)
+        self.assertEqual(
+            self.git_at(
+                worktree,
+                "status",
+                "--porcelain=v1",
+                "-z",
+                "--untracked-files=all",
+            ),
+            status_before,
+        )
+
     def test_explicit_missing_session_allows_one_fresh_fallback(self) -> None:
         run_id = self.create_interrupted_run()
         self.controller.outcomes = [
