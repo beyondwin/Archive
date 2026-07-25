@@ -15,8 +15,8 @@ bun run agent:verify -- --base origin/main --head HEAD
 `agent:contract` validates the repository contract: the complete root,
 subtree, and tool-guidance inventory; the four exact `agent:*` package entry
 points; verification-map reachability, overlaps, command working directories,
-package scripts, and executable gates; tested Codex execpolicy fixtures; and
-tracked-state exclusions. `agent:test` runs the agent-script unit suite.
+package scripts, executable gates, and tracked-state exclusions. `agent:test`
+runs the agent-script unit suite.
 `agent:verify` selects deterministic commands from changed tracked and untracked
 paths, including tracked deletions. It checks links only for Markdown files that
 still exist, resolves documents and local targets through their real paths so
@@ -63,8 +63,8 @@ Report each omitted check as `NOT RUN (opt-in)`. The Claude full eval invokes a
 live Claude provider and may update its version baseline, so it is not a
 deterministic acceptance gate.
 
-Local and CI verification use the same entry points. CI pins Bun `1.3.10`,
-Codex `0.144.6`, Rust `1.95.0`, Ubuntu `24.04`, and action revisions; see the
+Local and CI verification use the same entry points. CI pins Bun `1.3.10`, Rust
+`1.95.0`, Ubuntu `24.04`, and action revisions; see the
 [Codex local setup guide](codex-local-setup.md) for the support boundary and
 hosted-service limitations.
 
