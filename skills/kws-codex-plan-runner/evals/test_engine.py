@@ -144,11 +144,51 @@ class ScriptedAdapter:
                     cwd=request.worktree,
                 )
             head = git("rev-parse", "HEAD", cwd=request.worktree)
+            declaration = helper_client(
+                self.helper.socket_path,
+                self.helper.nonce,
+                {
+                    "protocol_version": self.helper.protocol_version,
+                    "run_id": packet["run_id"],
+                    "nonce": self.helper.nonce,
+                    "operation": "declare_verification",
+                    "payload": {
+                        "candidate_head": head,
+                        "plan_index": packet["current_plan"]["index"],
+                        "verification": {
+                            "kind": "commands",
+                            "candidate_head": head,
+                            "commands": [{
+                                "command_id": f"handoff-{packet['current_plan']['index']}",
+                                "command_role": "handoff",
+                                "argv": [sys.executable, "-c", "pass"],
+                                "cwd": ".",
+                                "input_digest": "a" * 64,
+                                "deadline_seconds": 10,
+                            }],
+                        },
+                        "prior_set_digests": packet["prior_verification_sets"],
+                        "is_final_plan": packet["is_final_plan"],
+                    },
+                },
+            )
+            digest = declaration["artifact"]["digest"]
+            helper_client(
+                self.helper.socket_path,
+                self.helper.nonce,
+                {
+                    "protocol_version": self.helper.protocol_version,
+                    "run_id": packet["run_id"],
+                    "nonce": self.helper.nonce,
+                    "operation": "run_verification",
+                    "payload": {"candidate_head": head, "set_digest": digest, "command_index": 0, "deadline_seconds": 10},
+                },
+            )
             result = {
                 "status": "implemented",
                 "head_commit": head,
                 "summary": f"plan {packet['current_plan']['index']}",
-                "verification_set_digest": "a" * 64,
+                "verification_set_digest": digest,
                 "blocker": None,
             }
             return ProviderOutcome(
@@ -423,7 +463,7 @@ class EngineTest(unittest.TestCase):
 
     def test_two_plans_use_two_root_controllers_and_final_plan_closes_run(self):
         code = self.run_two_plan_success()
-        self.assertEqual(code, ExitCode.READY)
+        self.assertEqual(code, ExitCode.READY, [self.output, self.state().get("failure")])
         self.assertEqual([packet["mode"] for packet in self.packets], ["implementation", "implementation"])
         state = self.state()
         self.assertEqual(state["status"], "ready_for_integration")
@@ -431,6 +471,37 @@ class EngineTest(unittest.TestCase):
         self.assertNotIn("finalization", state)
         self.assertTrue(all("task_ledger" not in packet for packet in self.packets))
         self.assertFalse(any(session["mode"] != "implementation" for session in state["sessions"]))
+
+    def test_invented_verification_digest_is_rejected(self):
+        def invented(_adapter, request, packet, session_id):
+            if packet["mode"] != "implementation":
+                return None
+            marker = request.worktree / "invented.txt"
+            marker.write_text("implemented\n", encoding="utf-8")
+            git("add", marker.name, cwd=request.worktree)
+            git("-c", "user.name=Engine Test", "-c", "user.email=engine@example.test", "commit", "-m", "invented", cwd=request.worktree)
+            return ProviderOutcome("implemented", 0, session_id, {
+                "status": "implemented",
+                "head_commit": git("rev-parse", "HEAD", cwd=request.worktree),
+                "summary": "invented receipt",
+                "verification_set_digest": "a" * 64,
+                "blocker": None,
+            }, None, {}, (), "")
+
+        self.outcome_hook = invented
+        self.assertEqual(self.runner().create_run(specs=self.specs, plans=self.plans[:1], workspace=self.source, stall_seconds=30, sandbox="workspace-write", model=None), ExitCode.INTEGRITY)
+
+    def test_active_recovery_uses_only_v2_progress_facts(self):
+        def transport(_adapter, _request, _packet, session_id):
+            return ProviderOutcome("failed", 1, session_id, None, "transport_closed", {}, (), "")
+
+        self.outcome_hook = transport
+        code = self.runner().create_run(
+            specs=self.specs, plans=self.plans[:1], workspace=self.source,
+            stall_seconds=30, sandbox="workspace-write", model=None,
+        )
+        self.assertEqual(code, ExitCode.FAILED)
+        self.assertNotIn("task_ledger", self.state())
 
     def test_version_one_is_inspect_only(self):
         self.run_two_plan_success()
@@ -440,9 +511,16 @@ class EngineTest(unittest.TestCase):
         state["contract_version"] = 1
         state["state_digest"] = storage_module._state_digest(state)
         (root / "state.json").write_bytes(storage_module.canonical_json(state))
-        before = (root / "state.json").read_bytes()
+        state_path = root / "state.json"
+        before = state_path.read_bytes()
+        before_metadata = state_path.stat()
         self.assertEqual(self.runner().inspect(state["run_id"]), ExitCode.READY)
-        self.assertEqual((root / "state.json").read_bytes(), before)
+        self.assertEqual(state_path.read_bytes(), before)
+        after_metadata = state_path.stat()
+        self.assertEqual(
+            (after_metadata.st_ino, after_metadata.st_size, after_metadata.st_mtime_ns),
+            (before_metadata.st_ino, before_metadata.st_size, before_metadata.st_mtime_ns),
+        )
         self.output.clear()
         self.assertEqual(self.runner().resume(state["run_id"], retry_blocked=False, retry_failed=False, strategy_note=None), ExitCode.INVALID)
         self.assertIn("legacy_contract_requires_v1_runner", self.output[-1])

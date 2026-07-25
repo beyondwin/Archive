@@ -822,7 +822,7 @@ def _validate_state(
                 not isinstance(failure.get("partial_attempt_id"), str)
                 or not failure["partial_attempt_id"]
                 or failure.get("partial_mode")
-                not in {"implementation", "final_review_fix"}
+                != "implementation"
             ):
                 raise ValueError("partial worktree checkpoint is invalid")
         for name in ("next_strategy", "previous_failed_strategy"):

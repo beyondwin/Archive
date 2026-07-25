@@ -86,17 +86,15 @@ _MAX_CHANGED_STRATEGIES = 1
 @dataclass(frozen=True)
 class ProgressSnapshot:
     git_tree_digest: str
-    reported_done_ids: tuple[str, ...]
     successful_receipt_digests: tuple[str, ...]
-    resolved_finding_ids: tuple[str, ...]
+    plan_handoff_digests: tuple[str, ...]
 
     def __post_init__(self) -> None:
         if not isinstance(self.git_tree_digest, str) or not self.git_tree_digest:
             raise ValueError("Git tree digest must be a non-empty string")
         for label, values in (
-            ("reported-done IDs", self.reported_done_ids),
             ("successful receipt digests", self.successful_receipt_digests),
-            ("resolved finding IDs", self.resolved_finding_ids),
+            ("plan handoff digests", self.plan_handoff_digests),
         ):
             if (
                 not isinstance(values, tuple)
@@ -220,8 +218,6 @@ def _material_progress(
     current: ProgressSnapshot,
     *,
     observed_tree_digests: object,
-    prior_reported_done_evidence: object,
-    current_reported_done_evidence: object,
 ) -> bool:
     if baseline is None:
         return False
@@ -235,37 +231,14 @@ def _material_progress(
         current.git_tree_digest != baseline.git_tree_digest
         and current.git_tree_digest not in observed_trees
     )
-    prior_evidence = (
-        prior_reported_done_evidence
-        if isinstance(prior_reported_done_evidence, Mapping)
-        else {}
-    )
-    current_evidence = (
-        current_reported_done_evidence
-        if isinstance(current_reported_done_evidence, Mapping)
-        else {}
-    )
-    prior_digests = {
-        digest for digest in prior_evidence.values() if isinstance(digest, str)
-    }
-    newly_reported = (
-        set(current.reported_done_ids) - set(baseline.reported_done_ids)
-    )
-    reported_done_progress = any(
-        isinstance((digest := current_evidence.get(task_id)), str)
-        and _DIGEST.fullmatch(digest) is not None
-        and digest not in prior_digests
-        for task_id in newly_reported
-    )
     return (
         git_progress
-        or reported_done_progress
         or bool(
             set(current.successful_receipt_digests)
             - set(baseline.successful_receipt_digests)
         )
         or bool(
-            set(current.resolved_finding_ids) - set(baseline.resolved_finding_ids)
+            set(current.plan_handoff_digests) - set(baseline.plan_handoff_digests)
         )
     )
 
@@ -310,12 +283,6 @@ class RecoveryPolicy:
                 baseline,
                 current,
                 observed_tree_digests=state.get("observed_tree_digests", ()),
-                prior_reported_done_evidence=state.get(
-                    "reported_done_evidence", {}
-                ),
-                current_reported_done_evidence=outcome.get(
-                    "reported_done_evidence", {}
-                ),
             )
         )
         session_action = self._session_action(
