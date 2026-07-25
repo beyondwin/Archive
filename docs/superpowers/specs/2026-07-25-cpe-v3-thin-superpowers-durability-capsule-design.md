@@ -73,7 +73,9 @@ It also supersedes the CPE-retirement portion of earlier provider-runner
 designs. The approved product decision is now to retain CPE only as an
 independent single-execution-contract Codex durability capsule. It does not
 change the separately approved thin-boundary redesign of the Codex and Claude
-provider plan runners.
+provider plan runners:
+
+- [Provider Plan Runners Thin Superpowers Boundary Design](./2026-07-25-provider-plan-runners-thin-superpowers-boundary-design.md)
 
 ## 3. Context And Evidence
 
