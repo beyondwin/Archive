@@ -668,6 +668,31 @@ class IsolationTests(unittest.TestCase):
 
 
 class SessionAndRunnerOutcomeTests(unittest.TestCase):
+    def test_canary_git_observations_disable_optional_locks(self):
+        completed = subprocess.CompletedProcess(
+            args=["git", "status", "--porcelain=v1"],
+            returncode=0,
+            stdout="",
+            stderr="",
+        )
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"GIT_OPTIONAL_LOCKS": "1"},
+                clear=False,
+            ),
+            mock.patch.object(
+                canary.subprocess,
+                "run",
+                return_value=completed,
+            ) as run,
+        ):
+            canary._git(Path("/tmp"), "status", "--porcelain=v1")
+        self.assertEqual(
+            run.call_args.kwargs["env"]["GIT_OPTIONAL_LOCKS"],
+            "0",
+        )
+
     def test_interruption_boundary_uses_scenario_deadline(self):
         controller = mock.Mock()
         controller.poll.return_value = None
@@ -699,6 +724,87 @@ class SessionAndRunnerOutcomeTests(unittest.TestCase):
                     controller,
                     set(),
                 )
+
+    def test_interruption_boundary_does_not_depend_on_ps_snapshot_for_live_group(
+        self,
+    ):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            worktree = root / "worktree"
+            canary._create_repository(worktree)
+            (worktree / "resume-marker.txt").write_text(
+                "first plan handoff complete\n",
+                encoding="utf-8",
+            )
+            canary._git(worktree, "add", "resume-marker.txt")
+            canary._git(
+                worktree,
+                "commit",
+                "-m",
+                "canary interruption boundary",
+            )
+            (worktree / "dirty-checkpoint.txt").write_text(
+                "resume this exact checkpoint\n",
+                encoding="utf-8",
+            )
+            provider = subprocess.Popen(
+                ["/bin/sleep", "30"],
+                start_new_session=True,
+            )
+            controller = mock.Mock()
+            controller.poll.return_value = None
+            state = {
+                "current_plan_index": 1,
+                "repository": {"worktree": str(worktree)},
+                "plans": [
+                    {"status": "implemented"},
+                    {"status": "running"},
+                ],
+                "sessions": [
+                    {
+                        "mode": "implementation",
+                        "plan_index": 1,
+                        "health": "healthy",
+                        "session_id": "healthy-session",
+                    }
+                ],
+                "attempts": [
+                    {
+                        "mode": "implementation",
+                        "plan_index": 1,
+                        "completed": False,
+                        "provider_pgid": provider.pid,
+                    }
+                ],
+            }
+            observed_groups = set()
+            try:
+                with (
+                    mock.patch.object(
+                        canary,
+                        "_load_latest_run",
+                        return_value=(root / "run", state),
+                    ),
+                    mock.patch.object(canary, "_process_table", return_value=[]),
+                    mock.patch.object(
+                        canary.time,
+                        "monotonic",
+                        side_effect=(100.0, 101.0, 1_901.0),
+                    ),
+                    mock.patch.object(canary.time, "sleep"),
+                ):
+                    _run_root, _state, _worktree, pgid = (
+                        canary._interruption_boundary(
+                            root / "operator-home",
+                            "codex",
+                            controller,
+                            observed_groups,
+                        )
+                    )
+                self.assertEqual(pgid, provider.pid)
+                self.assertEqual(observed_groups, {provider.pid})
+            finally:
+                canary._terminate_and_reap(provider)
 
     @staticmethod
     def _fake_shell_environment(provider, root, actions):

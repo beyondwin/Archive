@@ -40,6 +40,7 @@ TERM_GRACE_SECONDS = 1.0
 GIT_ENV = {
     "GIT_AUTHOR_DATE": "2026-01-01T00:00:00+00:00",
     "GIT_COMMITTER_DATE": "2026-01-01T00:00:00+00:00",
+    "GIT_OPTIONAL_LOCKS": "0",
 }
 AUTH_CODES = frozenset(
     {
@@ -2422,6 +2423,16 @@ def _process_group_quiescent(pgid: int) -> bool:
     )
 
 
+def _process_group_exists(pgid: int) -> bool:
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 def _cleanup_process_groups(pgids: set[int]) -> None:
     for pgid in sorted(pgids):
         if _process_group_quiescent(pgid):
@@ -2542,7 +2553,7 @@ def _interruption_boundary(
         dirty = _git(worktree, "status", "--porcelain=v1")
         if (
             healthy
-            and not _process_group_quiescent(current_pgid)
+            and _process_group_exists(current_pgid)
             and marker_committed
             and "dirty-checkpoint.txt" in dirty
         ):
@@ -2616,7 +2627,7 @@ def _run_interrupted_once(
                 provider_groups,
             )
         )
-        if _process_group_quiescent(current_provider_pgid):
+        if not _process_group_exists(current_provider_pgid):
             raise CanaryError("provider_process_group_not_live")
         interruption = _interrupt_controller(controller, provider_groups)
     except BaseException:
