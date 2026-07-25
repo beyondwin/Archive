@@ -14,6 +14,8 @@
 - Sets `integration_policy=keep` and keeps integration unperformed.
 - Defines dirty checkpoints as drift detection, not backups; they cannot
   restore files.
+- Persists the current provider process-group identity on each root attempt so
+  interruption canaries bind SIGINT evidence to the live attempt.
 - Version 1 state is inspect-only. Active execution requires Version 2.
 
 ## 1.0.0 - 2026-07-23

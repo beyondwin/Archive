@@ -330,6 +330,9 @@ class ClaudeAdapter:
         request: ProviderRequest,
         lease: ActivityLease,
         on_session_id: Callable[[str], None] | None = None,
+        on_process_observation: Callable[
+            [Mapping[str, object]], None
+        ] | None = None,
     ) -> ProviderOutcome:
         argv = self.build_argv(request)
         if not request.worktree.is_dir() or request.worktree.is_symlink():
@@ -367,6 +370,14 @@ class ClaudeAdapter:
                             )
                     except ProcessLookupError:
                         pass
+                    if on_process_observation is not None:
+                        on_process_observation(
+                            {
+                                "provider_pid": process.pid,
+                                "provider_pgid": pgid,
+                                "descendant_pids": [],
+                            }
+                        )
                     assert process.stdout is not None and process.stderr is not None
                     selector = selectors.DefaultSelector()
                     selector.register(process.stdout, selectors.EVENT_READ, "stdout")

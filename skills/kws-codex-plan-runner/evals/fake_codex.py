@@ -352,11 +352,35 @@ def _generic_main(argv: list[str], prompt: str, sequence_path: Path) -> int:
             }
         )
         return 1
-    if action in {"stalled", "dirty-stalled"}:
+    if action in {"stalled", "dirty-stalled", "canary-interrupt"}:
         if action == "dirty-stalled":
             Path("partial-provider-edit.txt").write_text(
                 "partial implementation\n", encoding="utf-8"
             )
+        if action == "canary-interrupt":
+            Path("resume-marker.txt").write_text(
+                "first plan handoff complete\n", encoding="utf-8"
+            )
+            subprocess.run(["git", "add", "resume-marker.txt"], check=True)
+            subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "user.name=Plan Runner Parity",
+                    "-c",
+                    "user.email=parity@example.test",
+                    "commit",
+                    "-m",
+                    "canary interruption boundary",
+                ],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            Path("dirty-checkpoint.txt").write_text(
+                "resume this exact checkpoint\n", encoding="utf-8"
+            )
+            time.sleep(300)
         time.sleep(2)
         return 7
     if action in {
@@ -400,7 +424,11 @@ def _generic_main(argv: list[str], prompt: str, sequence_path: Path) -> int:
         partial = (
             Path("partial-provider-edit.txt")
             if Path("partial-provider-edit.txt").exists()
-            else Path("partial.txt")
+            else (
+                Path("dirty-checkpoint.txt")
+                if Path("dirty-checkpoint.txt").exists()
+                else Path("partial.txt")
+            )
         )
         if action == "resume-dirty-implemented":
             if not partial.is_file():

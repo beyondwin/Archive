@@ -68,6 +68,7 @@ class ScriptedClaudeAdapter:
         request,
         lease,
         on_session_id=None,
+        on_process_observation=None,
     ):
         self.owner.leases.append(lease)
         packet = json.loads(
@@ -76,6 +77,14 @@ class ScriptedClaudeAdapter:
         self.owner.packets.append(packet)
         self.owner.requests.append(request)
         session_id = request.session_id
+        if on_process_observation is not None:
+            on_process_observation(
+                {
+                    "provider_pid": 5101,
+                    "provider_pgid": 5101,
+                    "descendant_pids": [5102],
+                }
+            )
         if on_session_id is not None:
             on_session_id(session_id)
         if self.owner.crash_after_session_capture:
@@ -306,6 +315,10 @@ class EngineTest(unittest.TestCase):
         )
         state = self.current_state()
         self.assertEqual(state["status"], "ready_for_integration")
+        self.assertEqual(
+            [attempt["provider_pgid"] for attempt in state["attempts"]],
+            [5101, 5101],
+        )
         self.assertNotIn("task_ledger", state)
         self.assertNotIn("finalization", state)
         self.assertTrue(

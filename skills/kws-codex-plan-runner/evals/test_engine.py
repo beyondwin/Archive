@@ -61,6 +61,14 @@ class ScriptedAdapter:
         self.owner.packets.append(packet)
         self.owner.requests.append(request)
         session_id = request.session_id or str(uuid.UUID(int=len(self.owner.requests)))
+        if on_process_observation is not None:
+            on_process_observation(
+                {
+                    "provider_pid": 4101,
+                    "provider_pgid": 4101,
+                    "descendant_pids": [4102],
+                }
+            )
         if on_session_id is not None:
             on_session_id(session_id)
         if self.owner.outcome_hook is not None:
@@ -263,6 +271,57 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(self.create(self.plans[:1]), ExitCode.FAILED)
         self.assertEqual([request.session_id for request in self.requests], [None, str(uuid.UUID(int=1)), None])
         self.assertEqual(self.state()["failure"]["reason_code"], "recovery_exhausted")
+
+    def test_controller_stop_seals_exact_dirty_checkpoint_and_resume_attempt(self):
+        def stopped(_adapter, request, _packet, session_id):
+            (request.worktree / "same-path.txt").write_text(
+                "first bytes\n", encoding="utf-8"
+            )
+            return ProviderOutcome(
+                "controller_stopped",
+                -2,
+                session_id,
+                None,
+                "controller_transport_failed",
+                {},
+                (),
+                "",
+            )
+
+        self.outcome_hook = stopped
+        self.assertEqual(self.create(self.plans[:1]), ExitCode.RESUMABLE)
+        state = self.state()
+        self.assertEqual(state["status"], "resumable")
+        self.assertEqual(
+            state["attempts"][0]["session_action"], "fresh_root"
+        )
+        self.assertEqual(state["attempts"][0]["provider_pgid"], 4101)
+        self.assertFalse(state["failure"]["partial_worktree"]["clean"])
+        sealed = dict(state["failure"]["partial_worktree"])
+
+        worktree = Path(state["repository"]["worktree"])
+        (worktree / "same-path.txt").write_text(
+            "second bytes\n", encoding="utf-8"
+        )
+        request_count = len(self.requests)
+        self.assertEqual(
+            self.runner().resume(
+                state["run_id"],
+                retry_blocked=False,
+                retry_failed=False,
+                strategy_note=None,
+            ),
+            ExitCode.INTEGRITY,
+        )
+        self.assertEqual(len(self.requests), request_count)
+        self.assertNotEqual(
+            sealed["tree_digest"],
+            GitWorkspace.open(
+                self.source,
+                worktree,
+                state["repository"]["branch"],
+            ).observe().tree_digest,
+        )
 
     def test_launch_lease_starts_at_current_monotonic_time(self):
         self.assertEqual(self.create(), ExitCode.READY)

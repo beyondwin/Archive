@@ -1449,19 +1449,39 @@ def validate_multi_plan_ownership_scenario(
     ):
         return False, "final_run_union_invalid", None
     receipts = evidence.get("verification_receipts")
+    observation = evidence.get("worktree_observation")
     if not isinstance(receipts, list) or len(receipts) != len(union):
+        return False, "final_handoff_not_receipt_bound", None
+    if (
+        not isinstance(observation, Mapping)
+        or observation.get("head") != observed_head
+        or observation.get("clean") is not True
+        or not isinstance(observation.get("tree_digest"), str)
+    ):
         return False, "final_handoff_not_receipt_bound", None
     unmatched = list(union)
     for receipt in receipts:
+        command = receipt.get("command") if isinstance(receipt, Mapping) else None
+        document = receipt.get("receipt") if isinstance(receipt, Mapping) else None
+        identity = (
+            _validated_receipt_identity(
+                document,
+                observed_head,
+                command_role=str(command.get("command_role")),
+                worktree_digest=str(observation["tree_digest"]),
+            )
+            if isinstance(command, Mapping)
+            else None
+        )
         if (
             not isinstance(receipt, Mapping)
-            or receipt.get("candidate_head") != observed_head
-            or receipt.get("outcome") != "success"
-            or receipt.get("exit_code") != 0
-            or receipt.get("command") not in unmatched
+            or identity is None
+            or command not in unmatched
+            or identity.get("argv") != command.get("argv")
+            or identity.get("input_digest") != command.get("input_digest")
         ):
             return False, "final_handoff_not_receipt_bound", None
-        unmatched.remove(receipt["command"])
+        unmatched.remove(command)
     if unmatched:
         return False, "final_handoff_not_receipt_bound", None
     return True, None, observed_head
@@ -1626,7 +1646,11 @@ def _validated_executable_identity(value: object) -> bool:
 
 
 def _validated_receipt_identity(
-    receipt: object, candidate: str
+    receipt: object,
+    candidate: str,
+    *,
+    command_role: str = "final",
+    worktree_digest: str | None = None,
 ) -> Mapping[str, Any] | None:
     if (
         not isinstance(receipt, Mapping)
@@ -1668,7 +1692,7 @@ def _validated_receipt_identity(
     )
     if (
         identity.get("candidate_head") != candidate
-        or identity.get("command_role") != "final"
+        or identity.get("command_role") != command_role
         or not isinstance(argv, list)
         or not argv
         or any(not isinstance(item, str) or not item for item in argv)
@@ -1682,9 +1706,82 @@ def _validated_receipt_identity(
         or hashlib.sha256(_canonical_json(identity)).hexdigest()
         != receipt["identity_digest"]
         or not _validated_executable_identity(identity.get("executable_identity"))
+        or (
+            worktree_digest is not None
+            and identity.get("worktree_digest") != worktree_digest
+        )
     ):
         return None
     return identity
+
+
+def _production_worktree_observation(
+    provider: str,
+    state: Mapping[str, Any],
+) -> dict[str, object]:
+    repository = state.get("repository")
+    if provider not in {"codex", "claude"} or not isinstance(
+        repository, Mapping
+    ):
+        raise CanaryError("dirty_checkpoint_changed")
+    required = {
+        "source_repository": repository.get("source_repository"),
+        "worktree": repository.get("worktree"),
+        "branch": repository.get("branch"),
+    }
+    if any(not isinstance(value, str) for value in required.values()):
+        raise CanaryError("dirty_checkpoint_changed")
+    scripts = (
+        REPO_ROOT
+        / f"skills/kws-{provider}-plan-runner/scripts"
+    ).resolve(strict=True)
+    source = """
+import dataclasses, json, sys
+sys.path.insert(0, sys.argv[1])
+from plan_runner.git_ops import GitWorkspace
+workspace = GitWorkspace.open(
+    __import__("pathlib").Path(sys.argv[2]),
+    __import__("pathlib").Path(sys.argv[3]),
+    sys.argv[4],
+)
+print(json.dumps(dataclasses.asdict(workspace.observe()), sort_keys=True))
+"""
+    result = subprocess.run(
+        [
+            str(Path(sys.executable).resolve()),
+            "-c",
+            source,
+            str(scripts),
+            required["source_repository"],
+            required["worktree"],
+            required["branch"],
+        ],
+        cwd=REPO_ROOT,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    try:
+        observed = json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        raise CanaryError("dirty_checkpoint_changed") from error
+    if (
+        result.returncode != 0
+        or not isinstance(observed, dict)
+        or set(observed)
+        != {
+            "head",
+            "branch",
+            "porcelain_digest",
+            "tree_digest",
+            "clean",
+        }
+    ):
+        raise CanaryError("dirty_checkpoint_changed")
+    return observed
 
 
 def validate_runner_artifacts(
@@ -1932,25 +2029,29 @@ def _ownership_evidence_from_run(
     )
     run_set = {"digest": run_ref["digest"], **dict(run_value)}
     observed_head = _git(worktree, "rev-parse", "HEAD")
+    observed_tree = _production_worktree_observation(
+        str(state.get("provider")), state
+    )
     final_commands = run_set.get("commands")
     if not isinstance(final_commands, list):
         raise CanaryError("verification_set_invalid")
     receipts: list[dict[str, object]] = []
     for reference in _references(state, "verification_receipt"):
         receipt = _artifact_from_ref(run_root, reference)
-        identity = receipt.get("identity")
-        if (
-            not isinstance(identity, Mapping)
-            or identity.get("candidate_head") != observed_head
-            or receipt.get("outcome") != "success"
-            or receipt.get("exit_code") != 0
-        ):
-            continue
         matching = next(
             (
                 command
                 for command in final_commands
                 if isinstance(command, Mapping)
+                and (
+                    identity := _validated_receipt_identity(
+                        receipt,
+                        observed_head,
+                        command_role=str(command.get("command_role")),
+                        worktree_digest=str(observed_tree["tree_digest"]),
+                    )
+                )
+                is not None
                 and command.get("argv") == identity.get("argv")
                 and command.get("input_digest") == identity.get("input_digest")
                 and isinstance(command.get("cwd"), str)
@@ -1962,10 +2063,9 @@ def _ownership_evidence_from_run(
         if matching is not None:
             receipts.append(
                 {
-                    "candidate_head": observed_head,
+                    "artifact_ref": dict(reference),
+                    "receipt": dict(receipt),
                     "command": matching,
-                    "outcome": "success",
-                    "exit_code": 0,
                 }
             )
     first_head = handoffs[0].get("head_commit")
@@ -2003,6 +2103,7 @@ def _ownership_evidence_from_run(
         "source_head": repository.get("source_commit"),
         "observed_head": observed_head,
         "porcelain": _git(worktree, "status", "--porcelain=v1"),
+        "worktree_observation": observed_tree,
         "prior_handoff_is_ancestor": ancestry,
         "state": projected_state,
         "plan_handoffs": handoffs,
@@ -2411,12 +2512,11 @@ def _interruption_boundary(
     provider: str,
     controller: subprocess.Popen[str],
     observed_groups: set[int],
-) -> tuple[Path, dict[str, Any], Path]:
+) -> tuple[Path, dict[str, Any], Path, int]:
     deadline = time.monotonic() + COMMAND_DEADLINE_SECONDS
     while time.monotonic() < deadline:
         if controller.poll() is not None:
             raise CanaryError("interruption_boundary_not_reached")
-        observed_groups.update(_descendant_groups(controller.pid))
         loaded = _load_latest_run(home, provider)
         if loaded is None:
             time.sleep(0.1)
@@ -2463,10 +2563,14 @@ def _interruption_boundary(
             and attempt.get("plan_index") == 1
             and attempt.get("completed") is False
         ]
-        for attempt in current_attempts:
-            pgid = attempt.get("provider_pgid")
-            if isinstance(pgid, int) and pgid > 0:
-                observed_groups.add(pgid)
+        current_pgid = (
+            current_attempts[0].get("provider_pgid")
+            if len(current_attempts) == 1
+            else None
+        )
+        if not isinstance(current_pgid, int) or current_pgid <= 0:
+            time.sleep(0.1)
+            continue
         marker_committed = (
             subprocess.run(
                 ["git", "cat-file", "-e", "HEAD:resume-marker.txt"],
@@ -2482,12 +2586,13 @@ def _interruption_boundary(
         dirty = _git(worktree, "status", "--porcelain=v1")
         if (
             healthy
-            and (current_attempts or observed_groups)
-            and observed_groups
+            and not _process_group_quiescent(current_pgid)
             and marker_committed
             and "dirty-checkpoint.txt" in dirty
         ):
-            return run_root, state, worktree
+            observed_groups.clear()
+            observed_groups.add(current_pgid)
+            return run_root, state, worktree, current_pgid
         time.sleep(0.1)
     raise CanaryError("interruption_boundary_deadline")
 
@@ -2547,7 +2652,7 @@ def _run_interrupted_once(
     )
     provider_groups: set[int] = set()
     try:
-        run_root, _state_before, worktree = (
+        run_root, _state_before, worktree, current_provider_pgid = (
             _interruption_boundary(
                 Path(environment["HOME"]),
                 provider,
@@ -2555,6 +2660,8 @@ def _run_interrupted_once(
                 provider_groups,
             )
         )
+        if _process_group_quiescent(current_provider_pgid):
+            raise CanaryError("provider_process_group_not_live")
         interruption = _interrupt_controller(controller, provider_groups)
     except BaseException:
         if controller.poll() is None:
@@ -2609,14 +2716,27 @@ def _run_interrupted_once(
         and session.get("mode") == "implementation"
         and session.get("plan_index") == 0
     )
-    porcelain_before = _git(worktree, "status", "--porcelain=v1")
-    if checkpoint.get("head") != _git(worktree, "rev-parse", "HEAD"):
+    observed_before = _production_worktree_observation(
+        provider, interrupted_state
+    )
+    expected_checkpoint = {
+        **observed_before,
+    }
+    if provider == "claude":
+        expected_checkpoint = {
+            "version": 1,
+            "plan_index": interrupted_state.get("current_plan_index"),
+            **expected_checkpoint,
+        }
+    if checkpoint != expected_checkpoint:
         raise CanaryError("dirty_checkpoint_changed")
     if drift:
         (worktree / "drift.txt").write_text(
             "drift after sealed checkpoint\n", encoding="utf-8"
         )
-    porcelain_at_resume = _git(worktree, "status", "--porcelain=v1")
+    observed_at_resume = _production_worktree_observation(
+        provider, interrupted_state
+    )
     resume = run_bounded(
         _runner_argv(
             provider,
@@ -2637,10 +2757,11 @@ def _run_interrupted_once(
     if not isinstance(attempts_after, list) or not isinstance(sessions_after, list):
         raise CanaryError("resumed_state_invalid")
     if drift:
-        drift_detail = (resume.stdout + " " + resume.stderr).lower()
         return {
             "drift_rejected": (
-                resume.returncode in {65, 70} and "dirty" in drift_detail
+                resume.returncode in {65, 70}
+                and observed_at_resume != observed_before
+                and len(attempts_before) == len(attempts_after)
             ),
             "drift_reason_code": "dirty_checkpoint_drift",
             "provider_launch_count_before_drift": len(attempts_before),
@@ -2677,7 +2798,8 @@ def _run_interrupted_once(
         "interrupted_checkpoint": dict(checkpoint),
         "resume_checkpoint": (
             dict(checkpoint)
-            if porcelain_at_resume == porcelain_before and porcelain_before
+            if observed_at_resume == observed_before
+            and observed_before.get("clean") is False
             else None
         ),
         "recorded_session": dict(recorded[-1]),

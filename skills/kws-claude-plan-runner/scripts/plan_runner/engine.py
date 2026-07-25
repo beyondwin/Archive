@@ -744,6 +744,11 @@ class PlanRunner:
                     session_id=captured,
                     candidate_head=candidate_head,
                 ),
+                on_process_observation=lambda process: self._record_process(
+                    store,
+                    attempt_id=attempt_id,
+                    process=process,
+                ),
             )
 
     def _packet(
@@ -1227,6 +1232,29 @@ class PlanRunner:
             if result_artifact.as_dict() not in state["artifact_refs"]:
                 state["artifact_refs"].append(result_artifact.as_dict())
             attempt["result_artifact"] = result_artifact.as_dict()
+        store.commit(state)
+
+    def _record_process(
+        self,
+        store: StateStore,
+        *,
+        attempt_id: str,
+        process: Mapping[str, object],
+    ) -> None:
+        state = store.snapshot()
+        attempt = next(
+            (
+                item
+                for item in reversed(state["attempts"])
+                if isinstance(item, dict)
+                and item.get("attempt_id") == attempt_id
+            ),
+            None,
+        )
+        if not isinstance(attempt, dict):
+            raise ValueError("provider process attempt is unavailable")
+        for name in ("provider_pid", "provider_pgid", "descendant_pids"):
+            attempt[name] = process[name]
         store.commit(state)
 
     def _reconcile_controller(

@@ -20,6 +20,7 @@ from unittest import mock
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parents[1]
 HARNESS_PATH = SCRIPT_DIR / "plan-runner-live-canary.py"
+PARITY_PATH = SCRIPT_DIR / "check-plan-runner-parity.py"
 
 
 def load_harness():
@@ -33,6 +34,21 @@ def load_harness():
 
 
 canary = load_harness()
+
+
+def load_parity():
+    spec = importlib.util.spec_from_file_location(
+        "plan_runner_parity_for_canary", PARITY_PATH
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("cannot load plan runner parity harness")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+parity = load_parity()
 
 
 class LauncherTests(unittest.TestCase):
@@ -561,6 +577,35 @@ class IsolationTests(unittest.TestCase):
 
 class SessionAndRunnerOutcomeTests(unittest.TestCase):
     @staticmethod
+    def _fake_shell_environment(provider, root, actions):
+        home = root / "operator-home"
+        home.mkdir(parents=True)
+        environment = parity._sealed_git_environment(os.environ)
+        environment["HOME"] = str(home)
+        parity._prepare_empty_git_template(root, environment)
+        if provider == "codex":
+            parity._prepare_fake_codex_environment(root, environment)
+        environment["UV_PYTHON_INSTALL_DIR"] = str(
+            Path(sys.executable).resolve().parents[2]
+        )
+        binary = parity._install_fake(provider, root)
+        environment["PATH"] = os.pathsep.join(
+            (str(binary), environment.get("PATH", ""))
+        )
+        sequence = root / "sequence.json"
+        log = root / "fake.jsonl"
+        parity._write_sequence(sequence, actions)
+        environment.update(
+            {
+                "PLAN_RUNNER_FAKE_SEQUENCE": str(sequence),
+                "PLAN_RUNNER_FAKE_LOG": str(log),
+                "FAKE_CODEX_LOG": str(log),
+                "FAKE_CLAUDE_LOG": str(log),
+            }
+        )
+        return environment
+
+    @staticmethod
     def _put_scenario_artifact(run_root, kind, value):
         raw_value = json.dumps(
             value, sort_keys=True, separators=(",", ":")
@@ -590,6 +635,18 @@ class SessionAndRunnerOutcomeTests(unittest.TestCase):
         final_head = canary._git(worktree, "rev-parse", "HEAD")
         run_root = root / "run"
         run_root.mkdir()
+        branch = canary._git(worktree, "branch", "--show-current")
+        observation_state = {
+            "provider": "codex",
+            "repository": {
+                "source_repository": str(worktree),
+                "worktree": str(worktree),
+                "branch": branch,
+            },
+        }
+        observation = canary._production_worktree_observation(
+            "codex", observation_state
+        )
         first_command = {
             "command_id": "first",
             "command_role": "handoff",
@@ -665,30 +722,52 @@ class SessionAndRunnerOutcomeTests(unittest.TestCase):
         ]
         receipt_refs = []
         for command in (first_command, second_command):
+            executable = Path(command["argv"][0]).resolve(strict=True)
+            metadata = executable.stat()
+            identity = {
+                "argv": command["argv"],
+                "candidate_head": final_head,
+                "command_role": command["command_role"],
+                "cwd": str(worktree.resolve()),
+                "environment_fingerprint": "e" * 64,
+                "executable_identity": {
+                    "path": str(executable),
+                    "sha256": hashlib.sha256(executable.read_bytes()).hexdigest(),
+                    "mode": metadata.st_mode,
+                    "size": metadata.st_size,
+                },
+                "input_digest": command["input_digest"],
+                "worktree_digest": observation["tree_digest"],
+            }
             receipt_refs.append(
                 self._put_scenario_artifact(
                     run_root,
                     "verification_receipt",
                     {
-                        "identity": {
-                            "argv": command["argv"],
-                            "cwd": str(worktree.resolve()),
-                            "input_digest": command["input_digest"],
-                            "candidate_head": final_head,
-                        },
+                        "schema_version": 1,
+                        "identity": identity,
+                        "identity_digest": hashlib.sha256(
+                            canary._canonical_json(identity)
+                        ).hexdigest(),
                         "outcome": "success",
                         "exit_code": 0,
+                        "stdout_tail": "",
+                        "stderr_tail": "",
+                        "process": {},
                     },
                 )
             )
         state = {
             "format_version": 2,
             "contract_version": 2,
+            "provider": "codex",
             "status": "ready_for_integration",
             "integration": "not_observed",
             "repository": {
+                "source_repository": str(worktree),
                 "source_commit": source_head,
                 "worktree": str(worktree),
+                "branch": branch,
             },
             "plans": [
                 {
@@ -880,11 +959,19 @@ class SessionAndRunnerOutcomeTests(unittest.TestCase):
                         "resume this exact checkpoint\n", encoding="utf-8"
                     )
                     head = canary._git(worktree, "rev-parse", "HEAD")
-                    sealed = {**checkpoint, "head": head, "clean": False}
                     interrupted = {
+                        "provider": "codex",
                         "run_id": "fake-run",
                         "status": "resumable",
-                        "failure": {"partial_worktree": sealed},
+                        "current_plan_index": 1,
+                        "repository": {
+                            "source_repository": str(worktree),
+                            "source_commit": checkpoint["head"],
+                            "worktree": str(worktree),
+                            "branch": canary._git(
+                                worktree, "branch", "--show-current"
+                            ),
+                        },
                         "plans": [
                             {
                                 "status": "implemented",
@@ -914,6 +1001,12 @@ class SessionAndRunnerOutcomeTests(unittest.TestCase):
                             }
                         ],
                     }
+                    observed = canary._production_worktree_observation(
+                        "codex", interrupted
+                    )
+                    interrupted["failure"] = {
+                        "partial_worktree": dict(observed)
+                    }
                     final = json.loads(json.dumps(interrupted))
                     if not drift:
                         final["status"] = "ready_for_integration"
@@ -939,7 +1032,7 @@ class SessionAndRunnerOutcomeTests(unittest.TestCase):
                             }
                         )
                     state_holder["states"] = [interrupted, final]
-                    return run_root, interrupted, worktree
+                    return run_root, interrupted, worktree, next(iter(groups))
 
                 def load_state(_home, _provider):
                     states = state_holder["states"]
@@ -1113,6 +1206,22 @@ class SessionAndRunnerOutcomeTests(unittest.TestCase):
             canary.validate_multi_plan_ownership_scenario(evidence),
             (True, None, evidence["observed_head"]),
         )
+        ordered = json.loads(
+            (
+                SCRIPT_DIR / "fixtures/plan-runner-parity-v1.json"
+            ).read_text(encoding="utf-8")
+        )["scenarios"][0]
+        with tempfile.TemporaryDirectory() as raw:
+            actual = {
+                provider: parity.run_provider(
+                    provider, ordered, Path(raw).resolve()
+                )
+                for provider in ("codex", "claude")
+            }
+        self.assertEqual(
+            {provider: result["status"] for provider, result in actual.items()},
+            {"codex": "ready_for_integration", "claude": "ready_for_integration"},
+        )
 
         mutations = {
             "same labels": lambda value: value["plan_labels"][1].append("Task 3"),
@@ -1138,6 +1247,34 @@ class SessionAndRunnerOutcomeTests(unittest.TestCase):
             "receipt binding": lambda value: value[
                 "verification_receipts"
             ].pop(),
+            "stale receipt tree": lambda value: (
+                value["verification_receipts"][0]["receipt"]["identity"].update(
+                    worktree_digest="0" * 64
+                ),
+                value["verification_receipts"][0]["receipt"].update(
+                    identity_digest=hashlib.sha256(
+                        canary._canonical_json(
+                            value["verification_receipts"][0]["receipt"][
+                                "identity"
+                            ]
+                        )
+                    ).hexdigest()
+                ),
+            ),
+            "wrong receipt role": lambda value: (
+                value["verification_receipts"][0]["receipt"]["identity"].update(
+                    command_role="final"
+                ),
+                value["verification_receipts"][0]["receipt"].update(
+                    identity_digest=hashlib.sha256(
+                        canary._canonical_json(
+                            value["verification_receipts"][0]["receipt"][
+                                "identity"
+                            ]
+                        )
+                    ).hexdigest()
+                ),
+            ),
             "integration": lambda value: value["state"].update(
                 integration="merged"
             ),
@@ -1226,6 +1363,77 @@ class SessionAndRunnerOutcomeTests(unittest.TestCase):
         self._exercise_interrupted_cycle_orchestration(
             final_ownership, checkpoint
         )
+        for provider in ("codex", "claude"):
+            with self.subTest(provider=provider):
+                with tempfile.TemporaryDirectory() as raw:
+                    root = Path(raw).resolve()
+                    resume_root = root / "resume"
+                    drift_root = root / "drift"
+                    resume_root.mkdir()
+                    drift_root.mkdir()
+                    resume_environment = self._fake_shell_environment(
+                        provider,
+                        resume_root,
+                        [
+                            "implemented",
+                            "canary-interrupt",
+                            "resume-dirty-implemented",
+                        ],
+                    )
+                    drift_environment = self._fake_shell_environment(
+                        provider,
+                        drift_root,
+                        [
+                            "implemented",
+                            "canary-interrupt",
+                            "resume-dirty-implemented",
+                        ],
+                    )
+                    actual = canary._run_interrupted_once(
+                        provider=provider,
+                        root=resume_root,
+                        runner=(
+                            REPO_ROOT
+                            / f"skills/kws-{provider}-plan-runner/scripts/runner"
+                        ),
+                        environment=resume_environment,
+                        drift=False,
+                    )
+                    actual.update(
+                        canary._run_interrupted_once(
+                            provider=provider,
+                            root=drift_root,
+                            runner=(
+                                REPO_ROOT
+                                / f"skills/kws-{provider}-plan-runner/scripts/runner"
+                            ),
+                            environment=drift_environment,
+                            drift=True,
+                        )
+                    )
+                    valid, reason, _head = (
+                        canary.validate_interruption_resume_scenario(actual)
+                    )
+                    self.assertTrue(valid, reason)
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            repository = root / "repository"
+            canary._create_repository(repository)
+            branch = canary._git(repository, "branch", "--show-current")
+            state = {
+                "repository": {
+                    "source_repository": str(repository),
+                    "worktree": str(repository),
+                    "branch": branch,
+                }
+            }
+            dirty = repository / "same-path.txt"
+            dirty.write_text("first bytes\n", encoding="utf-8")
+            before = canary._production_worktree_observation("codex", state)
+            dirty.write_text("second bytes\n", encoding="utf-8")
+            after = canary._production_worktree_observation("codex", state)
+            self.assertEqual(before["porcelain_digest"], after["porcelain_digest"])
+            self.assertNotEqual(before["tree_digest"], after["tree_digest"])
         self.assertEqual(
             canary.validate_interruption_resume_scenario(evidence),
             (True, None, final_ownership["observed_head"]),

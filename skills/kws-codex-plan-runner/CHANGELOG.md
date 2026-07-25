@@ -15,6 +15,8 @@
   provider launches.
 - Defines dirty checkpoints as drift detection, not backups; they cannot
   restore files.
+- Persists provider process identity, root-session action, and the exact dirty
+  worktree observation for controller interruption and recorded-session resume.
 - Version 1 state is inspect-only. Active execution requires Version 2.
 
 ## 1.1.0 - 2026-07-25
