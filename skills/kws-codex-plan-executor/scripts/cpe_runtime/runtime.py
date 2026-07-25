@@ -163,7 +163,11 @@ class CpeRuntime:
             "preserve artifacts; use explicit --adopt-worktree for continuation"}
     def _launch(self, store: RunStore, assignment: WorktreeAssignment, *, mode: str, session_id: str | None) -> dict[str, object]:
         with store.lock() as lock:
+            store = RunStore.open(self.codex_home, store.manifest.run_id)
             state = store.state
+            if mode == "resume" and state.status == "handed_off":
+                return {"status": "blocked", "run_id": store.manifest.run_id,
+                        "reason": "run_already_handed_off"}
             def persist(**changes: object) -> None:
                 nonlocal state
                 state = _save(store, state, **changes)

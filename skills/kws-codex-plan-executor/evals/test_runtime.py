@@ -11,6 +11,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 from typing import Callable
 from unittest.mock import patch
@@ -398,6 +400,71 @@ class RuntimeContractTests(unittest.TestCase):
                 "--untracked-files=all",
             ),
             status_before,
+        )
+
+    def test_resume_rechecks_handed_off_state_after_acquiring_run_lock(self) -> None:
+        run_id = self.create_interrupted_run()
+        stale_store = self.store(run_id)
+        worktree = Path(stale_store.manifest.worktree)
+        real_open = RunStore.open
+        authoritative: dict[str, bytes | str] = {}
+
+        @contextmanager
+        def lock_after_competing_handoff(shared: bool = False):
+            competing_store = real_open(self.codex_home, run_id)
+            with competing_store.lock():
+                competing_store.write_handoff({"sentinel": "competing-writer"})
+                competing_store.save_state(
+                    replace(competing_store.state, status="handed_off")
+                )
+                authoritative["state"] = competing_store.state_path.read_bytes()
+                authoritative["handoff"] = competing_store.handoff_path.read_bytes()
+                authoritative["head"] = self.git_at(worktree, "rev-parse", "HEAD")
+                authoritative["status"] = self.git_at(
+                    worktree,
+                    "status",
+                    "--porcelain=v1",
+                    "-z",
+                    "--untracked-files=all",
+                )
+            with RunStore.lock(stale_store, shared=shared) as lock:
+                yield lock
+
+        stale_store.lock = lock_after_competing_handoff
+        opened = False
+
+        def open_stale_once(codex_home: Path, selected_run_id: str) -> RunStore:
+            nonlocal opened
+            if not opened:
+                opened = True
+                return stale_store
+            return real_open(codex_home, selected_run_id)
+
+        with patch.object(RunStore, "open", side_effect=open_stale_once):
+            result = self.runtime.resume(run_id=run_id)
+
+        self.assertEqual(
+            result,
+            {
+                "status": "blocked",
+                "run_id": run_id,
+                "reason": "run_already_handed_off",
+            },
+        )
+        self.assertEqual(self.controller.requests, [])
+        final_store = self.store(run_id)
+        self.assertEqual(final_store.state_path.read_bytes(), authoritative["state"])
+        self.assertEqual(final_store.handoff_path.read_bytes(), authoritative["handoff"])
+        self.assertEqual(self.git_at(worktree, "rev-parse", "HEAD"), authoritative["head"])
+        self.assertEqual(
+            self.git_at(
+                worktree,
+                "status",
+                "--porcelain=v1",
+                "-z",
+                "--untracked-files=all",
+            ),
+            authoritative["status"],
         )
 
     def test_explicit_missing_session_allows_one_fresh_fallback(self) -> None:
