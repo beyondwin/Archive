@@ -1093,20 +1093,55 @@ print(json.dumps({"type": "turn.completed"}), flush=True)
                 self.assertEqual(outcome.process_class, "invalid_envelope")
                 self.assertIsNone(outcome.terminal)
 
-    def test_explicit_null_terminal_objects_are_invalid(self) -> None:
-        for field in ("resume_capsule", "blocker"):
-            with self.subTest(field=field):
-                outcome = self.launch_terminal_text(
-                    json.dumps(
-                        {
-                            "claim": "completed",
-                            "head_commit": "a" * 40,
-                            field: None,
-                        }
-                    )
-                )
-                self.assertEqual(outcome.process_class, "invalid_envelope")
-                self.assertIsNone(outcome.terminal)
+    def test_schema_required_null_terminal_objects_preserve_claim_contract(self) -> None:
+        capsule = {
+            "head_commit": "b" * 40,
+            "worktree_status_digest": "c" * 64,
+            "note": "resume locally",
+            "evidence_refs": [],
+        }
+        blocker = {
+            "class": "operator_owned",
+            "code": "approval_required",
+            "resource": "local-worktree",
+            "operation": "continue_execution",
+            "retry_condition": "operator supplies the required decision",
+            "provider_code": None,
+        }
+        cases = (
+            (
+                {
+                    "claim": "completed",
+                    "head_commit": "a" * 40,
+                    "resume_capsule": None,
+                    "blocker": None,
+                },
+                "completed",
+            ),
+            (
+                {
+                    "claim": "interrupted",
+                    "head_commit": "a" * 40,
+                    "resume_capsule": capsule,
+                    "blocker": None,
+                },
+                "interrupted",
+            ),
+            (
+                {
+                    "claim": "blocked",
+                    "head_commit": "a" * 40,
+                    "resume_capsule": None,
+                    "blocker": blocker,
+                },
+                "blocked",
+            ),
+        )
+        for payload, process_class in cases:
+            with self.subTest(process_class=process_class):
+                outcome = self.launch_terminal_text(json.dumps(payload))
+                self.assertEqual(outcome.process_class, process_class)
+                self.assertIsNotNone(outcome.terminal)
 
     def test_blocker_has_exact_keys_and_utf8_byte_bounds(self) -> None:
         blocker = {

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import re
 import sys
 from pathlib import Path
@@ -165,6 +166,57 @@ def active_contract_text(text: str) -> str:
     )
 
 
+def schema_allows_null(schema: object) -> bool:
+    if not isinstance(schema, dict):
+        return False
+    schema_type = schema.get("type")
+    if schema_type == "null":
+        return True
+    if isinstance(schema_type, list) and "null" in schema_type:
+        return True
+    return any(
+        isinstance(branches, list)
+        and any(schema_allows_null(branch) for branch in branches)
+        for branches in (schema.get("anyOf"), schema.get("oneOf"))
+    )
+
+
+def structured_output_errors(schema: object, path: str = "$") -> list[str]:
+    if not isinstance(schema, dict):
+        return []
+    errors: list[str] = []
+    properties = schema.get("properties")
+    if isinstance(properties, dict):
+        required = schema.get("required")
+        if (
+            not isinstance(required, list)
+            or not all(isinstance(name, str) for name in required)
+            or len(required) != len(properties)
+            or set(required) != set(properties)
+        ):
+            errors.append(
+                "structured output object must require every property: "
+                f"{path}"
+            )
+        for name, child in properties.items():
+            child_path = f"{path}.properties.{name}"
+            errors.extend(structured_output_errors(child, child_path))
+    items = schema.get("items")
+    if isinstance(items, dict):
+        errors.extend(structured_output_errors(items, f"{path}.items"))
+    for keyword in ("anyOf", "oneOf", "allOf"):
+        branches = schema.get(keyword)
+        if isinstance(branches, list):
+            for index, branch in enumerate(branches):
+                errors.extend(
+                    structured_output_errors(
+                        branch,
+                        f"{path}.{keyword}[{index}]",
+                    )
+                )
+    return errors
+
+
 def check(root: Path = ROOT) -> list[str]:
     errors: list[str] = []
     release_root = root.name == "kws-codex-plan-executor"
@@ -201,6 +253,35 @@ def check(root: Path = ROOT) -> list[str]:
             f"expected={sorted(EXPECTED_TEMPLATES)} "
             f"actual={sorted(template_inventory)}"
         )
+    for path in schemas:
+        try:
+            schema = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, RecursionError) as exc:
+            errors.append(f"invalid JSON schema: {path.relative_to(root)}: {exc}")
+            continue
+        errors.extend(structured_output_errors(schema))
+        if isinstance(schema, dict):
+            root_properties = schema.get("properties")
+            if isinstance(root_properties, dict):
+                optional_fields = (
+                    ("resume_capsule", root_properties.get("resume_capsule")),
+                    ("blocker", root_properties.get("blocker")),
+                )
+                blocker = root_properties.get("blocker")
+                if isinstance(blocker, dict):
+                    blocker_properties = blocker.get("properties")
+                    if isinstance(blocker_properties, dict):
+                        optional_fields += (
+                            ("provider_code", blocker_properties.get("provider_code")),
+                        )
+                for field, field_schema in optional_fields:
+                    if field_schema is not None and not schema_allows_null(
+                        field_schema
+                    ):
+                        errors.append(
+                            "structured output optional field must allow null: "
+                            f"{field}"
+                        )
 
     for path in [*paths, *schemas]:
         text = path.read_text(encoding="utf-8")

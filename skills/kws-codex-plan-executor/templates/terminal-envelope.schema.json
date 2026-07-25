@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["claim", "head_commit"],
+  "required": ["claim", "head_commit", "resume_capsule", "blocker"],
   "properties": {
     "claim": {
       "enum": ["completed", "interrupted", "blocked"]
@@ -12,7 +12,7 @@
       "pattern": "^[0-9a-f]{40}$"
     },
     "resume_capsule": {
-      "type": "object",
+      "type": ["object", "null"],
       "additionalProperties": false,
       "required": [
         "head_commit",
@@ -45,14 +45,15 @@
       }
     },
     "blocker": {
-      "type": "object",
+      "type": ["object", "null"],
       "additionalProperties": false,
       "required": [
         "class",
         "code",
         "resource",
         "operation",
-        "retry_condition"
+        "retry_condition",
+        "provider_code"
       ],
       "properties": {
         "class": {
