@@ -87,12 +87,12 @@ def _capsule(outcome: ControllerOutcome) -> dict[str, object] | None:
         "note": value.note, "evidence_refs": list(value.evidence_refs),
     }
 def _session_unavailable(outcome: ControllerOutcome) -> bool:
-    return (outcome.process_class == "session_unavailable" or
-            outcome.provider_code == "session_unavailable")
+    return (outcome.terminal is None and (
+        outcome.process_class == "session_unavailable" or
+        outcome.process_class == "failed" and outcome.provider_code == "session_unavailable"))
 def _assignment(manifest: RunManifest) -> WorktreeAssignment:
     repository, worktree = Path(manifest.source_repository), Path(manifest.worktree)
-    return WorktreeAssignment(repository, worktree, manifest.branch,
-                              manifest.base_commit, _common_repository(repository)[1])
+    return WorktreeAssignment(repository, worktree, manifest.branch, manifest.base_commit, _common_repository(repository)[1])
 class CpeRuntime:
     def __init__(
         self, *, codex_home: Path | None = None, worktree_root: Path | None = None,
@@ -149,8 +149,7 @@ class CpeRuntime:
         session_id = store.state.controller_session_id
         if session_id is None:
             return {"status": "blocked", "run_id": run_id, "reason": "saved_session_unavailable"}
-        return self._launch(store, _assignment(store.manifest),
-                            mode="resume", session_id=session_id)
+        return self._launch(store, _assignment(store.manifest), mode="resume", session_id=session_id)
     def inspect(self, *, run_id: str) -> dict[str, object]:
         v5_root = RunStore._run_root(self.codex_home, run_id)
         if os.path.lexists(v5_root):
@@ -160,8 +159,7 @@ class CpeRuntime:
         return {"status": "legacy_read_only", "format_version": version,
             "run_root": str(root), "recommended_action":
             "preserve artifacts; use explicit --adopt-worktree for continuation"}
-    def _launch(self, store: RunStore, assignment: WorktreeAssignment, *,
-                mode: str, session_id: str | None) -> dict[str, object]:
+    def _launch(self, store: RunStore, assignment: WorktreeAssignment, *, mode: str, session_id: str | None) -> dict[str, object]:
         with store.lock() as lock:
             state = store.state
             def persist(**changes: object) -> None:
@@ -195,7 +193,8 @@ class CpeRuntime:
                 return self._finish(store, state, assignment, outcome)
             if state.fresh_fallback_used or state.controller_generation == 1:
                 return self._block_session_unavailable(store, state, assignment, outcome)
-            facts = observe_git(assignment.worktree)
+            try: facts = observe_git(assignment.worktree)
+            except ValueError: return self._launch_error(store, state, assignment, "failed")
             terminal = outcome.terminal
             state = _save(
                 store, state, status="interrupted", controller_session_id=None,
@@ -218,9 +217,10 @@ class CpeRuntime:
             if _session_unavailable(launched):
                 return self._block_session_unavailable(store, state, assignment, launched)
             return self._finish(store, state, assignment, launched)
-    def _block_session_unavailable(self, store: RunStore, state: RunState, assignment: WorktreeAssignment,
-                                   outcome: ControllerOutcome) -> dict[str, object]:
-        facts, terminal = observe_git(assignment.worktree), outcome.terminal
+    def _block_session_unavailable(self, store: RunStore, state: RunState, assignment: WorktreeAssignment, outcome: ControllerOutcome) -> dict[str, object]:
+        try: facts = observe_git(assignment.worktree)
+        except ValueError: return self._launch_error(store, state, assignment, "failed")
+        terminal = outcome.terminal
         _save(
             store, state, status="blocked", active_pid=None,
             active_process_group=None, last_observed_head=facts.head,
