@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
+import signal
 import sys
 import time
 import uuid
@@ -59,6 +61,30 @@ class RuntimePaths:
             object.__setattr__(self, name, value)
 
 
+class _SignalGate:
+    def __init__(self) -> None:
+        self._requested = False
+        self._previous: dict[int, object] = {}
+
+    def requested(self) -> bool:
+        return self._requested
+
+    def __enter__(self) -> "_SignalGate":
+        self._requested = False
+        for number in (signal.SIGINT, signal.SIGTERM):
+            self._previous[number] = signal.getsignal(number)
+            signal.signal(number, self._stop)
+        return self
+
+    def __exit__(self, _type: object, _value: object, _traceback: object) -> None:
+        for number, handler in self._previous.items():
+            signal.signal(number, handler)
+        self._previous.clear()
+
+    def _stop(self, _number: int, _frame: object) -> None:
+        self._requested = True
+
+
 class PlanRunner:
     def __init__(
         self, paths: RuntimePaths, *, runtime_checker: Callable[[], RuntimeIdentity] | None = None,
@@ -72,6 +98,7 @@ class PlanRunner:
         self._environment = dict(os.environ if environment is None else environment)
         self._event_hook = event_hook
         self._recovery = RecoveryPolicy()
+        self._signals = _SignalGate()
 
     def _event(self, stage: str) -> None:
         if self._event_hook is not None:
@@ -326,12 +353,30 @@ class PlanRunner:
 
     def _execute(self, store: StateStore) -> int:
         try:
-            with RunLock(store.root / "run.lock"):
+            with self._signals, RunLock(store.root / "run.lock"):
                 state = store.snapshot()
                 repository = state["repository"]
                 workspace = GitWorkspace.open(Path(repository["source_repository"]), Path(repository["worktree"]), repository["branch"])
+                self._require_git(state, workspace)
+                failure = (
+                    state.get("failure")
+                    if isinstance(state.get("failure"), Mapping)
+                    else {}
+                )
+                recorded_session = (
+                    failure.get("session_id")
+                    if failure.get("next_session_action") == "resume_root"
+                    and isinstance(failure.get("session_id"), str)
+                    else None
+                )
                 while state["current_plan_index"] < len(state["plans"]):
-                    code = self._execute_plan(store, workspace)
+                    code = self._execute_plan(
+                        store,
+                        workspace,
+                        session_id=recorded_session,
+                        resume_session=recorded_session is not None,
+                    )
+                    recorded_session = None
                     if code is not None:
                         return code
                     state = store.snapshot()
@@ -344,15 +389,78 @@ class PlanRunner:
             self._fail_closed(store, error)
             return int(ExitCode.INTEGRITY)
 
-    def _execute_plan(self, store: StateStore, workspace: GitWorkspace, *, session_id: str | None = None) -> int | None:
+    def _require_git(
+        self, state: Mapping[str, object], workspace: GitWorkspace
+    ):
+        observation = workspace.observe()
+        if workspace.protected_refs() != state["immutable_config"]["protected_refs"]:
+            raise ValueError("protected refs changed during provider execution")
+        import subprocess
+        if subprocess.run(
+            [
+                "git",
+                "merge-base",
+                "--is-ancestor",
+                str(state["repository"]["source_commit"]),
+                observation.head,
+            ],
+            cwd=workspace.worktree,
+            check=False,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        ).returncode:
+            raise ValueError("starting commit is not an ancestor")
+        if observation.clean:
+            return observation
+        failure = state.get("failure")
+        sealed = (
+            failure.get("partial_worktree")
+            if isinstance(failure, Mapping)
+            else None
+        )
+        if sealed != dataclasses.asdict(observation):
+            raise ValueError("dirty worktree identity is not sealed")
+        return observation
+
+    def _execute_plan(
+        self,
+        store: StateStore,
+        workspace: GitWorkspace,
+        *,
+        session_id: str | None = None,
+        resume_session: bool = False,
+    ) -> int | None:
         state = store.snapshot()
         index = state["current_plan_index"]
         plan = state["plans"][index]
-        observation = workspace.require_clean_ancestor(state["repository"]["source_commit"])
+        observation = self._require_git(state, workspace)
         plan["status"] = "running"
         state["status"] = "running"
+        attempt_id = str(uuid.uuid4())
+        state["attempts"].append(
+            {
+                "attempt_id": attempt_id,
+                "mode": "implementation",
+                "plan_index": index,
+                "completed": False,
+                "session_action": (
+                    "resume_root" if resume_session else "fresh_root"
+                ),
+            }
+        )
         store.commit(state)
-        outcome = self._launch(store, workspace, index, observation.head, session_id=session_id)
+        outcome = self._launch(
+            store,
+            workspace,
+            index,
+            observation.head,
+            session_id=session_id,
+            attempt_id=attempt_id,
+        )
+        self._complete_attempt(store, attempt_id, outcome)
+        if outcome.kind == "controller_stopped":
+            return self._pause(store, workspace, outcome, attempt_id)
         if outcome.kind == "blocked":
             state = store.snapshot()
             state["status"] = "blocked"
@@ -369,7 +477,16 @@ class PlanRunner:
             return int(ExitCode.INTEGRITY)
         return None
 
-    def _launch(self, store: StateStore, workspace: GitWorkspace, index: int, head: str, *, session_id: str | None = None) -> ProviderOutcome:
+    def _launch(
+        self,
+        store: StateStore,
+        workspace: GitWorkspace,
+        index: int,
+        head: str,
+        *,
+        session_id: str | None = None,
+        attempt_id: str,
+    ) -> ProviderOutcome:
         state = store.snapshot()
         evidence = EvidenceStore(store, workspace, self._environment)
         lease = ActivityLease(float(state["immutable_config"]["stall_seconds"]), time.monotonic())
@@ -386,7 +503,16 @@ class PlanRunner:
                 sandbox=state["immutable_config"]["sandbox"], model=state["immutable_config"].get("model"), session_id=session_id,
             )
             adapter = self._adapter(state["run_id"], helper.descriptor, workspace)
-            outcome = adapter.launch(request, lease, on_session_id=lambda session: self._record_session(store, index, session, head))
+            outcome = adapter.launch(
+                request,
+                lease,
+                on_session_id=lambda session: self._record_session(
+                    store, index, session, head
+                ),
+                on_process_observation=lambda process: self._record_process(
+                    store, attempt_id, process
+                ),
+            )
         return outcome
 
     def _packet(self, state: Mapping[str, object], index: int, head: str, helper: HelperDescriptor) -> dict[str, object]:
@@ -487,10 +613,79 @@ class PlanRunner:
     def _record_session(self, store: StateStore, index: int, session_id: str, head: str) -> None:
         state = store.snapshot()
         state["sessions"].append({"mode": "implementation", "plan_index": index, "session_id": session_id, "candidate_head": head, "health": "healthy"})
+        for attempt in reversed(state["attempts"]):
+            if attempt.get("plan_index") == index and attempt.get("completed") is False:
+                attempt["session_id"] = session_id
+                attempt["session_health"] = "healthy"
+                break
         store.commit(state)
 
+    def _record_process(
+        self,
+        store: StateStore,
+        attempt_id: str,
+        process: Mapping[str, object],
+    ) -> None:
+        state = store.snapshot()
+        attempt = next(
+            item
+            for item in reversed(state["attempts"])
+            if item.get("attempt_id") == attempt_id
+        )
+        for name in ("provider_pid", "provider_pgid", "descendant_pids"):
+            attempt[name] = process[name]
+        store.commit(state)
+
+    def _complete_attempt(
+        self, store: StateStore, attempt_id: str, outcome: ProviderOutcome
+    ) -> None:
+        state = store.snapshot()
+        attempt = next(
+            item
+            for item in reversed(state["attempts"])
+            if item.get("attempt_id") == attempt_id
+        )
+        attempt.update(
+            {
+                "completed": True,
+                "outcome": outcome.kind,
+                "provider_code": outcome.provider_code,
+                "return_code": outcome.return_code,
+                "session_id": outcome.session_id,
+            }
+        )
+        store.commit(state)
+
+    def _pause(
+        self,
+        store: StateStore,
+        workspace: GitWorkspace,
+        outcome: ProviderOutcome,
+        attempt_id: str,
+    ) -> int:
+        state = store.snapshot()
+        observation = workspace.observe()
+        state["status"] = "resumable"
+        state["failure"] = {
+            "reason_code": "controller_transport_failed",
+            "provider_code": outcome.provider_code,
+            "next_strategy": "resume_root",
+            "next_session_action": "resume_root",
+            "session_id": outcome.session_id,
+            "partial_attempt_id": attempt_id,
+            "partial_mode": "implementation",
+            "partial_worktree": (
+                dataclasses.asdict(observation)
+                if not observation.clean
+                else None
+            ),
+        }
+        store.commit(state)
+        self._emit_summary(state)
+        return int(ExitCode.RESUMABLE)
+
     def _adapter(self, run_id: str, helper: HelperDescriptor, workspace: GitWorkspace):
-        values = {"source_env": self._environment, "provider_auth_prefixes": ("OPENAI_", "CODEX_"), "remotes": ("origin",), "run_id": run_id, "helper": helper}
+        values = {"source_env": self._environment, "provider_auth_prefixes": ("OPENAI_", "CODEX_"), "remotes": ("origin",), "run_id": run_id, "helper": helper, "stop_requested": self._signals.requested}
         return self._adapter_factory(**values) if self._adapter_factory else CodexAdapter(**values)
 
     def _recovery_context(self, state: Mapping[str, object], *, workspace_head: str) -> dict[str, object]:

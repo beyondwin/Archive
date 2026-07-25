@@ -260,11 +260,35 @@ def generic_main(sequence_path: Path) -> int:
     with log_path.open("a", encoding="utf-8") as stream:
         stream.write(json.dumps(record, sort_keys=True) + "\n")
     emit({"type": "system", "subtype": "init", "session_id": session_id})
-    if action in {"stalled", "dirty-stalled"}:
+    if action in {"stalled", "dirty-stalled", "canary-interrupt"}:
         if action == "dirty-stalled":
             Path("partial-provider-edit.txt").write_text(
                 "partial implementation\n", encoding="utf-8"
             )
+        if action == "canary-interrupt":
+            Path("resume-marker.txt").write_text(
+                "first plan handoff complete\n", encoding="utf-8"
+            )
+            subprocess.run(["git", "add", "resume-marker.txt"], check=True)
+            subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "user.name=Plan Runner Parity",
+                    "-c",
+                    "user.email=parity@example.test",
+                    "commit",
+                    "-m",
+                    "canary interruption boundary",
+                ],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            Path("dirty-checkpoint.txt").write_text(
+                "resume this exact checkpoint\n", encoding="utf-8"
+            )
+            time.sleep(300)
         time.sleep(2)
         return 7
     if action in {"interrupted", "clean-interrupted", "same-failure"}:
@@ -274,7 +298,11 @@ def generic_main(sequence_path: Path) -> int:
         marker = Path(f"plan-{index}.txt")
         marker.write_text("implemented\n", encoding="utf-8")
         paths = [marker.name]
-        partial = Path("partial-provider-edit.txt")
+        partial = (
+            Path("partial-provider-edit.txt")
+            if Path("partial-provider-edit.txt").exists()
+            else Path("dirty-checkpoint.txt")
+        )
         if action == "resume-dirty-implemented":
             if not partial.is_file():
                 raise ValueError("sealed partial implementation is missing")
