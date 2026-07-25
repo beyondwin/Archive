@@ -559,6 +559,241 @@ class IsolationTests(unittest.TestCase):
 
 
 class SessionAndRunnerOutcomeTests(unittest.TestCase):
+    @staticmethod
+    def _ownership_scenario():
+        first_head = "b" * 40
+        final_head = "c" * 40
+        first_set = {
+            "digest": "1" * 64,
+            "candidate_head": first_head,
+            "commands": [
+                {
+                    "argv": ["/usr/bin/true"],
+                    "cwd": ".",
+                    "input_digest": "a" * 64,
+                    "deadline_seconds": 30,
+                }
+            ],
+        }
+        second_set = {
+            "digest": "2" * 64,
+            "candidate_head": final_head,
+            "commands": [
+                {
+                    "argv": ["/usr/bin/true"],
+                    "cwd": ".",
+                    "input_digest": "a" * 64,
+                    "deadline_seconds": 30,
+                },
+                {
+                    "argv": ["/usr/bin/false", "--version"],
+                    "cwd": ".",
+                    "input_digest": "b" * 64,
+                    "deadline_seconds": 30,
+                },
+            ],
+        }
+        return {
+            "plan_labels": [
+                ["Task 1", "Task 2"],
+                ["Task 1", "Task 2"],
+            ],
+            "source_head": "a" * 40,
+            "observed_head": final_head,
+            "porcelain": "",
+            "prior_handoff_is_ancestor": True,
+            "state": {
+                "format_version": 2,
+                "contract_version": 2,
+                "status": "ready_for_integration",
+                "integration": "not_observed",
+                "plans": [
+                    {
+                        "status": "implemented",
+                        "handoff_digest": "3" * 64,
+                    },
+                    {
+                        "status": "implemented",
+                        "handoff_digest": "4" * 64,
+                    },
+                ],
+                "sessions": [
+                    {
+                        "mode": "implementation",
+                        "plan_index": 0,
+                        "session_id": "session-a",
+                        "health": "healthy",
+                    },
+                    {
+                        "mode": "implementation",
+                        "plan_index": 1,
+                        "session_id": "session-b",
+                        "health": "healthy",
+                    },
+                ],
+                "failure": None,
+            },
+            "plan_handoffs": [
+                {
+                    "digest": "3" * 64,
+                    "plan_index": 0,
+                    "head_commit": first_head,
+                    "verification_set_digest": first_set["digest"],
+                },
+                {
+                    "digest": "4" * 64,
+                    "plan_index": 1,
+                    "head_commit": final_head,
+                    "verification_set_digest": "5" * 64,
+                },
+            ],
+            "plan_verification_sets": [first_set, second_set],
+            "run_verification_set": {
+                "digest": "5" * 64,
+                "candidate_head": final_head,
+                "plan_set_digests": [
+                    first_set["digest"],
+                    second_set["digest"],
+                ],
+                "commands": [
+                    first_set["commands"][0],
+                    second_set["commands"][1],
+                ],
+            },
+            "verification_receipts": [
+                {
+                    "candidate_head": final_head,
+                    "command": first_set["commands"][0],
+                    "outcome": "success",
+                    "exit_code": 0,
+                },
+                {
+                    "candidate_head": final_head,
+                    "command": second_set["commands"][1],
+                    "outcome": "success",
+                    "exit_code": 0,
+                },
+            ],
+        }
+
+    def test_multi_plan_ownership_scenario(self):
+        evidence = self._ownership_scenario()
+        self.assertEqual(
+            canary.validate_multi_plan_ownership_scenario(evidence),
+            (True, None, "c" * 40),
+        )
+
+        mutations = {
+            "same labels": lambda value: value["plan_labels"][1].append("Task 3"),
+            "distinct commits": lambda value: value["plan_handoffs"][1].update(
+                head_commit="b" * 40
+            ),
+            "fresh sessions": lambda value: value["state"]["sessions"][1].update(
+                session_id="session-a"
+            ),
+            "ancestry": lambda value: value.update(
+                prior_handoff_is_ancestor=False
+            ),
+            "no workflow state": lambda value: value["state"].update(
+                finalization={}
+            ),
+            "exact run union": lambda value: value[
+                "run_verification_set"
+            ]["commands"].reverse(),
+            "handoff head": lambda value: value["plan_handoffs"][1].update(
+                head_commit="d" * 40
+            ),
+            "clean head": lambda value: value.update(porcelain=" M partial.txt"),
+            "receipt binding": lambda value: value[
+                "verification_receipts"
+            ].pop(),
+            "integration": lambda value: value["state"].update(
+                integration="merged"
+            ),
+        }
+        for label, mutate in mutations.items():
+            with self.subTest(label=label):
+                changed = json.loads(json.dumps(evidence))
+                mutate(changed)
+                valid, reason, _head = (
+                    canary.validate_multi_plan_ownership_scenario(changed)
+                )
+                self.assertFalse(valid)
+                self.assertIsInstance(reason, str)
+
+    def test_interruption_resume_scenario(self):
+        checkpoint = {
+            "head": "b" * 40,
+            "branch": "codex-plan/canary",
+            "porcelain_digest": "6" * 64,
+            "tree_digest": "7" * 64,
+            "clean": False,
+        }
+        evidence = {
+            "sigint_sent": True,
+            "provider_process_group_quiescent": True,
+            "interrupted_status": "resumable",
+            "interrupted_checkpoint": checkpoint,
+            "resume_checkpoint": dict(checkpoint),
+            "recorded_session": {
+                "session_id": "healthy-session",
+                "health": "healthy",
+                "plan_index": 1,
+            },
+            "resume_session_id": "healthy-session",
+            "completed_first_handoff_before": "3" * 64,
+            "completed_first_handoff_after": "3" * 64,
+            "first_plan_session_count_before": 1,
+            "first_plan_session_count_after": 1,
+            "final_ownership": self._ownership_scenario(),
+            "drift_rejected": True,
+            "drift_reason_code": "dirty_checkpoint_drift",
+            "provider_launch_count_before_drift": 3,
+            "provider_launch_count_after_drift": 3,
+        }
+        self.assertEqual(
+            canary.validate_interruption_resume_scenario(evidence),
+            (True, None, "c" * 40),
+        )
+
+        mutations = {
+            "no SIGINT": lambda value: value.update(sigint_sent=False),
+            "live process group": lambda value: value.update(
+                provider_process_group_quiescent=False
+            ),
+            "not resumable": lambda value: value.update(
+                interrupted_status="failed"
+            ),
+            "checkpoint changed": lambda value: value[
+                "resume_checkpoint"
+            ].update(tree_digest="8" * 64),
+            "unhealthy session": lambda value: value[
+                "recorded_session"
+            ].update(health="failed"),
+            "wrong resume": lambda value: value.update(
+                resume_session_id="new-session"
+            ),
+            "replayed first task": lambda value: value.update(
+                first_plan_session_count_after=2
+            ),
+            "handoff replaced": lambda value: value.update(
+                completed_first_handoff_after="9" * 64
+            ),
+            "drift accepted": lambda value: value.update(drift_rejected=False),
+            "provider relaunched": lambda value: value.update(
+                provider_launch_count_after_drift=4
+            ),
+        }
+        for label, mutate in mutations.items():
+            with self.subTest(label=label):
+                changed = json.loads(json.dumps(evidence))
+                mutate(changed)
+                valid, reason, _head = (
+                    canary.validate_interruption_resume_scenario(changed)
+                )
+                self.assertFalse(valid)
+                self.assertIsInstance(reason, str)
+
     def test_fake_session_success_requires_exact_nonce_id_and_clean_head(self):
         session_id = str(uuid.uuid4())
         fake = canary.SessionEvidence(

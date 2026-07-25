@@ -1285,6 +1285,232 @@ def _one_artifact(
     return refs[0], _artifact_from_ref(run_root, refs[0])
 
 
+def _contains_workflow_state(value: object) -> bool:
+    forbidden = {
+        "task",
+        "task_id",
+        "task_ledger",
+        "task_status",
+        "finding",
+        "findings",
+        "open_findings",
+        "finalization",
+        "final_review_fix",
+        "obligation",
+        "obligations",
+    }
+    if isinstance(value, Mapping):
+        return any(
+            key in forbidden or _contains_workflow_state(item)
+            for key, item in value.items()
+        )
+    if isinstance(value, list):
+        return any(_contains_workflow_state(item) for item in value)
+    return False
+
+
+def _scenario_command_identity(value: object) -> bytes | None:
+    if not isinstance(value, Mapping) or set(value) != {
+        "argv",
+        "cwd",
+        "input_digest",
+        "deadline_seconds",
+    }:
+        return None
+    argv = value.get("argv")
+    if (
+        not isinstance(argv, list)
+        or not argv
+        or any(not isinstance(item, str) or not item for item in argv)
+        or not isinstance(value.get("cwd"), str)
+        or not isinstance(value.get("input_digest"), str)
+        or re.fullmatch(r"[0-9a-f]{64}", value["input_digest"]) is None
+        or not isinstance(value.get("deadline_seconds"), (int, float))
+        or isinstance(value.get("deadline_seconds"), bool)
+        or value["deadline_seconds"] <= 0
+    ):
+        return None
+    return _canonical_json(value)
+
+
+def validate_multi_plan_ownership_scenario(
+    evidence: Mapping[str, Any],
+) -> tuple[bool, str | None, str | None]:
+    labels = evidence.get("plan_labels")
+    if labels != [["Task 1", "Task 2"], ["Task 1", "Task 2"]]:
+        return False, "plan_labels_not_reused", None
+    source_head = evidence.get("source_head")
+    observed_head = evidence.get("observed_head")
+    if (
+        not isinstance(source_head, str)
+        or FULL_HEAD.fullmatch(source_head) is None
+        or not isinstance(observed_head, str)
+        or FULL_HEAD.fullmatch(observed_head) is None
+    ):
+        return False, "repository_head_invalid", None
+    if evidence.get("porcelain") != "":
+        return False, "runner_worktree_dirty", None
+    if evidence.get("prior_handoff_is_ancestor") is not True:
+        return False, "prior_handoff_not_ancestor", None
+
+    state = evidence.get("state")
+    if not isinstance(state, Mapping) or _contains_workflow_state(state):
+        return False, "runner_owns_workflow_state", None
+    if (
+        state.get("format_version") != 2
+        or state.get("contract_version") != 2
+        or state.get("status") != "ready_for_integration"
+        or state.get("integration") != "not_observed"
+    ):
+        return False, "run_not_ready", None
+    plans = state.get("plans")
+    if not isinstance(plans, list) or len(plans) != 2 or any(
+        not isinstance(plan, Mapping) or plan.get("status") != "implemented"
+        for plan in plans
+    ):
+        return False, "plans_not_implemented", None
+    sessions = state.get("sessions")
+    if not isinstance(sessions, list) or len(sessions) != 2:
+        return False, "fresh_plan_sessions_missing", None
+    session_ids: list[str] = []
+    for index, session in enumerate(sessions):
+        if (
+            not isinstance(session, Mapping)
+            or session.get("mode") != "implementation"
+            or session.get("plan_index") != index
+            or session.get("health") != "healthy"
+            or not isinstance(session.get("session_id"), str)
+            or not session["session_id"]
+        ):
+            return False, "fresh_plan_sessions_missing", None
+        session_ids.append(session["session_id"])
+    if len(set(session_ids)) != 2:
+        return False, "plan_session_not_distinct", None
+
+    handoffs = evidence.get("plan_handoffs")
+    plan_sets = evidence.get("plan_verification_sets")
+    run_set = evidence.get("run_verification_set")
+    if (
+        not isinstance(handoffs, list)
+        or len(handoffs) != 2
+        or not isinstance(plan_sets, list)
+        or len(plan_sets) != 2
+        or not isinstance(run_set, Mapping)
+    ):
+        return False, "handoff_evidence_missing", None
+    heads: list[str] = []
+    plan_set_digests: list[str] = []
+    union: list[Mapping[str, Any]] = []
+    seen: set[bytes] = set()
+    for index, (plan, handoff, plan_set) in enumerate(
+        zip(plans, handoffs, plan_sets, strict=True)
+    ):
+        if (
+            not isinstance(handoff, Mapping)
+            or not isinstance(plan_set, Mapping)
+            or handoff.get("plan_index") != index
+            or plan.get("handoff_digest") != handoff.get("digest")
+            or not isinstance(handoff.get("head_commit"), str)
+            or FULL_HEAD.fullmatch(handoff["head_commit"]) is None
+            or not isinstance(plan_set.get("digest"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", plan_set["digest"]) is None
+            or plan_set.get("candidate_head") != handoff["head_commit"]
+        ):
+            return False, "handoff_invalid", None
+        heads.append(handoff["head_commit"])
+        plan_set_digests.append(plan_set["digest"])
+        commands = plan_set.get("commands")
+        if not isinstance(commands, list) or not commands:
+            return False, "verification_set_invalid", None
+        for command in commands:
+            identity = _scenario_command_identity(command)
+            if identity is None:
+                return False, "verification_set_invalid", None
+            if identity not in seen:
+                seen.add(identity)
+                union.append(command)
+    if (
+        source_head in heads
+        or len(set(heads)) != 2
+        or heads[-1] != observed_head
+    ):
+        return False, "plan_commits_not_distinct", None
+    if (
+        handoffs[0].get("verification_set_digest") != plan_set_digests[0]
+        or handoffs[-1].get("verification_set_digest") != run_set.get("digest")
+        or run_set.get("candidate_head") != observed_head
+        or run_set.get("plan_set_digests") != plan_set_digests
+        or run_set.get("commands") != union
+    ):
+        return False, "final_run_union_invalid", None
+    receipts = evidence.get("verification_receipts")
+    if not isinstance(receipts, list) or len(receipts) != len(union):
+        return False, "final_handoff_not_receipt_bound", None
+    unmatched = list(union)
+    for receipt in receipts:
+        if (
+            not isinstance(receipt, Mapping)
+            or receipt.get("candidate_head") != observed_head
+            or receipt.get("outcome") != "success"
+            or receipt.get("exit_code") != 0
+            or receipt.get("command") not in unmatched
+        ):
+            return False, "final_handoff_not_receipt_bound", None
+        unmatched.remove(receipt["command"])
+    if unmatched:
+        return False, "final_handoff_not_receipt_bound", None
+    return True, None, observed_head
+
+
+def validate_interruption_resume_scenario(
+    evidence: Mapping[str, Any],
+) -> tuple[bool, str | None, str | None]:
+    if evidence.get("sigint_sent") is not True:
+        return False, "sigint_not_observed", None
+    if evidence.get("provider_process_group_quiescent") is not True:
+        return False, "provider_process_group_not_quiescent", None
+    if evidence.get("interrupted_status") != "resumable":
+        return False, "interrupted_run_not_resumable", None
+    interrupted = evidence.get("interrupted_checkpoint")
+    resumed = evidence.get("resume_checkpoint")
+    if (
+        not isinstance(interrupted, Mapping)
+        or interrupted.get("clean") is not False
+        or resumed != interrupted
+    ):
+        return False, "dirty_checkpoint_changed", None
+    recorded = evidence.get("recorded_session")
+    if (
+        not isinstance(recorded, Mapping)
+        or recorded.get("health") != "healthy"
+        or recorded.get("plan_index") != 1
+        or not isinstance(recorded.get("session_id"), str)
+        or evidence.get("resume_session_id") != recorded.get("session_id")
+    ):
+        return False, "recorded_healthy_session_not_resumed", None
+    if (
+        evidence.get("completed_first_handoff_before")
+        != evidence.get("completed_first_handoff_after")
+        or evidence.get("first_plan_session_count_before") != 1
+        or evidence.get("first_plan_session_count_after") != 1
+    ):
+        return False, "completed_first_task_replayed", None
+    final = evidence.get("final_ownership")
+    if not isinstance(final, Mapping):
+        return False, "final_handoff_missing", None
+    valid, reason, head = validate_multi_plan_ownership_scenario(final)
+    if not valid:
+        return False, reason or "final_handoff_invalid", None
+    if (
+        evidence.get("drift_rejected") is not True
+        or evidence.get("drift_reason_code") != "dirty_checkpoint_drift"
+        or evidence.get("provider_launch_count_before_drift")
+        != evidence.get("provider_launch_count_after_drift")
+    ):
+        return False, "dirty_drift_launched_provider", None
+    return True, None, head
+
+
 def validate_runner_state(
     state: Mapping[str, Any], *, observed_head: str, porcelain: str
 ) -> tuple[bool, str | None, str | None]:
