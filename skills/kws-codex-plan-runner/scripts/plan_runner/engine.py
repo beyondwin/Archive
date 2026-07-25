@@ -16,7 +16,13 @@ from .evidence import EvidenceStore
 from .git_ops import GitIdentity, GitWorkspace, VOLATILE_REF_POLICY_VERSION, configured_git_identity, protected_refs, validate_commit_identities
 from .helper import HelperDescriptor, HelperServer
 from .provider import CodexAdapter, ProviderOutcome, ProviderRequest
-from .recovery import ActivityLease, ProgressSnapshot, RecoveryPolicy, strategy_note_digest
+from .recovery import (
+    ActivityLease,
+    ProgressSnapshot,
+    RecoveryPolicy,
+    normalize_strategy_note,
+    strategy_note_digest,
+)
 from .runtime import RuntimeIdentity, RuntimeUnavailable, require_compatible_runtime
 from .storage import (
     IntentLock,
@@ -44,6 +50,18 @@ _AUTHORITY_BLOCKERS = frozenset({
     "provider_usage_blocked", "sandbox_capability_blocked",
 })
 _RUNNER_COMMAND = "./skills/kws-codex-plan-runner/scripts/runner"
+
+
+class _RetryRejected(ValueError):
+    pass
+
+
+def _artifact_payload(
+    store: StateStore, reference: Mapping[str, object]
+) -> object:
+    return json.loads(
+        store.referenced_artifact(reference).read_text(encoding="utf-8")
+    )
 
 
 @dataclass(frozen=True)
@@ -304,7 +322,9 @@ class PlanRunner:
             if state.get("format_version") == 1:
                 self._emit_error("legacy_contract_requires_v1_runner", "version 1 execution is inspect-only")
                 return int(ExitCode.INVALID)
+            profile = self._effective_execution_profile(store, state)
             if state["status"] == "ready_for_integration":
+                self._require_ready_handoff(store)
                 self._emit_summary(state)
                 return int(ExitCode.READY)
             if state["status"] == "blocked" and not retry_blocked:
@@ -313,13 +333,266 @@ class PlanRunner:
             if state["status"] == "failed" and not retry_failed:
                 self._emit_summary(state)
                 return int(ExitCode.FAILED)
+            if retry_blocked and state["status"] != "blocked":
+                raise _RetryRejected("--retry-blocked requires a blocked run")
+            if retry_failed and state["status"] != "failed":
+                raise _RetryRejected("--retry-failed requires a failed run")
+
+            artifacts: list[tuple[str, dict[str, object]]] = []
+            target = {
+                "sandbox": profile["sandbox"] if sandbox is None else sandbox,
+                "model": profile["model"] if model is None else model,
+            }
+            profile_requested = sandbox is not None or model is not None
+            if profile_requested:
+                artifacts.append(
+                    (
+                        "execution_profile_transition",
+                        self._profile_transition_document(
+                            state,
+                            current=profile,
+                            target=target,
+                            retry_blocked=retry_blocked,
+                            retry_failed=retry_failed,
+                            strategy_note=strategy_note,
+                        ),
+                    )
+                )
+
+            next_failure: dict[str, object] | None
+            failure = state.get("failure")
+            if state["status"] == "failed":
+                if not isinstance(strategy_note, str) or not strategy_note.strip():
+                    raise _RetryRejected(
+                        "--retry-failed requires a nonempty --strategy-note"
+                    )
+                if not self._is_retryable_failed_state(failure):
+                    raise _RetryRejected("failed run is not retryable")
+                normalized = normalize_strategy_note(strategy_note)
+                digest = strategy_note_digest(normalized)
+                prior = (
+                    failure.get("strategy_digests", [])
+                    if isinstance(failure, Mapping)
+                    else []
+                )
+                if not isinstance(prior, list) or digest in prior:
+                    raise _RetryRejected(
+                        "strategy note duplicates a prior strategy"
+                    )
+                artifacts.extend(
+                    [
+                        (
+                            "recovery_audit",
+                            {
+                                "run_id": state["run_id"],
+                                "failed_revision": state["revision"],
+                                "failure": (
+                                    dict(failure)
+                                    if isinstance(failure, Mapping)
+                                    else None
+                                ),
+                            },
+                        ),
+                        (
+                            "strategy_note",
+                            {
+                                "run_id": state["run_id"],
+                                "failure_signature": (
+                                    failure.get("failure_signature")
+                                    if isinstance(failure, Mapping)
+                                    else None
+                                ),
+                                "mode": "implementation",
+                                "plan_index": state["current_plan_index"],
+                                "strategy_note": normalized,
+                                "strategy_note_digest": digest,
+                            },
+                        ),
+                    ]
+                )
+                next_failure = {
+                    "reason_code": "operator_retry",
+                    "failure_sequence": [],
+                    "next_strategy": "fresh_root",
+                    "next_session_action": "fresh_root",
+                    "strategy_digests": [*prior, digest],
+                }
+            elif state["status"] == "blocked":
+                next_failure = {
+                    **(
+                        dict(failure)
+                        if isinstance(failure, Mapping)
+                        else {}
+                    ),
+                    "next_strategy": "fresh_root",
+                    "next_session_action": "fresh_root",
+                }
+            else:
+                next_failure = (
+                    dict(failure)
+                    if isinstance(failure, Mapping)
+                    else None
+                )
+
+            sealed = [
+                store.put_artifact(kind, document)
+                for kind, document in artifacts
+            ]
+            next_state = store.snapshot()
+            for artifact in sealed:
+                if artifact.as_dict() not in next_state["artifact_refs"]:
+                    next_state["artifact_refs"].append(artifact.as_dict())
+            next_state["status"] = "resumable"
+            next_state["failure"] = next_failure
+            store.commit(next_state)
             return self._execute(store)
         except FileNotFoundError:
             self._emit_error("unknown_run", run_id)
             return int(ExitCode.INVALID)
+        except _RetryRejected as error:
+            self._emit_error("invalid_invocation", error)
+            return int(ExitCode.INVALID)
         except (OSError, ValueError, RuntimeError) as error:
             self._emit_error("state_integrity_failed", error)
             return int(ExitCode.INTEGRITY)
+
+    @staticmethod
+    def _effective_execution_profile(
+        store: StateStore,
+        state: Mapping[str, object],
+    ) -> dict[str, object]:
+        config = state["immutable_config"]
+        current: dict[str, object] = {
+            "sandbox": config.get("sandbox"),
+            "model": config.get("model"),
+        }
+        if current["sandbox"] not in {
+            "workspace-write",
+            "danger-full-access",
+        }:
+            raise ValueError("initial execution profile is invalid")
+        if current["model"] is not None and (
+            not isinstance(current["model"], str)
+            or not current["model"]
+        ):
+            raise ValueError("initial execution profile is invalid")
+        expected_keys = {
+            "contract_version",
+            "run_id",
+            "from_profile",
+            "to_profile",
+            "failure_reason_code",
+            "strategy_note",
+            "strategy_note_digest",
+        }
+        for reference in state["artifact_refs"]:
+            if (
+                not isinstance(reference, Mapping)
+                or reference.get("kind")
+                != "execution_profile_transition"
+            ):
+                continue
+            payload = _artifact_payload(store, reference)
+            if (
+                not isinstance(payload, Mapping)
+                or set(payload) != expected_keys
+                or payload.get("contract_version") != 1
+                or payload.get("run_id") != state.get("run_id")
+                or payload.get("from_profile") != current
+            ):
+                raise ValueError(
+                    "execution profile transition chain is invalid"
+                )
+            target = payload.get("to_profile")
+            if (
+                not isinstance(target, Mapping)
+                or set(target) != {"sandbox", "model"}
+                or target.get("sandbox")
+                not in {"workspace-write", "danger-full-access"}
+                or (
+                    target.get("model") is not None
+                    and (
+                        not isinstance(target.get("model"), str)
+                        or not target.get("model")
+                    )
+                )
+                or payload.get("strategy_note_digest")
+                != strategy_note_digest(payload.get("strategy_note"))
+            ):
+                raise ValueError(
+                    "execution profile transition chain is invalid"
+                )
+            current = dict(target)
+        return current
+
+    @staticmethod
+    def _profile_transition_document(
+        state: Mapping[str, object],
+        *,
+        current: Mapping[str, object],
+        target: Mapping[str, object],
+        retry_blocked: bool,
+        retry_failed: bool,
+        strategy_note: str | None,
+    ) -> dict[str, object]:
+        if not isinstance(strategy_note, str) or not strategy_note.strip():
+            raise _RetryRejected(
+                "execution profile change requires a meaningful strategy note"
+            )
+        normalized = normalize_strategy_note(strategy_note)
+        if target == current:
+            raise _RetryRejected(
+                "execution profile change must change sandbox or model"
+            )
+        if target.get("sandbox") not in {
+            "workspace-write",
+            "danger-full-access",
+        }:
+            raise _RetryRejected("execution profile sandbox is invalid")
+        model = target.get("model")
+        if model is not None and (
+            not isinstance(model, str) or not model or "\0" in model
+        ):
+            raise _RetryRejected("execution profile model is invalid")
+        failure = state.get("failure")
+        reason = (
+            failure.get("reason_code")
+            if isinstance(failure, Mapping)
+            else None
+        )
+        if state.get("status") == "blocked":
+            if (
+                not retry_blocked
+                or retry_failed
+                or reason != "sandbox_capability_blocked"
+                or current.get("sandbox") != "workspace-write"
+                or target.get("sandbox") != "danger-full-access"
+            ):
+                raise _RetryRejected(
+                    "execution profile change is not authorized for blocker"
+                )
+        elif state.get("status") == "failed":
+            if (
+                not retry_failed
+                or retry_blocked
+                or not PlanRunner._is_retryable_failed_state(failure)
+            ):
+                raise _RetryRejected(
+                    "execution profile change is not authorized for failure"
+                )
+        else:
+            raise _RetryRejected(
+                "execution profile change requires blocked or failed retry"
+            )
+        return {
+            "contract_version": 1,
+            "run_id": state["run_id"],
+            "from_profile": dict(current),
+            "to_profile": dict(target),
+            "failure_reason_code": reason,
+            "strategy_note": normalized,
+            "strategy_note_digest": strategy_note_digest(normalized),
+        }
 
     def inspect(self, run_id: str) -> int:
         try:
@@ -358,6 +631,7 @@ class PlanRunner:
                 repository = state["repository"]
                 workspace = GitWorkspace.open(Path(repository["source_repository"]), Path(repository["worktree"]), repository["branch"])
                 self._require_git(state, workspace)
+                self._effective_execution_profile(store, state)
                 failure = (
                     state.get("failure")
                     if isinstance(state.get("failure"), Mapping)
@@ -367,6 +641,9 @@ class PlanRunner:
                     failure.get("session_id")
                     if failure.get("next_session_action") == "resume_root"
                     and isinstance(failure.get("session_id"), str)
+                    and not self._resume_consumed(
+                        state, state["current_plan_index"]
+                    )
                     else None
                 )
                 while state["current_plan_index"] < len(state["plans"]):
@@ -380,6 +657,7 @@ class PlanRunner:
                     if code is not None:
                         return code
                     state = store.snapshot()
+                self._require_ready_handoff(store, workspace)
                 state["status"] = "ready_for_integration"
                 state["failure"] = None
                 store.commit(state)
@@ -411,6 +689,7 @@ class PlanRunner:
             stderr=subprocess.DEVNULL,
         ).returncode:
             raise ValueError("starting commit is not an ancestor")
+        self._require_commit_identity(state, workspace, observation.head)
         if observation.clean:
             return observation
         failure = state.get("failure")
@@ -422,6 +701,21 @@ class PlanRunner:
         if sealed != dataclasses.asdict(observation):
             raise ValueError("dirty worktree identity is not sealed")
         return observation
+
+    @staticmethod
+    def _require_commit_identity(
+        state: Mapping[str, object],
+        workspace: GitWorkspace,
+        candidate_head: str,
+    ) -> None:
+        validate_commit_identities(
+            workspace.worktree,
+            state["repository"]["source_commit"],
+            candidate_head,
+            GitIdentity.from_mapping(
+                state["immutable_config"]["git_identity"]
+            ),
+        )
 
     def _execute_plan(
         self,
@@ -494,13 +788,18 @@ class PlanRunner:
         with HelperServer(run_id=state["run_id"], worktree=workspace.worktree, evidence_store=evidence,
                           client_argv=client_argv, state_store=store) as helper:
             packet = self._packet(store.snapshot(), index, head, helper.descriptor)
+            execution_profile = self._effective_execution_profile(
+                store, store.snapshot()
+            )
             request = ProviderRequest(
                 worktree=workspace.worktree, git_common_dir=workspace._common_dir,
                 git_identity=GitIdentity.from_mapping(state["immutable_config"]["git_identity"]),
                 prompt=IMPLEMENTATION_PROMPT + "\nEXECUTION_PACKET=" + canonical_json(packet).decode(),
                 output_schema=(self.paths.skill_root / "templates" / "plan-result.schema.json").resolve(),
                 output_path=store.root / f".provider-{uuid.uuid4().hex}.json",
-                sandbox=state["immutable_config"]["sandbox"], model=state["immutable_config"].get("model"), session_id=session_id,
+                sandbox=execution_profile["sandbox"],
+                model=execution_profile["model"],
+                session_id=session_id,
             )
             adapter = self._adapter(state["run_id"], helper.descriptor, workspace)
             outcome = adapter.launch(
@@ -533,6 +832,66 @@ class PlanRunner:
             "integration_policy": "keep",
         }
 
+    @staticmethod
+    def _artifact_reference(
+        state: Mapping[str, object], kind: str, digest: str
+    ) -> dict[str, str]:
+        matches = [
+            reference
+            for reference in state["artifact_refs"]
+            if isinstance(reference, dict)
+            and reference.get("kind") == kind
+            and reference.get("digest") == digest
+        ]
+        if len(matches) != 1:
+            raise ValueError(f"{kind} artifact reference is invalid")
+        return dict(matches[0])
+
+    @classmethod
+    def _ordered_plan_handoff_refs(
+        cls, state: Mapping[str, object]
+    ) -> list[dict[str, str]]:
+        references: list[dict[str, str]] = []
+        for plan in state["plans"]:
+            digest = plan.get("handoff_digest")
+            if not isinstance(digest, str):
+                raise ValueError("plan handoff is not sealed")
+            references.append(
+                cls._artifact_reference(state, "plan_handoff", digest)
+            )
+        return references
+
+    @staticmethod
+    def _require_plan_history(
+        store: StateStore,
+        workspace: GitWorkspace,
+        candidate_head: str,
+        plan_index: int,
+    ) -> None:
+        state = store.snapshot()
+        for expected_index, plan in enumerate(state["plans"][:plan_index]):
+            digest = plan.get("handoff_digest")
+            if not isinstance(digest, str):
+                raise ValueError("prior plan handoff is not sealed")
+            reference = PlanRunner._artifact_reference(
+                state, "plan_handoff", digest
+            )
+            payload = _artifact_payload(store, reference)
+            handoff_head = (
+                payload.get("head_commit")
+                if isinstance(payload, Mapping)
+                and payload.get("plan_index") == expected_index
+                else None
+            )
+            if not isinstance(handoff_head, str):
+                raise ValueError("prior plan handoff artifact is invalid")
+            try:
+                workspace.require_ancestor(handoff_head, candidate_head)
+            except ValueError as error:
+                raise ValueError(
+                    "prior plan handoff is not an ancestor of candidate HEAD"
+                ) from error
+
     def _accept_implemented(self, store: StateStore, workspace: GitWorkspace, index: int, outcome: ProviderOutcome) -> None:
         result = outcome.result
         self._validated_plan_result(result)
@@ -543,17 +902,66 @@ class PlanRunner:
             raise ValueError("protected refs changed during provider execution")
         if result["head_commit"] != observation.head:
             raise ValueError("implementation HEAD mismatch")
-        validate_commit_identities(workspace.worktree, state["repository"]["source_commit"], observation.head, GitIdentity.from_mapping(state["immutable_config"]["git_identity"]))
+        self._require_plan_history(
+            store, workspace, observation.head, index
+        )
+        self._require_commit_identity(state, workspace, observation.head)
         digest = result["verification_set_digest"]
         assert isinstance(digest, str)
-        EvidenceStore(store, workspace, self._environment).require_successful_verification_set(
+        evidence = EvidenceStore(store, workspace, self._environment)
+        verification_receipts = evidence.require_successful_verification_set(
             digest, candidate_head=observation.head,
             kind="run_verification_set" if index == len(state["plans"]) - 1 else "plan_verification_set", plan_index=index,
         )
         result_artifact = store.put_artifact("provider_result", dict(result))
         handoff = store.put_artifact("plan_handoff", {"plan_index": index, "head_commit": observation.head, "summary": result["summary"], "verification_set_digest": digest})
+        branch_handoff = None
+        if index == len(state["plans"]) - 1:
+            run_reference = self._artifact_reference(
+                store.snapshot(), "run_verification_set", digest
+            )
+            run_document = _artifact_payload(store, run_reference)
+            if (
+                not isinstance(run_document, Mapping)
+                or not isinstance(
+                    run_document.get("plan_set_digests"), list
+                )
+            ):
+                raise ValueError("final verification provenance is invalid")
+            prior_handoffs = self._ordered_plan_handoff_refs(
+                {
+                    **state,
+                    "plans": state["plans"][:index],
+                }
+            )
+            ordered_handoffs = [*prior_handoffs, handoff.as_dict()]
+            branch_handoff = store.put_artifact(
+                "branch_handoff",
+                {
+                    "schema_version": 1,
+                    "run_id": state["run_id"],
+                    "status": "ready_for_integration",
+                    "branch": state["repository"]["branch"],
+                    "worktree": state["repository"]["worktree"],
+                    "starting_commit": state["repository"][
+                        "source_commit"
+                    ],
+                    "candidate_head": observation.head,
+                    "ordered_plan_handoffs": ordered_handoffs,
+                    "final_plan_handoff": handoff.as_dict(),
+                    "review_receipt": result_artifact.as_dict(),
+                    "verification_set": run_reference,
+                    "plan_set_digests": list(
+                        run_document["plan_set_digests"]
+                    ),
+                    "verification_receipts": verification_receipts,
+                    "integration": "not_observed",
+                },
+            )
         state = store.snapshot()
-        for artifact in (result_artifact, handoff):
+        for artifact in (result_artifact, handoff, branch_handoff):
+            if artifact is None:
+                continue
             if artifact.as_dict() not in state["artifact_refs"]:
                 state["artifact_refs"].append(artifact.as_dict())
         state["plans"][index]["status"] = "implemented"
@@ -562,6 +970,108 @@ class PlanRunner:
         state["status"] = "resumable"
         state["failure"] = None
         store.commit(state)
+
+    def _require_ready_handoff(
+        self,
+        store: StateStore,
+        workspace: GitWorkspace | None = None,
+    ) -> None:
+        state = store.snapshot()
+        repository = state["repository"]
+        if workspace is None:
+            workspace = GitWorkspace.open(
+                Path(repository["source_repository"]),
+                Path(repository["worktree"]),
+                repository["branch"],
+            )
+        observed = workspace.require_clean_ancestor(
+            repository["source_commit"]
+        )
+        self._require_commit_identity(state, workspace, observed.head)
+        if state["current_plan_index"] != len(state["plans"]) or any(
+            plan.get("status") != "implemented" for plan in state["plans"]
+        ):
+            raise ValueError("branch handoff plans are incomplete")
+        self._require_plan_history(
+            store, workspace, observed.head, len(state["plans"])
+        )
+        branch_references = [
+            reference
+            for reference in state["artifact_refs"]
+            if isinstance(reference, dict)
+            and reference.get("kind") == "branch_handoff"
+        ]
+        if len(branch_references) != 1:
+            raise ValueError("branch handoff artifact is invalid")
+        branch = _artifact_payload(store, branch_references[0])
+        if not isinstance(branch, Mapping):
+            raise ValueError("branch handoff artifact is invalid")
+        ordered_handoffs = self._ordered_plan_handoff_refs(state)
+        final_handoff = ordered_handoffs[-1]
+        final_document = _artifact_payload(store, final_handoff)
+        if not isinstance(final_document, Mapping):
+            raise ValueError("final plan handoff artifact is invalid")
+        review_reference = branch.get("review_receipt")
+        if (
+            not isinstance(review_reference, Mapping)
+            or review_reference
+            != self._artifact_reference(
+                state,
+                "provider_result",
+                str(review_reference.get("digest")),
+            )
+        ):
+            raise ValueError("branch handoff review receipt is invalid")
+        review = _artifact_payload(store, review_reference)
+        verification_digest = final_document.get(
+            "verification_set_digest"
+        )
+        if (
+            not isinstance(review, Mapping)
+            or review.get("status") != "implemented"
+            or review.get("head_commit") != observed.head
+            or review.get("verification_set_digest")
+            != verification_digest
+            or not isinstance(verification_digest, str)
+        ):
+            raise ValueError("branch handoff review receipt is invalid")
+        run_reference = self._artifact_reference(
+            state, "run_verification_set", verification_digest
+        )
+        run_document = _artifact_payload(store, run_reference)
+        if (
+            not isinstance(run_document, Mapping)
+            or not isinstance(run_document.get("plan_set_digests"), list)
+        ):
+            raise ValueError("branch handoff verification provenance is invalid")
+        receipts = EvidenceStore(
+            store, workspace, self._environment
+        ).require_successful_verification_set(
+            verification_digest,
+            candidate_head=observed.head,
+            kind="run_verification_set",
+            plan_index=len(state["plans"]) - 1,
+        )
+        expected = {
+            "schema_version": 1,
+            "run_id": state["run_id"],
+            "status": "ready_for_integration",
+            "branch": repository["branch"],
+            "worktree": repository["worktree"],
+            "starting_commit": repository["source_commit"],
+            "candidate_head": observed.head,
+            "ordered_plan_handoffs": ordered_handoffs,
+            "final_plan_handoff": final_handoff,
+            "review_receipt": dict(review_reference),
+            "verification_set": run_reference,
+            "plan_set_digests": list(
+                run_document["plan_set_digests"]
+            ),
+            "verification_receipts": receipts,
+            "integration": "not_observed",
+        }
+        if dict(branch) != expected:
+            raise ValueError("branch handoff completeness is invalid")
 
     def _recover(self, store: StateStore, workspace: GitWorkspace, outcome: ProviderOutcome, index: int) -> int | None:
         state = store.snapshot()
@@ -576,15 +1086,21 @@ class PlanRunner:
              "command_identity": None, "candidate_head": workspace.observe().head, "input_digest": state["immutable_config"]["input_snapshot_digest"],
              "interruption": outcome.kind, "strategy_note": "resume same plan", "progress": progress},
         )
+        session_action = decision.session_action
+        if (
+            session_action == "explicit_resume"
+            and self._resume_consumed(state, index)
+        ):
+            session_action = "fresh_session"
         sequence = list(failure.get("failure_sequence", []))
-        sequence.append({"failure_signature": decision.failure_signature, "strategy_note_digest": strategy_note_digest("resume same plan"), "fresh_session_attempted": decision.session_action == "fresh_session"})
-        next_strategy = {"explicit_resume": "resume_root", "fresh_session": "fresh_root"}.get(decision.session_action, "block")
+        sequence.append({"failure_signature": decision.failure_signature, "strategy_note_digest": strategy_note_digest("resume same plan"), "fresh_session_attempted": session_action == "fresh_session"})
+        next_strategy = {"explicit_resume": "resume_root", "fresh_session": "fresh_root"}.get(session_action, "block")
         state["status"] = decision.run_status
         state["failure"] = {"reason_code": decision.reason_code, "failure_signature": decision.failure_signature,
-                            "failure_sequence": sequence, "next_strategy": next_strategy, "next_session_action": decision.session_action}
+                            "failure_sequence": sequence, "next_strategy": next_strategy, "next_session_action": session_action}
         store.commit(state)
         if decision.action == "recover":
-            resume_session = outcome.session_id if decision.session_action == "explicit_resume" else None
+            resume_session = outcome.session_id if session_action == "explicit_resume" else None
             return self._execute_plan(
                 store,
                 workspace,
@@ -593,6 +1109,18 @@ class PlanRunner:
             )
         self._emit_summary(store.snapshot())
         return int(ExitCode.FAILED)
+
+    @staticmethod
+    def _resume_consumed(
+        state: Mapping[str, object], plan_index: int
+    ) -> bool:
+        return any(
+            isinstance(attempt, Mapping)
+            and attempt.get("mode") == "implementation"
+            and attempt.get("plan_index") == plan_index
+            and attempt.get("session_action") == "resume_root"
+            for attempt in state.get("attempts", [])
+        )
 
     def _progress(self, state: Mapping[str, object], workspace: GitWorkspace) -> ProgressSnapshot:
         observation = workspace.observe()
@@ -670,13 +1198,22 @@ class PlanRunner:
     ) -> int:
         state = store.snapshot()
         observation = workspace.observe()
+        next_action = (
+            "fresh_root"
+            if self._resume_consumed(
+                state, state["current_plan_index"]
+            )
+            else "resume_root"
+        )
         state["status"] = "resumable"
         state["failure"] = {
             "reason_code": "controller_transport_failed",
             "provider_code": outcome.provider_code,
-            "next_strategy": "resume_root",
-            "next_session_action": "resume_root",
-            "session_id": outcome.session_id,
+            "next_strategy": next_action,
+            "next_session_action": next_action,
+            "session_id": (
+                outcome.session_id if next_action == "resume_root" else None
+            ),
             "partial_attempt_id": attempt_id,
             "partial_mode": "implementation",
             "partial_worktree": (

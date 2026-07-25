@@ -23,7 +23,14 @@ from .contracts import (
     sha256_json,
 )
 from .evidence import EvidenceStore
-from .git_ops import GitWorkspace, WorktreeObservation
+from .git_ops import (
+    GitIdentity,
+    GitWorkspace,
+    WorktreeObservation,
+    configured_git_identity,
+    sanitized_controller_env,
+    validate_commit_identities,
+)
 from .helper import HelperDescriptor, HelperServer
 from .provider import (
     DENY_TOOLS,
@@ -115,10 +122,15 @@ class _SignalGate:
         self._requested = True
 
 
-def _git(workspace: Path, *arguments: str) -> str:
+def _git(
+    workspace: Path,
+    *arguments: str,
+    environment: Mapping[str, str] | None = None,
+) -> str:
     process = subprocess.run(
         ["git", *arguments],
         cwd=workspace,
+        env=sanitized_controller_env(environment),
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -132,12 +144,25 @@ def _git(workspace: Path, *arguments: str) -> str:
     return process.stdout.strip()
 
 
-def _source_head(workspace: Path) -> str:
-    return require_full_sha(_git(workspace, "rev-parse", "HEAD"))
+def _source_head(
+    workspace: Path,
+    environment: Mapping[str, str] | None = None,
+) -> str:
+    return require_full_sha(
+        _git(workspace, "rev-parse", "HEAD", environment=environment)
+    )
 
 
-def _common_directory(workspace: Path) -> Path:
-    raw = _git(workspace, "rev-parse", "--git-common-dir")
+def _common_directory(
+    workspace: Path,
+    environment: Mapping[str, str] | None = None,
+) -> Path:
+    raw = _git(
+        workspace,
+        "rev-parse",
+        "--git-common-dir",
+        environment=environment,
+    )
     candidate = Path(raw)
     return (
         candidate
@@ -149,6 +174,7 @@ def _common_directory(workspace: Path) -> Path:
 def _protected_refs(
     workspace: Path,
     assigned_branch: str,
+    environment: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
     assigned = f"refs/heads/{assigned_branch}"
     result: dict[str, str] = {}
@@ -156,6 +182,7 @@ def _protected_refs(
         workspace,
         "for-each-ref",
         "--format=%(refname)\t%(objectname)",
+        environment=environment,
     ).splitlines():
         name, separator, sha = line.partition("\t")
         if separator and name != assigned:
@@ -309,8 +336,12 @@ class PlanRunner:
             ):
                 raise ValueError("workspace and inputs must be absolute")
             source = source.resolve(strict=True)
-            starting_commit = _source_head(source)
-            common = _common_directory(source)
+            starting_commit = _source_head(source, self._environment)
+            common = _common_directory(source, self._environment)
+            git_identity = configured_git_identity(
+                source,
+                self._environment,
+            )
             input_digest = _input_fingerprint(
                 ordered_specs,
                 ordered_plans,
@@ -354,7 +385,12 @@ class PlanRunner:
                         "input_snapshot_digest": input_digest,
                         "execution_intent_digest": intent_digest,
                         "git_common_dir": str(common),
-                        "protected_refs": _protected_refs(source, branch),
+                        "protected_refs": _protected_refs(
+                            source,
+                            branch,
+                            self._environment,
+                        ),
+                        "git_identity": git_identity.as_dict(),
                     },
                     runner_runtime=_runtime_document(runtime),
                 )
@@ -398,6 +434,7 @@ class PlanRunner:
             self._runtime()
             status = state["status"]
             if status == "ready_for_integration":
+                self._require_ready_handoff(store)
                 self._emit_summary(state)
                 return int(ExitCode.READY)
             if status == "blocked":
@@ -513,6 +550,14 @@ class PlanRunner:
                     and isinstance(failure.get("session_id"), str)
                     else None
                 )
+                if (
+                    recorded_session is not None
+                    and self._resume_consumed(
+                        state,
+                        state["current_plan_index"],
+                    )
+                ):
+                    recorded_session = None
                 while (
                     store.snapshot()["current_plan_index"]
                     < len(store.snapshot()["plans"])
@@ -526,6 +571,7 @@ class PlanRunner:
                     recorded_session = None
                     if result is not None:
                         return result
+                self._require_ready_handoff(store, workspace)
                 state = store.snapshot()
                 state["status"] = "ready_for_integration"
                 state["failure"] = None
@@ -571,6 +617,7 @@ class PlanRunner:
             state["repository"]["source_commit"],
             observed.head,
         )
+        self._require_commit_identity(state, workspace, observed.head)
         if observed.clean:
             return observed
         failure = state.get("failure")
@@ -587,6 +634,21 @@ class PlanRunner:
         if sealed != expected:
             raise ValueError("dirty worktree identity is not sealed")
         return observed
+
+    @staticmethod
+    def _require_commit_identity(
+        state: Mapping[str, object],
+        workspace: GitWorkspace,
+        candidate_head: str,
+    ) -> None:
+        validate_commit_identities(
+            workspace.worktree,
+            state["repository"]["source_commit"],
+            candidate_head,
+            GitIdentity.from_mapping(
+                state["immutable_config"].get("git_identity")
+            ),
+        )
 
     def _execute_plan(
         self,
@@ -715,6 +777,9 @@ class PlanRunner:
                     ).read_text(encoding="utf-8")
                 ),
                 session_id=session_id,
+                git_identity=GitIdentity.from_mapping(
+                    state["immutable_config"].get("git_identity")
+                ),
                 resume=resume_session,
                 model=state["immutable_config"].get("model"),
             )
@@ -849,6 +914,13 @@ class PlanRunner:
             raise ValueError("protected refs changed during provider handoff")
         if result["head_commit"] != observed.head:
             raise ValueError("provider handoff HEAD does not match clean worktree")
+        self._require_plan_history(
+            store,
+            workspace,
+            observed.head,
+            index,
+        )
+        self._require_commit_identity(state, workspace, observed.head)
         digest = require_digest(result["verification_set_digest"])
         artifact_kind = (
             "run_verification_set"
@@ -856,7 +928,7 @@ class PlanRunner:
             else "plan_verification_set"
         )
         evidence = EvidenceStore(store, workspace, self._environment)
-        evidence.require_successful_verification_set(
+        verification_receipts = evidence.require_successful_verification_set(
             digest,
             candidate_head=observed.head,
             artifact_kind=artifact_kind,
@@ -879,8 +951,49 @@ class PlanRunner:
                 "summary": result["summary"],
             },
         )
+        branch_handoff = None
+        if index == len(state["plans"]) - 1:
+            run_reference = self._artifact_reference(
+                store.snapshot(),
+                "run_verification_set",
+                digest,
+            )
+            run_document = _artifact_payload(store, run_reference)
+            plan_set_digests = run_document.get("plan_set_digests")
+            if not isinstance(plan_set_digests, list):
+                raise ValueError("final verification provenance is invalid")
+            prior_handoffs = self._ordered_plan_handoff_refs(
+                {
+                    **state,
+                    "plans": state["plans"][:index],
+                }
+            )
+            ordered_handoffs = [*prior_handoffs, handoff.as_dict()]
+            branch_handoff = store.put_artifact(
+                "branch_handoff",
+                {
+                    "schema_version": 1,
+                    "run_id": state["run_id"],
+                    "status": "ready_for_integration",
+                    "branch": state["repository"]["branch"],
+                    "worktree": state["repository"]["worktree"],
+                    "starting_commit": state["repository"][
+                        "source_commit"
+                    ],
+                    "candidate_head": observed.head,
+                    "ordered_plan_handoffs": ordered_handoffs,
+                    "final_plan_handoff": handoff.as_dict(),
+                    "review_receipt": result_artifact.as_dict(),
+                    "verification_set": run_reference,
+                    "plan_set_digests": list(plan_set_digests),
+                    "verification_receipts": verification_receipts,
+                    "integration": "not_observed",
+                },
+            )
         state = store.snapshot()
-        for artifact in (result_artifact, handoff):
+        for artifact in (result_artifact, handoff, branch_handoff):
+            if artifact is None:
+                continue
             if artifact.as_dict() not in state["artifact_refs"]:
                 state["artifact_refs"].append(artifact.as_dict())
         state["plans"][index]["status"] = "implemented"
@@ -889,6 +1002,187 @@ class PlanRunner:
         state["status"] = "resumable"
         state["failure"] = None
         store.commit(state)
+
+    @staticmethod
+    def _artifact_reference(
+        state: Mapping[str, object],
+        kind: str,
+        digest: str,
+    ) -> dict[str, str]:
+        require_digest(digest)
+        matches = [
+            reference
+            for reference in state["artifact_refs"]
+            if isinstance(reference, dict)
+            and reference.get("kind") == kind
+            and reference.get("digest") == digest
+        ]
+        if len(matches) != 1:
+            raise ValueError(f"{kind} artifact reference is invalid")
+        return dict(matches[0])
+
+    @classmethod
+    def _ordered_plan_handoff_refs(
+        cls,
+        state: Mapping[str, object],
+    ) -> list[dict[str, str]]:
+        result: list[dict[str, str]] = []
+        for plan in state["plans"]:
+            digest = plan.get("handoff_digest")
+            if not isinstance(digest, str):
+                raise ValueError("plan handoff is not sealed")
+            result.append(
+                cls._artifact_reference(
+                    state,
+                    "plan_handoff",
+                    digest,
+                )
+            )
+        return result
+
+    @staticmethod
+    def _require_plan_history(
+        store: StateStore,
+        workspace: GitWorkspace,
+        candidate_head: str,
+        plan_index: int,
+    ) -> None:
+        state = store.snapshot()
+        for expected_index, plan in enumerate(state["plans"][:plan_index]):
+            digest = plan.get("handoff_digest")
+            if not isinstance(digest, str):
+                raise ValueError("prior plan handoff is not sealed")
+            reference = PlanRunner._artifact_reference(
+                state,
+                "plan_handoff",
+                digest,
+            )
+            handoff = _artifact_payload(store, reference)
+            handoff_head = (
+                handoff.get("head_commit")
+                if handoff.get("plan_index") == expected_index
+                else None
+            )
+            if not isinstance(handoff_head, str):
+                raise ValueError("prior plan handoff artifact is invalid")
+            try:
+                workspace.require_ancestor(
+                    handoff_head,
+                    candidate_head,
+                )
+            except ValueError as error:
+                raise ValueError(
+                    "prior plan handoff is not an ancestor of candidate HEAD"
+                ) from error
+
+    def _require_ready_handoff(
+        self,
+        store: StateStore,
+        workspace: GitWorkspace | None = None,
+    ) -> None:
+        state = store.snapshot()
+        repository = state["repository"]
+        if workspace is None:
+            workspace = GitWorkspace.open(
+                Path(repository["source_repository"]),
+                Path(repository["worktree"]),
+                repository["branch"],
+            )
+        observed = workspace.require_clean_ancestor(
+            repository["source_commit"]
+        )
+        self._require_commit_identity(state, workspace, observed.head)
+        if (
+            state["current_plan_index"] != len(state["plans"])
+            or any(
+                plan.get("status") != "implemented"
+                for plan in state["plans"]
+            )
+        ):
+            raise ValueError("branch handoff plans are incomplete")
+        self._require_plan_history(
+            store,
+            workspace,
+            observed.head,
+            len(state["plans"]),
+        )
+        branch_references = [
+            reference
+            for reference in state["artifact_refs"]
+            if isinstance(reference, dict)
+            and reference.get("kind") == "branch_handoff"
+        ]
+        if len(branch_references) != 1:
+            raise ValueError("branch handoff artifact is invalid")
+        branch = _artifact_payload(store, branch_references[0])
+        ordered_handoffs = self._ordered_plan_handoff_refs(state)
+        final_handoff = ordered_handoffs[-1]
+        final_document = _artifact_payload(store, final_handoff)
+        review_reference = branch.get("review_receipt")
+        if not isinstance(review_reference, Mapping):
+            raise ValueError("branch handoff review receipt is invalid")
+        review_digest = review_reference.get("digest")
+        if (
+            not isinstance(review_digest, str)
+            or dict(review_reference)
+            != self._artifact_reference(
+                state,
+                "provider_result",
+                review_digest,
+            )
+        ):
+            raise ValueError("branch handoff review receipt is invalid")
+        review = _artifact_payload(store, review_reference)
+        verification_digest = final_document.get(
+            "verification_set_digest"
+        )
+        if (
+            not isinstance(verification_digest, str)
+            or review.get("status") != "implemented"
+            or review.get("head_commit") != observed.head
+            or review.get("verification_set_digest")
+            != verification_digest
+        ):
+            raise ValueError("branch handoff review receipt is invalid")
+        run_reference = self._artifact_reference(
+            state,
+            "run_verification_set",
+            verification_digest,
+        )
+        run_document = _artifact_payload(store, run_reference)
+        plan_set_digests = run_document.get("plan_set_digests")
+        if not isinstance(plan_set_digests, list):
+            raise ValueError(
+                "branch handoff verification provenance is invalid"
+            )
+        receipts = EvidenceStore(
+            store,
+            workspace,
+            self._environment,
+        ).require_successful_verification_set(
+            verification_digest,
+            candidate_head=observed.head,
+            artifact_kind="run_verification_set",
+            plan_index=len(state["plans"]) - 1,
+        )
+        expected = {
+            "schema_version": 1,
+            "run_id": state["run_id"],
+            "status": "ready_for_integration",
+            "branch": repository["branch"],
+            "worktree": repository["worktree"],
+            "starting_commit": repository["source_commit"],
+            "candidate_head": observed.head,
+            "ordered_plan_handoffs": ordered_handoffs,
+            "final_plan_handoff": final_handoff,
+            "review_receipt": dict(review_reference),
+            "verification_set": run_reference,
+            "plan_set_digests": list(plan_set_digests),
+            "verification_receipts": receipts,
+            "integration": "not_observed",
+        }
+        if branch != expected:
+            raise ValueError("branch handoff completeness is invalid")
 
     @staticmethod
     def _validated_plan_result(value: object) -> dict[str, object]:
@@ -981,12 +1275,18 @@ class PlanRunner:
                 "progress": progress,
             },
         )
+        session_action = decision.session_action
+        if (
+            session_action == "resume_root"
+            and self._resume_consumed(state, index)
+        ):
+            session_action = "fresh_root"
         sequence.append(
             {
                 "failure_signature": decision.failure_signature,
                 "strategy_note_digest": strategy_note_digest(note),
                 "fresh_root_attempted": (
-                    decision.session_action == "fresh_root"
+                    session_action == "fresh_root"
                 ),
             }
         )
@@ -998,11 +1298,11 @@ class PlanRunner:
             "return_code": outcome.return_code,
             "failure_signature": decision.failure_signature,
             "failure_sequence": sequence,
-            "next_strategy": decision.session_action,
-            "next_session_action": decision.session_action,
+            "next_strategy": session_action,
+            "next_session_action": session_action,
             "session_id": (
                 outcome.session_id
-                if decision.session_action == "resume_root"
+                if session_action == "resume_root"
                 else None
             ),
         }
@@ -1018,7 +1318,7 @@ class PlanRunner:
         if decision.action != "recover":
             self._emit_summary(store.snapshot())
             return int(ExitCode.FAILED)
-        if decision.session_action == "resume_root" and outcome.session_id:
+        if session_action == "resume_root" and outcome.session_id:
             return self._execute_plan(
                 store,
                 workspace,
@@ -1048,6 +1348,14 @@ class PlanRunner:
             else {}
         )
         sequence = list(prior_failure.get("failure_sequence", []))
+        next_session_action = (
+            "fresh_root"
+            if self._resume_consumed(
+                state,
+                state["current_plan_index"],
+            )
+            else "resume_root"
+        )
         state["status"] = "resumable"
         state["failure"] = {
             "reason_code": "controller_transport_failed",
@@ -1055,9 +1363,13 @@ class PlanRunner:
             "outcome_kind": outcome.kind,
             "return_code": outcome.return_code,
             "failure_sequence": sequence,
-            "next_strategy": "resume_root",
-            "next_session_action": "resume_root",
-            "session_id": outcome.session_id,
+            "next_strategy": next_session_action,
+            "next_session_action": next_session_action,
+            "session_id": (
+                outcome.session_id
+                if next_session_action == "resume_root"
+                else None
+            ),
             "partial_worktree": (
                 None
                 if observed.clean
@@ -1076,6 +1388,19 @@ class PlanRunner:
         store.commit(state)
         self._emit_summary(store.snapshot())
         return int(ExitCode.RESUMABLE)
+
+    @staticmethod
+    def _resume_consumed(
+        state: Mapping[str, object],
+        plan_index: int,
+    ) -> bool:
+        return any(
+            isinstance(attempt, Mapping)
+            and attempt.get("mode") == "implementation"
+            and attempt.get("plan_index") == plan_index
+            and attempt.get("session_action") == "resume_root"
+            for attempt in state.get("attempts", [])
+        )
 
     def _block(
         self,
@@ -1293,14 +1618,23 @@ class PlanRunner:
                 else {}
             )
             sequence = list(prior_failure.get("failure_sequence", []))
+            next_session_action = (
+                "fresh_root"
+                if self._resume_consumed(state, index)
+                else "resume_root"
+            )
             state["status"] = "resumable"
             state["failure"] = {
                 **dict(prior_failure),
                 "reason_code": "controller_transport_failed",
                 "failure_sequence": sequence,
-                "next_strategy": "resume_root",
-                "next_session_action": "resume_root",
-                "session_id": session_id,
+                "next_strategy": next_session_action,
+                "next_session_action": next_session_action,
+                "session_id": (
+                    session_id
+                    if next_session_action == "resume_root"
+                    else None
+                ),
             }
             store.commit(state)
             return
@@ -1394,7 +1728,11 @@ class PlanRunner:
             "source_env": self._environment,
             "remotes": tuple(
                 line
-                for line in _git(workspace.worktree, "remote").splitlines()
+                for line in _git(
+                    workspace.worktree,
+                    "remote",
+                    environment=self._environment,
+                ).splitlines()
                 if line
             ),
             "run_id": run_id,

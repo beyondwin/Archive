@@ -98,10 +98,6 @@ def nested_git_init_probe(action_index: int) -> dict[str, object] | None:
                     "git",
                     "-C",
                     str(repository),
-                    "-c",
-                    "user.name=Plan Runner Parity",
-                    "-c",
-                    "user.email=parity@example.test",
                     "commit",
                     "-m",
                     "provider child probe",
@@ -114,10 +110,32 @@ def nested_git_init_probe(action_index: int) -> dict[str, object] | None:
 
     git_dir = repository / ".git"
     hook_marker = os.environ.get("PARITY_HOSTILE_HOOK_MARKER")
+    identity = None
+    if commit_returncode == 0:
+        raw_identity = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(repository),
+                "log",
+                "-1",
+                "--format=%an%x00%ae%x00%cn%x00%ce",
+            ],
+            text=True,
+            capture_output=True,
+            check=True,
+        ).stdout.rstrip("\n").split("\0")
+        identity = {
+            "author_name": raw_identity[0],
+            "author_email": raw_identity[1],
+            "committer_name": raw_identity[2],
+            "committer_email": raw_identity[3],
+        }
     return {
         "add_returncode": add_returncode,
         "commit_returncode": commit_returncode,
         "git_template_dir": os.environ.get("GIT_TEMPLATE_DIR"),
+        "identity": identity,
         "hostile_hook_copied": (git_dir / "hooks" / "pre-commit").exists(),
         "hostile_hook_executed": (
             hook_marker is not None and Path(hook_marker).exists()
@@ -388,9 +406,28 @@ record = {
     },
     "git_terminal_prompt": os.environ.get("GIT_TERMINAL_PROMPT"),
     "git_config_count": os.environ.get("GIT_CONFIG_COUNT"),
-    "git_pushurl": os.environ.get("GIT_CONFIG_VALUE_0"),
+    "git_pushurl": next(
+        (
+            os.environ.get(f"GIT_CONFIG_VALUE_{index}")
+            for index in range(
+                int(os.environ.get("GIT_CONFIG_COUNT", "0"))
+            )
+            if os.environ.get(f"GIT_CONFIG_KEY_{index}")
+            == "remote.origin.pushurl"
+        ),
+        None,
+    ),
+    "git_identity": {
+        "author_name": os.environ.get("GIT_AUTHOR_NAME"),
+        "author_email": os.environ.get("GIT_AUTHOR_EMAIL"),
+        "committer_name": os.environ.get("GIT_COMMITTER_NAME"),
+        "committer_email": os.environ.get("GIT_COMMITTER_EMAIL"),
+    },
     "helper_socket": os.environ.get("KWS_PLAN_RUNNER_HELPER_SOCKET"),
 }
+nested_git_init = nested_git_init_probe(launch_count - 1)
+if nested_git_init is not None:
+    record["nested_git_init"] = nested_git_init
 with log_path.open("a", encoding="utf-8") as stream:
     stream.write(json.dumps(record, sort_keys=True) + "\n")
 
