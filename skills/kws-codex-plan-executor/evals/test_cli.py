@@ -329,9 +329,24 @@ class ArchitectureGuardTests(unittest.TestCase):
             "python3 scripts/cpe.py resume --run-id RUN_ID\n"
             "python3 scripts/cpe.py inspect --run-id RUN_ID\n"
             "python3 -m py_compile scripts/cpe.py scripts/cpe_runtime/*.py\n"
+            "python3 -m py_compile "
+            "skills/kws-codex-plan-executor/scripts/cpe.py\n"
             "```\n"
         )
-        text = "# Fixture\n\n" + "\n\n".join(statements) + "\n\n" + commands
+        inventory = (
+            "```text\n"
+            "scripts/cpe.py\n"
+            "scripts/cpe_runtime/runtime.py\n"
+            "```\n"
+        )
+        text = (
+            "# Fixture\n\n"
+            + "\n\n".join(statements)
+            + "\n\n"
+            + commands
+            + "\n"
+            + inventory
+        )
         text = text.replace(
             "reports a mechanical `handed_off`",
             "reports a mechanical\n`handed_off`",
@@ -378,12 +393,36 @@ class ArchitectureGuardTests(unittest.TestCase):
     def test_guard_rejects_broad_semantic_tokens_case_and_quote_robustly(self) -> None:
         cases = (
             "task_id = 'T1'",
+            "taskId = 'T2'",
             "COMPLETED_TASK = True",
+            "completedTask = True",
+            "currentPlanIndex = 1",
+            "fixRound = 1",
             "final_review = {}",
+            "finalReview = {}",
             "Finding = 'important'",
+            "openFindingIds = []",
             "OBLIGATION = 'open'",
+            "openObligationIds = []",
             "mode = 'verification'",
             'mode = "Verification"',
+        )
+        path = self.runtime / "runtime.py"
+        baseline = path.read_text(encoding="utf-8")
+        for source in cases:
+            with self.subTest(source=source):
+                path.write_text(baseline + source + "\n", encoding="utf-8")
+                self.assert_guard_fails("forbidden semantic token")
+        path.write_text(baseline, encoding="utf-8")
+
+    def test_guard_rejects_verification_and_migration_authority_aliases(self) -> None:
+        cases = (
+            "verification = []",
+            "VERIFICATION = []",
+            "verificationResult = []",
+            "def migrate_run():\n    pass",
+            "def migrateRun():\n    pass",
+            "route = 'migrate-run'",
         )
         path = self.runtime / "runtime.py"
         baseline = path.read_text(encoding="utf-8")
@@ -445,6 +484,25 @@ class ArchitectureGuardTests(unittest.TestCase):
             readme.write(
                 "\n```console\n"
                 "$ python3 scripts/cpe.py recover-ledger --run-id OLD\n"
+                "```\n"
+            )
+
+        self.assert_guard_fails(
+            "active commands mismatch in SKILL.md",
+            "active commands mismatch in README.md",
+        )
+
+    def test_guard_rejects_repo_prefixed_and_absolute_old_cpe_commands(self) -> None:
+        with (self.root / "SKILL.md").open("a", encoding="utf-8") as skill:
+            skill.write(
+                "\nDo not call `python3 "
+                "skills/kws-codex-plan-executor/scripts/cpe.py verify`.\n"
+            )
+        with (self.root / "README.md").open("a", encoding="utf-8") as readme:
+            readme.write(
+                "\n```console\n"
+                "$ /tmp/repo/skills/kws-codex-plan-executor/"
+                "scripts/cpe.py verify\n"
                 "```\n"
             )
 
