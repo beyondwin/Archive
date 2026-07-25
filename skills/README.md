@@ -24,6 +24,10 @@
 `SKILL.md`의 `metadata.version`, 릴리스 이력은 같은 디렉터리의
 `CHANGELOG.md`가 단일 출처입니다.
 
+두 sequential plan runner의 현재 릴리스는 `2.0.0`입니다. Version 1
+state는 inspect-only이며 active run, resume, recovery에는 Version 2가
+필요합니다.
+
 사용자 홈에 심볼릭 링크를 추가하거나 문서만 정리하는 작업은 런타임 계약을
 바꾸지 않으므로 버전을 올리지 않습니다. CLI, 상태, 복구, 검증, 완료 의미가
 바뀌면 SemVer에 따라 `SKILL.md`, `CHANGELOG.md`, README, 계약 테스트를
@@ -38,11 +42,16 @@ Waygent 제품 런타임 의존성이 아닙니다.
 ## 공통 순차 실행 계약
 
 두 plan runner는 provider 구현은 독립적이지만 완료 의미는 같습니다.
-task의 `reported_done`은 provider 보고이며, plan의 `implemented`는 해당
-plan의 Git 결과와 durable ledger가 봉인되었다는 plan-local 상태입니다.
-둘 다 전체 실행 완료를 뜻하지 않습니다. 모든 plan이 구현되고 동일한
-최종 candidate HEAD에서 선언된 verification set과 fresh final review가
-성공해야 run-level `ready_for_integration`이 됩니다.
+plan의 `implemented`는 해당 plan의 Git handoff와 Superpowers ledger가
+봉인되었다는 plan-local 상태이며 전체 실행 완료를 뜻하지 않습니다. 모든
+plan이 구현되고 동일한 최종 candidate HEAD에서 exact ordered verification
+union과 final whole-branch review가 성공해야 run-level
+`ready_for_integration`이 됩니다.
+
+각 plan은 fresh root로 시작하며 healthy recorded-session resume 1회와
+fresh-root fallback 1회만 허용합니다. 중단된 dirty worktree는 HEAD, branch,
+porcelain, bounded content digest를 봉인한 뒤 unchanged resume만 허용하고,
+drift는 provider를 다시 실행하기 전에 거부합니다.
 
 `--spec`과 `--plan`은 각각 반복할 수 있으며 CLI 입력 순서를 보존합니다.
 모든 spec은 immutable common context이고, plan은 전달 순서대로 하나의
@@ -73,8 +82,8 @@ cutover 단위 테스트는 repository verification map에서 함께 선택됩�
 포함하지 않고 다음 canary를 명시적으로 선택한 경우에만 실행합니다.
 
 ```bash
-./scripts/agent/plan-runner-live-canary --provider codex --mode all
-./scripts/agent/plan-runner-live-canary --provider claude --mode all
+./scripts/agent/plan-runner-live-canary --provider all --mode ownership
+./scripts/agent/plan-runner-live-canary --provider all --mode interruption
 ```
 
 ## 심볼릭 링크 셋업

@@ -8,6 +8,24 @@ SKILL_ROOT = Path(__file__).resolve().parents[1]
 
 
 class SkillContractTests(unittest.TestCase):
+    def test_release_metadata_is_synchronized(self) -> None:
+        skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        package = (
+            SKILL_ROOT / "scripts" / "plan_runner" / "__init__.py"
+        ).read_text(encoding="utf-8")
+        readme = (SKILL_ROOT / "README.md").read_text(encoding="utf-8")
+        changelog = (SKILL_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        catalog = (SKILL_ROOT.parent / "README.md").read_text(encoding="utf-8")
+
+        self.assertIn('version: "2.0.0"', skill)
+        self.assertIn('__version__ = "2.0.0"', package)
+        self.assertIn("Current release: `2.0.0`", readme)
+        self.assertIn("## 2.0.0 - 2026-07-25", changelog)
+        self.assertIn(
+            "두 sequential plan runner의 현재 릴리스는 `2.0.0`입니다.",
+            catalog,
+        )
+
     def test_skill_frontmatter_is_discoverable_and_versioned(self) -> None:
         skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
 
@@ -130,6 +148,7 @@ class SkillContractTests(unittest.TestCase):
         self.assertIn("## 1.0.0 - 2026-07-23", changelog)
         self.assertIn("greenfield", changelog.lower())
         self.assertIn("Version 1 state is inspect-only", changelog)
+        self.assertIn("durable session-aware recovery", changelog)
 
     def test_public_contract_documents_the_thin_superpowers_boundary(self) -> None:
         documents = {
@@ -180,6 +199,17 @@ class SkillContractTests(unittest.TestCase):
                     "run-level union",
                     text,
                 )
+
+    def test_readme_documents_release_canaries(self) -> None:
+        readme = " ".join(
+            (SKILL_ROOT / "README.md")
+            .read_text(encoding="utf-8")
+            .replace("\\\n", "")
+            .split()
+        )
+
+        self.assertIn("--provider all --mode ownership", readme)
+        self.assertIn("--provider all --mode interruption", readme)
 
 
 if __name__ == "__main__":
