@@ -8,6 +8,7 @@ import stat
 import sys
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
@@ -32,7 +33,9 @@ class StateContractTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.base = Path(self.temporary_directory.name)
-        self.root = self.base / "run"
+        self.codex_home = self.base / "codex-home"
+        self.run_id = "cpe-0123456789abcdef"
+        self.root = self.codex_home / "cpe-v3" / "runs" / self.run_id
         self.sources = self.base / "sources"
         self.sources.mkdir()
 
@@ -53,27 +56,50 @@ class StateContractTests(unittest.TestCase):
 
     def manifest(self, records: tuple) -> RunManifest:
         return RunManifest(
-            run_id="cpe-0123456789abcdef",
-            git=GitIdentity(
-                head_commit="a" * 40,
-                worktree_status_digest="b" * 64,
-            ),
+            format_version=5,
+            contract_version=3,
+            run_id=self.run_id,
+            source_repository=str(self.sources),
+            base_commit="a" * 40,
+            branch=f"codex/{self.run_id}",
+            worktree=str(self.base / "worktree"),
             documents=records,
-            superpowers_skills=("subagent-driven-development", "executing-plans"),
+            superpowers_skill="executing-plans",
+            git_identity=GitIdentity(
+                author_name="CPE Author",
+                author_email="author@example.test",
+                committer_name="CPE Committer",
+                committer_email="committer@example.test",
+            ),
             sandbox="danger-full-access",
+            approval_policy="operator-required",
+            integration_policy="not-observed",
+            remote_action_policy="prohibited",
+            created_at="2026-07-25T00:00:00+00:00",
         )
 
     def state(self) -> RunState:
         return RunState(
-            run_id="cpe-0123456789abcdef",
             status="prepared",
+            controller_session_id=None,
             controller_generation=0,
             fresh_fallback_used=False,
+            active_pid=None,
+            active_process_group=None,
+            last_observed_head="a" * 40,
+            tracked_clean=True,
+            untracked_present=False,
+            status_digest="b" * 64,
+            last_process_class=None,
+            last_exit_code=None,
+            resume_capsule=None,
+            blocker=None,
+            updated_at="2026-07-25T00:00:00+00:00",
         )
 
     def create_store(self) -> RunStore:
         return RunStore.create(
-            run_root=self.root,
+            codex_home=self.codex_home,
             manifest=self.manifest(self.snapshot_one_document()),
             state=self.state(),
         )
@@ -104,6 +130,7 @@ class StateContractTests(unittest.TestCase):
             [Path(record.snapshot_path).read_bytes() for record in records],
             [b"# Design\n", b"not a task list", b"\xff\x00opaque", b"[broken](missing.md)"],
         )
+        self.assertEqual([record.order for record in records], [1, 2, 3, 4])
 
     def test_snapshot_rejects_unsafe_or_empty_input_identities(self) -> None:
         document = self.write_bytes("document.md", b"content")
@@ -135,21 +162,64 @@ class StateContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "format-5 state"):
             RunStore.validate_state_payload(payload)
 
+    def test_approved_interfaces_have_exact_payloads_and_derived_store_root(self) -> None:
+        manifest = self.manifest(self.snapshot_one_document())
+        state = self.state()
+        self.assertEqual(
+            set(manifest.to_payload()),
+            {
+                "format_version", "contract_version", "run_id", "source_repository",
+                "base_commit", "branch", "worktree", "documents", "superpowers_skill",
+                "git_identity", "sandbox", "approval_policy", "integration_policy",
+                "remote_action_policy", "created_at",
+            },
+        )
+        self.assertEqual(
+            set(state.to_payload()),
+            {
+                "status", "controller_session_id", "controller_generation",
+                "fresh_fallback_used", "active_pid", "active_process_group",
+                "last_observed_head", "tracked_clean", "untracked_present",
+                "status_digest", "last_process_class", "last_exit_code",
+                "resume_capsule", "blocker", "updated_at",
+            },
+        )
+        store = RunStore.create(self.codex_home, manifest, state)
+        self.assertEqual(store.root, self.root.resolve())
+        self.assertEqual(RunStore.open(self.codex_home, self.run_id).state, state)
+
+    def test_manifest_validator_rejects_missing_and_additional_fields(self) -> None:
+        payload = self.manifest(self.snapshot_one_document()).to_payload()
+        for invalid in (
+            {**payload, "completed_task_ids": []},
+            {key: value for key, value in payload.items() if key != "created_at"},
+        ):
+            with self.subTest(invalid=invalid):
+                with self.assertRaisesRegex(ValueError, "format-5 manifest"):
+                    RunStore.validate_manifest_payload(invalid)
+
     def test_state_contract_has_exact_keys_and_generation_relation(self) -> None:
         payload = self.valid_state_payload()
         self.assertEqual(
             set(payload),
             {
-                "format_version",
-                "contract_version",
-                "run_id",
                 "status",
+                "controller_session_id",
                 "controller_generation",
                 "fresh_fallback_used",
+                "active_pid",
+                "active_process_group",
+                "last_observed_head",
+                "tracked_clean",
+                "untracked_present",
+                "status_digest",
+                "last_process_class",
+                "last_exit_code",
+                "resume_capsule",
+                "blocker",
+                "updated_at",
             },
         )
-        self.assertEqual(payload["format_version"], 5)
-        self.assertEqual(payload["contract_version"], 3)
         for status in (
             "prepared", "running", "interrupted", "blocked", "failed", "handed_off",
         ):
@@ -162,7 +232,7 @@ class StateContractTests(unittest.TestCase):
             {**payload, "controller_generation": 2},
             {**payload, "controller_generation": 1},
             {**payload, "status": "completed"},
-            {**payload, "run_id": "wrong"},
+            {**payload, "last_observed_head": "wrong"},
         ):
             with self.subTest(changed=changed):
                 with self.assertRaisesRegex(ValueError, "format-5 state"):
@@ -181,19 +251,14 @@ class StateContractTests(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(store.root.stat().st_mode), 0o700)
         self.assertEqual(stat.S_IMODE(store.state_path.stat().st_mode), 0o600)
         self.assertEqual(set(json.loads(store.manifest_path.read_text(encoding="utf-8"))), {
-            "format_version", "contract_version", "run_id", "git", "documents",
-            "superpowers_skills", "sandbox",
+            "format_version", "contract_version", "run_id", "source_repository",
+            "base_commit", "branch", "worktree", "documents", "superpowers_skill",
+            "git_identity", "sandbox", "approval_policy", "integration_policy",
+            "remote_action_policy", "created_at",
         })
         store.write_handoff({"claim": "interrupted"})
         self.assertEqual(stat.S_IMODE(store.handoff_path.stat().st_mode), 0o600)
-        store.save_state(
-            RunState(
-                run_id="cpe-0123456789abcdef",
-                status="running",
-                controller_generation=0,
-                fresh_fallback_used=False,
-            )
-        )
+        store.save_state(replace(self.state(), status="running"))
         self.assertEqual(
             json.loads(store.state_path.read_text(encoding="utf-8"))["status"],
             "running",
@@ -205,7 +270,7 @@ class StateContractTests(unittest.TestCase):
         (self.root / "unexpected.json").write_text("{}", encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "prepared run root"):
             RunStore.create(
-                run_root=self.root,
+                codex_home=self.codex_home,
                 manifest=self.manifest(records),
                 state=self.state(),
             )
@@ -217,18 +282,18 @@ class StateContractTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "manifest documents"):
             RunStore.create(
-                run_root=self.root,
+                codex_home=self.codex_home,
                 manifest=self.manifest(records),
                 state=self.state(),
             )
 
     def test_run_lock_refuses_a_second_writer(self) -> None:
         store = self.create_store()
-        with RunLock(store.lock_path) as lock:
+        with store.lock() as lock:
             self.assertIsInstance(lock.fileno(), int)
             self.assertEqual(stat.S_IMODE(store.lock_path.stat().st_mode), 0o600)
             with self.assertRaises(BlockingIOError):
-                with RunLock(store.lock_path):
+                with store.lock():
                     pass
 
     def test_resume_capsule_bounds_are_structural_only(self) -> None:
