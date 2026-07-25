@@ -149,11 +149,17 @@ class ParityInvariantTest(unittest.TestCase):
     def test_claude_disposable_setup_ignores_hostile_git_environment(self) -> None:
         self.assert_ready_outcome_survives_hostile_git_environment("claude")
 
-    def assert_hostile_git_template_is_ignored(self, provider: str) -> None:
+    def assert_provider_child_nested_git_init_uses_sealed_template(
+        self,
+        provider: str,
+    ) -> None:
         template = self.root / "hostile-template"
         hooks = template / "hooks"
         hooks.mkdir(parents=True)
+        template_marker = template / "parity-hostile-template-marker"
+        template_marker.write_text("must not be copied\n", encoding="utf-8")
         marker = self.root / "hostile-hook-ran"
+        probe_root = self.root / f"{provider}-provider-child-git-init"
         hook = hooks / "pre-commit"
         hook.write_text(
             "#!/bin/sh\n"
@@ -168,15 +174,57 @@ class ParityInvariantTest(unittest.TestCase):
             {
                 "GIT_TEMPLATE_DIR": str(template),
                 "PARITY_HOSTILE_HOOK_MARKER": str(marker),
+                "PLAN_RUNNER_FAKE_NESTED_GIT_INIT_ROOT": str(probe_root),
             },
         )
+
+        fake_log = (
+            self.root
+            / "parity"
+            / provider
+            / "ordered-two-plan-ready"
+            / "fake.jsonl"
+        )
+        first_record = json.loads(
+            fake_log.read_text(encoding="utf-8").splitlines()[0]
+        )
+        nested_init = first_record.get("nested_git_init")
+        self.assertIsInstance(nested_init, dict)
+        assert isinstance(nested_init, dict)
+        sealed_template = (
+            self.root
+            / "parity"
+            / provider
+            / "ordered-two-plan-ready"
+            / "empty-git-template"
+        )
+        nested_repository = probe_root / "action-0"
+        self.assertEqual(
+            nested_init["init_argv"],
+            ["git", "init", str(nested_repository)],
+        )
+        self.assertEqual(
+            nested_init["git_template_dir"],
+            str(sealed_template),
+        )
+        self.assertEqual(nested_init["init_returncode"], 0)
+        self.assertEqual(nested_init["commit_returncode"], 0)
+        self.assertFalse(nested_init["hostile_template_marker_copied"])
+        self.assertFalse(nested_init["hostile_hook_copied"])
+        self.assertFalse(nested_init["hostile_hook_executed"])
+        self.assertEqual(stat.S_IMODE(sealed_template.stat().st_mode), 0o700)
+        self.assertEqual(list(sealed_template.iterdir()), [])
         self.assertFalse(marker.exists())
 
-    def test_codex_disposable_setup_ignores_hostile_git_template(self) -> None:
-        self.assert_hostile_git_template_is_ignored("codex")
+    def test_codex_provider_child_nested_git_init_inherits_sealed_template(
+        self,
+    ) -> None:
+        self.assert_provider_child_nested_git_init_uses_sealed_template("codex")
 
-    def test_claude_disposable_setup_ignores_hostile_git_template(self) -> None:
-        self.assert_hostile_git_template_is_ignored("claude")
+    def test_claude_provider_child_nested_git_init_inherits_sealed_template(
+        self,
+    ) -> None:
+        self.assert_provider_child_nested_git_init_uses_sealed_template("claude")
 
     def test_recovery_reports_only_the_external_root_action(self) -> None:
         healthy = [
