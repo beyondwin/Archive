@@ -8,15 +8,13 @@ commit. Local runtime state still belongs in ignored directories such as
 Useful files:
 
 - `config.toml` - project defaults for Codex sessions opened in this repo.
-- `rules/*.rules` - command approval/safety rules loaded when this trusted
-  project's `.codex` layer is active.
 
-These rules are repository-local. They do not change user-global authentication,
-MCP, sandbox, or approval configuration and do not protect other repositories.
-All Git commands currently prompt because execpolicy matches literal leading
-tokens; the extra read-only prompts close bypasses through global Git options,
-while direct hard reset and force push remain forbidden.
+Archive intentionally does not commit repository-local execpolicy rules.
+Desktop Full Access sessions disable interactive approvals, so project rules
+that request confirmation can reject ordinary Git commands instead of showing
+an approval prompt. Destructive-operation boundaries remain in `AGENTS.md`,
+isolated runner worktrees, protected-ref checks, and remote-mutation guards.
 
-Restart Codex or start a new task after changing these files. See the
+Restart Codex or start a new task after changing project configuration. See the
 [local setup guide](../docs/operations/codex-local-setup.md) for trust, reload,
 tool-version, and local-state boundaries.

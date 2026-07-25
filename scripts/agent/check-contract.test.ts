@@ -17,12 +17,6 @@ const EXECUTOR_GATES = [
   "skills/kws-claude-multi-agent-executor/evals/run.sh",
 ] as const;
 
-const CODEX_EXECPOLICY_UNAVAILABLE = {
-  code: "codex_execpolicy_unavailable",
-  path: "codex execpolicy check --rules .codex/rules/archive.rules -- git status --short",
-  message: "Codex execpolicy fixture command could not run",
-};
-
 const fixtureRoots: string[] = [];
 
 afterEach(async () => {
@@ -259,7 +253,7 @@ describe("checkContract", () => {
     }));
   });
 
-  test("reports an unavailable Codex execpolicy command", async () => {
+  test("accepts a contract fixture without repository-local execpolicy", async () => {
     const root = await createContractFixture();
 
     const issues = await checkContract({
@@ -267,24 +261,10 @@ describe("checkContract", () => {
       requiredPaths: [],
       requiredAgentFiles: [],
       trackedFiles: [],
-      codexBin: "definitely-missing-codex",
+      verificationScopes: [],
     });
 
-    expect(issues).toContainEqual(CODEX_EXECPOLICY_UNAVAILABLE);
-  });
-
-  test("reports a nonzero Codex execpolicy command with the same stable issue", async () => {
-    const root = await createContractFixture();
-
-    const issues = await checkContract({
-      root,
-      requiredPaths: [],
-      requiredAgentFiles: [],
-      trackedFiles: [],
-      codexBin: "/bin/false",
-    });
-
-    expect(issues).toContainEqual(CODEX_EXECPOLICY_UNAVAILABLE);
+    expect(issues).toEqual([]);
   });
 
   test("reports a non-executable executor gate", async () => {

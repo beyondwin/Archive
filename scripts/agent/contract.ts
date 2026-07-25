@@ -40,8 +40,7 @@ export type ContractIssueCode =
   | "missing_active_path" | "missing_agent_file" | "stale_active_claim"
   | "missing_package_script" | "non_executable_gate"
   | "tracked_local_state" | "invalid_verification_map"
-  | "codex_execpolicy_unavailable" | "invalid_guidance_file"
-  | "tracked_file_scan_failed";
+  | "invalid_guidance_file" | "tracked_file_scan_failed";
 
 export interface ContractIssue {
   code: ContractIssueCode;

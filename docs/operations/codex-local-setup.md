@@ -7,13 +7,9 @@ sessions remain machine-local operator concerns.
 
 ## Prerequisites And First Run
 
-Use Codex `0.144.1` or newer locally. That is the minimum version this
-repository supports for the tested `codex execpolicy` contract. CI installs
-Codex `0.144.6` exactly.
-
 Trust the checkout in Codex before expecting `AGENTS.md` or the project
-`.codex/config.toml` and `.codex/rules/` layer to load. Then run these commands
-from the repository root:
+`.codex/config.toml` layer to load. Then run these commands from the repository
+root:
 
 ```bash
 codex doctor --summary --no-color
@@ -31,8 +27,8 @@ weakening the shared checks.
 
 Start a new Codex task after changing `AGENTS.md`, a nearest subtree instruction
 file, or project configuration. Restart Codex when the client does not reload
-`.codex/config.toml` or `.codex/rules/` in a new task. Existing tasks can retain
-the instructions and configuration loaded when they started.
+`.codex/config.toml` in a new task. Existing tasks can retain the instructions
+and configuration loaded when they started.
 
 Repository trust is also a local client decision. Opening the same checkout in
 another Codex installation or profile may require trusting it again.
@@ -52,27 +48,22 @@ current work. Periodically review retained sessions and stale worktrees, but do
 not delete active worktrees or evidence automatically. Never paste credentials
 into committed configuration or documentation.
 
-## Repository-Local Command Policy
+## Command Safety
 
-The rules in `.codex/rules/archive.rules` apply only while this trusted
-repository's project layer is active; they do not protect other repositories.
-Direct hard reset and `--force`/`-f` push forms are forbidden. Cleanup, branch
-deletion, worktree removal, and `--force-with-lease` history rewrites require
-operator confirmation.
-
-All project Git commands currently prompt, including read-only commands. This
-is an intentional safety/usability tradeoff: Codex execpolicy rules match
-literal leading tokens, so a broad `git` prompt prevents global Git options or
-alternate spellings from bypassing narrower destructive-command rules. Expect
-extra confirmations until execpolicy can safely express those combinations.
+Archive does not commit repository-local Codex execpolicy rules. Desktop Full
+Access tasks use non-interactive approvals, and a project rule that requests
+confirmation can otherwise reject routine Git commands such as status, add,
+and commit. Follow `AGENTS.md` destructive-operation boundaries and use the
+repository's isolated worktree, protected-ref, and remote-mutation checks for
+automated plan execution.
 
 ## Version And CI Pin Updates
 
-The repository pins Bun `1.3.10`, Codex `0.144.6`, Rust `1.95.0`, Ubuntu
-`24.04`, and GitHub Actions by full commit SHA. Update a pin intentionally in a
-reviewed change, keep the local pin files and workflow values synchronized, and
-rerun `bun run agent:test`, `bun run agent:contract`, and the affected
-verification scopes.
+The repository pins Bun `1.3.10`, Rust `1.95.0`, Ubuntu `24.04`, and GitHub
+Actions by full commit SHA. Update a pin intentionally in a reviewed change,
+keep the local pin files and workflow values synchronized, and rerun
+`bun run agent:test`, `bun run agent:contract`, and the affected verification
+scopes.
 
 These pins make the declared toolchain reproducible, but CI is not fully
 hermetic. GitHub-hosted runners, GitHub Actions availability, package
