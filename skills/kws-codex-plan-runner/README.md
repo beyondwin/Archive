@@ -1,5 +1,7 @@
 # KWS Codex Plan Runner
 
+Current release: `2.0.0`.
+
 An independent thin wrapper for implementing approved Superpowers
 specifications and ordered plans through headless Codex. Superpowers owns task
 decomposition, SDD dispatch, TDD, task review, fixes, and the final whole-branch
@@ -89,6 +91,11 @@ checkpoint.
 
 A dirty checkpoint is drift detection: it seals HEAD, branch, porcelain, and
 bounded content digests. It is not a backup and cannot restore files.
+On `SIGINT` or `SIGTERM`, the runner records the current attempt and provider
+process group, requires that group to become quiescent, and exposes a resumable
+checkpoint only after sealing the exact dirty worktree identity. An unchanged
+checkpoint resumes the recorded healthy session; drift fails before another
+provider launch.
 
 ## Verification and completion
 
@@ -128,8 +135,21 @@ not assert completion.
 
 ```bash
 ./evals/run.sh
+```
+
+From the repository root, run the canonical gate and the two live release
+canaries:
+
+```bash
 bun run agent:verify -- --base MERGE_BASE --head CANDIDATE_HEAD
+
+./scripts/agent/plan-runner-live-canary \
+  --provider all \
+  --mode ownership
+./scripts/agent/plan-runner-live-canary \
+  --provider all \
+  --mode interruption
 ```
 
 Deterministic validation does not prove live Codex compatibility. Live canaries
-remain separate opt-in evidence.
+remain separate opt-in evidence and invoke both installed providers.

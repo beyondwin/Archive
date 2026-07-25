@@ -1,5 +1,7 @@
 # KWS Claude Plan Runner
 
+Current release: `2.0.0`.
+
 An independent thin wrapper for approved Superpowers specifications and ordered
 plans executed through Claude Code. Superpowers owns task decomposition, SDD
 dispatch, TDD, task review, fixes, and the final whole-branch review. The
@@ -53,7 +55,11 @@ stream details are not part of cross-provider parity.
 
 An interrupted dirty checkpoint seals HEAD, branch, porcelain, and bounded
 content digests for drift detection. It is not a backup and cannot restore
-files.
+files. On `SIGINT` or `SIGTERM`, the runner records the current attempt and
+provider process group, requires that group to become quiescent, and exposes a
+resumable checkpoint only after sealing the exact dirty worktree identity. An
+unchanged checkpoint resumes the recorded healthy session; drift fails before
+another provider launch.
 
 ## Verification and completion
 
@@ -94,5 +100,19 @@ than asserting completion.
 ./evals/run.sh
 ```
 
+From the repository root, run the canonical gate and the two live release
+canaries:
+
+```bash
+bun run agent:verify -- --base MERGE_BASE --head CANDIDATE_HEAD
+
+./scripts/agent/plan-runner-live-canary \
+  --provider all \
+  --mode ownership
+./scripts/agent/plan-runner-live-canary \
+  --provider all \
+  --mode interruption
+```
+
 The fake-provider suite is deterministic. A live Claude canary is separate
-opt-in evidence.
+opt-in evidence; the release commands above invoke both installed providers.

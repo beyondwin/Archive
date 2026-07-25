@@ -16,12 +16,16 @@
   restore files.
 - Persists the current provider process-group identity on each root attempt so
   interruption canaries bind SIGINT evidence to the live attempt.
+- Binds final receipts to the complete command, executable, environment,
+  candidate, and worktree identity.
+- Adds provider-backed `ownership` and `interruption` canaries for the
+  `2.0.0` release gate.
 - Version 1 state is inspect-only. Active execution requires Version 2.
 
 ## 1.0.0 - 2026-07-23
 
 - Initial greenfield Claude plan-runner release.
-- Added ordered multi-spec/multi-plan execution, durable recovery, exact
-  verification, and candidate-HEAD review.
-- Used an independent uv-managed CPython 3.13 runtime.
+- Adds ordered multi-spec/multi-plan execution, durable session-aware recovery,
+  parent-owned exact verification, and candidate-HEAD final review.
+- Uses an independent uv-managed CPython 3.13 runtime.
 - This release does not claim compatibility with legacy run state.
