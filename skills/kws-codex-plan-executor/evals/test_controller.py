@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import contextlib
+import fcntl
 import io
 import json
 import os
+import signal
+import subprocess
 import sys
 import tempfile
 import time
@@ -127,6 +130,186 @@ class ControllerContractTests(unittest.TestCase):
         provider.chmod(0o755)
         return provider
 
+    def controller_helper(self, name: str) -> Path:
+        scripts = Path(__file__).resolve().parents[1] / "scripts"
+        return self.write_provider(
+            name,
+            """
+import json
+import os
+import sys
+from pathlib import Path
+
+sys.path.insert(0, %r)
+
+from cpe_runtime.controller import CodexController, ControllerRequest
+from cpe_runtime.state import GitIdentity, RunLock
+
+base = Path(os.environ["CPE_HELPER_BASE"])
+prompt = Path(os.environ["CPE_HELPER_PROMPT"]).read_text(encoding="utf-8")
+result_path = Path(os.environ["CPE_HELPER_RESULT"])
+started_path = Path(os.environ["CPE_HELPER_STARTED"])
+session_path = Path(os.environ["CPE_HELPER_SESSION"])
+
+with RunLock(Path(os.environ["CPE_HELPER_LOCK"])) as lock:
+    request = ControllerRequest(
+        mode="initial",
+        worktree=Path(os.environ["CPE_HELPER_WORKTREE"]),
+        git_common_dir=Path(os.environ["CPE_HELPER_GIT_COMMON"]),
+        sandbox="workspace-write",
+        prompt=prompt,
+        schema_path=Path(os.environ["CPE_HELPER_SCHEMA"]),
+        session_id=None,
+        generation=0,
+        git_identity=GitIdentity(
+            author_name="CPE Canary",
+            author_email="cpe@example.invalid",
+            committer_name="CPE Committer",
+            committer_email="committer@example.invalid",
+        ),
+        lock_fd=lock.fileno(),
+    )
+
+    def process_started(pid, process_group):
+        started_path.write_text(
+            json.dumps({"pid": pid, "process_group": process_group}),
+            encoding="utf-8",
+        )
+
+    def session_started(session_id):
+        session_path.write_text(session_id, encoding="utf-8")
+
+    try:
+        outcome = CodexController(
+            executable=os.environ["CPE_HELPER_PROVIDER"],
+            termination_grace_seconds=float(
+                os.environ.get("CPE_HELPER_TERM_GRACE", "0.05")
+            ),
+        ).launch(
+            request,
+            on_session_id=session_started,
+            on_process_started=process_started,
+        )
+    except KeyboardInterrupt:
+        result_path.write_text(
+            json.dumps({"interrupted": True}),
+            encoding="utf-8",
+        )
+        raise SystemExit(42)
+
+result_path.write_text(
+    json.dumps({
+        "interrupted": False,
+        "session_id": outcome.session_id,
+        "exit_code": outcome.exit_code,
+        "process_class": outcome.process_class,
+    }),
+    encoding="utf-8",
+)
+"""
+            % str(scripts),
+        )
+
+    def start_controller_helper(
+        self,
+        *,
+        name: str,
+        provider: Path,
+        prompt: str,
+        environment: dict[str, str] | None = None,
+    ) -> tuple[subprocess.Popen[bytes], dict[str, Path]]:
+        helper_base = self.base / name
+        helper_base.mkdir()
+        worktree = helper_base / "worktree"
+        git_common = helper_base / "git-common"
+        worktree.mkdir()
+        git_common.mkdir()
+        schema = helper_base / "schema.json"
+        schema.write_text("{}\n", encoding="utf-8")
+        prompt_path = helper_base / "prompt.txt"
+        prompt_path.write_text(prompt, encoding="utf-8")
+        paths = {
+            "base": helper_base,
+            "result": helper_base / "result.json",
+            "started": helper_base / "started.json",
+            "session": helper_base / "session.txt",
+            "lock": helper_base / "run.lock",
+            "stdout": helper_base / "stdout.log",
+            "stderr": helper_base / "stderr.log",
+        }
+        child_environment = os.environ.copy()
+        child_environment.update(
+            {
+                "CPE_HELPER_BASE": str(helper_base),
+                "CPE_HELPER_PROMPT": str(prompt_path),
+                "CPE_HELPER_RESULT": str(paths["result"]),
+                "CPE_HELPER_STARTED": str(paths["started"]),
+                "CPE_HELPER_SESSION": str(paths["session"]),
+                "CPE_HELPER_LOCK": str(paths["lock"]),
+                "CPE_HELPER_WORKTREE": str(worktree),
+                "CPE_HELPER_GIT_COMMON": str(git_common),
+                "CPE_HELPER_SCHEMA": str(schema),
+                "CPE_HELPER_PROVIDER": str(provider),
+                "CPE_HELPER_TERM_GRACE": "0.05",
+            }
+        )
+        child_environment.update(environment or {})
+        with (
+            paths["stdout"].open("wb") as stdout,
+            paths["stderr"].open("wb") as stderr,
+        ):
+            helper = subprocess.Popen(
+                [sys.executable, str(self.controller_helper(f"{name}-helper"))],
+                stdout=stdout,
+                stderr=stderr,
+                env=child_environment,
+            )
+        return helper, paths
+
+    def wait_for_path(self, path: Path, timeout: float = 2.0) -> None:
+        deadline = time.monotonic() + timeout
+        while not path.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertTrue(path.exists(), f"timed out waiting for {path}")
+
+    @staticmethod
+    def process_group_exists(process_group: int) -> bool:
+        try:
+            os.killpg(process_group, 0)
+        except ProcessLookupError:
+            return False
+        return True
+
+    @staticmethod
+    def lock_is_available(path: Path) -> bool:
+        descriptor = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return False
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+            return True
+        finally:
+            os.close(descriptor)
+
+    @staticmethod
+    def cleanup_helper(
+        helper: subprocess.Popen[bytes],
+        process_group: int | None,
+    ) -> None:
+        if helper.poll() is None:
+            helper.kill()
+        try:
+            helper.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            pass
+        if process_group is not None:
+            try:
+                os.killpg(process_group, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
     def terminal_provider(self) -> Path:
         return self.write_provider(
             "terminal-provider",
@@ -216,6 +399,18 @@ print(json.dumps({"type": "turn.completed"}), flush=True)
                 "GIT_CONFIG_COUNT": "1",
                 "GIT_CONFIG_KEY_0": "alias.commit",
                 "GIT_CONFIG_VALUE_0": "!false",
+                "GIT_DIR": "/tmp/routed-git-dir",
+                "GIT_WORK_TREE": "/tmp/routed-worktree",
+                "GIT_COMMON_DIR": "/tmp/routed-common-dir",
+                "GIT_INDEX_FILE": "/tmp/routed-index",
+                "GIT_OBJECT_DIRECTORY": "/tmp/routed-objects",
+                "GIT_ALTERNATE_OBJECT_DIRECTORIES": "/tmp/routed-alternates",
+                "OPENAI_API_KEY": "openai-secret",
+                "ANTHROPIC_API_KEY": "anthropic-secret",
+                "AWS_SECRET_ACCESS_KEY": "aws-secret",
+                "AWS_SESSION_TOKEN": "aws-session-secret",
+                "GITHUB_TOKEN": "github-secret",
+                "CODEX_HOME": "/tmp/codex-home",
             },
             clear=False,
         ):
@@ -230,6 +425,21 @@ print(json.dumps({"type": "turn.completed"}), flush=True)
         self.assertFalse(
             [name for name in environment if name == "GIT_CONFIG" or name.startswith("GIT_CONFIG_")]
         )
+        for name in (
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_COMMON_DIR",
+            "GIT_INDEX_FILE",
+            "GIT_OBJECT_DIRECTORY",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_SESSION_TOKEN",
+            "GITHUB_TOKEN",
+        ):
+            self.assertNotIn(name, environment)
+        self.assertEqual(environment["CODEX_HOME"], "/tmp/codex-home")
 
     def test_stream_persists_first_session_and_terminal_envelope(self) -> None:
         observed: list[str] = []
@@ -495,6 +705,156 @@ raise SystemExit(7)
         with self.assertRaises(ProcessLookupError):
             os.kill(process_ids[0], 0)
 
+    def test_actual_sigterm_cleans_provider_group_and_inherited_lock(self) -> None:
+        term_marker = self.base / "actual-sigterm-observed"
+        helper, paths = self.start_controller_helper(
+            name="actual-sigterm",
+            provider=self.fake_codex,
+            prompt="Execute the approved plan.",
+            environment={
+                "CPE_FAKE_SCENARIO": "ignore_term",
+                "CPE_FAKE_TERM_MARKER": str(term_marker),
+            },
+        )
+        process_group: int | None = None
+        try:
+            self.wait_for_path(paths["session"])
+            started = json.loads(paths["started"].read_text(encoding="utf-8"))
+            process_group = started["process_group"]
+            os.kill(helper.pid, signal.SIGTERM)
+            return_code = helper.wait(timeout=2)
+            group_alive = self.process_group_exists(process_group)
+            lock_available = self.lock_is_available(paths["lock"])
+            term_observed = term_marker.is_file()
+        finally:
+            self.cleanup_helper(helper, process_group)
+        self.assertEqual(return_code, 42)
+        self.assertFalse(group_alive)
+        self.assertTrue(lock_available)
+        self.assertTrue(term_observed)
+
+    def test_large_prompt_and_provider_output_do_not_deadlock(self) -> None:
+        provider = self.write_provider(
+            "write-before-read-provider",
+            """
+import json
+import sys
+
+for index in range(2200):
+    print(json.dumps({
+        "type": "diagnostic",
+        "index": index,
+        "text": "x" * 1000,
+    }), flush=True)
+sys.stdin.read()
+print(json.dumps({"type": "thread.started", "thread_id": %r}), flush=True)
+print(json.dumps({
+    "type": "item.completed",
+    "item": {
+        "type": "agent_message",
+        "text": json.dumps({"claim": "completed", "head_commit": "a" * 40}),
+    },
+}), flush=True)
+print(json.dumps({"type": "turn.completed"}), flush=True)
+"""
+            % SESSION_ID,
+        )
+        helper, paths = self.start_controller_helper(
+            name="concurrent-prompt",
+            provider=provider,
+            prompt="p" * 2_097_152,
+        )
+        process_group: int | None = None
+        timed_out = False
+        return_code: int | None = None
+        result: dict[str, object] | None = None
+        try:
+            self.wait_for_path(paths["started"])
+            started = json.loads(paths["started"].read_text(encoding="utf-8"))
+            process_group = started["process_group"]
+            try:
+                return_code = helper.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+            if paths["result"].is_file():
+                result = json.loads(paths["result"].read_text(encoding="utf-8"))
+        finally:
+            self.cleanup_helper(helper, process_group)
+        self.assertFalse(timed_out, "controller deadlocked on prompt/output pipes")
+        self.assertEqual(
+            return_code,
+            0,
+            paths["stderr"].read_text(encoding="utf-8", errors="replace"),
+        )
+        self.assertIsNotNone(result)
+        self.assertEqual(result["process_class"], "completed")
+
+    def test_leader_exit_with_descendant_held_pipes_is_bounded(self) -> None:
+        descendant_path = self.base / "descendant-pid"
+        provider = self.write_provider(
+            "descendant-pipe-provider",
+            """
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+sys.stdin.read()
+descendant = subprocess.Popen(
+    [sys.executable, "-c", "import time; time.sleep(60)"],
+)
+Path(os.environ["CPE_DESCENDANT_PID"]).write_text(
+    str(descendant.pid),
+    encoding="utf-8",
+)
+print(json.dumps({"type": "thread.started", "thread_id": %r}), flush=True)
+print(json.dumps({
+    "type": "item.completed",
+    "item": {
+        "type": "agent_message",
+        "text": json.dumps({"claim": "completed", "head_commit": "a" * 40}),
+    },
+}), flush=True)
+print(json.dumps({"type": "turn.completed"}), flush=True)
+"""
+            % SESSION_ID,
+        )
+        helper, paths = self.start_controller_helper(
+            name="descendant-pipes",
+            provider=provider,
+            prompt="Execute the approved plan.",
+            environment={"CPE_DESCENDANT_PID": str(descendant_path)},
+        )
+        process_group: int | None = None
+        timed_out = False
+        return_code: int | None = None
+        result: dict[str, object] | None = None
+        group_alive = True
+        try:
+            self.wait_for_path(paths["started"])
+            self.wait_for_path(descendant_path)
+            started = json.loads(paths["started"].read_text(encoding="utf-8"))
+            process_group = started["process_group"]
+            try:
+                return_code = helper.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+            group_alive = self.process_group_exists(process_group)
+            if paths["result"].is_file():
+                result = json.loads(paths["result"].read_text(encoding="utf-8"))
+        finally:
+            self.cleanup_helper(helper, process_group)
+        self.assertFalse(timed_out, "descendant-held pipes stalled controller")
+        self.assertEqual(
+            return_code,
+            0,
+            paths["stderr"].read_text(encoding="utf-8", errors="replace"),
+        )
+        self.assertFalse(group_alive)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["process_class"], "completed")
+
     def test_resume_capsule_matches_task_one_byte_and_count_bounds(self) -> None:
         capsule = {
             "head_commit": "b" * 40,
@@ -524,6 +884,97 @@ raise SystemExit(7)
                 )
                 self.assertEqual(rejected.process_class, "invalid_envelope")
                 self.assertIsNone(rejected.terminal)
+
+    def test_terminal_claims_require_their_approved_optional_fields(self) -> None:
+        capsule = {
+            "head_commit": "b" * 40,
+            "worktree_status_digest": "c" * 64,
+            "note": "resume locally",
+            "evidence_refs": [],
+        }
+        blocker = {
+            "class": "operator_owned",
+            "code": "approval_required",
+            "resource": "local-worktree",
+            "operation": "continue_execution",
+            "retry_condition": "operator supplies the required decision",
+            "provider_code": None,
+        }
+        invalid_payloads = [
+            {"claim": "failed", "head_commit": "a" * 40},
+            {
+                "claim": "completed",
+                "head_commit": "a" * 40,
+                "resume_capsule": capsule,
+            },
+            {
+                "claim": "completed",
+                "head_commit": "a" * 40,
+                "blocker": blocker,
+            },
+            {"claim": "interrupted", "head_commit": "a" * 40},
+            {
+                "claim": "interrupted",
+                "head_commit": "a" * 40,
+                "resume_capsule": capsule,
+                "blocker": blocker,
+            },
+            {"claim": "blocked", "head_commit": "a" * 40},
+        ]
+        for payload in invalid_payloads:
+            with self.subTest(payload=payload):
+                outcome = self.launch_terminal_text(json.dumps(payload))
+                self.assertEqual(outcome.process_class, "invalid_envelope")
+                self.assertIsNone(outcome.terminal)
+
+    def test_blocker_has_exact_keys_and_utf8_byte_bounds(self) -> None:
+        blocker = {
+            "class": "operator_owned",
+            "code": "approval_required",
+            "resource": "local-worktree",
+            "operation": "continue_execution",
+            "retry_condition": "operator supplies the required decision",
+            "provider_code": "auth",
+        }
+        accepted = self.launch_terminal_text(
+            json.dumps(
+                {
+                    "claim": "blocked",
+                    "head_commit": "a" * 40,
+                    "blocker": blocker,
+                }
+            )
+        )
+        self.assertEqual(accepted.process_class, "blocked")
+        self.assertEqual(accepted.terminal.blocker, blocker)
+
+        missing = dict(blocker)
+        missing.pop("retry_condition")
+        invalid_blockers = [
+            missing,
+            {**blocker, "unexpected": "semantic detail"},
+            {**blocker, "class": ""},
+            {**blocker, "class": "é" * 33},
+            {**blocker, "code": "c" * 129},
+            {**blocker, "resource": "r" * 257},
+            {**blocker, "operation": "o" * 129},
+            {**blocker, "retry_condition": "r" * 513},
+            {**blocker, "provider_code": 7},
+            {**blocker, "provider_code": "p" * 129},
+        ]
+        for invalid_blocker in invalid_blockers:
+            with self.subTest(invalid_blocker=invalid_blocker):
+                outcome = self.launch_terminal_text(
+                    json.dumps(
+                        {
+                            "claim": "blocked",
+                            "head_commit": "a" * 40,
+                            "blocker": invalid_blocker,
+                        }
+                    )
+                )
+                self.assertEqual(outcome.process_class, "invalid_envelope")
+                self.assertIsNone(outcome.terminal)
 
     def test_terminal_envelope_rejects_semantic_completion_fields(self) -> None:
         semantic_fields = {
