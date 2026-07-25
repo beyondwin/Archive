@@ -86,8 +86,6 @@ class HelperServer:
         evidence_store: EvidenceStore,
         client_argv: tuple[str, ...],
         state_store: StateStore | None = None,
-        sealed_final_set_digest: str | None = None,
-        sealed_candidate_head: str | None = None,
         on_command_started: Callable[[float], None] | None = None,
         on_command_finished: Callable[[float], None] | None = None,
         io_timeout_seconds: float = _CLIENT_TIMEOUT_SECONDS,
@@ -109,11 +107,6 @@ class HelperServer:
             )
         if state_store is not None and state_store.snapshot().get("run_id") != run_id:
             raise ValueError("state store run ID does not match helper run ID")
-        if (sealed_final_set_digest is None) != (sealed_candidate_head is None):
-            raise ValueError("sealed finalization identity is incomplete")
-        if sealed_final_set_digest is not None:
-            require_digest(sealed_final_set_digest)
-            require_full_sha(sealed_candidate_head)
         if not isinstance(io_timeout_seconds, (int, float)) or isinstance(io_timeout_seconds, bool) or not math.isfinite(io_timeout_seconds) or io_timeout_seconds <= 0:
             raise ValueError("helper I/O timeout must be finite and positive")
         if not isinstance(shutdown_timeout_seconds, (int, float)) or isinstance(shutdown_timeout_seconds, bool) or not math.isfinite(shutdown_timeout_seconds) or shutdown_timeout_seconds <= 0:
@@ -141,8 +134,8 @@ class HelperServer:
         self._dispatch_lock = threading.Lock()
         self._active_lock = threading.Lock()
         self._active_command_deadline: float | None = None
-        self._final_set_digest = sealed_final_set_digest
-        self._final_candidate_head = sealed_candidate_head
+        self._verification_set_digest: str | None = None
+        self._verification_candidate_head: str | None = None
         self._on_command_started = on_command_started
         self._on_command_finished = on_command_finished
         self._io_timeout_seconds = float(io_timeout_seconds)
@@ -302,10 +295,10 @@ class HelperServer:
         if verification.get("candidate_head") != candidate_head:
             raise ValueError("verification candidate head does not match request")
         with self._dispatch_lock:
-            if self._final_set_digest is not None:
+            if self._verification_set_digest is not None:
                 raise _ProtocolError("verification_set_sealed", "a verification set is already sealed")
             artifact = self._evidence.declare_verification(verification, candidate_head, plan_index=plan_index, prior_set_digests=prior, is_final_plan=payload["is_final_plan"])
-            self._final_set_digest, self._final_candidate_head = artifact.digest, candidate_head
+            self._verification_set_digest, self._verification_candidate_head = artifact.digest, candidate_head
         return {"ok": True, "operation": "declare_verification", "artifact": {"digest": artifact.digest}}
 
     def _run_verification(self, payload: Mapping[str, object]) -> dict[str, object]:
@@ -317,9 +310,9 @@ class HelperServer:
         if not isinstance(index, int) or isinstance(index, bool) or index < 0:
             raise ValueError("final command index is invalid")
         with self._dispatch_lock:
-            if set_digest != self._final_set_digest:
+            if set_digest != self._verification_set_digest:
                 raise _ProtocolError("verification_set_unavailable", "verification set is not sealed by this helper")
-            if candidate_head != self._final_candidate_head:
+            if candidate_head != self._verification_candidate_head:
                 raise _ProtocolError("candidate_head_mismatch", "candidate head does not match the sealed verification set")
             command = self._evidence.load_verification_command(set_digest, index)
             deadline = payload["deadline_seconds"]

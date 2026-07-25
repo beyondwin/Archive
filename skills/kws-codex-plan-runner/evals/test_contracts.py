@@ -50,7 +50,7 @@ class ContractVocabularyTest(unittest.TestCase):
             "then",
             "uniqueItems",
         }
-        for name in ("plan-result.schema.json", "finalization-result.schema.json"):
+        for name in ("plan-result.schema.json",):
             path = SKILL_ROOT / "templates" / name
             document = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual(document.get("type"), "object", str(path))

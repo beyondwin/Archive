@@ -281,51 +281,6 @@ class EvidenceStore:
             raise ValueError("final command role must be final")
         return command
 
-    def declare_final_set(self, payload: object, candidate_head: str) -> ArtifactRef:
-        self._observation(candidate_head)
-        if not isinstance(payload, Mapping) or payload.get("candidate_head") != candidate_head:
-            raise ValueError("final set candidate HEAD is invalid")
-        kind = payload.get("kind")
-        if kind == "commands":
-            if set(payload) != {"kind", "candidate_head", "commands"} or not isinstance(payload.get("commands"), list) or not payload["commands"]:
-                raise ValueError("final command set is invalid")
-            commands = [self._command_from_document(item, require_final=True) for item in payload["commands"]]
-            if len({command.command_id for command in commands}) != len(commands):
-                raise ValueError("final command IDs must be unique")
-            sealed: dict[str, Any] = {"kind": kind, "candidate_head": candidate_head, "commands": [
-                {"command_id": command.command_id, "command_role": command.command_role, "argv": list(command.argv), "cwd": command.cwd, "input_digest": command.input_digest, "deadline_seconds": command.deadline_seconds}
-                for command in commands
-            ]}
-        elif kind == "no_applicable_verification":
-            if set(payload) != {"kind", "candidate_head", "rationale"}:
-                raise ValueError("no-applicable verification declaration is invalid")
-            sealed = {"kind": kind, "candidate_head": candidate_head, "rationale": _safe_string(payload.get("rationale"), "rationale")}
-        else:
-            raise ValueError("final verification kind is invalid")
-        artifact = self.state.put_artifact("final_verification_set", sealed)
-        self._append_artifact(artifact)
-        return artifact
-
-    def load_final_command(self, set_digest: str, index: int) -> ExactCommand:
-        require_digest(set_digest)
-        if not isinstance(index, int) or isinstance(index, bool) or index < 0:
-            raise ValueError("final command index is invalid")
-        state = self.state.snapshot()
-        references = state["artifact_refs"]
-        assert isinstance(references, list)
-        matching = [ArtifactRef(**item) for item in references if isinstance(item, dict) and item.get("kind") == "final_verification_set" and item.get("digest") == set_digest]
-        if len(matching) != 1:
-            raise ValueError("final verification set is not sealed")
-        payload = self._artifact_document(matching[0])
-        if matching[0].digest != set_digest:
-            raise ValueError("final verification set digest mismatch")
-        if not isinstance(payload, dict) or payload.get("kind") != "commands" or not isinstance(payload.get("commands"), list):
-            raise ValueError("final verification set has no commands")
-        try:
-            return self._command_from_document(payload["commands"][index], require_final=True)
-        except IndexError as error:
-            raise ValueError("final command index is unavailable") from error
-
     def declare_verification(
         self,
         payload: object,
@@ -343,14 +298,14 @@ class EvidenceStore:
             if set(payload) != {"kind", "candidate_head", "commands"} or not isinstance(payload.get("commands"), list) or not payload["commands"]:
                 raise ValueError("verification command set is invalid")
             commands = [self._command_from_document(item, require_final=False) for item in payload["commands"]]
-            sealed = {"kind": "commands", "candidate_head": candidate_head, "commands": [
+            sealed = {"kind": "commands", "candidate_head": candidate_head, "plan_index": plan_index, "commands": [
                 {"command_id": command.command_id, "command_role": command.command_role, "argv": list(command.argv), "cwd": command.cwd, "input_digest": command.input_digest, "deadline_seconds": command.deadline_seconds}
                 for command in commands
             ]}
         elif kind == "no_applicable_verification":
             if set(payload) != {"kind", "candidate_head", "rationale"}:
                 raise ValueError("no-applicable verification declaration is invalid")
-            sealed = {"kind": kind, "candidate_head": candidate_head, "rationale": _safe_string(payload.get("rationale"), "rationale")}
+            sealed = {"kind": kind, "candidate_head": candidate_head, "plan_index": plan_index, "rationale": _safe_string(payload.get("rationale"), "rationale")}
         else:
             raise ValueError("verification kind is invalid")
         plan = self.state.put_artifact("plan_verification_set", sealed)
@@ -395,6 +350,57 @@ class EvidenceStore:
                 except IndexError as error:
                     raise ValueError("verification command index is unavailable") from error
         raise ValueError("verification set is not sealed")
+
+    def require_successful_verification_set(
+        self,
+        set_digest: str,
+        *,
+        candidate_head: str,
+        kind: str,
+        plan_index: int | None,
+    ) -> None:
+        require_digest(set_digest)
+        candidate_head = require_full_sha(candidate_head)
+        matching = [
+            ArtifactRef(**reference)
+            for reference in self.state.snapshot()["artifact_refs"]
+            if isinstance(reference, dict)
+            and reference.get("kind") == kind
+            and reference.get("digest") == set_digest
+        ]
+        if len(matching) != 1:
+            raise ValueError("verification set is not sealed")
+        payload = self._artifact_document(matching[0])
+        if payload.get("candidate_head") != candidate_head:
+            raise ValueError("verification set candidate HEAD mismatch")
+        if kind == "plan_verification_set" and plan_index is not None and payload.get("plan_index") != plan_index:
+            raise ValueError("verification set plan identity mismatch")
+        if kind == "run_verification_set" and plan_index is not None:
+            plan_sets = payload.get("plan_set_digests")
+            if not isinstance(plan_sets, list) or not plan_sets:
+                raise ValueError("run verification plan declarations are invalid")
+            final_plan_set = plan_sets[-1]
+            if not isinstance(final_plan_set, str):
+                raise ValueError("run verification plan declaration is invalid")
+            self.require_successful_verification_set(
+                final_plan_set,
+                candidate_head=candidate_head,
+                kind="plan_verification_set",
+                plan_index=plan_index,
+            )
+        commands = payload.get("commands")
+        if payload.get("kind") == "no_applicable_verification":
+            if not isinstance(payload.get("rationale"), str) or not payload["rationale"].strip():
+                raise ValueError("verification rationale is invalid")
+            return
+        if not isinstance(commands, list) or not commands:
+            raise ValueError("verification set commands are invalid")
+        for index in range(len(commands)):
+            command = self.load_verification_command(set_digest, index)
+            identity = self.identity_digest(command, candidate_head=candidate_head)
+            receipt = self.reusable_success(identity)
+            if receipt is None or receipt.outcome != "success":
+                raise ValueError("successful verification receipt is missing")
 
     def record_liveness(self, sample: Mapping[str, object]) -> None:
         if not isinstance(sample, Mapping):

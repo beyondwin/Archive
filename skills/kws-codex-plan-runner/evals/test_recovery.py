@@ -29,11 +29,10 @@ class FakeClock:
 def progress(
     tree: str = "tree-a",
     *,
-    done: tuple[str, ...] = (),
     receipts: tuple[str, ...] = (),
-    findings: tuple[str, ...] = (),
+    handoffs: tuple[str, ...] = (),
 ) -> ProgressSnapshot:
-    return ProgressSnapshot(tree, done, receipts, findings)
+    return ProgressSnapshot(tree, receipts, handoffs)
 
 
 def state(**overrides):
@@ -45,7 +44,6 @@ def state(**overrides):
         "resume_failed": False,
         "failure_sequence": (),
         "failure_baseline_progress": progress(),
-        "reported_done_evidence": {},
         "observed_tree_digests": ("tree-a",),
     }
     values.update(overrides)
@@ -62,7 +60,6 @@ def outcome(**overrides):
         "interruption": "simple",
         "strategy_note": "retry through the alternate transport",
         "progress": progress(),
-        "reported_done_evidence": {},
         "logs": ["unstable"],
         "timestamp": "2026-07-23T00:00:00Z",
         "token_output": 100,
