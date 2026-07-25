@@ -8,6 +8,7 @@ import stat
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 SCRIPT = Path(__file__).with_name("check-plan-runner-parity.py")
@@ -62,6 +63,88 @@ class ParityInvariantTest(unittest.TestCase):
             "digest": digest,
             "relative_path": str(relative),
         }
+
+    def assert_ready_outcome_survives_hostile_git_environment(
+        self,
+        provider: str,
+    ) -> None:
+        fixture = json.loads(PARITY.FIXTURE.read_text(encoding="utf-8"))
+        scenario = next(
+            item
+            for item in fixture["scenarios"]
+            if item["id"] == "ordered-two-plan-ready"
+        )
+        hostile_global = self.root / "hostile-global.gitconfig"
+        hostile_global.write_text(
+            "[user]\n"
+            "\tname = Hostile Global\n"
+            "\temail = hostile-global@example.test\n"
+            "[init]\n"
+            "\tdefaultObjectFormat = sha256\n",
+            encoding="utf-8",
+        )
+        hostile = {
+            "EMAIL": "hostile-email@example.test",
+            "GIT_AUTHOR_NAME": "Hostile Author",
+            "GIT_AUTHOR_EMAIL": "hostile-author@example.test",
+            "GIT_AUTHOR_DATE": "2037-12-31T23:59:59+00:00",
+            "GIT_COMMITTER_NAME": "Hostile Committer",
+            "GIT_COMMITTER_EMAIL": "hostile-committer@example.test",
+            "GIT_COMMITTER_DATE": "2038-01-01T00:00:00+00:00",
+            "GIT_DEFAULT_HASH": "sha256",
+            "GIT_CONFIG_GLOBAL": str(hostile_global),
+            "GIT_CONFIG_SYSTEM": str(hostile_global),
+            "GIT_CONFIG_NOSYSTEM": "0",
+            "GIT_CONFIG_COUNT": "2",
+            "GIT_CONFIG_KEY_0": "user.name",
+            "GIT_CONFIG_VALUE_0": "Hostile Inline",
+            "GIT_CONFIG_KEY_1": "user.email",
+            "GIT_CONFIG_VALUE_1": "hostile-inline@example.test",
+            "GIT_DIR": str(self.root / "hostile.git"),
+            "GIT_WORK_TREE": str(self.root / "hostile-worktree"),
+            "GIT_INDEX_FILE": str(self.root / "hostile-index"),
+            "GIT_OBJECT_DIRECTORY": str(self.root / "hostile-objects"),
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES": str(
+                self.root / "hostile-alternates"
+            ),
+            "GIT_COMMON_DIR": str(self.root / "hostile-common"),
+            "GIT_CEILING_DIRECTORIES": str(self.root),
+        }
+        with mock.patch.dict(os.environ, hostile):
+            try:
+                actual = PARITY.run_provider(
+                    provider,
+                    scenario,
+                    self.root / "parity",
+                )
+            except PARITY.ParityFailure as error:
+                self.fail(f"hostile Git environment escaped sealing: {error}")
+
+        self.assertEqual(
+            actual,
+            {
+                "exit": 0,
+                "status": "ready_for_integration",
+                "plan_statuses": ["implemented", "implemented"],
+                "handoff_heads": [
+                    "bd543a5d1bb6df4281554f9203fbe5cb7092d603",
+                    "f73c30696405350ab1ae7902906b14c2ef332a27",
+                ],
+                "verification_set_digest": (
+                    "efbbd878b2b01230cd635bf195785a177"
+                    "f97e1477a35cf0b1096d39ea0845755"
+                ),
+                "required_receipt_count": 1,
+                "session_action": None,
+                "integration": "not_observed",
+            },
+        )
+
+    def test_codex_disposable_setup_ignores_hostile_git_environment(self) -> None:
+        self.assert_ready_outcome_survives_hostile_git_environment("codex")
+
+    def test_claude_disposable_setup_ignores_hostile_git_environment(self) -> None:
+        self.assert_ready_outcome_survives_hostile_git_environment("claude")
 
     def test_recovery_reports_only_the_external_root_action(self) -> None:
         healthy = [
