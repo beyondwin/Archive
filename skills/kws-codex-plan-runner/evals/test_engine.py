@@ -167,6 +167,13 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(len(roots), 1)
         return json.loads((roots[0] / "state.json").read_text(encoding="utf-8"))
 
+    def artifact(self, state, reference):
+        return json.loads(
+            StateStore.open(self.paths.state_home / state["run_id"])
+            .referenced_artifact(reference)
+            .read_text(encoding="utf-8")
+        )
+
     def create_paused_run(
         self,
         *,
@@ -279,6 +286,47 @@ class EngineTest(unittest.TestCase):
         )
         self.assertEqual(self.state()["failure"]["reason_code"], "recovery_exhausted")
 
+    def test_external_resume_consumption_forces_fresh_fallback_after_transport_failure(self):
+        self.outcome_hook = lambda _a, _r, _p, session: ProviderOutcome(
+            "controller_stopped",
+            -2,
+            session,
+            None,
+            "controller_transport_failed",
+            {},
+            (),
+            "",
+        )
+        self.assertEqual(self.create(self.plans[:1]), ExitCode.RESUMABLE)
+        paused = self.state()
+
+        self.outcome_hook = lambda _a, _r, _p, session: ProviderOutcome(
+            "transport_failed",
+            1,
+            session,
+            None,
+            "controller_transport_failed",
+            {},
+            (),
+            "",
+        )
+        self.assertEqual(
+            self.runner().resume(
+                paused["run_id"],
+                retry_blocked=False,
+                retry_failed=False,
+                strategy_note=None,
+            ),
+            ExitCode.FAILED,
+        )
+        self.assertEqual(
+            [
+                attempt["session_action"]
+                for attempt in self.state()["attempts"]
+            ],
+            ["fresh_root", "resume_root", "fresh_root"],
+        )
+
     def test_controller_stop_seals_exact_dirty_checkpoint_and_resume_attempt(self):
         def stopped(_adapter, request, _packet, session_id):
             (request.worktree / "same-path.txt").write_text(
@@ -350,6 +398,209 @@ class EngineTest(unittest.TestCase):
         self.after_implementation_hook = lambda _a, request, _p, _s, head: git("update-ref", "refs/tags/provider-drift", head, cwd=request.worktree)
         self.assertEqual(self.create(self.plans[:1]), ExitCode.INTEGRITY)
 
+    def test_every_prior_plan_handoff_head_must_remain_in_candidate_history(self):
+        def rewrite_history(adapter, request, packet, session_id):
+            if packet["current_plan"]["index"] == 0:
+                return None
+            git("reset", "--hard", self.starting_head, cwd=request.worktree)
+            marker = request.worktree / "rewritten-plan.txt"
+            marker.write_text("alternate history\n", encoding="utf-8")
+            git("add", marker.name, cwd=request.worktree)
+            git(
+                "-c",
+                "user.name=Engine Test",
+                "-c",
+                "user.email=engine@example.test",
+                "commit",
+                "-m",
+                "rewritten plan",
+                cwd=request.worktree,
+            )
+            head = git("rev-parse", "HEAD", cwd=request.worktree)
+            declaration = helper_client(
+                adapter.helper.socket_path,
+                adapter.helper.nonce,
+                {
+                    "protocol_version": adapter.helper.protocol_version,
+                    "run_id": packet["run_id"],
+                    "nonce": adapter.helper.nonce,
+                    "operation": "declare_verification",
+                    "payload": {
+                        "candidate_head": head,
+                        "plan_index": 1,
+                        "verification": {
+                            "kind": "commands",
+                            "candidate_head": head,
+                            "commands": [
+                                {
+                                    "command_id": "rewritten",
+                                    "command_role": "handoff",
+                                    "argv": [sys.executable, "-c", "pass"],
+                                    "cwd": ".",
+                                    "input_digest": "a" * 64,
+                                    "deadline_seconds": 10,
+                                }
+                            ],
+                        },
+                        "prior_set_digests": packet["prior_verification_sets"],
+                        "is_final_plan": True,
+                    },
+                },
+            )
+            digest = declaration["artifact"]["digest"]
+            helper_client(
+                adapter.helper.socket_path,
+                adapter.helper.nonce,
+                {
+                    "protocol_version": adapter.helper.protocol_version,
+                    "run_id": packet["run_id"],
+                    "nonce": adapter.helper.nonce,
+                    "operation": "run_verification",
+                    "payload": {
+                        "candidate_head": head,
+                        "set_digest": digest,
+                        "command_index": 0,
+                        "deadline_seconds": 10,
+                    },
+                },
+            )
+            return ProviderOutcome(
+                "implemented",
+                0,
+                session_id,
+                {
+                    "status": "implemented",
+                    "head_commit": head,
+                    "summary": "rewritten history",
+                    "verification_set_digest": digest,
+                    "blocker": None,
+                },
+                None,
+                {},
+                (),
+                "",
+            )
+
+        self.outcome_hook = rewrite_history
+        self.assertEqual(self.create(), ExitCode.INTEGRITY)
+        self.assertIn("plan handoff", self.state()["failure"]["detail"])
+
+    def test_final_readiness_seals_complete_standalone_branch_handoff(self):
+        self.assertEqual(self.create(), ExitCode.READY)
+        state = self.state()
+        references = [
+            reference
+            for reference in state["artifact_refs"]
+            if reference["kind"] == "branch_handoff"
+        ]
+        self.assertEqual(len(references), 1)
+        handoff = self.artifact(state, references[0])
+        plan_refs = [
+            next(
+                reference
+                for reference in state["artifact_refs"]
+                if reference["kind"] == "plan_handoff"
+                and reference["digest"] == plan["handoff_digest"]
+            )
+            for plan in state["plans"]
+        ]
+        final_plan = self.artifact(state, plan_refs[-1])
+        run_set = next(
+            reference
+            for reference in state["artifact_refs"]
+            if reference["kind"] == "run_verification_set"
+            and reference["digest"] == final_plan["verification_set_digest"]
+        )
+        receipts = [
+            reference
+            for reference in state["artifact_refs"]
+            if reference["kind"] == "verification_receipt"
+            and self.artifact(state, reference)["identity"]["candidate_head"]
+            == handoff["candidate_head"]
+        ]
+        self.assertEqual(
+            handoff,
+            {
+                "schema_version": 1,
+                "run_id": state["run_id"],
+                "status": "ready_for_integration",
+                "branch": state["repository"]["branch"],
+                "worktree": state["repository"]["worktree"],
+                "starting_commit": state["repository"]["source_commit"],
+                "candidate_head": git(
+                    "rev-parse",
+                    "HEAD",
+                    cwd=Path(state["repository"]["worktree"]),
+                ),
+                "ordered_plan_handoffs": plan_refs,
+                "final_plan_handoff": plan_refs[-1],
+                "review_receipt": handoff["review_receipt"],
+                "verification_set": run_set,
+                "plan_set_digests": handoff["plan_set_digests"],
+                "verification_receipts": receipts,
+                "integration": "not_observed",
+            },
+        )
+        self.assertEqual(handoff["review_receipt"]["kind"], "provider_result")
+        self.assertEqual(
+            handoff["plan_set_digests"],
+            self.artifact(state, run_set)["plan_set_digests"],
+        )
+
+    def test_mutated_branch_handoff_completeness_is_rejected_on_ready_resume(self):
+        self.assertEqual(self.create(), ExitCode.READY)
+        state = self.state()
+        store = StateStore.open(self.paths.state_home / state["run_id"])
+        reference = next(
+            item
+            for item in state["artifact_refs"]
+            if item["kind"] == "branch_handoff"
+        )
+        payload = self.artifact(state, reference)
+        payload["verification_receipts"] = []
+        replacement = store.put_artifact("branch_handoff", payload)
+        candidate = store.snapshot()
+        candidate["artifact_refs"][
+            candidate["artifact_refs"].index(reference)
+        ] = replacement.as_dict()
+        store.commit(candidate)
+
+        self.assertEqual(
+            self.runner().resume(
+                state["run_id"],
+                retry_blocked=False,
+                retry_failed=False,
+                strategy_note=None,
+            ),
+            ExitCode.INTEGRITY,
+        )
+        self.assertIn(
+            "branch handoff",
+            json.loads(self.output[-1])["detail"],
+        )
+
+    def test_ready_resume_revalidates_the_sealed_git_identity(self):
+        self.assertEqual(self.create(self.plans[:1]), ExitCode.READY)
+        state = self.state()
+        root = self.paths.state_home / state["run_id"]
+        state["immutable_config"]["git_identity"] = {
+            "name": "Tampered Identity",
+            "email": "tampered@example.test",
+        }
+        state["state_digest"] = storage_module._state_digest(state)
+        (root / "state.json").write_bytes(
+            storage_module.canonical_json(state)
+        )
+        self.assertEqual(
+            self.runner().resume(
+                state["run_id"],
+                retry_blocked=False,
+                retry_failed=False,
+                strategy_note=None,
+            ),
+            ExitCode.INTEGRITY,
+        )
+
     def test_version_one_is_inspect_only(self):
         self.assertEqual(self.create(), ExitCode.READY)
         state = self.state()
@@ -416,6 +667,154 @@ class EngineTest(unittest.TestCase):
         )
         self.assertEqual(len(list(self.paths.state_home.iterdir())), 1)
         self.assertEqual(len(list(self.paths.worktree_home.iterdir())), 1)
+
+    def test_authorized_blocked_retry_seals_and_launches_effective_profile(self):
+        initial = self.create_paused_run(
+            sandbox="workspace-write",
+            model="model-a",
+        )
+        store = StateStore.open(self.paths.state_home / initial["run_id"])
+        blocked = store.snapshot()
+        blocked["status"] = "blocked"
+        blocked["failure"] = {
+            "reason_code": "sandbox_capability_blocked",
+            "detail": "workspace write is unavailable",
+            "next_strategy": "block",
+            "next_session_action": "none",
+        }
+        store.commit(blocked)
+
+        self.assertEqual(
+            self.runner().resume(
+                initial["run_id"],
+                retry_blocked=True,
+                retry_failed=False,
+                strategy_note=(
+                    "workspace-write cannot edit; use the explicitly "
+                    "authorized full-access profile"
+                ),
+                sandbox="danger-full-access",
+                model="model-b",
+            ),
+            ExitCode.READY,
+        )
+        final = self.state()
+        self.assertEqual(
+            {
+                "sandbox": final["immutable_config"]["sandbox"],
+                "model": final["immutable_config"]["model"],
+            },
+            {"sandbox": "workspace-write", "model": "model-a"},
+        )
+        reference = next(
+            item
+            for item in final["artifact_refs"]
+            if item["kind"] == "execution_profile_transition"
+        )
+        transition = self.artifact(final, reference)
+        self.assertEqual(
+            transition["from_profile"],
+            {"sandbox": "workspace-write", "model": "model-a"},
+        )
+        self.assertEqual(
+            transition["to_profile"],
+            {"sandbox": "danger-full-access", "model": "model-b"},
+        )
+        self.assertEqual(
+            (self.requests[0].sandbox, self.requests[0].model),
+            ("danger-full-access", "model-b"),
+        )
+
+    def test_retryable_failure_audits_strategy_and_model_transition(self):
+        initial = self.create_paused_run(
+            sandbox="danger-full-access",
+            model="model-a",
+        )
+        store = StateStore.open(self.paths.state_home / initial["run_id"])
+        failed = store.snapshot()
+        failed["status"] = "failed"
+        failed["failure"] = {
+            "reason_code": "recovery_exhausted",
+            "failure_signature": "f" * 64,
+            "failure_sequence": [],
+            "strategy_digests": [],
+            "next_strategy": "fresh_root",
+            "next_session_action": "none",
+        }
+        store.commit(failed)
+
+        self.assertEqual(
+            self.runner().resume(
+                initial["run_id"],
+                retry_blocked=False,
+                retry_failed=True,
+                strategy_note="Use the newly selected model on a fresh root.",
+                sandbox=None,
+                model="model-b",
+            ),
+            ExitCode.READY,
+        )
+        self.assertEqual(self.requests[0].model, "model-b")
+        kinds = {
+            reference["kind"] for reference in self.state()["artifact_refs"]
+        }
+        self.assertTrue(
+            {
+                "execution_profile_transition",
+                "recovery_audit",
+                "strategy_note",
+            }.issubset(kinds)
+        )
+
+    def test_rejected_profile_note_and_artifact_failure_do_not_mutate_state_refs(self):
+        initial = self.create_paused_run(
+            sandbox="workspace-write",
+            model="model-a",
+        )
+        root = self.paths.state_home / initial["run_id"]
+        store = StateStore.open(root)
+        blocked = store.snapshot()
+        blocked["status"] = "blocked"
+        blocked["failure"] = {
+            "reason_code": "sandbox_capability_blocked",
+            "next_strategy": "block",
+            "next_session_action": "none",
+        }
+        store.commit(blocked)
+        before = (root / "state.json").read_bytes()
+
+        self.assertEqual(
+            self.runner().resume(
+                initial["run_id"],
+                retry_blocked=True,
+                retry_failed=False,
+                strategy_note="   ",
+                sandbox="danger-full-access",
+                model=None,
+            ),
+            ExitCode.INVALID,
+        )
+        self.assertEqual((root / "state.json").read_bytes(), before)
+        self.assertFalse(self.requests)
+
+        with mock.patch.object(
+            StateStore,
+            "put_artifact",
+            side_effect=OSError("simulated artifact failure"),
+        ):
+            self.assertEqual(
+                self.runner().resume(
+                    initial["run_id"],
+                    retry_blocked=True,
+                    retry_failed=False,
+                    strategy_note="Use the authorized full-access profile.",
+                    sandbox="danger-full-access",
+                    model=None,
+                ),
+                ExitCode.INTEGRITY,
+            )
+        self.assertEqual((root / "state.json").read_bytes(), before)
+        self.assertFalse(self.requests)
 
     def test_same_files_in_different_order_are_distinct_execution_intents(self):
         first = self.create_paused_run(plans=self.plans)

@@ -14,7 +14,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
-from .git_ops import sanitized_child_env
+from .git_ops import GitIdentity, sanitized_child_env
 from .helper import HelperDescriptor
 from .process import (
     _anchored_members,
@@ -212,6 +212,7 @@ class ProviderRequest:
     prompt: str
     output_schema: Mapping[str, Any]
     session_id: str
+    git_identity: GitIdentity
     resume: bool = False
     model: str | None = None
 
@@ -237,6 +238,8 @@ class ProviderRequest:
         ):
             raise ValueError("model must be a non-empty NUL-free string")
         _canonical_uuid(self.session_id)
+        if not isinstance(self.git_identity, GitIdentity):
+            raise ValueError("git_identity must be a sealed GitIdentity")
         if not isinstance(self.resume, bool):
             raise ValueError("resume must be a boolean")
 
@@ -337,7 +340,7 @@ class ClaudeAdapter:
         argv = self.build_argv(request)
         if not request.worktree.is_dir() or request.worktree.is_symlink():
             raise ValueError("provider worktree must be a real directory")
-        env = self._child_env()
+        env = self._child_env(request.git_identity)
         state = _StreamState()
         stdout_buffer = bytearray()
         stderr_tail = _RedactedStderrTail()
@@ -556,12 +559,13 @@ class ClaudeAdapter:
             _scrub(stderr_tail),
         )
 
-    def _child_env(self) -> dict[str, str]:
+    def _child_env(self, git_identity: GitIdentity) -> dict[str, str]:
         env = sanitized_child_env(
             self._source_env,
             provider_auth_prefixes=("ANTHROPIC_",),
             remotes=self._remotes,
             run_id=self._run_id,
+            git_identity=git_identity,
         )
         for key in _NESTING_MARKERS | _UNRELATED_CREDENTIALS:
             env.pop(key, None)

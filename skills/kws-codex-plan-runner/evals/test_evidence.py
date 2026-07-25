@@ -55,8 +55,10 @@ class EvidenceStoreTest(unittest.TestCase):
         )
         self.spec = self.root / "spec.md"
         self.plan = self.root / "plan.md"
+        self.final_plan = self.root / "final-plan.md"
         self.spec.write_text("spec\n", encoding="utf-8")
         self.plan.write_text("plan\n", encoding="utf-8")
+        self.final_plan.write_text("final plan\n", encoding="utf-8")
         self.state = StateStore.create(
             root=self.root / "run",
             provider="codex",
@@ -66,7 +68,7 @@ class EvidenceStoreTest(unittest.TestCase):
             worktree=self.worktree_path,
             branch="codex-plan/evidence",
             specs=[self.spec],
-            plans=[self.plan],
+            plans=[self.plan, self.final_plan],
             immutable_config={
                 "git_identity": {
                     "name": "Runner Test",
@@ -308,6 +310,141 @@ class EvidenceStoreTest(unittest.TestCase):
         (self.state.root / artifact.relative_path).write_text('{"tampered":true}', encoding="utf-8")
         with self.assertRaises(ValueError):
             self.evidence.load_verification_command(artifact.digest, 0)
+
+    def test_rationale_only_and_mixed_final_unions_preserve_ordered_provenance(self):
+        rationale = self.evidence.declare_verification(
+            {
+                "kind": "no_applicable_verification",
+                "candidate_head": self.head,
+                "rationale": "The first plan changes documentation only.",
+            },
+            self.head,
+            plan_index=0,
+            prior_set_digests=[],
+            is_final_plan=False,
+        )
+        handoff = self.state.put_artifact(
+            "plan_handoff",
+            {
+                "plan_index": 0,
+                "head_commit": self.head,
+                "verification_set_digest": rationale.digest,
+            },
+        )
+        state = self.state.snapshot()
+        state["artifact_refs"].append(handoff.as_dict())
+        state["plans"][0]["status"] = "implemented"
+        state["plans"][0]["handoff_digest"] = handoff.digest
+        state["current_plan_index"] = 1
+        self.state.commit(state)
+
+        rationale_only = self.evidence.declare_verification(
+            {
+                "kind": "no_applicable_verification",
+                "candidate_head": self.head,
+                "rationale": "The final plan also has no executable verification.",
+            },
+            self.head,
+            plan_index=1,
+            prior_set_digests=[rationale.digest],
+            is_final_plan=True,
+        )
+        rationale_document = json.loads(
+            self.state.referenced_artifact(rationale_only.as_dict()).read_text()
+        )
+        final_plan_digest = rationale_document["plan_set_digests"][1]
+        self.assertEqual(
+            rationale_document,
+            {
+                "kind": "no_applicable_verification",
+                "candidate_head": self.head,
+                "plan_set_digests": [rationale.digest, final_plan_digest],
+                "rationales": [
+                    {
+                        "plan_index": 0,
+                        "plan_set_digest": rationale.digest,
+                        "rationale": "The first plan changes documentation only.",
+                    },
+                    {
+                        "plan_index": 1,
+                        "plan_set_digest": final_plan_digest,
+                        "rationale": "The final plan also has no executable verification.",
+                    },
+                ],
+            },
+        )
+        self.evidence.require_successful_verification_set(
+            rationale_only.digest,
+            candidate_head=self.head,
+            kind="run_verification_set",
+            plan_index=1,
+        )
+
+        command = self.command(
+            python_command("print('mixed')"),
+            command_id="mixed-final",
+            command_role="handoff",
+        )
+        mixed = self.evidence.declare_verification(
+            {
+                "kind": "commands",
+                "candidate_head": self.head,
+                "commands": [
+                    {
+                        "command_id": command.command_id,
+                        "command_role": command.command_role,
+                        "argv": list(command.argv),
+                        "cwd": command.cwd,
+                        "input_digest": command.input_digest,
+                        "deadline_seconds": command.deadline_seconds,
+                    }
+                ],
+            },
+            self.head,
+            plan_index=1,
+            prior_set_digests=[rationale.digest],
+            is_final_plan=True,
+        )
+        mixed_document = json.loads(
+            self.state.referenced_artifact(mixed.as_dict()).read_text()
+        )
+        self.assertEqual(mixed_document["kind"], "run_verification")
+        self.assertEqual(
+            [item["command_id"] for item in mixed_document["commands"]],
+            ["mixed-final"],
+        )
+        self.assertEqual(mixed_document["plan_set_digests"][0], rationale.digest)
+        self.evidence.execute(command, candidate_head=self.head)
+        self.evidence.require_successful_verification_set(
+            mixed.digest,
+            candidate_head=self.head,
+            kind="run_verification_set",
+            plan_index=1,
+        )
+
+        forged = self.state.put_artifact(
+            "run_verification_set",
+            {
+                **rationale_document,
+                "rationales": [
+                    {
+                        **rationale_document["rationales"][0],
+                        "rationale": "mutated provenance",
+                    },
+                    rationale_document["rationales"][1],
+                ],
+            },
+        )
+        forged_state = self.state.snapshot()
+        forged_state["artifact_refs"].append(forged.as_dict())
+        self.state.commit(forged_state)
+        with self.assertRaisesRegex(ValueError, "provenance"):
+            self.evidence.require_successful_verification_set(
+                forged.digest,
+                candidate_head=self.head,
+                kind="run_verification_set",
+                plan_index=1,
+            )
 
     def test_receipts_are_durable_before_state_reference_and_liveness_is_not_progress(self):
         receipt = self.evidence.execute(self.command(python_command("print('ok')")), candidate_head=self.head)

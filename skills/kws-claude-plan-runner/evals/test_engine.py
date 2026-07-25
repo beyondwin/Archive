@@ -20,6 +20,7 @@ from plan_runner.engine import PlanRunner, RuntimePaths  # noqa: E402
 from plan_runner.helper import helper_client  # noqa: E402
 from plan_runner.provider import ProviderOutcome  # noqa: E402
 from plan_runner.runtime import RuntimeIdentity  # noqa: E402
+from plan_runner.storage import StateStore  # noqa: E402
 
 
 class SimulatedCrash(BaseException):
@@ -228,6 +229,7 @@ class EngineTest(unittest.TestCase):
         self.after_implementation_hook = None
         self.crash_after_session_capture = False
         self.rationale_only = False
+        self.environment = {"PATH": os.environ["PATH"]}
 
     def tearDown(self):
         self.temporary.cleanup()
@@ -241,7 +243,7 @@ class EngineTest(unittest.TestCase):
                 values["helper"],
             ),
             output=self.output.append,
-            environment={"PATH": os.environ["PATH"]},
+            environment=self.environment,
         )
 
     def create_v2_run(self, plans=None):
@@ -258,6 +260,111 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(len(roots), 1)
         return json.loads(
             (roots[0] / "state.json").read_text(encoding="utf-8")
+        )
+
+    def artifact(self, state, reference):
+        return json.loads(
+            StateStore.open(self.paths.state_home / state["run_id"])
+            .referenced_artifact(reference)
+            .read_text(encoding="utf-8")
+        )
+
+    def implemented_outcome(
+        self,
+        adapter,
+        request,
+        packet,
+        session_id,
+        *,
+        reset_to=None,
+        author=("Engine Test", "engine@example.test"),
+        committer=("Engine Test", "engine@example.test"),
+    ):
+        if reset_to is not None:
+            git("reset", "--hard", reset_to, cwd=request.worktree)
+        marker = request.worktree / f"custom-{len(self.requests)}.txt"
+        marker.write_text("custom implementation\n", encoding="utf-8")
+        git("add", marker.name, cwd=request.worktree)
+        environment = {
+            **os.environ,
+            "GIT_AUTHOR_NAME": author[0],
+            "GIT_AUTHOR_EMAIL": author[1],
+            "GIT_COMMITTER_NAME": committer[0],
+            "GIT_COMMITTER_EMAIL": committer[1],
+        }
+        subprocess.run(
+            ["git", "commit", "-m", "custom implementation"],
+            cwd=request.worktree,
+            env=environment,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        head = git("rev-parse", "HEAD", cwd=request.worktree)
+        declaration = helper_client(
+            adapter.helper.socket_path,
+            adapter.helper.nonce,
+            {
+                "protocol_version": adapter.helper.protocol_version,
+                "run_id": packet["run_id"],
+                "nonce": adapter.helper.nonce,
+                "operation": "declare_verification",
+                "payload": {
+                    "candidate_head": head,
+                    "plan_index": packet["current_plan"]["index"],
+                    "verification": {
+                        "kind": "commands",
+                        "candidate_head": head,
+                        "commands": [
+                            {
+                                "command_id": "custom-handoff",
+                                "command_role": "handoff",
+                                "argv": [sys.executable, "-c", "pass"],
+                                "cwd": ".",
+                                "input_digest": "a" * 64,
+                                "deadline_seconds": 10,
+                            }
+                        ],
+                    },
+                    "prior_set_digests": packet[
+                        "prior_verification_sets"
+                    ],
+                    "is_final_plan": packet["is_final_plan"],
+                },
+            },
+        )
+        digest = declaration["artifact"]["digest"]
+        helper_client(
+            adapter.helper.socket_path,
+            adapter.helper.nonce,
+            {
+                "protocol_version": adapter.helper.protocol_version,
+                "run_id": packet["run_id"],
+                "nonce": adapter.helper.nonce,
+                "operation": "run_verification",
+                "payload": {
+                    "candidate_head": head,
+                    "set_digest": digest,
+                    "command_index": 0,
+                    "deadline_seconds": 10,
+                },
+            },
+        )
+        return ProviderOutcome(
+            "implemented",
+            0,
+            session_id,
+            {
+                "status": "implemented",
+                "head_commit": head,
+                "summary": "custom implementation",
+                "verification_set_digest": digest,
+                "blocker": None,
+            },
+            None,
+            {},
+            (),
+            "",
         )
 
     @staticmethod
@@ -498,6 +605,57 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(
             self.requests[0].session_id,
             self.requests[1].session_id,
+        )
+
+    def test_external_resume_failure_uses_fresh_root_without_second_healthy_resume(self):
+        self.outcome_hook = (
+            lambda _adapter, _request, _packet, session_id: ProviderOutcome(
+                "controller_stopped",
+                None,
+                session_id,
+                None,
+                "controller_transport_failed",
+                {},
+                (),
+                "",
+            )
+        )
+        self.assertEqual(
+            self.create_v2_run(self.plans[:1]),
+            ExitCode.RESUMABLE,
+        )
+        run_id = self.current_state()["run_id"]
+        self.outcome_hook = (
+            lambda _adapter, _request, _packet, session_id: ProviderOutcome(
+                "transport_failed",
+                1,
+                session_id,
+                None,
+                "controller_transport_failed",
+                {},
+                (),
+                "",
+            )
+        )
+        self.assertEqual(
+            self.runner().resume(
+                run_id,
+                retry_blocked=False,
+                retry_failed=False,
+                strategy_note=None,
+            ),
+            ExitCode.FAILED,
+        )
+        self.assertEqual(
+            [
+                attempt["session_action"]
+                for attempt in self.current_state()["attempts"]
+            ],
+            ["fresh_root", "resume_root", "fresh_root"],
+        )
+        self.assertEqual(
+            [request.resume for request in self.requests],
+            [False, True, False],
         )
 
     def test_restart_after_session_capture_reuses_the_healthy_recorded_uuid(self):
@@ -782,6 +940,229 @@ class EngineTest(unittest.TestCase):
         )
         self.assertEqual(
             self.create_v2_run(self.plans[:1]),
+            ExitCode.INTEGRITY,
+        )
+
+    def test_every_prior_plan_handoff_head_must_remain_in_candidate_history(self):
+        def rewrite(adapter, request, packet, session_id):
+            if packet["current_plan"]["index"] == 0:
+                return None
+            return self.implemented_outcome(
+                adapter,
+                request,
+                packet,
+                session_id,
+                reset_to=self.starting_head,
+            )
+
+        self.outcome_hook = rewrite
+        self.assertEqual(self.create_v2_run(), ExitCode.INTEGRITY)
+        self.assertIn(
+            "plan handoff",
+            self.current_state()["failure"]["detail"],
+        )
+
+    def test_final_readiness_seals_complete_standalone_branch_handoff(self):
+        self.assertEqual(self.create_v2_run(), ExitCode.READY)
+        state = self.current_state()
+        references = [
+            reference
+            for reference in state["artifact_refs"]
+            if reference["kind"] == "branch_handoff"
+        ]
+        self.assertEqual(len(references), 1)
+        handoff = self.artifact(state, references[0])
+        plan_refs = [
+            next(
+                reference
+                for reference in state["artifact_refs"]
+                if reference["kind"] == "plan_handoff"
+                and reference["digest"] == plan["handoff_digest"]
+            )
+            for plan in state["plans"]
+        ]
+        final_plan = self.artifact(state, plan_refs[-1])
+        run_set = next(
+            reference
+            for reference in state["artifact_refs"]
+            if reference["kind"] == "run_verification_set"
+            and reference["digest"] == final_plan["verification_set_digest"]
+        )
+        receipts = [
+            reference
+            for reference in state["artifact_refs"]
+            if reference["kind"] == "verification_receipt"
+            and self.artifact(state, reference)["identity"]["candidate_head"]
+            == handoff["candidate_head"]
+        ]
+        self.assertEqual(
+            handoff,
+            {
+                "schema_version": 1,
+                "run_id": state["run_id"],
+                "status": "ready_for_integration",
+                "branch": state["repository"]["branch"],
+                "worktree": state["repository"]["worktree"],
+                "starting_commit": state["repository"]["source_commit"],
+                "candidate_head": git(
+                    "rev-parse",
+                    "HEAD",
+                    cwd=Path(state["repository"]["worktree"]),
+                ),
+                "ordered_plan_handoffs": plan_refs,
+                "final_plan_handoff": plan_refs[-1],
+                "review_receipt": handoff["review_receipt"],
+                "verification_set": run_set,
+                "plan_set_digests": handoff["plan_set_digests"],
+                "verification_receipts": receipts,
+                "integration": "not_observed",
+            },
+        )
+        self.assertEqual(handoff["review_receipt"]["kind"], "provider_result")
+        self.assertEqual(
+            handoff["plan_set_digests"],
+            self.artifact(state, run_set)["plan_set_digests"],
+        )
+
+    def test_mutated_branch_handoff_completeness_is_rejected_on_ready_resume(self):
+        self.assertEqual(self.create_v2_run(), ExitCode.READY)
+        state = self.current_state()
+        store = StateStore.open(self.paths.state_home / state["run_id"])
+        reference = next(
+            item
+            for item in state["artifact_refs"]
+            if item["kind"] == "branch_handoff"
+        )
+        payload = self.artifact(state, reference)
+        payload["verification_receipts"] = []
+        replacement = store.put_artifact("branch_handoff", payload)
+        candidate = store.snapshot()
+        candidate["artifact_refs"][
+            candidate["artifact_refs"].index(reference)
+        ] = replacement.as_dict()
+        store.commit(candidate)
+
+        self.assertEqual(
+            self.runner().resume(
+                state["run_id"],
+                retry_blocked=False,
+                retry_failed=False,
+                strategy_note=None,
+            ),
+            ExitCode.INTEGRITY,
+        )
+        self.assertIn(
+            "branch handoff",
+            json.loads(self.output[-1])["detail"],
+        )
+
+    def test_candidate_author_and_committer_must_match_sealed_identity(self):
+        cases = (
+            (
+                ("Wrong Author", "wrong-author@example.test"),
+                ("Engine Test", "engine@example.test"),
+            ),
+            (
+                ("Engine Test", "engine@example.test"),
+                ("Wrong Committer", "wrong-committer@example.test"),
+            ),
+        )
+        for case_index, (author, committer) in enumerate(cases):
+            with self.subTest(author=author, committer=committer):
+                if case_index:
+                    self.tearDown()
+                    self.setUp()
+                self.outcome_hook = (
+                    lambda adapter,
+                    request,
+                    packet,
+                    session_id,
+                    author=author,
+                    committer=committer: self.implemented_outcome(
+                        adapter,
+                        request,
+                        packet,
+                        session_id,
+                        author=author,
+                        committer=committer,
+                    )
+                )
+                self.assertEqual(
+                    self.create_v2_run(self.plans[:1]),
+                    ExitCode.INTEGRITY,
+                )
+                self.assertIn(
+                    "identity",
+                    self.current_state()["failure"]["detail"].lower(),
+                )
+
+    def test_hostile_git_environment_cannot_reroute_controller_or_identity(self):
+        hostile = self.root / "hostile"
+        hostile.mkdir()
+        git("init", "-q", cwd=hostile)
+        hostile_config = self.root / "hostile.gitconfig"
+        hostile_config.write_text(
+            "[user]\n"
+            "\tname = Hostile Global\n"
+            "\temail = hostile@example.test\n",
+            encoding="utf-8",
+        )
+        environment = {
+            "GIT_DIR": str(hostile / ".git"),
+            "GIT_WORK_TREE": str(hostile),
+            "GIT_INDEX_FILE": str(hostile / ".git" / "index"),
+            "GIT_OBJECT_DIRECTORY": str(hostile / ".git" / "objects"),
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES": str(
+                hostile / ".git" / "objects"
+            ),
+            "GIT_COMMON_DIR": str(hostile / ".git"),
+            "GIT_CONFIG_GLOBAL": str(hostile_config),
+            "GIT_CONFIG_SYSTEM": str(hostile_config),
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "user.name",
+            "GIT_CONFIG_VALUE_0": "Inline Hostile",
+            "GIT_AUTHOR_NAME": "Hostile Author",
+            "GIT_AUTHOR_EMAIL": "hostile-author@example.test",
+            "GIT_COMMITTER_NAME": "Hostile Committer",
+            "GIT_COMMITTER_EMAIL": "hostile-committer@example.test",
+            "HOME": str(self.root / "hostile-home"),
+        }
+        self.environment = {
+            "PATH": os.environ["PATH"],
+            **environment,
+        }
+        self.assertEqual(
+            self.create_v2_run(self.plans[:1]),
+            ExitCode.READY,
+        )
+        state = self.current_state()
+        self.assertEqual(
+            state["immutable_config"]["git_identity"],
+            {"name": "Engine Test", "email": "engine@example.test"},
+        )
+
+    def test_ready_resume_revalidates_the_sealed_git_identity(self):
+        self.assertEqual(
+            self.create_v2_run(self.plans[:1]),
+            ExitCode.READY,
+        )
+        state = self.current_state()
+        root = self.paths.state_home / state["run_id"]
+        state["immutable_config"]["git_identity"] = {
+            "name": "Tampered Identity",
+            "email": "tampered@example.test",
+        }
+        state["state_digest"] = storage_module._state_digest(state)
+        (root / "state.json").write_bytes(
+            storage_module.canonical_json(state)
+        )
+        self.assertEqual(
+            self.runner().resume(
+                state["run_id"],
+                retry_blocked=False,
+                retry_failed=False,
+                strategy_note=None,
+            ),
             ExitCode.INTEGRITY,
         )
 

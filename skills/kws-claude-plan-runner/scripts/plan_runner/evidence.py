@@ -511,7 +511,7 @@ class EvidenceStore:
         candidate_head: str,
         artifact_kind: str,
         plan_index: int,
-    ) -> None:
+    ) -> list[dict[str, str]]:
         _, payload = self._artifact_by_digest(
             set_digest,
             kinds=frozenset({artifact_kind}),
@@ -549,7 +549,7 @@ class EvidenceStore:
                     raise ValueError(
                         "no-applicable run provenance is invalid"
                     )
-                return
+                return []
             if payload.get("commands") != ordered:
                 raise ValueError("run verification union is invalid")
         else:
@@ -561,9 +561,10 @@ class EvidenceStore:
                 or not payload["rationale"].strip()
             ):
                 raise ValueError("verification rationale is invalid")
-            return
+            return []
         if not isinstance(commands, list) or not commands:
             raise ValueError("verification commands are invalid")
+        receipts: list[dict[str, str]] = []
         for command_index in range(len(commands)):
             command = self.load_verification_command(
                 set_digest,
@@ -573,8 +574,11 @@ class EvidenceStore:
                 command,
                 candidate_head=candidate_head,
             )
-            if self.reusable_success(identity) is None:
+            receipt = self.reusable_success(identity)
+            if receipt is None:
                 raise ValueError("successful verification receipt is missing")
+            receipts.append(receipt.artifact.as_dict())
+        return receipts
 
     def record_liveness(self, sample: Mapping[str, object]) -> None:
         if not isinstance(sample, Mapping):

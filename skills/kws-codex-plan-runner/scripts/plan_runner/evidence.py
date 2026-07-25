@@ -315,17 +315,24 @@ class EvidenceStore:
         self._append_artifact(plan)
         if not is_final_plan:
             return plan
-        command_documents: list[dict[str, object]] = []
-        for digest in [*expected_prior, plan.digest]:
-            command_documents.extend(self._verification_commands(digest))
-        deduplicated: list[dict[str, object]] = []
-        seen: set[str] = set()
-        for command in command_documents:
-            identity = sha256_json({key: command[key] for key in ("argv", "cwd", "input_digest", "deadline_seconds")})
-            if identity not in seen:
-                seen.add(identity)
-                deduplicated.append(command)
-        run = self.state.put_artifact("run_verification_set", {"kind": "commands", "candidate_head": candidate_head, "plan_set_digests": [*expected_prior, plan.digest], "commands": deduplicated})
+        lineage = [*expected_prior, plan.digest]
+        commands = self._ordered_union(lineage)
+        run_document = (
+            {
+                "kind": "run_verification",
+                "candidate_head": candidate_head,
+                "plan_set_digests": lineage,
+                "commands": commands,
+            }
+            if commands
+            else {
+                "kind": "no_applicable_verification",
+                "candidate_head": candidate_head,
+                "plan_set_digests": lineage,
+                "rationales": self._rationale_provenance(lineage),
+            }
+        )
+        run = self.state.put_artifact("run_verification_set", run_document)
         self._append_artifact(run)
         return run
 
@@ -379,7 +386,61 @@ class EvidenceStore:
                 payload = self._artifact_document(ArtifactRef(**reference))
                 if payload.get("kind") == "commands" and isinstance(payload.get("commands"), list):
                     return [dict(command) for command in payload["commands"] if isinstance(command, dict)]
+                if payload.get("kind") == "no_applicable_verification":
+                    rationale = payload.get("rationale")
+                    if isinstance(rationale, str) and rationale.strip():
+                        return []
         raise ValueError("plan verification set is not sealed")
+
+    def _ordered_union(self, plan_set_digests: list[str]) -> list[dict[str, object]]:
+        ordered: list[dict[str, object]] = []
+        seen: set[str] = set()
+        for digest in plan_set_digests:
+            for command in self._verification_commands(digest):
+                identity = sha256_json(
+                    {
+                        key: command[key]
+                        for key in (
+                            "argv",
+                            "cwd",
+                            "input_digest",
+                            "deadline_seconds",
+                        )
+                    }
+                )
+                if identity not in seen:
+                    seen.add(identity)
+                    ordered.append(command)
+        return ordered
+
+    def _rationale_provenance(
+        self, plan_set_digests: list[str]
+    ) -> list[dict[str, object]]:
+        rationales: list[dict[str, object]] = []
+        for digest in plan_set_digests:
+            payload = self._plan_set_payload(
+                digest,
+                len(rationales),
+            )
+            rationale = payload.get("rationale")
+            if (
+                payload.get("kind") != "no_applicable_verification"
+                or not isinstance(rationale, str)
+                or not rationale.strip()
+            ):
+                raise ValueError(
+                    "command-free run requires rationale for every plan"
+                )
+            rationales.append(
+                {
+                    "plan_index": len(rationales),
+                    "plan_set_digest": digest,
+                    "rationale": rationale,
+                }
+            )
+        if not rationales:
+            raise ValueError("no-applicable run rationale is empty")
+        return rationales
 
     def load_verification_command(self, set_digest: str, index: int) -> ExactCommand:
         require_digest(set_digest)
@@ -404,7 +465,7 @@ class EvidenceStore:
         candidate_head: str,
         kind: str,
         plan_index: int | None,
-    ) -> None:
+    ) -> list[dict[str, str]]:
         require_digest(set_digest)
         candidate_head = require_full_sha(candidate_head)
         matching = [
@@ -441,19 +502,39 @@ class EvidenceStore:
                 kind="plan_verification_set",
                 plan_index=plan_index,
             )
+            ordered = self._ordered_union(plan_sets)
+            if payload.get("kind") == "no_applicable_verification":
+                if (
+                    ordered
+                    or "commands" in payload
+                    or payload.get("rationales")
+                    != self._rationale_provenance(plan_sets)
+                ):
+                    raise ValueError(
+                        "no-applicable run provenance is invalid"
+                    )
+                return []
+            if (
+                payload.get("kind") != "run_verification"
+                or payload.get("commands") != ordered
+            ):
+                raise ValueError("run verification union is invalid")
         commands = payload.get("commands")
         if payload.get("kind") == "no_applicable_verification":
             if not isinstance(payload.get("rationale"), str) or not payload["rationale"].strip():
                 raise ValueError("verification rationale is invalid")
-            return
+            return []
         if not isinstance(commands, list) or not commands:
             raise ValueError("verification set commands are invalid")
+        receipts: list[dict[str, str]] = []
         for index in range(len(commands)):
             command = self.load_verification_command(set_digest, index)
             identity = self.identity_digest(command, candidate_head=candidate_head)
             receipt = self.reusable_success(identity)
             if receipt is None or receipt.outcome != "success":
                 raise ValueError("successful verification receipt is missing")
+            receipts.append(receipt.artifact.as_dict())
+        return receipts
 
     def record_liveness(self, sample: Mapping[str, object]) -> None:
         if not isinstance(sample, Mapping):

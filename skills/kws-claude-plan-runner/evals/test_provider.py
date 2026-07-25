@@ -14,6 +14,7 @@ SKILL_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SKILL_ROOT / "scripts"))
 
 from plan_runner.helper import HelperDescriptor  # noqa: E402
+from plan_runner.git_ops import GitIdentity  # noqa: E402
 from plan_runner.provider import (  # noqa: E402
     ClaudeAdapter,
     ProviderOutcome,
@@ -65,6 +66,10 @@ class ClaudeProviderTest(unittest.TestCase):
             "a" * 64,
             (str(Path(sys.executable).resolve()), str(fake.resolve())),
         )
+        self.git_identity = GitIdentity(
+            "Engine Test",
+            "engine@example.test",
+        )
 
     def tearDown(self):
         self.temporary.cleanup()
@@ -80,6 +85,7 @@ class ClaudeProviderTest(unittest.TestCase):
             },
             model=model,
             session_id=session_id,
+            git_identity=self.git_identity,
             resume=resume,
         )
 
@@ -184,6 +190,7 @@ class ClaudeProviderTest(unittest.TestCase):
             prompt="use provider defaults",
             output_schema={"type": "object"},
             session_id=SESSION_ID,
+            git_identity=self.git_identity,
         )
         argv = self.adapter().build_argv(request)
         self.assertNotIn("--model", argv)
@@ -201,6 +208,7 @@ class ClaudeProviderTest(unittest.TestCase):
             prompt="immutable",
             output_schema=schema,
             session_id=SESSION_ID,
+            git_identity=self.git_identity,
         )
         schema["required"].append("mutated")
         schema["properties"]["status"]["enum"][0] = "failed"
@@ -262,12 +270,69 @@ class ClaudeProviderTest(unittest.TestCase):
         self.assertEqual(record["credentials"], {"ANTHROPIC_API_KEY": "provider-secret"})
         self.assertFalse(any(record["nesting_markers"].values()))
         self.assertEqual(record["git_terminal_prompt"], "0")
-        self.assertEqual(record["git_config_count"], "1")
+        self.assertEqual(record["git_config_count"], "5")
         self.assertEqual(
             record["git_pushurl"],
             "disabled://plan-runner/run-claude-1/origin",
         )
+        self.assertEqual(
+            record["git_identity"],
+            {
+                "author_name": "Engine Test",
+                "author_email": "engine@example.test",
+                "committer_name": "Engine Test",
+                "committer_email": "engine@example.test",
+            },
+        )
         self.assertEqual(record["helper_socket"], str(self.helper.socket_path))
+
+    def test_provider_child_nested_git_uses_only_sealed_identity(self):
+        nested_root = self.root / "nested"
+        nested_root.mkdir()
+        source_env = self.adapter()._source_env
+        hostile_home = self.root / "hostile-home"
+        hostile_home.mkdir()
+        (hostile_home / ".gitconfig").write_text(
+            "[user]\n"
+            "\tname = Hostile Global\n"
+            "\temail = hostile@example.test\n",
+            encoding="utf-8",
+        )
+        hostile = {
+            **source_env,
+            "PLAN_RUNNER_FAKE_NESTED_GIT_INIT_ROOT": str(nested_root),
+            "HOME": str(hostile_home),
+            "GIT_DIR": str(self.root / "hostile.git"),
+            "GIT_WORK_TREE": str(self.root / "hostile-worktree"),
+            "GIT_INDEX_FILE": str(self.root / "hostile-index"),
+            "GIT_OBJECT_DIRECTORY": str(self.root / "hostile-objects"),
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES": str(
+                self.root / "hostile-alternates"
+            ),
+            "GIT_CONFIG_GLOBAL": str(hostile_home / ".gitconfig"),
+            "GIT_CONFIG_SYSTEM": str(hostile_home / ".gitconfig"),
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "user.name",
+            "GIT_CONFIG_VALUE_0": "Inline Hostile",
+            "GIT_AUTHOR_NAME": "Hostile Author",
+            "GIT_AUTHOR_EMAIL": "hostile-author@example.test",
+            "GIT_COMMITTER_NAME": "Hostile Committer",
+            "GIT_COMMITTER_EMAIL": "hostile-committer@example.test",
+        }
+        outcome = self.launch("success", source_env=hostile)
+        self.assertEqual(outcome.kind, "implemented")
+        record = self.record()
+        self.assertEqual(record["nested_git_init"]["commit_returncode"], 0)
+        self.assertEqual(
+            record["nested_git_init"]["identity"],
+            {
+                "author_name": self.git_identity.name,
+                "author_email": self.git_identity.email,
+                "committer_name": self.git_identity.name,
+                "committer_email": self.git_identity.email,
+            },
+        )
+        self.assertIsNone(record["nested_git_init"]["git_template_dir"])
 
     def test_repeated_chunks_and_logs_do_not_refresh_lease(self):
         lease = RecordingLease()
