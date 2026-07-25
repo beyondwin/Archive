@@ -13,16 +13,20 @@
 ## 1. Summary
 
 CPE v3 is a thin, Codex-specific durability capsule around one Superpowers
-root-controller execution contract. It accepts any number of approved design,
-specification, implementation-plan, incident, context, and authority documents,
-seals their bytes as one immutable document bundle, assigns one Git worktree,
-and launches one Codex root controller with one explicitly selected Superpowers
-entry skill.
+root-controller execution contract. It accepts any number of caller-supplied
+Superpowers documents, seals their bytes as one immutable ordered bundle,
+assigns one Git worktree, and launches one Codex root controller with one
+explicitly selected Superpowers entry skill.
 
 CPE does not interpret the documents. It does not compile tasks, keep a task
 database, advance an ordered plan queue, infer completed work, mirror
 Superpowers progress, select or execute product verification, track reviews or
 findings, or decide that engineering work is complete.
+
+There is no CPE document review. CPE does not assign document roles, validate
+Markdown, check links, compare a design with a plan, or decide whether the
+bundle is sufficient. It preserves exact bytes and caller order, then gives the
+bundle to the selected Superpowers controller.
 
 Superpowers owns engineering workflow meaning. In
 `subagent-driven-development`, the plan-scoped
@@ -157,7 +161,8 @@ requires the extra evidence system.
 ## 4. Goals
 
 1. Make direct Superpowers behavior the normal implementation path inside CPE.
-2. Accept multiple approved documents without compiling or interpreting them.
+2. Accept multiple caller-supplied documents without classifying, compiling,
+   linting, cross-validating, or interpreting them.
 3. Preserve one run, worktree, branch, and Codex root-controller session across
    process interruption.
 4. Prefer same-session resume for both supported Superpowers entry skills.
@@ -247,37 +252,39 @@ layer.
 
 ## 8. One Run, One Execution Contract, Multiple Documents
 
-One CPE run is not limited to one Markdown file. It represents one user-approved
-execution contract and may contain any number of documents.
+One CPE run is not limited to one Markdown file. It represents one
+user-approved execution contract and may contain any number of documents.
 
-Supported immutable input roles are:
+CPE accepts one repeatable `--document` option. It preserves only the global
+CLI declaration order. It does not ask the caller to classify a document as a
+specification, plan, context, incident, or authority because those labels would
+create a second semantic model beside Superpowers.
 
-- `spec`;
-- `plan`;
-- `context`;
-- `authority`.
-
-Each role is repeatable. The declared role and input order are external facts,
-not semantic instructions interpreted by CPE.
+Document approval, completeness, ordering meaning, cross-document consistency,
+and fitness for the selected Superpowers skill are caller-and-controller
+concerns. CPE does not pre-review them. A missing heading, broken Markdown
+link, contradictory statement, unfamiliar extension, or absent Task structure
+must reach the Superpowers controller unchanged rather than becoming a CPE
+preflight decision.
 
 Example:
 
 ```bash
 python3 scripts/cpe.py run \
-  --spec /abs/design-a.md \
-  --spec /abs/design-b.md \
-  --plan /abs/implementation-1.md \
-  --plan /abs/implementation-2.md \
-  --context /abs/incident-report.md \
-  --authority /abs/execution-contract.md \
+  --document /abs/design-a.md \
+  --document /abs/design-b.md \
+  --document /abs/implementation-1.md \
+  --document /abs/implementation-2.md \
+  --document /abs/incident-report.md \
+  --document /abs/execution-contract.md \
   --workspace /abs/repository \
   --superpowers-skill subagent-driven-development
 ```
 
 All documents go to one root controller in one immutable bundle. Superpowers
-decides how their contents relate and in what semantic order to execute them.
-CPE never advances a `current_plan_index` and never marks one input document
-complete.
+decides what each document means, how their contents relate, whether they
+require review, and in what semantic order to execute them. CPE never advances
+a `current_plan_index` and never marks one input document complete.
 
 ## 9. CLI Contract
 
@@ -291,10 +298,7 @@ inspect
 
 `run` accepts:
 
-- repeatable `--spec`;
-- repeatable `--plan`;
-- repeatable `--context`;
-- repeatable `--authority`;
+- repeatable required `--document`;
 - required `--workspace`;
 - required `--superpowers-skill`, with values:
   - `subagent-driven-development`;
@@ -330,8 +334,7 @@ CPE state shape, recovery rules, terminal rules, or artifact interpretation.
 
 For every input, CPE records:
 
-- role;
-- declaration order within the role;
+- global declaration order;
 - original absolute path;
 - private snapshot path;
 - SHA-256;
@@ -341,24 +344,41 @@ The snapshot name is deterministic and collision-resistant at the filename
 level:
 
 ```text
-<role>-<ordinal>-<original-basename>
+document-<ordinal>-<original-basename>
 ```
 
 For example:
 
 ```text
-plan-001-implementation.md
-plan-002-implementation.md
+document-001-implementation.md
+document-002-implementation.md
 ```
 
-The filename prefix reduces collisions in Superpowers plan-scoped workspace
-names without changing document bytes. CPE does not rewrite headings,
-references, or content.
+The filename prefix eliminates same-basename collisions without changing
+document bytes. CPE does not decode Markdown, inspect headings or links,
+rewrite references, infer document types, or compare documents with each
+other.
+
+The only input checks are mechanical durability checks:
+
+- at least one path was supplied;
+- each path is absolute;
+- each path can be opened without following a symbolic link;
+- the opened object is a regular file;
+- no two inputs resolve to the same file identity;
+- the exact bytes written to the private snapshot match the recorded digest
+  and length.
+
+CPE does not require UTF-8, a Markdown extension, a particular basename,
+recognizable Superpowers headings, or an internally consistent document set.
+If Superpowers cannot use a supplied document, that is controller-owned
+execution feedback, not a CPE document validator.
 
 Repository instructions such as `AGENTS.md` remain authoritative through the
 recorded base commit and live worktree. Explicit parent authority that is not
-already in the approved documents must be supplied through repeatable
-`--authority` inputs rather than reconstructed from chat history.
+already in the supplied documents must be supplied as another `--document`
+rather than reconstructed from chat history. CPE does not distinguish that
+authority document from any other input.
 
 ## 11. Run Artifacts
 
@@ -369,7 +389,7 @@ run-root/
   manifest.json
   state.json
   inputs/
-  receipts/
+  run.lock
   handoff.json        # only after successful handoff
 ```
 
@@ -424,7 +444,6 @@ Conceptual shape:
     "fresh_fallback_used": false
   },
   "active_process": {
-    "invocation_id": "opaque-id",
     "pid": 123,
     "process_group": 123
   },
@@ -437,9 +456,8 @@ Conceptual shape:
     "class": "interrupted",
     "exit_code": 1
   },
-  "resume_capsule_ref": null,
+  "resume_capsule": null,
   "blocker": null,
-  "handoff_ref": null,
   "updated_at": "RFC-3339"
 }
 ```
@@ -459,22 +477,11 @@ Allowed states are:
 There is no `checkpointed` state. A checkpoint is an optional controller hint,
 not a CPE workflow stage.
 
-### 11.3 Process receipts
-
-After each controller process exits, CPE may write one small immutable receipt
-containing only:
-
-- invocation identity;
-- whether it was initial, same-session resume, or fresh fallback;
-- session ID observed;
-- generation;
-- normalized provider/process outcome;
-- exit code;
-- before and after Git facts;
-- terminal-envelope digest when present.
-
-Receipts do not include task, review, verification, transcript, or product
-semantics.
+There is no per-invocation receipt directory. The last bounded process and Git
+facts needed for recovery live in `state.json`; the successful mechanical
+result lives in `handoff.json`. Historical execution meaning remains in the
+controller session, Superpowers artifacts, and Git rather than a parallel CPE
+event log.
 
 ## 12. Controller Launch Packet
 
@@ -513,8 +520,7 @@ Successful claim:
 ```json
 {
   "claim": "completed",
-  "head_commit": "40-hex",
-  "summary": "bounded child-attested summary"
+  "head_commit": "40-hex"
 }
 ```
 
@@ -524,7 +530,6 @@ Incomplete claim:
 {
   "claim": "interrupted",
   "head_commit": "40-hex",
-  "summary": "bounded child-attested summary",
   "resume_capsule": {
     "head_commit": "40-hex",
     "worktree_status_digest": "64-hex",
@@ -548,7 +553,7 @@ The envelope does not contain:
 - `current_task_id`.
 
 CPE validates structure, bounds, Git object shape, and relative-path safety. It
-does not validate the semantic truth of the summary or note.
+does not validate the semantic truth of the opaque note.
 
 ## 14. Opaque Resume Capsule
 
@@ -565,7 +570,7 @@ It may contain:
 CPE:
 
 - validates type, size, path containment, and digest;
-- stores the bytes privately;
+- stores the bounded object inline in private `state.json`;
 - does not parse tasks or rewrite the note;
 - does not use the capsule for a healthy same-session resume;
 - passes it only to the one permitted fresh controller.
@@ -580,7 +585,8 @@ revalidates them.
 
 ### 15.1 Initial run
 
-1. Validate immutable inputs and selected sandbox.
+1. Snapshot mechanically safe immutable inputs and validate the selected
+   sandbox.
 2. Resolve the source repository and base commit.
 3. Create a new branch/worktree or explicitly adopt an existing one.
 4. Write the immutable manifest and initial state.
@@ -605,9 +611,10 @@ The resume prompt does not reconstruct workflow progress. It points the same
 session at the same worktree and immutable contract and instructs it to
 continue from the actual Superpowers and Git state.
 
-One CLI invocation performs at most one automatic same-session retry. CPE never
-runs an unbounded internal resume loop. Later attempts require an explicit
-`resume` invocation.
+One ordinary CLI invocation launches one controller process. CPE has no
+automatic transport retry loop. A later attempt requires an explicit `resume`
+invocation; the sole exception is the one fresh fallback immediately following
+an explicit `session_unavailable` result from a same-session resume.
 
 ### 15.3 Fresh-controller fallback
 
@@ -635,22 +642,20 @@ It does not receive CPE-inferred task completion.
 
 ### 15.4 Repeated external failure
 
-Material progress for CPE recovery is limited to:
+CPE does not calculate semantic or heuristic progress. Task completion, review
+progress, test output, narrative claims, HEAD movement, and status-digest
+movement do not drive a retry policy.
 
-- observed HEAD change;
-- tracked worktree status-digest change;
-- successful controller-session acquisition;
-- successful local-handoff creation.
+Recovery is bounded structurally instead:
 
-Task completion, review progress, test output, or narrative claims are not CPE
-progress signals.
+- an ordinary CLI invocation launches one controller process;
+- a missing or corrupt session permits at most one fresh-controller fallback
+  for the run;
+- every later attempt requires an explicit `resume` invocation;
+- auth, credential, quota, and provider blockers remain normalized facts in
+  state and never trigger an inferred workaround.
 
-If the same normalized external-failure fingerprint repeats at the same Git
-facts twice, automatic recovery stops. The state becomes `blocked` or
-`interrupted` according to the external class.
-
-The fingerprint is built from normalized facts such as outcome class,
-operation, provider code, and resource. It is not a hash of raw error text.
+There is no failure-fingerprint circuit breaker or automatic strategy engine.
 
 ## 16. Process And Locking Model
 
@@ -829,7 +834,7 @@ CPE error classes remain external and small.
 | Class | Example | CPE action |
 | --- | --- | --- |
 | `interrupted` | signal or stopped process | preserve state; same-session resume |
-| `transport` | temporary provider transport failure | at most one automatic same-session retry |
+| `transport` | temporary provider transport failure | return `interrupted`; explicit resume only |
 | `session_unavailable` | explicit missing/corrupt session | one fresh fallback |
 | `auth` | authentication unavailable | `blocked`; no credential guessing |
 | `quota` | provider quota | `blocked`; no fallback |
@@ -854,8 +859,9 @@ Proposed production modules:
 - `scripts/cpe_runtime/controller.py` — Codex stream, session, process group;
 - `scripts/cpe_runtime/runtime.py` — run, resume, inspect, handoff transitions.
 
-The target is approximately 1,500 to 2,000 production Python lines, with no
-module larger than roughly 600 lines. The exact line count is not an acceptance
+The target is approximately 1,000 to 1,400 production Python lines, with a hard
+ceiling of 1,500 and no module larger than 450 lines without a concrete
+whole-diff-review justification. The exact line count is not an acceptance
 substitute; responsibility tests are authoritative.
 
 Modules and surfaces removed from the v3 production design include:
@@ -877,7 +883,7 @@ Existing filenames may be deleted rather than retained as compatibility shims.
 
 Deterministic tests cover only CPE-owned contracts:
 
-1. multiple immutable inputs by role and order;
+1. multiple immutable documents in one global order without content parsing;
 2. deterministic same-basename snapshot names;
 3. manifest immutability;
 4. atomic single-file state updates;
@@ -921,14 +927,16 @@ Superpowers tasks or reviews.
 
 The canary uses:
 
-- multiple design, plan, context, and authority documents;
+- multiple caller-supplied documents with repeated basenames and no CPE role
+  labels;
 - one root controller;
 - `subagent-driven-development`;
 - an interruption followed by same-session resume.
 
 Acceptance:
 
-- Superpowers owns its plan workspace and task/review semantics;
+- Superpowers owns document interpretation, its plan workspace, and task/review
+  semantics;
 - CPE state contains no task or review projection;
 - the same run, branch, worktree, and session are retained;
 - local handoff is `handed_off`;
@@ -958,7 +966,9 @@ The canary demonstrates:
   and Superpowers artifacts;
 - the new run has a distinct v3 identity without altering the legacy run.
 
-Canary receipts contain only run/session/process/Git/handoff facts.
+The opt-in test harness may write one bounded canary evidence file outside the
+CPE run root. It contains only run/session/process/Git/handoff facts and is not
+a production per-invocation receipt surface.
 
 ## 25. Change-Impact Canary Selection
 
@@ -980,12 +990,14 @@ analysis engine to optimize its own canaries.
 
 ## 26. Independent Review And Release Gate
 
-The v3 candidate receives a full BASE..HEAD review after all release canaries.
-The reviewer checks:
+The v3 candidate receives a full BASE..HEAD implementation review after all
+release canaries. This is a review of the CPE code and its ownership boundary,
+not a CPE review of caller-supplied Superpowers documents. The reviewer checks:
 
 - the ownership matrix in this design;
 - absence of task/review/verification authority;
-- multiple-document behavior without a plan queue;
+- multiple-document passthrough without roles, content validation, or a plan
+  queue;
 - same-session resume;
 - exactly one fresh fallback;
 - bounded workflow-neutral capsule;
@@ -1025,8 +1037,8 @@ ledger for its own implementation.
    source identity.
 2. **Explicit full access:** `danger-full-access` permits same-UID mutation
    outside the worktree and cannot be fully audited by CPE.
-3. **Provider truth:** CPE cannot prove that a controller's completion claim or
-   summary is honest.
+3. **Provider truth:** CPE cannot prove that a controller's completion claim is
+   honest.
 4. **Session API drift:** Codex JSONL and session-resume behavior may change.
 5. **No full transcript:** minimized private evidence limits some forensic
    debugging.
@@ -1070,7 +1082,8 @@ adoption retains user work without keeping migration in the core runtime.
 CPE v3 is ready to implement when the implementation plan preserves all of the
 following:
 
-1. One run represents one execution contract and accepts multiple documents.
+1. One run represents one execution contract and accepts multiple ordered
+   `--document` inputs without CPE classification or content review.
 2. One run has one worktree, branch, and root controller at a time.
 3. There is no CPE-owned plan queue or semantic progress model.
 4. Superpowers remains the only owner of task, TDD, review, fix, verification,
