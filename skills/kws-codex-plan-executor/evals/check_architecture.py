@@ -36,18 +36,18 @@ DELETED_MODULES = {
     "verification",
 }
 SEMANTIC_PATTERNS = {
-    "task_id": re.compile(r"task_id", re.IGNORECASE),
-    "completed_task": re.compile(r"completed_task", re.IGNORECASE),
-    "current_plan_index": re.compile(r"current_plan_index", re.IGNORECASE),
-    "fix_round": re.compile(r"fix_round", re.IGNORECASE),
-    "final_review": re.compile(r"final_review", re.IGNORECASE),
-    "finding": re.compile(r"finding", re.IGNORECASE),
-    "obligation": re.compile(r"obligation", re.IGNORECASE),
-    "quoted verification": re.compile(
-        r"(?P<quote>['\"])verification(?P=quote)",
+    "task_id": re.compile(r"task(?:_|-)?id", re.IGNORECASE),
+    "completed_task": re.compile(r"completed(?:_|-)?task", re.IGNORECASE),
+    "current_plan_index": re.compile(
+        r"current(?:_|-)?plan(?:_|-)?index",
         re.IGNORECASE,
     ),
-    "migrate-run": re.compile(r"migrate-run", re.IGNORECASE),
+    "fix_round": re.compile(r"fix(?:_|-)?round", re.IGNORECASE),
+    "final_review": re.compile(r"final(?:_|-)?review", re.IGNORECASE),
+    "finding": re.compile(r"finding", re.IGNORECASE),
+    "obligation": re.compile(r"obligation", re.IGNORECASE),
+    "verification": re.compile(r"verification", re.IGNORECASE),
+    "migrate_run": re.compile(r"migrate(?:_|-)?run", re.IGNORECASE),
 }
 PUBLIC_COMMANDS = {"run", "resume", "inspect"}
 CURRENT_PUBLIC_PHRASES = (
@@ -71,10 +71,15 @@ STALE_PUBLIC_PATTERNS = {
     "completed status": re.compile(r"`completed`", re.IGNORECASE),
     "checkpointed status": re.compile(r"`checkpointed`", re.IGNORECASE),
 }
-CPE_COMMAND = re.compile(
-    r"(?<![\w/])(?:(?:python3|python)\s+(?:\./)?scripts/cpe\.py|"
-    r"(?:\./)scripts/cpe\.py)\s+([a-z][a-z-]*)",
+PYTHON_CPE_COMMAND = re.compile(
+    r"(?<![\w/])(?:python3|python)[ \t]+"
+    r"(?:[^\s`'\"<>]+/)*scripts/cpe\.py[ \t]+([a-z][a-z-]*)",
     re.IGNORECASE,
+)
+DIRECT_CPE_COMMAND = re.compile(
+    r"(?:^[ \t]*(?:\$[ \t]*)?|(?<=`))"
+    r"(?:[^\s`'\"<>]+/)*scripts/cpe\.py[ \t]+([a-z][a-z-]*)",
+    re.IGNORECASE | re.MULTILINE,
 )
 PRODUCTION_LIMIT = 1500
 MODULE_LIMIT = 450
@@ -120,9 +125,11 @@ def imported_deleted_modules(tree: ast.AST) -> set[str]:
 
 
 def active_commands(document: Path) -> set[str]:
+    text = document.read_text(encoding="utf-8")
     return {
         command.casefold()
-        for command in CPE_COMMAND.findall(document.read_text(encoding="utf-8"))
+        for pattern in (PYTHON_CPE_COMMAND, DIRECT_CPE_COMMAND)
+        for command in pattern.findall(text)
     }
 
 
