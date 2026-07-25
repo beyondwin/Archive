@@ -504,26 +504,22 @@ class IsolationTests(unittest.TestCase):
     def test_claude_uses_empty_disposable_config_and_preserves_env_auth(self):
         with tempfile.TemporaryDirectory() as raw:
             isolated = Path(raw) / "isolated"
-            with mock.patch.object(
-                canary, "_claude_keychain_oauth_token"
-            ) as keychain:
-                env = canary.isolated_provider_environment(
-                    "claude",
-                    isolated,
-                    operator_home=Path(raw) / "operator",
-                    source_env={
-                        "PATH": "/usr/bin:/bin",
-                        "ANTHROPIC_API_KEY": "env-secret",
-                    },
-                )
+            env = canary.isolated_provider_environment(
+                "claude",
+                isolated,
+                operator_home=Path(raw) / "operator",
+                source_env={
+                    "PATH": "/usr/bin:/bin",
+                    "ANTHROPIC_API_KEY": "env-secret",
+                },
+            )
             config = isolated / ".claude"
             self.assertEqual(env["HOME"], str(isolated))
             self.assertEqual(env["CLAUDE_CONFIG_DIR"], str(config))
             self.assertEqual(env["ANTHROPIC_API_KEY"], "env-secret")
             self.assertEqual(list(config.iterdir()), [])
-            keychain.assert_not_called()
 
-    def test_claude_uses_keychain_oauth_and_bypasses_agentlens_shim(self):
+    def test_claude_bypasses_shim_without_promoting_host_login_to_auth(self):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             operator = root / "operator"
@@ -532,34 +528,57 @@ class IsolationTests(unittest.TestCase):
             source_path = os.pathsep.join(
                 (str(shim), "/opt/homebrew/bin", "/usr/bin")
             )
-            with mock.patch.object(
-                canary,
-                "_claude_keychain_oauth_token",
-                return_value="oauth-secret",
-            ) as keychain:
-                env = canary.isolated_provider_environment(
-                    "claude",
-                    isolated,
-                    operator_home=operator,
-                    source_env={
-                        "HOME": str(operator),
-                        "GITHUB_TOKEN": "unrelated-secret",
-                        "PATH": source_path,
-                        "USER": "operator",
-                    },
-                )
+            env = canary.isolated_provider_environment(
+                "claude",
+                isolated,
+                operator_home=operator,
+                source_env={
+                    "HOME": str(operator),
+                    "PATH": source_path,
+                    "USER": "operator",
+                },
+            )
             self.assertEqual(
                 env["PATH"],
                 os.pathsep.join(("/opt/homebrew/bin", "/usr/bin")),
             )
-            self.assertEqual(env["CLAUDE_CODE_OAUTH_TOKEN"], "oauth-secret")
             self.assertEqual(env["CLAUDE_CONFIG_DIR"], str(isolated / ".claude"))
-            keychain.assert_called_once()
-            self.assertEqual(
-                keychain.call_args.args[0]["HOME"],
-                str(operator),
+            with mock.patch.object(
+                canary,
+                "run_bounded",
+                side_effect=AssertionError("auth status must not be consulted"),
+            ):
+                self.assertFalse(canary.claude_explicit_auth_present(env))
+            self.assertTrue(
+                canary.claude_explicit_auth_present(
+                    {**env, "ANTHROPIC_API_KEY": "explicit-secret"}
+                )
             )
-            self.assertNotIn("GITHUB_TOKEN", keychain.call_args.args[0])
+
+    def test_live_runner_argv_authorizes_codex_full_access_only(self):
+        root = Path("/private/tmp/canary")
+        values = {
+            "workspace": root / "source",
+            "specs": (root / "spec.md",),
+            "plans": (root / "plan.md",),
+        }
+        codex = canary._runner_argv(
+            "codex",
+            Path("/runner/codex"),
+            "run",
+            **values,
+        )
+        claude = canary._runner_argv(
+            "claude",
+            Path("/runner/claude"),
+            "run",
+            **values,
+        )
+        self.assertIn(
+            ["--sandbox", "danger-full-access"],
+            [codex[index : index + 2] for index in range(len(codex) - 1)],
+        )
+        self.assertNotIn("--sandbox", claude)
 
     def test_claude_without_isolated_env_auth_blocks_before_provider_session(self):
         with (
@@ -574,7 +593,10 @@ class IsolationTests(unittest.TestCase):
                 return_value=("2.1.206 (Claude Code)", None),
             ),
             mock.patch.object(
-                canary, "claude_auth_available", return_value=False, create=True
+                canary,
+                "claude_explicit_auth_present",
+                return_value=False,
+                create=True,
             ),
             mock.patch.object(canary, "_create_repository") as create_repository,
             mock.patch.object(
@@ -628,7 +650,9 @@ class IsolationTests(unittest.TestCase):
                 "_provider_version",
                 return_value=("2.1.206 (Claude Code)", None),
             ),
-            mock.patch.object(canary, "claude_auth_available", return_value=False),
+            mock.patch.object(
+                canary, "claude_explicit_auth_present", return_value=False
+            ),
             mock.patch.object(canary, "_create_repository") as create_repository,
             mock.patch.object(
                 canary,
@@ -1585,7 +1609,7 @@ class SessionAndRunnerOutcomeTests(unittest.TestCase):
                 ),
             ),
             mock.patch.object(
-                canary, "claude_auth_available", return_value=True
+                canary, "claude_explicit_auth_present", return_value=True
             ),
             mock.patch.object(
                 canary, "_run_interrupted_once", side_effect=fake_cycle

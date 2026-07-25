@@ -871,40 +871,6 @@ def _without_agentlens_shims(path: str) -> str:
     return os.pathsep.join(retained)
 
 
-def _claude_keychain_oauth_token(env: Mapping[str, str]) -> str | None:
-    security = Path("/usr/bin/security")
-    if sys.platform != "darwin" or not security.is_file():
-        return None
-    result = run_bounded(
-        [
-            str(security),
-            "find-generic-password",
-            "-w",
-            "-s",
-            "Claude Code-credentials",
-        ],
-        cwd=REPO_ROOT,
-        timeout=10,
-        env=env,
-    )
-    if result.timed_out or result.returncode != 0:
-        return None
-    try:
-        payload = json.loads(result.stdout)
-    except (json.JSONDecodeError, UnicodeError):
-        return None
-    oauth = payload.get("claudeAiOauth") if isinstance(payload, Mapping) else None
-    token = oauth.get("accessToken") if isinstance(oauth, Mapping) else None
-    if (
-        not isinstance(token, str)
-        or not token
-        or len(token) > STREAM_LIMIT
-        or any(ord(character) < 32 or ord(character) == 127 for character in token)
-    ):
-        return None
-    return token
-
-
 def isolated_provider_environment(
     provider: str,
     isolated_home: Path,
@@ -916,13 +882,6 @@ def isolated_provider_environment(
         raise ValueError("unknown provider")
     operator = Path.home() if operator_home is None else operator_home
     env = dict(os.environ if source_env is None else source_env)
-    operator_env = {
-        key: env[key]
-        for key in ("LANG", "LC_ALL", "LC_CTYPE", "LOGNAME", "TMPDIR", "USER")
-        if isinstance(env.get(key), str)
-    }
-    operator_env["HOME"] = str(operator)
-    operator_env["PATH"] = "/usr/bin:/bin"
     effective_codex_home = env.get("CODEX_HOME")
     isolated_home.mkdir(mode=0o700, parents=True, exist_ok=True)
     isolated_home.chmod(0o700)
@@ -953,43 +912,18 @@ def isolated_provider_environment(
         config = isolated_home / ".claude"
         config.mkdir(mode=0o700)
         env["CLAUDE_CONFIG_DIR"] = str(config)
-        if not any(
-            isinstance(env.get(key), str) and bool(env[key].strip())
-            for key in (
-                "ANTHROPIC_API_KEY",
-                "ANTHROPIC_AUTH_TOKEN",
-                "CLAUDE_CODE_OAUTH_TOKEN",
-            )
-        ):
-            token = _claude_keychain_oauth_token(operator_env)
-            if token is not None:
-                env["CLAUDE_CODE_OAUTH_TOKEN"] = token
     return env
 
 
-def claude_auth_available(root: Path, env: Mapping[str, str]) -> bool:
-    if any(
+def claude_explicit_auth_present(env: Mapping[str, str]) -> bool:
+    return any(
         isinstance(env.get(key), str) and bool(env[key].strip())
         for key in (
             "ANTHROPIC_API_KEY",
             "ANTHROPIC_AUTH_TOKEN",
             "CLAUDE_CODE_OAUTH_TOKEN",
         )
-    ):
-        return True
-    status = run_bounded(
-        ["claude", "auth", "status"],
-        cwd=root,
-        timeout=20,
-        env=env,
     )
-    if status.timed_out or status.returncode != 0:
-        return False
-    try:
-        payload = json.loads(status.stdout)
-    except (json.JSONDecodeError, UnicodeError):
-        return False
-    return isinstance(payload, Mapping) and payload.get("loggedIn") is True
 
 
 def _probe_codex_session(
@@ -1168,9 +1102,7 @@ def probe_session(provider: str) -> dict[str, object]:
                 elapsed=time.monotonic() - started,
                 reason_code=unavailable,
             )
-        if provider == "claude" and not claude_auth_available(
-            Path(raw), provider_env
-        ):
+        if provider == "claude" and not claude_explicit_auth_present(provider_env):
             return normalized_result(
                 provider=provider,
                 mode="session",
@@ -2173,7 +2105,7 @@ def probe_runner(
                 elapsed=time.monotonic() - started,
                 reason_code=unavailable,
             )
-        if provider == "claude" and not claude_auth_available(root, runner_env):
+        if provider == "claude" and not claude_explicit_auth_present(runner_env):
             return normalized_result(
                 provider=provider,
                 mode=scenario_mode,
@@ -2192,12 +2124,14 @@ def probe_runner(
                 REPO_ROOT
                 / f"skills/kws-{provider}-plan-runner/scripts/runner"
             )
-            argv = [str(runner), "run"]
-            for spec in specs:
-                argv.extend(("--spec", str(spec)))
-            for plan in plans:
-                argv.extend(("--plan", str(plan)))
-            argv.extend(("--workspace", str(workspace)))
+            argv = _runner_argv(
+                provider,
+                runner,
+                "run",
+                workspace=workspace,
+                specs=specs,
+                plans=plans,
+            )
             command = run_bounded(
                 argv,
                 cwd=root,
@@ -2423,6 +2357,8 @@ def _runner_argv(
         if workspace is None:
             raise CanaryError("interruption_scenario_invalid")
         argv.extend(("--workspace", str(workspace)))
+        if provider == "codex":
+            argv.extend(("--sandbox", "danger-full-access"))
     elif command == "resume":
         if not isinstance(run_id, str):
             raise CanaryError("interruption_scenario_invalid")
@@ -2871,7 +2807,7 @@ def _probe_interruption_live(provider: str) -> dict[str, object]:
                 raise CanaryError(unavailable)
             if (
                 provider == "claude"
-                and not claude_auth_available(primary, primary_env)
+                and not claude_explicit_auth_present(primary_env)
             ):
                 raise CanaryError("provider_auth_blocked")
             runner = (
