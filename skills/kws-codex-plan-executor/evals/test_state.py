@@ -104,6 +104,12 @@ class StateContractTests(unittest.TestCase):
             state=self.state(),
         )
 
+    def replace_with_external_byte_identical_symlink(self, path: Path) -> None:
+        external = self.base / f"external-{path.name}"
+        external.write_bytes(path.read_bytes())
+        path.unlink()
+        path.symlink_to(external)
+
     def valid_state_payload(self) -> dict[str, object]:
         return self.state().to_payload()
 
@@ -195,6 +201,20 @@ class StateContractTests(unittest.TestCase):
         store.manifest_path.chmod(0o600)
         store.manifest_path.write_text(json.dumps(payload), encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "run identity"):
+            RunStore.open(self.codex_home, self.run_id)
+
+    def test_open_rejects_external_byte_identical_manifest_symlink(self) -> None:
+        store = self.create_store()
+        self.replace_with_external_byte_identical_symlink(store.manifest_path)
+
+        with self.assertRaisesRegex(ValueError, "run state is unavailable"):
+            RunStore.open(self.codex_home, self.run_id)
+
+    def test_open_rejects_external_byte_identical_state_symlink(self) -> None:
+        store = self.create_store()
+        self.replace_with_external_byte_identical_symlink(store.state_path)
+
+        with self.assertRaisesRegex(ValueError, "run state is unavailable"):
             RunStore.open(self.codex_home, self.run_id)
 
     def test_manifest_validator_rejects_missing_and_additional_fields(self) -> None:
@@ -304,6 +324,30 @@ class StateContractTests(unittest.TestCase):
             with self.assertRaises(BlockingIOError):
                 with store.lock():
                     pass
+
+    def test_failed_run_lock_contender_closes_its_descriptor(self) -> None:
+        store = self.create_store()
+        contender = store.lock()
+        contender_descriptor: int | None = None
+        try:
+            with store.lock():
+                contender_descriptor = os.open(os.devnull, os.O_RDONLY)
+                os.close(contender_descriptor)
+                with self.assertRaises(BlockingIOError):
+                    contender.__enter__()
+
+            self.assertIsNone(contender.descriptor)
+            with self.assertRaisesRegex(RuntimeError, "run lock is not held"):
+                contender.fileno()
+            with self.assertRaises(OSError):
+                os.fstat(contender_descriptor)
+        finally:
+            for descriptor in {contender_descriptor, contender.descriptor} - {None}:
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
+            contender.descriptor = None
 
     def test_resume_capsule_bounds_are_structural_only(self) -> None:
         valid = {
