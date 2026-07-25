@@ -74,6 +74,7 @@ AMBIENT_GIT_KEYS = frozenset(
         "GIT_QUARANTINE_PATH",
         "GIT_REPLACE_REF_BASE",
         "GIT_SHALLOW_FILE",
+        "GIT_TEMPLATE_DIR",
         "GIT_WORK_TREE",
     )
 )
@@ -183,12 +184,33 @@ def validate_external_contract(contract: Mapping[str, Any]) -> None:
         raise ParityFailure("external parity field drift")
 
 
-def _init_source(root: Path, env: Mapping[str, str]) -> Path:
+def _prepare_empty_git_template(
+    root: Path,
+    environment: dict[str, str],
+) -> Path:
+    template = root / "empty-git-template"
+    template.mkdir(mode=0o700)
+    template.chmod(0o700)
+    environment["GIT_TEMPLATE_DIR"] = str(template)
+    return template
+
+
+def _init_source(
+    root: Path,
+    env: Mapping[str, str],
+    template: Path,
+) -> Path:
     source = root / "source"
     source.mkdir(parents=True)
     _checked_git(
         source,
-        ("init", "--object-format=sha1", "-b", "main"),
+        (
+            "init",
+            f"--template={template}",
+            "--object-format=sha1",
+            "-b",
+            "main",
+        ),
         env,
     )
     _checked_git(
@@ -552,6 +574,7 @@ def run_provider(
     home.mkdir(parents=True)
     env = _sealed_git_environment(os.environ)
     env["HOME"] = str(home)
+    empty_git_template = _prepare_empty_git_template(root, env)
     if provider == "codex":
         _prepare_fake_codex_environment(root, env)
     # Keep runtime discovery read-only while isolating every provider HOME.
@@ -571,7 +594,7 @@ def run_provider(
     env["PLAN_RUNNER_FAKE_LOG"] = str(log_path)
     env["FAKE_CODEX_LOG"] = str(log_path)
     env["FAKE_CLAUDE_LOG"] = str(log_path)
-    source = _init_source(root, env)
+    source = _init_source(root, env, empty_git_template)
     specs, plans = _write_inputs(root)
     runner = PROVIDERS[provider]["runner"]
     argv = [
