@@ -179,6 +179,33 @@ def _directory_identity(path: Path) -> tuple[int, int] | None:
     return metadata.st_dev, metadata.st_ino
 
 
+def _cleanup_claimed_worktree(
+    repository: Path,
+    *,
+    worktree: Path,
+    branch: str,
+    path_claimed: bool,
+) -> None:
+    """Clean atomic claims with non-force native operations or fail closed."""
+
+    if path_claimed:
+        try:
+            _git(repository, "worktree", "remove", str(worktree))
+        except (OSError, subprocess.CalledProcessError):
+            try:
+                worktree.rmdir()
+            except OSError as directory_error:
+                raise RuntimeError(
+                    "claimed Git worktree cleanup failed; artifacts were preserved"
+                ) from directory_error
+    try:
+        _git(repository, "branch", "-d", branch)
+    except (OSError, subprocess.CalledProcessError) as branch_error:
+        raise RuntimeError(
+            "claimed Git branch cleanup failed; branch was preserved"
+        ) from branch_error
+
+
 def create_worktree(
     repository: Path,
     *,
@@ -201,16 +228,27 @@ def create_worktree(
     branch_ref = f"refs/heads/{branch}"
     worktree = (root / run_id).resolve()
     _git(source, "update-ref", "--no-deref", branch_ref, base, _ZERO_OID)
-    worktree.mkdir(mode=0o700)
-    if _directory_identity(worktree) is None:
-        raise ValueError("worktree path claim is invalid")
-    _git(
-        source,
-        "worktree",
-        "add",
-        str(worktree),
-        branch,
-    )
+    path_claimed = False
+    try:
+        worktree.mkdir(mode=0o700)
+        path_claimed = True
+        if _directory_identity(worktree) is None:
+            raise ValueError("worktree path claim is invalid")
+        _git(
+            source,
+            "worktree",
+            "add",
+            str(worktree),
+            branch,
+        )
+    except Exception:
+        _cleanup_claimed_worktree(
+            source,
+            worktree=worktree,
+            branch=branch,
+            path_claimed=path_claimed,
+        )
+        raise
     return WorktreeAssignment(
         repository=source,
         worktree=worktree,
