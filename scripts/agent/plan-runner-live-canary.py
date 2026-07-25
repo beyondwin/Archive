@@ -34,6 +34,7 @@ RESULT_LIMIT = 2_048
 STREAM_LIMIT = 1_048_576
 VERSION_LIMIT = 160
 COMMAND_DEADLINE_SECONDS = 600.0
+INTERRUPTION_BOUNDARY_DEADLINE_SECONDS = 1_800.0
 RUNNER_DEADLINE_SECONDS = 7_200.0
 TERM_GRACE_SECONDS = 1.0
 GIT_ENV = {
@@ -2468,7 +2469,7 @@ def _interruption_boundary(
     controller: subprocess.Popen[str],
     observed_groups: set[int],
 ) -> tuple[Path, dict[str, Any], Path, int]:
-    deadline = time.monotonic() + COMMAND_DEADLINE_SECONDS
+    deadline = time.monotonic() + INTERRUPTION_BOUNDARY_DEADLINE_SECONDS
     while time.monotonic() < deadline:
         if controller.poll() is not None:
             raise CanaryError("interruption_boundary_not_reached")
