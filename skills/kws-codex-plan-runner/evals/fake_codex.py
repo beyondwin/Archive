@@ -225,23 +225,41 @@ def _generic_result(packet: dict[str, object], action: str) -> dict[str, object]
             "status": "blocked",
             "head_commit": head,
             "summary": "external authority is required",
-            "task_ledger": packet["task_ledger"],
-            "open_obligation_ids": [],
-            "failure_signature": None,
-            "strategy_note": None,
+            "verification_set_digest": None,
             "blocker": {
                 "kind": "external_authority_required",
                 "detail": "provider-neutral parity blocker",
             },
         }
+    verification = {
+        "kind": "commands",
+        "candidate_head": head,
+        "commands": [{
+            "command_id": f"handoff-{packet['current_plan']['index']}",
+            "command_role": "handoff",
+            "argv": ["/usr/bin/true"],
+            "cwd": ".",
+            "input_digest": "a" * 64,
+            "deadline_seconds": 10,
+        }],
+    }
+    declared = _helper_call(packet, "declare_verification", {
+        "candidate_head": head,
+        "plan_index": packet["current_plan"]["index"],
+        "verification": verification,
+        "prior_set_digests": packet.get("prior_verification_sets", []),
+        "is_final_plan": packet.get("is_final_plan", False),
+    })
+    digest = declared["artifact"]["digest"]
+    _helper_call(packet, "run_verification", {
+        "candidate_head": head, "set_digest": digest, "command_index": 0,
+        "deadline_seconds": 10,
+    })
     return {
         "status": "implemented",
         "head_commit": head,
         "summary": "provider-neutral implementation",
-        "task_ledger": packet["task_ledger"],
-        "open_obligation_ids": [],
-        "failure_signature": None,
-        "strategy_note": None,
+        "verification_set_digest": digest,
         "blocker": None,
     }
 

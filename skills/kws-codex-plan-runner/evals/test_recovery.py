@@ -251,6 +251,27 @@ class RecoveryPolicyTest(unittest.TestCase):
         with self.assertRaises(dataclasses.FrozenInstanceError):
             decision.action = "changed"
 
+    def test_fixed_resume_then_fresh_then_exhaustion(self):
+        first = self.policy.decide(state(), outcome())
+        self.assertEqual(first.session_action, "explicit_resume")
+        entry = {
+            "failure_signature": first.failure_signature,
+            "strategy_note_digest": strategy_note_digest(outcome()["strategy_note"]),
+        }
+        second = self.policy.decide(
+            state(resume_failed=True, failure_sequence=(entry,)),
+            outcome(),
+        )
+        self.assertEqual(second.session_action, "fresh_session")
+        third = self.policy.decide(
+            state(
+                resume_failed=True,
+                failure_sequence=({**entry, "fresh_session_attempted": True},),
+            ),
+            outcome(),
+        )
+        self.assertEqual((third.action, third.run_status), ("fail", "failed"))
+
     def test_live_controller_recovers_while_absent_controller_is_resumable(self):
         live = self.policy.decide(state(), outcome())
         self.assertEqual((live.action, live.run_status), ("recover", "recovering"))

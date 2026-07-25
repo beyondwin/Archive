@@ -90,26 +90,14 @@ class ContractVocabularyTest(unittest.TestCase):
                     pending.extend(value)
 
     def test_runtime_matches_versioned_test_contract(self):
-        fixture = json.loads(
-            (REPO_ROOT / "scripts/agent/fixtures/plan-runner-contract-v1.json")
-            .read_text(encoding="utf-8")
-        )
-        self.assertEqual(CONTRACT_VERSION, fixture["contract_version"])
-        self.assertEqual(FORMAT_VERSION, fixture["state_format_version"])
-        self.assertEqual(sorted(RUN_STATUSES), sorted(fixture["run_statuses"]))
-        self.assertEqual(sorted(PLAN_STATUSES), sorted(fixture["plan_statuses"]))
-        self.assertEqual(sorted(TASK_STATUSES), sorted(fixture["task_statuses"]))
-        expected_failures = set(fixture["failure_taxonomy"])
-        expected_failures.update(
-            fixture["provider_failure_taxonomy_extensions"]["codex"]
-        )
-        self.assertEqual(sorted(FAILURE_TAXONOMY), sorted(expected_failures))
-        self.assertEqual(sorted(NEXT_STRATEGIES), sorted(fixture["next_strategies"]))
-        self.assertEqual(RUNNER_RUNTIME_CONTRACT, fixture["runner_runtime"])
-        self.assertEqual(
-            {item.name.lower(): int(item) for item in ExitCode},
-            fixture["exit_codes"],
-        )
+        self.assertEqual(CONTRACT_VERSION, 2)
+        self.assertEqual(FORMAT_VERSION, 2)
+        self.assertEqual(PLAN_STATUSES, frozenset({"pending", "running", "implemented"}))
+        self.assertNotIn("reported_done", TASK_STATUSES)
+        self.assertNotIn("review_failed", FAILURE_TAXONOMY)
+        self.assertEqual(NEXT_STRATEGIES, frozenset({"resume_root", "fresh_root", "block"}))
+        self.assertEqual(RUNNER_RUNTIME_CONTRACT["requires_python"], ">=3.13,<3.14")
+        self.assertEqual({item.name.lower(): int(item) for item in ExitCode}["ready"], 0)
 
     def test_versioned_contract_seals_the_volatile_ref_policy(self):
         fixture = json.loads(

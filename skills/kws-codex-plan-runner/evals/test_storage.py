@@ -109,11 +109,17 @@ class StateStoreTest(unittest.TestCase):
         self.assertEqual(state["runner_runtime"]["python_version"], "3.13.14")
         self.assertEqual(
             [item["sha256"] for item in specs],
-            [
-                hashlib.sha256(b"spec b\n").hexdigest(),
-                hashlib.sha256(b"spec a\n").hexdigest(),
-            ],
+            [hashlib.sha256(b"spec b\n").hexdigest(), hashlib.sha256(b"spec a\n").hexdigest()],
         )
+
+    def test_version_two_state_contains_no_superpowers_workflow_state(self):
+        state = self.create_store().snapshot()
+        self.assertEqual(state["format_version"], 2)
+        self.assertEqual(state["contract_version"], 2)
+        self.assertNotIn("task_ledger", state)
+        self.assertNotIn("finalization", state)
+        for plan in state["plans"]:
+            self.assertEqual(plan["handoff_digest"], None)
 
     def test_reopen_uses_immutable_snapshots_after_sources_change_or_disappear(self):
         modified = self.create_store(self.root / "state" / "modified")

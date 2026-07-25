@@ -146,6 +146,13 @@ class CodexProviderTest(unittest.TestCase):
     def record(self):
         return json.loads(self.log.read_text(encoding="utf-8").splitlines()[-1])
 
+    def test_private_sdd_layout_is_not_capability_contract(self):
+        for relative in SDD_RELATIVE_PATHS[4:]:
+            (self.codex_home / relative).unlink()
+        outcome = self.launch("initial")
+        self.assertEqual(outcome.kind, "implemented")
+
+
     def test_builds_exact_initial_argv_without_implicit_session_flags(self):
         argv = self.adapter().build_argv(self.request())
         self.assertEqual(

@@ -120,7 +120,7 @@ _RECOGNIZED_ERROR_CODES = (
     | _TRANSPORT_CODES
     | frozenset({"host_permission_blocked", "sandbox_capability_blocked"})
 )
-_RESULT_STATUSES = frozenset({"implemented", "blocked", "failed", "reviewed"})
+_RESULT_STATUSES = frozenset({"implemented", "blocked"})
 _SUPPORTED_ENV_AUTH_NAMES = frozenset({"OPENAI_API_KEY"})
 _MAX_AUTH_FILE_BYTES = 1_048_576
 _MAX_ERROR_MESSAGE_CHARS = 4_096
@@ -140,10 +140,6 @@ _REQUIRED_SDD_PATHS = (
     Path("skills/subagent-driven-development/scripts/sdd-workspace"),
     Path("skills/subagent-driven-development/scripts/task-brief"),
     Path("skills/subagent-driven-development/scripts/review-package"),
-    Path("skills/subagent-driven-development/implementer-prompt.md"),
-    Path("skills/subagent-driven-development/task-reviewer-prompt.md"),
-    Path("skills/subagent-driven-development/re-review-prompt.md"),
-    Path("skills/requesting-code-review/code-reviewer.md"),
 )
 
 
