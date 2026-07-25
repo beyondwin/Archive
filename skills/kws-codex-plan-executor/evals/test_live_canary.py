@@ -10,6 +10,33 @@ from evals import live_canary
 
 
 class LiveCanaryDiagnosticTests(unittest.TestCase):
+    def test_prefixed_environment_assignments_are_redacted(self) -> None:
+        output = (
+            b"OPENAI_API_KEY=plain-secret-value-123456 "
+            b"GITHUB_TOKEN=ghp_live-secret-value-987654\n"
+        )
+
+        message = live_canary.diagnostic_stream("stdout", output)
+
+        self.assertNotIn("plain-secret-value-123456", message)
+        self.assertNotIn("ghp_live-secret-value-987654", message)
+        self.assertEqual(message.count("[REDACTED]"), 2)
+
+    def test_secret_starting_before_diagnostic_tail_has_no_visible_suffix(
+        self,
+    ) -> None:
+        secret_suffix = "boundary-secret-suffix-987654"
+        output = (
+            b"provider-error "
+            + ("sk-" + "A" * 220 + secret_suffix).encode("ascii")
+            + b"\n"
+        )
+
+        message = live_canary.diagnostic_stream("stderr", output)
+
+        self.assertNotIn(secret_suffix, message)
+        self.assertIn("[REDACTED]", message)
+
     def test_unexpected_exit_surfaces_bounded_redacted_process_evidence(self) -> None:
         stdout = (
             b"X" * 2_000
