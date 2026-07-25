@@ -161,14 +161,16 @@ requires the extra evidence system.
 4. Prefer same-session resume for both supported Superpowers entry skills.
 5. Permit one fresh-controller fallback only for proven missing or corrupt
    sessions.
-6. Preserve bounded, workflow-neutral recovery facts without a task ledger.
-7. Produce a truthful local Git handoff without claiming engineering
+6. Seal and inject one valid Git author/committer identity without copying a
+   general Git configuration.
+7. Preserve bounded, workflow-neutral recovery facts without a task ledger.
+8. Produce a truthful local Git handoff without claiming engineering
    completion.
-8. Default to `workspace-write`; make `danger-full-access` explicit and
+9. Default to `workspace-write`; make `danger-full-access` explicit and
    immutable.
-9. Preserve legacy artifacts and recovery worktrees in place without
+10. Preserve legacy artifacts and recovery worktrees in place without
    migration.
-10. Make the production runtime and deterministic test surface small enough to
+11. Make the production runtime and deterministic test surface small enough to
     audit as one mechanical boundary.
 
 ## 5. Non-Goals
@@ -228,6 +230,7 @@ layer.
 | Immutable document bytes | Owns | Reads | Owns for its runs |
 | One CPE run ID | Owns | Observes | Does not nest |
 | CPE worktree and branch | Owns identity | Mutates through implementation | Does not nest |
+| Git author/committer identity | Seals and injects | Uses | Owns for its runs |
 | Codex process/session | Owns | Runs inside | Owns its own provider session |
 | Task decomposition | Must not own | Owns | Must not own |
 | SDD `progress.md` | Must not read or write | Owns | Must not parse |
@@ -297,6 +300,13 @@ inspect
 - optional `--sandbox`, defaulting to `workspace-write`;
 - optional explicit `--adopt-worktree`;
 - required `--base` when adopting an existing worktree.
+
+At run creation, CPE resolves one Git author and committer identity from the
+source repository's effective Git configuration. Missing or malformed identity
+is a pre-execution blocker. CPE records the private identity in the immutable
+manifest and injects only the required `GIT_AUTHOR_*` and `GIT_COMMITTER_*`
+variables into the controller process. It does not copy the user's complete
+Git configuration.
 
 `resume` accepts one run ID. It does not accept a different sandbox, document
 bundle, worktree, base, or entry skill.
@@ -387,7 +397,9 @@ verification cache.
 - worktree;
 - immutable input records;
 - selected Superpowers skill;
+- sealed Git author/committer identity;
 - sandbox mode;
+- noninteractive approval policy;
 - integration policy;
 - remote-action policy;
 - creation time.
@@ -469,10 +481,11 @@ The controller packet contains:
 1. the immutable document manifest and snapshot paths;
 2. the assigned worktree and base commit;
 3. the selected Superpowers entry skill;
-4. the local-only integration and remote-action policy;
-5. the instruction to read repository `AGENTS.md`;
-6. the instruction to use Superpowers and Git as semantic recovery sources;
-7. the minimal terminal-envelope contract.
+4. the sealed Git identity supplied through process environment;
+5. the local-only integration and remote-action policy;
+6. the instruction to read repository `AGENTS.md`;
+7. the instruction to use Superpowers and Git as semantic recovery sources;
+8. the minimal terminal-envelope contract.
 
 The packet does not restate:
 
@@ -654,6 +667,13 @@ Provider output is consumed as a stream. CPE extracts only the session ID,
 normalized process/provider facts, and terminal envelope. It does not persist
 a full raw transcript by default.
 
+Initial, resumed, and fallback controllers use the same noninteractive Codex
+profile, selected sandbox, and approval policy `never`. The controller uses the
+active installed Superpowers skills; CPE does not create a private skill copy
+or an isolated home that loses provider-session continuity. A command requiring
+authority outside the immutable sandbox fails rather than prompting for
+interactive escalation.
+
 This removes the need for child-published result paths, reserved result files,
 held output descriptors, hard-link no-clobber publication, or a result
 publication journal.
@@ -740,6 +760,11 @@ at run creation and becomes immutable.
 CPE never upgrades permissions during resume or fallback. If the immutable
 sandbox cannot perform the approved work, CPE records a bounded blocker rather
 than bypassing the boundary.
+
+All controller launches use noninteractive approval policy `never`. This is
+separate from sandbox authority: `never` prevents an unattended controller
+from waiting for an approval prompt, while the sandbox still determines which
+operations are permitted.
 
 ### 19.2 Private artifacts
 
@@ -859,15 +884,17 @@ Deterministic tests cover only CPE-owned contracts:
 7. lock inheritance and concurrent-resume refusal;
 8. process-group interruption;
 9. immediate session-ID persistence;
-10. same-session resume;
-11. one fallback only for explicit missing/corrupt session;
-12. no fallback for auth, quota, generic nonzero, timeout, or invalid envelope;
-13. bounded resume capsule;
-14. immutable sandbox configuration;
-15. HEAD equality and ancestry;
-16. tracked-clean handoff;
-17. legacy read-only detection and byte preservation;
-18. truthful `handed_off` output.
+10. Git identity capture, private sealing, and process injection;
+11. missing Git identity as a pre-execution blocker;
+12. same-session resume;
+13. one fallback only for explicit missing/corrupt session;
+14. no fallback for auth, quota, generic nonzero, timeout, or invalid envelope;
+15. bounded resume capsule;
+16. immutable sandbox and noninteractive approval configuration;
+17. HEAD equality and ancestry;
+18. tracked-clean handoff;
+19. legacy read-only detection and byte preservation;
+20. truthful `handed_off` output.
 
 Architecture tests reject reintroduction of semantic state fields or commands,
 including:
@@ -1001,11 +1028,13 @@ ledger for its own implementation.
 4. **Session API drift:** Codex JSONL and session-resume behavior may change.
 5. **No full transcript:** minimized private evidence limits some forensic
    debugging.
-6. **POSIX-only:** lock inheritance and process groups do not provide Windows
+6. **Git identity scope:** a sealed process identity does not reproduce every
+   repository-local signing, credential, or commit-hook configuration.
+7. **POSIX-only:** lock inheritance and process groups do not provide Windows
    support.
-7. **Legacy interpretation:** preserved legacy artifacts may require manual
+8. **Legacy interpretation:** preserved legacy artifacts may require manual
    analysis because v3 intentionally does not parse their semantics.
-8. **Dirty adoption:** an adopted worktree may contain incomplete or unrelated
+9. **Dirty adoption:** an adopted worktree may contain incomplete or unrelated
    work, and an unobserved legacy controller could still be live; the operator,
    controller, and approved documents must resolve those risks.
 
@@ -1050,14 +1079,16 @@ following:
 7. The fallback preserves run ID, worktree, branch, inputs, base, HEAD, and
    bounded capsule facts.
 8. `workspace-write` is the default and full access is explicit.
-9. Success is `handed_off`, not `completed`.
-10. The handoff contains only mechanical local facts and child-attested claim.
-11. Legacy format-3/4 artifacts remain byte-for-byte untouched.
-12. The current recovery branch and Fix Round 5 WIP remain unmerged forensic
+9. Git author/committer identity is valid, private, immutable, and consistent
+   across initial, resumed, and fallback controllers.
+10. Success is `handed_off`, not `completed`.
+11. The handoff contains only mechanical local facts and child-attested claim.
+12. Legacy format-3/4 artifacts remain byte-for-byte untouched.
+13. The current recovery branch and Fix Round 5 WIP remain unmerged forensic
     evidence.
-13. The production runtime contains no migration, task, review, finding,
+14. The production runtime contains no migration, task, review, finding,
     obligation, or verification authority.
-14. All deterministic contracts and three release canaries pass.
-15. Independent full-diff review reports Critical 0 and Important 0.
-16. The implementation and local merge perform no push, PR, tag, publish,
+15. All deterministic contracts and three release canaries pass.
+16. Independent full-diff review reports Critical 0 and Important 0.
+17. The implementation and local merge perform no push, PR, tag, publish,
     release, or deploy.
