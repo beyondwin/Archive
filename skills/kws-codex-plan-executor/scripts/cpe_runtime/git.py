@@ -7,7 +7,6 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import stat
 import subprocess
 from dataclasses import dataclass
@@ -17,6 +16,7 @@ from .state import RUN_ID, SHA40, GitIdentity, RunStore
 
 
 _IDENT = re.compile(r"^(.+) <([^<>]+)> [0-9]+ [+-][0-9]{4}$")
+_ZERO_OID = "0" * 40
 
 
 @dataclass(frozen=True)
@@ -169,44 +169,58 @@ def require_ancestor(worktree: Path, base: str, head: str) -> None:
         raise ValueError("Git ancestry is invalid") from exc
 
 
-def _branch_exists(repository: Path, branch: str) -> bool:
+def _directory_identity(path: Path) -> tuple[int, int] | None:
     try:
-        _git(repository, "show-ref", "--verify", "--quiet", f"refs/heads/{branch}")
-    except subprocess.CalledProcessError as exc:
-        if exc.returncode == 1:
-            return False
-        raise
-    return True
+        metadata = path.lstat()
+    except OSError:
+        return None
+    if not stat.S_ISDIR(metadata.st_mode):
+        return None
+    return metadata.st_dev, metadata.st_ino
 
 
-def _cleanup_partial_worktree(
+def _branch_is_checked_out(repository: Path, branch_ref: str) -> bool:
+    try:
+        listing = _git(repository, "worktree", "list", "--porcelain")
+    except (OSError, subprocess.CalledProcessError):
+        return True
+    return any(line == f"branch {branch_ref}" for line in listing.splitlines())
+
+
+def _delete_owned_branch(repository: Path, branch_ref: str, base: str) -> None:
+    if _branch_is_checked_out(repository, branch_ref):
+        return
+    try:
+        _git(repository, "update-ref", "--no-deref", "-d", branch_ref, base)
+    except (OSError, subprocess.CalledProcessError):
+        pass
+
+
+def _cleanup_claimed_worktree(
     repository: Path,
     *,
     worktree: Path,
-    branch: str,
+    directory_identity: tuple[int, int] | None,
+    branch_ref: str,
     base: str,
 ) -> None:
-    """Best-effort cleanup limited to identities absent before this call."""
+    """Best-effort cleanup only while this call's atomic claims still match."""
 
-    try:
-        _git(repository, "worktree", "remove", "--force", str(worktree))
-    except (OSError, subprocess.CalledProcessError):
-        if worktree.exists() and not worktree.is_symlink():
-            shutil.rmtree(worktree)
-    try:
-        branch_commit = _git(
-            repository,
-            "rev-parse",
-            "--verify",
-            f"refs/heads/{branch}^{{commit}}",
-        )
-    except (OSError, subprocess.CalledProcessError):
+    if directory_identity is None:
+        _delete_owned_branch(repository, branch_ref, base)
         return
-    if branch_commit == base:
+    if _directory_identity(worktree) != directory_identity:
+        return
+    try:
+        _git(repository, "worktree", "remove", str(worktree))
+    except (OSError, subprocess.CalledProcessError):
         try:
-            _git(repository, "branch", "-D", branch)
-        except (OSError, subprocess.CalledProcessError):
+            worktree.rmdir()
+        except OSError:
             pass
+    if _directory_identity(worktree) not in (None, directory_identity):
+        return
+    _delete_owned_branch(repository, branch_ref, base)
 
 
 def create_worktree(
@@ -228,26 +242,28 @@ def create_worktree(
     root = root.resolve()
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     branch = f"codex/{run_id}"
+    branch_ref = f"refs/heads/{branch}"
     worktree = (root / run_id).resolve()
-    if worktree.exists() or worktree.is_symlink():
-        raise ValueError("worktree path already exists")
-    if _branch_exists(source, branch):
-        raise ValueError("worktree branch already exists")
+    _git(source, "update-ref", "--no-deref", branch_ref, base, _ZERO_OID)
+    claimed_directory: tuple[int, int] | None = None
     try:
+        worktree.mkdir(mode=0o700)
+        claimed_directory = _directory_identity(worktree)
+        if claimed_directory is None:
+            raise ValueError("worktree path claim is invalid")
         _git(
             source,
             "worktree",
             "add",
-            "-b",
-            branch,
             str(worktree),
-            base,
+            branch,
         )
     except Exception:
-        _cleanup_partial_worktree(
+        _cleanup_claimed_worktree(
             source,
             worktree=worktree,
-            branch=branch,
+            directory_identity=claimed_directory,
+            branch_ref=branch_ref,
             base=base,
         )
         raise

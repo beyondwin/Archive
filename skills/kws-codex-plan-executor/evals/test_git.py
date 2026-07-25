@@ -197,7 +197,7 @@ class GitContractTests(unittest.TestCase):
             if (
                 not failed_once
                 and isinstance(argv, list)
-                and argv[1:4] == ["worktree", "add", "-b"]
+                and argv[1:3] == ["worktree", "add"]
             ):
                 failed_once = True
                 raise subprocess.CalledProcessError(1, argv)
@@ -217,6 +217,67 @@ class GitContractTests(unittest.TestCase):
             self.base,
         )
         self.assertTrue((self.repository / "tracked.txt").exists())
+
+    def test_pre_add_race_never_deletes_foreign_branch_or_path(self) -> None:
+        run_id = "cpe-1212121212121212"
+        root = self.temp / "worktrees"
+        worktree = (root / run_id).resolve()
+        branch = f"codex/{run_id}"
+        branch_ref = f"refs/heads/{branch}"
+        sentinel = worktree / "foreign.txt"
+        real_run = subprocess.run
+        injected = False
+
+        def inject_foreign_artifacts() -> None:
+            nonlocal injected
+            if injected:
+                return
+            injected = True
+            real_run(
+                ["git", "branch", branch, self.base],
+                cwd=self.repository,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            worktree.mkdir(parents=True)
+            sentinel.write_text("foreign\n", encoding="utf-8")
+
+        def race_before_claim(*args: object, **kwargs: object) -> subprocess.CompletedProcess:
+            argv = args[0]
+            if (
+                isinstance(argv, list)
+                and argv[:3] == ["git", "update-ref", "--no-deref"]
+                and argv[3] == branch_ref
+            ):
+                inject_foreign_artifacts()
+            try:
+                return real_run(*args, **kwargs)
+            except subprocess.CalledProcessError:
+                if (
+                    isinstance(argv, list)
+                    and argv[:4] == ["git", "show-ref", "--verify", "--quiet"]
+                    and argv[4] == branch_ref
+                ):
+                    inject_foreign_artifacts()
+                raise
+
+        with mock.patch("cpe_runtime.git.subprocess.run", side_effect=race_before_claim):
+            with self.assertRaises(subprocess.CalledProcessError):
+                create_worktree(
+                    self.repository,
+                    base=self.base,
+                    run_id=run_id,
+                    root=root,
+                )
+
+        self.assertTrue(injected)
+        self.assertEqual(
+            self.git("rev-parse", "--verify", f"{branch_ref}^{{commit}}"),
+            self.base,
+        )
+        self.assertTrue(worktree.is_dir())
+        self.assertEqual(sentinel.read_text(encoding="utf-8"), "foreign\n")
 
     def test_adopt_dirty_worktree_without_mutating_it(self) -> None:
         worktree = self.make_linked_worktree()
