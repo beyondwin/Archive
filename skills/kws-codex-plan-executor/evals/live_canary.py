@@ -158,9 +158,14 @@ def fresh_repository(root: Path) -> tuple[Path, str]:
 
 def recursive_inventory(root: Path) -> str:
     digest = hashlib.sha256()
-    for path in sorted(root.rglob("*"), key=lambda item: item.relative_to(root).as_posix()):
+    paths = [root, *root.rglob("*")]
+    for path in sorted(
+        paths,
+        key=lambda item: "." if item == root else item.relative_to(root).as_posix(),
+    ):
         metadata = path.lstat()
-        relative = path.relative_to(root).as_posix().encode("utf-8")
+        relative_text = "." if path == root else path.relative_to(root).as_posix()
+        relative = relative_text.encode("utf-8")
         digest.update(len(relative).to_bytes(4, "big"))
         digest.update(relative)
         digest.update(stat.S_IMODE(metadata.st_mode).to_bytes(4, "big"))
@@ -341,12 +346,95 @@ def persisted_run(
     return run_root, read_json(run_root / "manifest.json"), read_json(run_root / "state.json")
 
 
+def capsule_digest(capsule: object) -> str:
+    return hashlib.sha256(
+        json.dumps(capsule, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def validate_initial_capsule(
+    capsule: object,
+    *,
+    initial_head: str,
+    initial_status_digest: object,
+    required_evidence_ref: str,
+) -> str:
+    evidence_refs = capsule.get("evidence_refs") if isinstance(capsule, dict) else None
+    require(
+        isinstance(initial_status_digest, str)
+        and isinstance(capsule, dict)
+        and capsule.get("head_commit") == initial_head
+        and capsule.get("worktree_status_digest") == initial_status_digest
+        and isinstance(evidence_refs, list)
+        and required_evidence_ref in evidence_refs,
+        "resume capsule is not bound to the initial state",
+    )
+    return capsule_digest(capsule)
+
+
+def validate_first_phase_commit(
+    worktree: Path,
+    *,
+    base: str,
+    first_head: str,
+    source_path: str,
+    test_path: str,
+    expected_message: str,
+) -> None:
+    source = git(worktree, "show", f"{first_head}:{source_path}")
+    test = git(worktree, "show", f"{first_head}:{test_path}")
+    require(
+        first_head != base
+        and git(worktree, "rev-parse", "HEAD") == first_head
+        and int(git(worktree, "rev-list", "--count", f"{base}..{first_head}")) == 1
+        and git(worktree, "merge-base", "--is-ancestor", base, first_head) == ""
+        and git(worktree, "log", "-1", "--format=%s", first_head) == expected_message
+        and "phase_one" in source
+        and "phase_two" not in source
+        and "phase_one" in test
+        and "phase_two" not in test,
+        "initial canary phase is not exactly one phase-one commit",
+    )
+
+
+def validate_second_phase_commit(
+    worktree: Path,
+    *,
+    base: str,
+    first_head: str,
+    final_head: str,
+    source_path: str,
+    test_path: str,
+    expected_message: str,
+) -> None:
+    source = git(worktree, "show", f"{final_head}:{source_path}")
+    test = git(worktree, "show", f"{final_head}:{test_path}")
+    require(
+        final_head != first_head
+        and git(worktree, "rev-parse", "HEAD") == final_head
+        and int(git(worktree, "rev-list", "--count", f"{first_head}..{final_head}"))
+        == 1
+        and int(git(worktree, "rev-list", "--count", f"{base}..{final_head}")) == 2
+        and git(worktree, "merge-base", "--is-ancestor", first_head, final_head)
+        == ""
+        and git(worktree, "log", "-1", "--format=%s", final_head)
+        == expected_message
+        and "phase_one" in source
+        and "phase_two" in source
+        and "phase_one" in test
+        and "phase_two" in test,
+        "resumed canary phase is not one distinct phase-two commit",
+    )
+
+
 def sdd_multi_document(root: Path, real_codex: Path) -> dict[str, object]:
     repository, base = fresh_repository(root)
     plan = """# SDD Live Canary Execution Contract
 
 Use the installed `subagent-driven-development` skill. This contract has two
 small tasks and an invocation boundary.
+
+## Task 1
 
 On the initial CPE launch, execute Task 1 only. Create `canary_steps.py` with a
 `phase_one()` function returning `phase-one`, create `test_canary_steps.py`
@@ -355,6 +443,8 @@ with a unittest for it, run that test, and commit exactly once with message
 terminal envelope whose capsule records the current HEAD, the SHA-256 of raw
 `git status --porcelain=v1 -z --untracked-files=all`, a short opaque note, and
 `test_canary_steps.py` as its relative evidence reference.
+
+## Task 2
 
 When the launch packet says `CONTINUITY=same saved controller session`, execute
 Task 2. Add `phase_two()` returning `phase-two`, add its unittest, run the full
@@ -394,17 +484,28 @@ outside the assigned worktree.
     )
     first_session = first_state.get("controller_session_id")
     first_head = str(first_state.get("last_observed_head"))
+    initial_capsule = first_state.get("resume_capsule")
     require(
         isinstance(first_session, str)
         and first_state.get("controller_generation") == 0
-        and first_state.get("resume_capsule") is not None
+        and isinstance(initial_capsule, dict)
         and first_head != base,
         "initial SDD persisted facts are invalid",
     )
     worktree = Path(str(manifest.get("worktree"))).resolve(strict=True)
-    require(
-        git(worktree, "cat-file", "-e", f"{first_head}:test_canary_steps.py") == "",
-        "first tested commit is missing its test",
+    initial_capsule_digest = validate_initial_capsule(
+        initial_capsule,
+        initial_head=first_head,
+        initial_status_digest=first_state.get("status_digest"),
+        required_evidence_ref="test_canary_steps.py",
+    )
+    validate_first_phase_commit(
+        worktree,
+        base=base,
+        first_head=first_head,
+        source_path="canary_steps.py",
+        test_path="test_canary_steps.py",
+        expected_message="test: add canary phase one",
     )
 
     resume_result = invoke_cpe(
@@ -428,20 +529,28 @@ outside the assigned worktree.
     handoff_path = Path(str(resume_result.get("handoff_path"))).resolve(strict=True)
     handoff = read_json(handoff_path)
     final_head = str(handoff.get("observed_head"))
+    final_capsule = final_state.get("resume_capsule")
+    final_capsule_digest = capsule_digest(final_capsule)
     require(
         final_state.get("status") == "handed_off"
         and final_state.get("controller_generation") == 0
         and final_state.get("controller_session_id") == first_session
+        and final_capsule == initial_capsule
+        and final_capsule_digest == initial_capsule_digest
         and handoff.get("controller_session_id") == first_session
         and handoff.get("controller_generation") == 0
         and handoff.get("integration") == "not_observed"
         and handoff.get("saved_worktree") == str(worktree),
         "same-session handoff facts are invalid",
     )
-    require(
-        int(git(worktree, "rev-list", "--count", f"{base}..{final_head}")) == 2
-        and git(worktree, "merge-base", "--is-ancestor", first_head, final_head) == "",
-        "SDD canary did not preserve exactly two ordered commits",
+    validate_second_phase_commit(
+        worktree,
+        base=base,
+        first_head=first_head,
+        final_head=final_head,
+        source_path="canary_steps.py",
+        test_path="test_canary_steps.py",
+        expected_message="feat: add canary phase two",
     )
     require(git(worktree, "remote") == "", "SDD canary added a remote")
     test_result = run(
@@ -461,6 +570,8 @@ outside the assigned worktree.
         "integration": "not_observed",
         "first_head": first_head,
         "commit_count": 2,
+        "initial_resume_capsule_sha256": initial_capsule_digest,
+        "final_resume_capsule_sha256": final_capsule_digest,
     }
 
 
@@ -533,6 +644,20 @@ perform merge, push, publication, deployment, or outside-worktree writes.
         and manifest.get("superpowers_skill") == "executing-plans",
         "session-loss manifest is invalid",
     )
+    initial_capsule_digest = validate_initial_capsule(
+        initial_capsule,
+        initial_head=initial_head,
+        initial_status_digest=initial_state.get("status_digest"),
+        required_evidence_ref="test_session_steps.py",
+    )
+    validate_first_phase_commit(
+        worktree,
+        base=base,
+        first_head=initial_head,
+        source_path="session_steps.py",
+        test_path="test_session_steps.py",
+        expected_message="test: add session phase one",
+    )
 
     resume_result = invoke_cpe(
         environment, "resume", "--run-id", run_id, expected_exit=0
@@ -558,12 +683,14 @@ perform merge, push, publication, deployment, or outside-worktree writes.
     handoff_path = Path(str(resume_result.get("handoff_path"))).resolve(strict=True)
     handoff = read_json(handoff_path)
     final_head = str(handoff.get("observed_head"))
+    final_capsule_digest = capsule_digest(final_capsule)
     require(
         isinstance(final_session, str)
         and final_session != initial_session
         and final_state.get("controller_generation") == 1
         and final_state.get("fresh_fallback_used") is True
         and final_capsule == initial_capsule
+        and final_capsule_digest == initial_capsule_digest
         and handoff.get("controller_session_id") == final_session
         and handoff.get("controller_generation") == 1
         and handoff.get("saved_worktree") == str(worktree)
@@ -587,10 +714,17 @@ perform merge, push, publication, deployment, or outside-worktree writes.
         and fallbacks[0].get("status_digest") == initial_state.get("status_digest"),
         "session-loss shim did not prove one same-HEAD fallback",
     )
+    validate_second_phase_commit(
+        worktree,
+        base=base,
+        first_head=initial_head,
+        final_head=final_head,
+        source_path="session_steps.py",
+        test_path="test_session_steps.py",
+        expected_message="feat: add session phase two",
+    )
     require(
-        int(git(worktree, "rev-list", "--count", f"{base}..{final_head}")) == 2
-        and git(worktree, "remote") == "",
-        "session-loss commits or remote state are invalid",
+        git(worktree, "remote") == "", "session-loss remote state is invalid"
     )
     test_result = run(
         [sys.executable, "-m", "unittest", "-v", "test_session_steps.py"],
@@ -598,9 +732,6 @@ perform merge, push, publication, deployment, or outside-worktree writes.
         timeout=120,
     )
     require(test_result.returncode == 0, "session-loss final test failed")
-    capsule_digest = hashlib.sha256(
-        json.dumps(initial_capsule, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
     manifest_digest = hashlib.sha256(manifest_bytes).hexdigest()
     document_digest = hashlib.sha256(
         json.dumps(
@@ -622,8 +753,8 @@ perform merge, push, publication, deployment, or outside-worktree writes.
         "final_controller_session_id": final_session,
         "session_loss_head": initial_head,
         "fallback_start_head": fallbacks[0]["head"],
-        "initial_resume_capsule_sha256": capsule_digest,
-        "final_resume_capsule_sha256": capsule_digest,
+        "initial_resume_capsule_sha256": initial_capsule_digest,
+        "final_resume_capsule_sha256": final_capsule_digest,
         "manifest_sha256": manifest_digest,
         "document_bundle_sha256": document_digest,
         "base_commit": base,
