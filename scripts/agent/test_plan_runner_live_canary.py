@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import hashlib
+import io
 import json
 import os
 import signal
@@ -559,6 +560,56 @@ class IsolationTests(unittest.TestCase):
 
 
 class SessionAndRunnerOutcomeTests(unittest.TestCase):
+    def _assert_launcher_accepts_scenario_mode(self, mode):
+        launcher = SCRIPT_DIR / "plan-runner-live-canary"
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            capture = root / "argv.json"
+            interpreter = root / "managed/uv/python/cpython-3.13-test/bin/python3.13"
+            interpreter.parent.mkdir(parents=True)
+            interpreter.write_text(
+                "#!/bin/sh\n"
+                "shift\n"
+                "printf '%s\\n' \"$@\" > \"$CANARY_ARGV_CAPTURE\"\n",
+                encoding="utf-8",
+            )
+            interpreter.chmod(0o755)
+            uv = root / "uv"
+            uv.write_text(
+                "#!/bin/sh\n"
+                "if [ \"$1\" = python ] && [ \"$2\" = find ]; then\n"
+                "  printf '%s\\n' \"$FAKE_MANAGED_PYTHON\"\n"
+                "  exit 0\n"
+                "fi\n"
+                "exit 1\n",
+                encoding="utf-8",
+            )
+            uv.chmod(0o755)
+            result = subprocess.run(
+                [
+                    "/bin/sh",
+                    str(launcher),
+                    "--provider",
+                    "all",
+                    "--mode",
+                    mode,
+                ],
+                cwd="/tmp",
+                env={
+                    "PATH": f"{root}:/usr/bin:/bin",
+                    "FAKE_MANAGED_PYTHON": str(interpreter),
+                    "CANARY_ARGV_CAPTURE": str(capture),
+                },
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(
+                capture.read_text(encoding="utf-8").splitlines(),
+                ["--provider", "all", "--mode", mode],
+            )
+
     @staticmethod
     def _ownership_scenario():
         first_head = "b" * 40
@@ -677,6 +728,7 @@ class SessionAndRunnerOutcomeTests(unittest.TestCase):
         }
 
     def test_multi_plan_ownership_scenario(self):
+        self._assert_launcher_accepts_scenario_mode("ownership")
         evidence = self._ownership_scenario()
         self.assertEqual(
             canary.validate_multi_plan_ownership_scenario(evidence),
@@ -721,7 +773,44 @@ class SessionAndRunnerOutcomeTests(unittest.TestCase):
                 self.assertFalse(valid)
                 self.assertIsInstance(reason, str)
 
+        providers = []
+
+        def fake_probe(provider):
+            providers.append(provider)
+            valid, reason, head = canary.validate_multi_plan_ownership_scenario(
+                self._ownership_scenario()
+            )
+            self.assertTrue(valid, reason)
+            return canary.normalized_result(
+                provider=provider,
+                mode="ownership",
+                status="passed",
+                provider_version=f"{provider}-test",
+                session_action="two_fresh_plan_sessions",
+                final_head=head,
+                elapsed=0,
+            )
+
+        with (
+            mock.patch.object(canary, "require_runtime"),
+            mock.patch.object(
+                canary, "probe_runner", side_effect=fake_probe
+            ),
+            mock.patch("sys.stdout", new_callable=io.StringIO) as output,
+        ):
+            code = canary.main(
+                ["--provider", "all", "--mode", "ownership"]
+            )
+        self.assertEqual(code, 0)
+        self.assertEqual(providers, ["codex", "claude"])
+        values = [json.loads(line) for line in output.getvalue().splitlines()]
+        self.assertEqual(
+            [(value["provider"], value["mode"]) for value in values],
+            [("codex", "ownership"), ("claude", "ownership")],
+        )
+
     def test_interruption_resume_scenario(self):
+        self._assert_launcher_accepts_scenario_mode("interruption")
         checkpoint = {
             "head": "b" * 40,
             "branch": "codex-plan/canary",
@@ -793,6 +882,42 @@ class SessionAndRunnerOutcomeTests(unittest.TestCase):
                 )
                 self.assertFalse(valid)
                 self.assertIsInstance(reason, str)
+
+        providers = []
+
+        def fake_probe(provider):
+            providers.append(provider)
+            valid, reason, head = canary.validate_interruption_resume_scenario(
+                evidence
+            )
+            self.assertTrue(valid, reason)
+            return canary.normalized_result(
+                provider=provider,
+                mode="interruption",
+                status="passed",
+                provider_version=f"{provider}-test",
+                session_action="sigint_then_recorded_resume",
+                final_head=head,
+                elapsed=0,
+            )
+
+        with (
+            mock.patch.object(canary, "require_runtime"),
+            mock.patch.object(
+                canary, "probe_session", side_effect=fake_probe
+            ),
+            mock.patch("sys.stdout", new_callable=io.StringIO) as output,
+        ):
+            code = canary.main(
+                ["--provider", "all", "--mode", "interruption"]
+            )
+        self.assertEqual(code, 0)
+        self.assertEqual(providers, ["codex", "claude"])
+        values = [json.loads(line) for line in output.getvalue().splitlines()]
+        self.assertEqual(
+            [(value["provider"], value["mode"]) for value in values],
+            [("codex", "interruption"), ("claude", "interruption")],
+        )
 
     def test_fake_session_success_requires_exact_nonce_id_and_clean_head(self):
         session_id = str(uuid.uuid4())
