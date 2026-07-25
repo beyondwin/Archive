@@ -17,11 +17,48 @@ from plan_runner.recovery import (  # noqa: E402
 )
 
 
-def progress(tree="tree-a", tasks=(), receipts=(), findings=()):
-    return ProgressSnapshot(tree, tuple(tasks), tuple(receipts), tuple(findings))
+def progress(tree="tree-a", receipts=(), handoffs=()):
+    return ProgressSnapshot(tree, tuple(receipts), tuple(handoffs))
 
 
 class RecoveryBehaviorTest(unittest.TestCase):
+    def test_fixed_resume_then_fresh_then_exhaustion(self):
+        policy = RecoveryPolicy()
+        first = policy.decide(self.state(), self.outcome("resume root"))
+        self.assertEqual(first.session_action, "resume_root")
+        failure = {
+            "failure_signature": first.failure_signature,
+            "strategy_note_digest": strategy_note_digest("resume root"),
+        }
+        second = policy.decide(
+            self.state(
+                failure_sequence=(failure,),
+                resume_failed=True,
+            ),
+            self.outcome("fresh root"),
+        )
+        self.assertEqual(second.session_action, "fresh_root")
+        third = policy.decide(
+            self.state(
+                failure_sequence=(
+                    failure,
+                    {
+                        "failure_signature": first.failure_signature,
+                        "strategy_note_digest": strategy_note_digest(
+                            "fresh root"
+                        ),
+                        "fresh_root_attempted": True,
+                    },
+                ),
+                resume_failed=True,
+            ),
+            self.outcome("no fourth controller"),
+        )
+        self.assertEqual(
+            (third.action, third.run_status, third.reason_code),
+            ("fail", "failed", "recovery_exhausted"),
+        )
+
     def test_activity_lease_accepts_only_unique_tools_or_lifecycle_and_not_heartbeat(self):
         lease = ActivityLease(10, 100)
         self.assertFalse(lease.observe_provider_event("log", "noise", 105))
@@ -134,7 +171,7 @@ class RecoveryBehaviorTest(unittest.TestCase):
     def test_healthy_transport_interruption_resumes_but_contamination_goes_fresh(self):
         policy = RecoveryPolicy()
         state = self.state()
-        self.assertEqual(policy.decide(state, self.outcome("one")).session_action, "explicit_resume")
+        self.assertEqual(policy.decide(state, self.outcome("one")).session_action, "resume_root")
         for reason, interruption in (
             ("stall_expired", "stall"),
             ("session_invalid", "session_damage"),
@@ -142,7 +179,7 @@ class RecoveryBehaviorTest(unittest.TestCase):
         ):
             outcome = self.outcome(f"strategy {reason}")
             outcome.update(reason_code=reason, interruption=interruption)
-            self.assertEqual(policy.decide(state, outcome).session_action, "fresh_session")
+            self.assertEqual(policy.decide(state, outcome).session_action, "fresh_root")
 
     def test_input_change_duplicate_strategy_and_fourth_change_fail_closed(self):
         policy = RecoveryPolicy()
@@ -175,7 +212,7 @@ class RecoveryBehaviorTest(unittest.TestCase):
         self.assertEqual(policy.decide(state, outcome).reason_code, "recovery_exhausted")
 
     def test_decisions_are_immutable_and_never_choose_models(self):
-        decision = RecoveryDecision("recover", "recovering", "fresh_session", "x", True, "stall_expired")
+        decision = RecoveryDecision("recover", "recovering", "fresh_root", "x", True, "stall_expired")
         with self.assertRaises(FrozenInstanceError):
             decision.action = "model-escalation"
         self.assertFalse(hasattr(decision, "model"))

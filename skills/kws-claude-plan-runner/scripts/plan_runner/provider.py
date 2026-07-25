@@ -31,7 +31,7 @@ MAX_RESULT_STRING_BYTES = 4_096
 MAX_RAW_STDERR_LINE_BYTES = 65_536
 _MAX_USAGE_FIELDS = 32
 _MAX_USAGE_VALUE = 2**63 - 1
-_RESULT_STATUSES = frozenset(("implemented", "blocked", "failed", "reviewed"))
+_RESULT_STATUSES = frozenset(("implemented", "blocked"))
 _AUTH_CODES = frozenset(
     (
         "authentication_failed",
