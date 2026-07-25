@@ -24,7 +24,6 @@ jobs:
           toolchain: 1.95.0
           components: rustfmt
       - run: bun install --frozen-lockfile
-      - run: npm install --global @openai/codex@0.144.6
       - run: bun run agent:test
       - run: bun run agent:contract
       - if: github.event_name == 'pull_request'
