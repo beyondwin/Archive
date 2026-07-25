@@ -67,6 +67,69 @@ def consume_action(path: Path) -> tuple[int, str]:
         return index, actions[index]
 
 
+def nested_git_init_probe(action_index: int) -> dict[str, object] | None:
+    probe_root = os.environ.get("PLAN_RUNNER_FAKE_NESTED_GIT_INIT_ROOT")
+    if probe_root is None:
+        return None
+
+    repository = Path(probe_root) / f"action-{action_index}"
+    init_argv = ["git", "init", str(repository)]
+    initialized = subprocess.run(
+        init_argv,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    add_returncode: int | None = None
+    commit_returncode: int | None = None
+    if initialized.returncode == 0:
+        probe_file = repository / "provider-child-probe.txt"
+        probe_file.write_text("provider child nested git init\n", encoding="utf-8")
+        added = subprocess.run(
+            ["git", "-C", str(repository), "add", probe_file.name],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        add_returncode = added.returncode
+        if added.returncode == 0:
+            committed = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(repository),
+                    "-c",
+                    "user.name=Plan Runner Parity",
+                    "-c",
+                    "user.email=parity@example.test",
+                    "commit",
+                    "-m",
+                    "provider child probe",
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            commit_returncode = committed.returncode
+
+    git_dir = repository / ".git"
+    hook_marker = os.environ.get("PARITY_HOSTILE_HOOK_MARKER")
+    return {
+        "add_returncode": add_returncode,
+        "commit_returncode": commit_returncode,
+        "git_template_dir": os.environ.get("GIT_TEMPLATE_DIR"),
+        "hostile_hook_copied": (git_dir / "hooks" / "pre-commit").exists(),
+        "hostile_hook_executed": (
+            hook_marker is not None and Path(hook_marker).exists()
+        ),
+        "hostile_template_marker_copied": (
+            git_dir / "parity-hostile-template-marker"
+        ).exists(),
+        "init_argv": init_argv,
+        "init_returncode": initialized.returncode,
+    }
+
+
 def helper_call(packet: dict[str, object], operation: str, payload: object) -> dict:
     helper = packet["helper"]
     envelope = {
@@ -191,6 +254,9 @@ def generic_main(sequence_path: Path) -> int:
         "session_action": "resume" if "--resume" in sys.argv else "fresh",
         "session_id": session_id,
     }
+    nested_git_init = nested_git_init_probe(action_index)
+    if nested_git_init is not None:
+        record["nested_git_init"] = nested_git_init
     with log_path.open("a", encoding="utf-8") as stream:
         stream.write(json.dumps(record, sort_keys=True) + "\n")
     emit({"type": "system", "subtype": "init", "session_id": session_id})
