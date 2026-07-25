@@ -266,12 +266,10 @@ class HelperServer:
         if not isinstance(operation, str):
             raise _ProtocolError("invalid_request", "operation is invalid")
         payload = _require_mapping(request["payload"], "payload")
-        if operation == "verify_focused":
-            return self._verify_focused(payload)
-        if operation == "declare_final_set":
-            return self._declare_final_set(payload)
-        if operation == "verify_final":
-            return self._verify_final(payload)
+        if operation == "declare_verification":
+            return self._declare_verification(payload)
+        if operation == "run_verification":
+            return self._run_verification(payload)
         if operation == "record_liveness":
             return self._record_liveness(payload)
         raise _ProtocolError("unknown_operation", "operation is not supported")
@@ -292,27 +290,25 @@ class HelperServer:
                     self._on_command_finished(time.monotonic())
         return {"ok": True, "operation": operation, "artifact": {"digest": receipt.artifact.digest}}
 
-    def _verify_focused(self, payload: Mapping[str, object]) -> dict[str, object]:
-        if set(payload) != {"candidate_head", "command"}:
-            raise ValueError("focused verification payload is invalid")
-        return self._execute(_command(payload["command"], expected_role="focused"), _candidate_head(payload["candidate_head"]), "verify_focused")
-
-    def _declare_final_set(self, payload: Mapping[str, object]) -> dict[str, object]:
-        if set(payload) != {"candidate_head", "final_set"}:
-            raise ValueError("final-set declaration payload is invalid")
+    def _declare_verification(self, payload: Mapping[str, object]) -> dict[str, object]:
+        if set(payload) != {"candidate_head", "plan_index", "verification", "prior_set_digests", "is_final_plan"}:
+            raise ValueError("verification declaration payload is invalid")
         candidate_head = _candidate_head(payload["candidate_head"])
-        final_set = _require_mapping(payload["final_set"], "final set")
-        if final_set.get("candidate_head") != candidate_head:
-            raise ValueError("final set candidate head does not match request")
+        plan_index = payload["plan_index"]
+        prior = payload["prior_set_digests"]
+        if not isinstance(plan_index, int) or isinstance(plan_index, bool) or plan_index < 0 or not isinstance(prior, list) or not all(isinstance(item, str) for item in prior) or not isinstance(payload["is_final_plan"], bool):
+            raise ValueError("verification declaration identity is invalid")
+        verification = _require_mapping(payload["verification"], "verification")
+        if verification.get("candidate_head") != candidate_head:
+            raise ValueError("verification candidate head does not match request")
         with self._dispatch_lock:
             if self._final_set_digest is not None:
-                raise _ProtocolError("final_set_sealed", "a final verification set is already sealed")
-            artifact = self._evidence.declare_final_set(final_set, candidate_head)
-            self._final_set_digest = artifact.digest
-            self._final_candidate_head = candidate_head
-        return {"ok": True, "operation": "declare_final_set", "artifact": {"digest": artifact.digest}}
+                raise _ProtocolError("verification_set_sealed", "a verification set is already sealed")
+            artifact = self._evidence.declare_verification(verification, candidate_head, plan_index=plan_index, prior_set_digests=prior, is_final_plan=payload["is_final_plan"])
+            self._final_set_digest, self._final_candidate_head = artifact.digest, candidate_head
+        return {"ok": True, "operation": "declare_verification", "artifact": {"digest": artifact.digest}}
 
-    def _verify_final(self, payload: Mapping[str, object]) -> dict[str, object]:
+    def _run_verification(self, payload: Mapping[str, object]) -> dict[str, object]:
         if set(payload) != {"candidate_head", "set_digest", "command_index", "deadline_seconds"}:
             raise ValueError("final verification payload is invalid")
         candidate_head = _candidate_head(payload["candidate_head"])
@@ -322,10 +318,10 @@ class HelperServer:
             raise ValueError("final command index is invalid")
         with self._dispatch_lock:
             if set_digest != self._final_set_digest:
-                raise _ProtocolError("final_set_unavailable", "final verification set is not sealed by this helper")
+                raise _ProtocolError("verification_set_unavailable", "verification set is not sealed by this helper")
             if candidate_head != self._final_candidate_head:
-                raise _ProtocolError("candidate_head_mismatch", "candidate head does not match the sealed final verification set")
-            command = self._evidence.load_final_command(set_digest, index)
+                raise _ProtocolError("candidate_head_mismatch", "candidate head does not match the sealed verification set")
+            command = self._evidence.load_verification_command(set_digest, index)
             deadline = payload["deadline_seconds"]
             if (
                 not isinstance(deadline, (int, float))
@@ -333,7 +329,7 @@ class HelperServer:
                 or float(deadline) != float(command.deadline_seconds)
             ):
                 raise ValueError("final command deadline does not match sealed command")
-        return self._execute(command, candidate_head, "verify_final")
+        return self._execute(command, candidate_head, "run_verification")
 
     def _record_liveness(self, payload: Mapping[str, object]) -> dict[str, object]:
         if set(payload) != {"sample"} or not isinstance(payload["sample"], Mapping):
@@ -399,11 +395,7 @@ def _client_response_timeout(request: Mapping[str, object]) -> float:
     payload = request.get("payload")
     deadline: object = None
     if isinstance(payload, Mapping):
-        if request.get("operation") == "verify_focused":
-            command = payload.get("command")
-            if isinstance(command, Mapping):
-                deadline = command.get("deadline_seconds")
-        elif request.get("operation") == "verify_final":
+        if request.get("operation") == "run_verification":
             deadline = payload.get("deadline_seconds")
     if (
         isinstance(deadline, (int, float))

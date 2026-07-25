@@ -148,10 +148,7 @@ class ScriptedAdapter:
                 "status": "implemented",
                 "head_commit": head,
                 "summary": f"plan {packet['current_plan']['index']}",
-                "task_ledger": list(self.owner.implementation_ledger),
-                "open_obligation_ids": [],
-                "failure_signature": None,
-                "strategy_note": None,
+                "verification_set_digest": "a" * 64,
                 "blocker": None,
             }
             return ProviderOutcome(
@@ -413,6 +410,42 @@ class EngineTest(unittest.TestCase):
         run_roots = list(self.paths.state_home.iterdir())
         self.assertEqual(len(run_roots), 1)
         return json.loads((run_roots[0] / "state.json").read_text(encoding="utf-8"))
+
+    def run_two_plan_success(self):
+        return self.runner().create_run(
+            specs=self.specs,
+            plans=self.plans,
+            workspace=self.source,
+            stall_seconds=30,
+            sandbox="workspace-write",
+            model=None,
+        )
+
+    def test_two_plans_use_two_root_controllers_and_final_plan_closes_run(self):
+        code = self.run_two_plan_success()
+        self.assertEqual(code, ExitCode.READY)
+        self.assertEqual([packet["mode"] for packet in self.packets], ["implementation", "implementation"])
+        state = self.state()
+        self.assertEqual(state["status"], "ready_for_integration")
+        self.assertNotIn("task_ledger", state)
+        self.assertNotIn("finalization", state)
+        self.assertTrue(all("task_ledger" not in packet for packet in self.packets))
+        self.assertFalse(any(session["mode"] != "implementation" for session in state["sessions"]))
+
+    def test_version_one_is_inspect_only(self):
+        self.run_two_plan_success()
+        state = self.state()
+        root = self.paths.state_home / state["run_id"]
+        state["format_version"] = 1
+        state["contract_version"] = 1
+        state["state_digest"] = storage_module._state_digest(state)
+        (root / "state.json").write_bytes(storage_module.canonical_json(state))
+        before = (root / "state.json").read_bytes()
+        self.assertEqual(self.runner().inspect(state["run_id"]), ExitCode.READY)
+        self.assertEqual((root / "state.json").read_bytes(), before)
+        self.output.clear()
+        self.assertEqual(self.runner().resume(state["run_id"], retry_blocked=False, retry_failed=False, strategy_note=None), ExitCode.INVALID)
+        self.assertIn("legacy_contract_requires_v1_runner", self.output[-1])
 
     def worktree_observation(self, state=None):
         state = self.state() if state is None else state

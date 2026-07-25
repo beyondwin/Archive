@@ -52,14 +52,14 @@ class RecordingEvidence:
             False,
         )
 
-    def declare_final_set(self, payload, candidate_head):
+    def declare_verification(self, payload, candidate_head, *, plan_index, prior_set_digests, is_final_plan):
         self.declarations.append((payload, candidate_head))
-        return ArtifactRef("final_verification_set", DIGEST, f"artifacts/final_verification_set/{DIGEST}.json")
+        return ArtifactRef("plan_verification_set", DIGEST, f"artifacts/plan_verification_set/{DIGEST}.json")
 
-    def load_final_command(self, set_digest, index):
+    def load_verification_command(self, set_digest, index):
         if set_digest != DIGEST or index != 0:
-            raise ValueError("final command index is unavailable")
-        return ExactCommand("final-1", "final", (sys.executable, "-c", "pass"), ".", DIGEST, 3)
+            raise ValueError("verification command index is unavailable")
+        return ExactCommand("focused-1", "handoff", (sys.executable, "-c", "pass"), ".", DIGEST, 3)
 
     def record_liveness(self, sample):
         self.liveness.append(dict(sample))
@@ -184,22 +184,22 @@ class HelperProtocolTest(unittest.TestCase):
             self.evidence.release.set()
             releaser.join(1)
 
-    def test_final_set_is_sealed_once_and_final_execution_uses_its_index(self):
-        declaration = {"candidate_head": HEAD, "kind": "commands", "commands": [{**self.focused_payload()["command"], "command_role": "final"}]}
+    def test_plan_and_run_verification_use_one_helper_path(self):
+        declaration = {"candidate_head": HEAD, "kind": "commands", "commands": [{**self.focused_payload()["command"], "command_role": "handoff"}]}
         with self.server:
-            first = self.raw_request(self.envelope("declare_final_set", {"candidate_head": HEAD, "final_set": declaration}))
-            second = self.raw_request(self.envelope("declare_final_set", {"candidate_head": HEAD, "final_set": declaration}))
-            mismatch = self.raw_request(self.envelope("verify_final", {"candidate_head": "c" * 40, "set_digest": DIGEST, "command_index": 0, "deadline_seconds": 3}))
+            first = self.raw_request(self.envelope("declare_verification", {"candidate_head": HEAD, "plan_index": 0, "verification": declaration, "prior_set_digests": [], "is_final_plan": False}))
+            second = self.raw_request(self.envelope("declare_verification", {"candidate_head": HEAD, "plan_index": 0, "verification": declaration, "prior_set_digests": [], "is_final_plan": False}))
+            mismatch = self.raw_request(self.envelope("run_verification", {"candidate_head": "c" * 40, "set_digest": DIGEST, "command_index": 0, "deadline_seconds": 3}))
             self.assertFalse(mismatch["ok"])
             self.assertEqual(mismatch["error_code"], "candidate_head_mismatch")
             self.assertEqual(self.evidence.executed, [])
-            final = self.raw_request(self.envelope("verify_final", {"candidate_head": HEAD, "set_digest": DIGEST, "command_index": 0, "deadline_seconds": 3}))
+            final = self.raw_request(self.envelope("run_verification", {"candidate_head": HEAD, "set_digest": DIGEST, "command_index": 0, "deadline_seconds": 3}))
         self.assertTrue(first["ok"])
         self.assertFalse(second["ok"])
-        self.assertEqual(second["error_code"], "final_set_sealed")
+        self.assertEqual(second["error_code"], "verification_set_sealed")
         self.assertTrue(final["ok"])
         self.assertEqual(len(self.evidence.declarations), 1)
-        self.assertEqual(self.evidence.executed[-1][0].command_id, "final-1")
+        self.assertEqual(self.evidence.executed[-1][0].command_id, "focused-1")
 
     def test_trickled_request_has_one_total_deadline(self):
         class Clock:

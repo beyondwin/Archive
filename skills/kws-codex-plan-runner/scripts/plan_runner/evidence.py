@@ -326,6 +326,76 @@ class EvidenceStore:
         except IndexError as error:
             raise ValueError("final command index is unavailable") from error
 
+    def declare_verification(
+        self,
+        payload: object,
+        candidate_head: str,
+        *,
+        plan_index: int,
+        prior_set_digests: list[str],
+        is_final_plan: bool,
+    ) -> ArtifactRef:
+        self._observation(candidate_head)
+        if not isinstance(payload, Mapping) or payload.get("candidate_head") != candidate_head:
+            raise ValueError("verification candidate HEAD is invalid")
+        kind = payload.get("kind")
+        if kind == "commands":
+            if set(payload) != {"kind", "candidate_head", "commands"} or not isinstance(payload.get("commands"), list) or not payload["commands"]:
+                raise ValueError("verification command set is invalid")
+            commands = [self._command_from_document(item, require_final=False) for item in payload["commands"]]
+            sealed = {"kind": "commands", "candidate_head": candidate_head, "commands": [
+                {"command_id": command.command_id, "command_role": command.command_role, "argv": list(command.argv), "cwd": command.cwd, "input_digest": command.input_digest, "deadline_seconds": command.deadline_seconds}
+                for command in commands
+            ]}
+        elif kind == "no_applicable_verification":
+            if set(payload) != {"kind", "candidate_head", "rationale"}:
+                raise ValueError("no-applicable verification declaration is invalid")
+            sealed = {"kind": kind, "candidate_head": candidate_head, "rationale": _safe_string(payload.get("rationale"), "rationale")}
+        else:
+            raise ValueError("verification kind is invalid")
+        plan = self.state.put_artifact("plan_verification_set", sealed)
+        self._append_artifact(plan)
+        if not is_final_plan:
+            return plan
+        command_documents: list[dict[str, object]] = []
+        for digest in [*prior_set_digests, plan.digest]:
+            command_documents.extend(self._verification_commands(digest))
+        deduplicated: list[dict[str, object]] = []
+        seen: set[str] = set()
+        for command in command_documents:
+            identity = sha256_json({key: command[key] for key in ("argv", "cwd", "input_digest", "deadline_seconds")})
+            if identity not in seen:
+                seen.add(identity)
+                deduplicated.append(command)
+        run = self.state.put_artifact("run_verification_set", {"kind": "commands", "candidate_head": candidate_head, "plan_set_digests": [*prior_set_digests, plan.digest], "commands": deduplicated})
+        self._append_artifact(run)
+        return run
+
+    def _verification_commands(self, digest: str) -> list[dict[str, object]]:
+        require_digest(digest)
+        for reference in self.state.snapshot()["artifact_refs"]:
+            if isinstance(reference, dict) and reference.get("kind") == "plan_verification_set" and reference.get("digest") == digest:
+                payload = self._artifact_document(ArtifactRef(**reference))
+                if payload.get("kind") == "commands" and isinstance(payload.get("commands"), list):
+                    return [dict(command) for command in payload["commands"] if isinstance(command, dict)]
+        raise ValueError("plan verification set is not sealed")
+
+    def load_verification_command(self, set_digest: str, index: int) -> ExactCommand:
+        require_digest(set_digest)
+        if not isinstance(index, int) or isinstance(index, bool) or index < 0:
+            raise ValueError("verification command index is invalid")
+        for reference in self.state.snapshot()["artifact_refs"]:
+            if isinstance(reference, dict) and reference.get("digest") == set_digest and reference.get("kind") in {"plan_verification_set", "run_verification_set"}:
+                payload = self._artifact_document(ArtifactRef(**reference))
+                commands = payload.get("commands")
+                if not isinstance(commands, list):
+                    raise ValueError("verification set has no commands")
+                try:
+                    return self._command_from_document(commands[index], require_final=False)
+                except IndexError as error:
+                    raise ValueError("verification command index is unavailable") from error
+        raise ValueError("verification set is not sealed")
+
     def record_liveness(self, sample: Mapping[str, object]) -> None:
         if not isinstance(sample, Mapping):
             raise ValueError("liveness sample is invalid")

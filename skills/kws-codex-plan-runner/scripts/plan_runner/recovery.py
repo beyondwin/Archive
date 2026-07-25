@@ -80,7 +80,7 @@ _STABLE_FAILURE_FIELDS = (
     "input_digest",
 )
 _MAX_STRATEGY_BYTES = 4_096
-_MAX_CHANGED_STRATEGIES = 3
+_MAX_CHANGED_STRATEGIES = 1
 
 
 @dataclass(frozen=True)
@@ -352,6 +352,24 @@ class RecoveryPolicy:
                 str,
             )
         }
+        fresh_attempted = any(
+            entry.get("failure_signature") == signature
+            and entry.get("fresh_session_attempted") is True
+            for entry in active_sequence
+        )
+        if (
+            next_strategy in prior_strategies
+            and session_action == "fresh_session"
+            and not fresh_attempted
+        ):
+            return RecoveryDecision(
+                action="recover",
+                run_status="recovering",
+                session_action="fresh_session",
+                failure_signature=signature,
+                required_strategy_change=True,
+                reason_code=reason_code,
+            )
         if (
             next_strategy in prior_strategies
             or len(prior_strategies) >= _MAX_CHANGED_STRATEGIES

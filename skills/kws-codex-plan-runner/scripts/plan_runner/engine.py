@@ -665,6 +665,9 @@ class PlanRunner:
                 raise FileNotFoundError(f"unknown run: {run_id}")
             store = StateStore.open(run_root)
             state = store.snapshot()
+            if state.get("format_version") == 1:
+                self._emit_error("legacy_contract_requires_v1_runner", "version 1 execution is not supported by the version 2 runner")
+                return int(ExitCode.INVALID)
             status = state["status"]
             failed_retry_strategy = None
             if status == "failed" and retry_failed:
@@ -1041,6 +1044,9 @@ class PlanRunner:
                         raise ValueError(f"input proof failed: {detail}") from error
                     raise
                 state = store.snapshot()
+                if state.get("format_version") == 1:
+                    self._emit_error("legacy_contract_requires_v1_runner", "version 1 repair is not supported by the version 2 runner")
+                    return int(ExitCode.INVALID)
                 if state["revision"] != expected_revision:
                     raise ValueError("revision proof failed: stale expected revision")
                 workspace = self._open_repair_workspace(state)
@@ -1457,7 +1463,12 @@ class PlanRunner:
                     if code is not None:
                         return code
                     state = store.snapshot()
-                return self._finalize(store, workspace)
+                state = store.snapshot()
+                state["status"] = "ready_for_integration"
+                state["failure"] = None
+                store.commit(state)
+                self._emit_summary(store.snapshot())
+                return int(ExitCode.READY)
         except _LegacyVolatileRefRepairRequired as error:
             state = store.snapshot()
             state["status"] = "failed"
@@ -2038,7 +2049,7 @@ class PlanRunner:
             operator_notes=operator_notes,
         )
         return {
-            "packet_version": 1,
+            "packet_version": 2,
             "mode": "implementation",
             "run_id": state["run_id"],
             "worktree": state["repository"]["worktree"],
@@ -2059,8 +2070,15 @@ class PlanRunner:
                 "sha256": plan["sha256"],
             },
             "implemented_plan_handoffs": handoffs,
-            "task_ledger": state["task_ledger"],
-            "verification_receipts": receipts,
+            "prior_verification_sets": [
+                item["digest"] for item in state["artifact_refs"]
+                if isinstance(item, Mapping) and item.get("kind") == "plan_verification_set"
+            ],
+            "is_final_plan": current_index == len(state["plans"]) - 1,
+            "final_review_requirements": (
+                [{"snapshot_path": item["snapshot_path"], "sha256": item["sha256"]} for item in state["inputs"]]
+                if current_index == len(state["plans"]) - 1 else None
+            ),
             "checkpoint_revision": state["revision"],
             "recovery_context": recovery_context,
             "required_strategy_change": recovery_context[
@@ -2068,8 +2086,7 @@ class PlanRunner:
             ],
             "operator_strategy_notes": operator_notes,
             "helper": _descriptor_document(helper),
-            "quality_profile": "quality_first",
-            "integration": "not_observed",
+            "integration_policy": "keep",
         }
 
     def _finalization_packet(
@@ -2877,11 +2894,10 @@ class PlanRunner:
             return self._integrity_failure(store, str(error))
         if result.get("head_commit") != observation.head:
             return self._integrity_failure(store, "implementation HEAD mismatch")
-        ledger = self._validated_task_ledger(result.get("task_ledger"))
-        self._require_all_tasks_reported_done(ledger)
-        obligations = result.get("open_obligation_ids")
-        if not isinstance(obligations, list) or obligations:
-            return self._integrity_failure(store, "implementation obligations remain")
+        self._validated_plan_result(result)
+        verification_set_digest = result.get("verification_set_digest")
+        if not isinstance(verification_set_digest, str):
+            return self._integrity_failure(store, "implementation verification declaration is missing")
         result_artifact = store.put_artifact(
             "provider_result", dict(result)
         )
@@ -2891,7 +2907,7 @@ class PlanRunner:
                 "plan_index": index,
                 "head_commit": observation.head,
                 "summary": str(result.get("summary", ""))[:4096],
-                "task_ledger": ledger,
+                "verification_set_digest": verification_set_digest,
             },
         )
         state = store.snapshot()
@@ -2937,8 +2953,8 @@ class PlanRunner:
         if session is not None:
             session["phase"] = "completed"
             session["health"] = "healthy"
-        state["task_ledger"] = ledger
         state["plans"][index]["status"] = "implemented"
+        state["plans"][index]["handoff_digest"] = handoff_artifact.digest
         state["current_plan_index"] = index + 1
         state["status"] = "resumable"
         state["failure"] = None
@@ -3027,85 +3043,26 @@ class PlanRunner:
             )
         return result
 
-    @classmethod
-    def _validated_plan_result(
-        cls, value: object
-    ) -> list[dict[str, object]]:
+    @staticmethod
+    def _validated_plan_result(value: object) -> None:
         if not isinstance(value, Mapping) or set(value) != {
-            "status",
-            "head_commit",
-            "summary",
-            "task_ledger",
-            "open_obligation_ids",
-            "failure_signature",
-            "strategy_note",
-            "blocker",
+            "status", "head_commit", "summary", "verification_set_digest", "blocker"
         }:
             raise ValueError("plan result shape is invalid")
-        status = value.get("status")
-        summary = value.get("summary")
-        head = value.get("head_commit")
-        obligations = value.get("open_obligation_ids")
-        signature = value.get("failure_signature")
-        strategy = value.get("strategy_note")
-        blocker = value.get("blocker")
-        if (
-            status not in {"implemented", "blocked", "failed"}
-            or not isinstance(head, str)
-            or re.fullmatch(r"[0-9a-f]{40}([0-9a-f]{24})?", head) is None
-            or not isinstance(summary, str)
-            or not summary.strip()
-            or len(summary) > 4096
-            or not isinstance(obligations, list)
-            or len(obligations) > 1024
-            or any(
-                not isinstance(item, str)
-                or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", item)
-                is None
-                for item in obligations
-            )
-            or len(set(obligations)) != len(obligations)
-            or (
-                strategy is not None
-                and (
-                    not isinstance(strategy, str)
-                    or not strategy.strip()
-                    or len(strategy) > 4096
-                )
-            )
-        ):
+        status, head, summary = value.get("status"), value.get("head_commit"), value.get("summary")
+        verification, blocker = value.get("verification_set_digest"), value.get("blocker")
+        if (status not in {"implemented", "blocked"} or not isinstance(head, str)
+                or re.fullmatch(r"[0-9a-f]{40}([0-9a-f]{24})?", head) is None
+                or not isinstance(summary, str) or not summary.strip() or len(summary) > 4096):
             raise ValueError("plan result contract is invalid")
-        ledger = cls._validated_task_ledger(value.get("task_ledger"))
         if status == "implemented":
-            if signature is not None or blocker is not None or obligations:
+            if not isinstance(verification, str) or re.fullmatch(r"[0-9a-f]{64}", verification) is None or blocker is not None:
                 raise ValueError("implemented result contract is invalid")
-            cls._require_all_tasks_reported_done(ledger)
-        elif status == "blocked":
-            if (
-                not isinstance(blocker, Mapping)
-                or set(blocker) != {"kind", "detail"}
-                or blocker.get("kind") not in _AUTHORITY_BLOCKERS
-                or not isinstance(blocker.get("detail"), str)
-                or not str(blocker["detail"]).strip()
-                or len(str(blocker["detail"])) > 2048
-                or (
-                    signature is not None
-                    and (
-                        not isinstance(signature, str)
-                        or re.fullmatch(r"[0-9a-f]{64}", signature) is None
-                    )
-                )
-            ):
-                raise ValueError("blocked result contract is invalid")
-        elif (
-            blocker is not None
-            or not isinstance(signature, str)
-            or re.fullmatch(r"[0-9a-f]{64}", signature) is None
-            or not isinstance(strategy, str)
-            or not strategy.strip()
-        ):
-            raise ValueError("failed result contract is invalid")
-        return ledger
+        elif (verification is not None or not isinstance(blocker, Mapping)
+              or set(blocker) != {"kind", "detail"}
+              or blocker.get("kind") not in _AUTHORITY_BLOCKERS
+              or not isinstance(blocker.get("detail"), str) or not blocker["detail"].strip()):
+            raise ValueError("blocked result contract is invalid")
 
     @staticmethod
     def _require_all_tasks_reported_done(
@@ -3139,11 +3096,7 @@ class PlanRunner:
         self, state: Mapping[str, object], workspace: GitWorkspace
     ) -> ProgressSnapshot:
         observation = workspace.observe()
-        done = tuple(
-            entry["task_id"]
-            for entry in state["task_ledger"]
-            if isinstance(entry, Mapping) and entry.get("status") == "reported_done"
-        )
+        done = ()
         receipts = tuple(
             item["digest"]
             for item in state["artifact_refs"]
