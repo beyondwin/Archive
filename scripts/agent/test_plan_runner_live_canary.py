@@ -668,6 +668,38 @@ class IsolationTests(unittest.TestCase):
 
 
 class SessionAndRunnerOutcomeTests(unittest.TestCase):
+    def test_interruption_boundary_uses_scenario_deadline(self):
+        controller = mock.Mock()
+        controller.poll.return_value = None
+        self.assertGreaterEqual(
+            canary.INTERRUPTION_BOUNDARY_DEADLINE_SECONDS,
+            1_800.0,
+        )
+        with (
+            mock.patch.object(
+                canary,
+                "INTERRUPTION_BOUNDARY_DEADLINE_SECONDS",
+                7.0,
+            ),
+            mock.patch.object(
+                canary.time,
+                "monotonic",
+                side_effect=(100.0, 106.0, 108.0),
+            ),
+            mock.patch.object(canary.time, "sleep"),
+            mock.patch.object(canary, "_load_latest_run", return_value=None),
+        ):
+            with self.assertRaisesRegex(
+                canary.CanaryError,
+                "interruption_boundary_deadline",
+            ):
+                canary._interruption_boundary(
+                    Path("/tmp/operator-home"),
+                    "codex",
+                    controller,
+                    set(),
+                )
+
     @staticmethod
     def _fake_shell_environment(provider, root, actions):
         home = root / "operator-home"
