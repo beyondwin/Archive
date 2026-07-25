@@ -179,50 +179,6 @@ def _directory_identity(path: Path) -> tuple[int, int] | None:
     return metadata.st_dev, metadata.st_ino
 
 
-def _branch_is_checked_out(repository: Path, branch_ref: str) -> bool:
-    try:
-        listing = _git(repository, "worktree", "list", "--porcelain")
-    except (OSError, subprocess.CalledProcessError):
-        return True
-    return any(line == f"branch {branch_ref}" for line in listing.splitlines())
-
-
-def _delete_owned_branch(repository: Path, branch_ref: str, base: str) -> None:
-    if _branch_is_checked_out(repository, branch_ref):
-        return
-    try:
-        _git(repository, "update-ref", "--no-deref", "-d", branch_ref, base)
-    except (OSError, subprocess.CalledProcessError):
-        pass
-
-
-def _cleanup_claimed_worktree(
-    repository: Path,
-    *,
-    worktree: Path,
-    directory_identity: tuple[int, int] | None,
-    branch_ref: str,
-    base: str,
-) -> None:
-    """Best-effort cleanup only while this call's atomic claims still match."""
-
-    if directory_identity is None:
-        _delete_owned_branch(repository, branch_ref, base)
-        return
-    if _directory_identity(worktree) != directory_identity:
-        return
-    try:
-        _git(repository, "worktree", "remove", str(worktree))
-    except (OSError, subprocess.CalledProcessError):
-        try:
-            worktree.rmdir()
-        except OSError:
-            pass
-    if _directory_identity(worktree) not in (None, directory_identity):
-        return
-    _delete_owned_branch(repository, branch_ref, base)
-
-
 def create_worktree(
     repository: Path,
     *,
@@ -245,28 +201,16 @@ def create_worktree(
     branch_ref = f"refs/heads/{branch}"
     worktree = (root / run_id).resolve()
     _git(source, "update-ref", "--no-deref", branch_ref, base, _ZERO_OID)
-    claimed_directory: tuple[int, int] | None = None
-    try:
-        worktree.mkdir(mode=0o700)
-        claimed_directory = _directory_identity(worktree)
-        if claimed_directory is None:
-            raise ValueError("worktree path claim is invalid")
-        _git(
-            source,
-            "worktree",
-            "add",
-            str(worktree),
-            branch,
-        )
-    except Exception:
-        _cleanup_claimed_worktree(
-            source,
-            worktree=worktree,
-            directory_identity=claimed_directory,
-            branch_ref=branch_ref,
-            base=base,
-        )
-        raise
+    worktree.mkdir(mode=0o700)
+    if _directory_identity(worktree) is None:
+        raise ValueError("worktree path claim is invalid")
+    _git(
+        source,
+        "worktree",
+        "add",
+        str(worktree),
+        branch,
+    )
     return WorktreeAssignment(
         repository=source,
         worktree=worktree,

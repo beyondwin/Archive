@@ -15,6 +15,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
+import cpe_runtime.git as git_runtime
 from cpe_runtime.git import (
     _parse_ident,
     adopt_worktree,
@@ -183,7 +184,7 @@ class GitContractTests(unittest.TestCase):
         self.assertEqual(assignment.git_common_dir, (self.repository / ".git").resolve())
         self.assertEqual(self.git_at(assignment.worktree, "rev-parse", "HEAD"), self.base)
 
-    def test_failed_creation_removes_only_the_new_path_and_branch(self) -> None:
+    def test_failed_creation_preserves_claims_when_cleanup_is_ambiguous(self) -> None:
         run_id = "cpe-1111111111111111"
         worktree = (self.temp / "worktrees" / run_id).resolve()
         branch = f"codex/{run_id}"
@@ -211,9 +212,9 @@ class GitContractTests(unittest.TestCase):
                     run_id=run_id,
                     root=self.temp / "worktrees",
                 )
-        self.assertFalse(worktree.exists())
-        self.assertNotEqual(
-            self.git("show-ref", "--verify", f"refs/heads/{branch}", check=False),
+        self.assertTrue(worktree.is_dir())
+        self.assertEqual(
+            self.git("rev-parse", "--verify", f"refs/heads/{branch}^{{commit}}"),
             self.base,
         )
         self.assertTrue((self.repository / "tracked.txt").exists())
@@ -278,6 +279,134 @@ class GitContractTests(unittest.TestCase):
         )
         self.assertTrue(worktree.is_dir())
         self.assertEqual(sentinel.read_text(encoding="utf-8"), "foreign\n")
+
+    def test_cleanup_has_no_window_that_removes_a_replacement_path(self) -> None:
+        run_id = "cpe-1313131313131313"
+        worktree = (self.temp / "worktrees" / run_id).resolve()
+        displaced = self.temp / "displaced-owned-worktree"
+        replacement = worktree / "tracked.txt"
+        real_run = subprocess.run
+        real_identity = git_runtime._directory_identity
+        identity_observations = 0
+        replacement_injected = False
+
+        def fail_after_add(*args: object, **kwargs: object) -> subprocess.CompletedProcess:
+            result = real_run(*args, **kwargs)
+            argv = args[0]
+            if isinstance(argv, list) and argv[1:3] == ["worktree", "add"]:
+                raise subprocess.CalledProcessError(1, argv)
+            return result
+
+        def replace_after_identity(path: Path) -> tuple[int, int] | None:
+            nonlocal identity_observations, replacement_injected
+            identity = real_identity(path)
+            if path == worktree:
+                identity_observations += 1
+                if identity_observations == 2 and identity is not None:
+                    worktree.rename(displaced)
+                    worktree.mkdir()
+                    (worktree / ".git").write_bytes((displaced / ".git").read_bytes())
+                    replacement.write_text("initial\n", encoding="utf-8")
+                    replacement_injected = True
+            return identity
+
+        with (
+            mock.patch("cpe_runtime.git.subprocess.run", side_effect=fail_after_add),
+            mock.patch(
+                "cpe_runtime.git._directory_identity",
+                side_effect=replace_after_identity,
+            ),
+        ):
+            with self.assertRaises(subprocess.CalledProcessError):
+                create_worktree(
+                    self.repository,
+                    base=self.base,
+                    run_id=run_id,
+                    root=self.temp / "worktrees",
+                )
+
+        if replacement_injected:
+            self.assertTrue(worktree.is_dir())
+            self.assertEqual(replacement.read_text(encoding="utf-8"), "initial\n")
+        else:
+            self.assertTrue(worktree.is_dir())
+
+    def test_cleanup_has_no_window_that_deletes_a_newly_checked_out_branch(self) -> None:
+        run_id = "cpe-1414141414141414"
+        root = self.temp / "worktrees"
+        worktree = (root / run_id).resolve()
+        branch = f"codex/{run_id}"
+        branch_ref = f"refs/heads/{branch}"
+        external = self.temp / "external-checkout"
+        real_run = subprocess.run
+        collision_injected = False
+        checkout_injected = False
+        delete_attempted = False
+
+        def race_checkout_after_listing(
+            *args: object,
+            **kwargs: object,
+        ) -> subprocess.CompletedProcess:
+            nonlocal collision_injected, checkout_injected, delete_attempted
+            argv = args[0]
+            if (
+                isinstance(argv, list)
+                and argv[:3] == ["git", "update-ref", "--no-deref"]
+                and len(argv) == 6
+                and argv[3] == branch_ref
+            ):
+                result = real_run(*args, **kwargs)
+                worktree.mkdir(parents=True)
+                (worktree / "foreign.txt").write_text("foreign\n", encoding="utf-8")
+                collision_injected = True
+                return result
+            if (
+                isinstance(argv, list)
+                and argv[1:4] == ["worktree", "list", "--porcelain"]
+            ):
+                result = real_run(*args, **kwargs)
+                real_run(
+                    ["git", "worktree", "add", "-q", str(external), branch],
+                    cwd=self.repository,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                checkout_injected = True
+                return result
+            if (
+                isinstance(argv, list)
+                and argv[:5] == [
+                    "git", "update-ref", "--no-deref", "-d", branch_ref,
+                ]
+            ):
+                delete_attempted = True
+            return real_run(*args, **kwargs)
+
+        with mock.patch(
+            "cpe_runtime.git.subprocess.run",
+            side_effect=race_checkout_after_listing,
+        ):
+            with self.assertRaises(FileExistsError):
+                create_worktree(
+                    self.repository,
+                    base=self.base,
+                    run_id=run_id,
+                    root=root,
+                )
+
+        self.assertTrue(collision_injected)
+        self.assertFalse(delete_attempted)
+        self.assertEqual(
+            self.git("rev-parse", "--verify", f"{branch_ref}^{{commit}}"),
+            self.base,
+        )
+        if checkout_injected:
+            self.assertEqual(
+                self.git_at(external, "symbolic-ref", "--short", "HEAD"),
+                branch,
+            )
+            self.assertEqual(self.git_at(external, "rev-parse", "HEAD"), self.base)
 
     def test_adopt_dirty_worktree_without_mutating_it(self) -> None:
         worktree = self.make_linked_worktree()
