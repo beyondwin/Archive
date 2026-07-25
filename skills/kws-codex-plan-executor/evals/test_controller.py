@@ -773,6 +773,86 @@ raise SystemExit(7)
             "numeric PGID access occurred after the leader PID was reaped",
         )
 
+    def test_late_cleanup_never_accesses_an_already_reaped_group(self) -> None:
+        class LateFailure(RuntimeError):
+            pass
+
+        class LateFailureController(CodexController):
+            leader: subprocess.Popen[bytes] | None = None
+
+            def _drain(
+                self,
+                process: subprocess.Popen[bytes],
+                prompt: str,
+                expected_session_id: str | None,
+                on_session_id: object,
+            ) -> object:
+                self.leader = process
+                super()._drain(
+                    process,
+                    prompt,
+                    expected_session_id,
+                    on_session_id,
+                )
+                if process.returncode is None:
+                    raise AssertionError("probe requires a reaped leader")
+                raise LateFailure("late cleanup after drain")
+
+        provider = self.write_provider(
+            "late-cleanup-provider",
+            """
+import subprocess
+import sys
+
+sys.stdin.read()
+subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+""",
+        )
+        controller = LateFailureController(
+            executable=str(provider),
+            termination_grace_seconds=0,
+        )
+        real_killpg = os.killpg
+        post_reap_accesses: list[tuple[int, int]] = []
+
+        def reject_reaped_group(
+            process_group: int,
+            signal_number: int,
+        ) -> None:
+            if (
+                controller.leader is not None
+                and controller.leader.returncode is not None
+            ):
+                post_reap_accesses.append((process_group, signal_number))
+                raise ProcessLookupError
+            real_killpg(process_group, signal_number)
+
+        previous_handler = signal.getsignal(signal.SIGTERM)
+
+        def sentinel_handler(_signum: int, _frame: object) -> None:
+            return None
+
+        signal.signal(signal.SIGTERM, sentinel_handler)
+        try:
+            with (
+                mock.patch(
+                    "cpe_runtime.controller.os.killpg",
+                    side_effect=reject_reaped_group,
+                ),
+                self.assertRaises(LateFailure),
+            ):
+                controller.launch(
+                    self.request(),
+                    on_session_id=lambda _session_id: None,
+                    on_process_started=lambda _pid, _group: None,
+                )
+            restored_handler = signal.getsignal(signal.SIGTERM)
+        finally:
+            signal.signal(signal.SIGTERM, previous_handler)
+
+        self.assertEqual(post_reap_accesses, [])
+        self.assertIs(restored_handler, sentinel_handler)
+
     def test_group_disappearance_still_unconditionally_reaps_leader(self) -> None:
         leader = subprocess.Popen(
             [sys.executable, "-c", "import time; time.sleep(60)"],
