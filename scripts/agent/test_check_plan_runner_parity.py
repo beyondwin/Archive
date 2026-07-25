@@ -66,7 +66,7 @@ class ParityInvariantTest(unittest.TestCase):
     def test_recovery_reports_only_the_external_root_action(self) -> None:
         healthy = [
             {
-                "action": "stalled",
+                "action": "clean-interrupted",
                 "session_action": "fresh",
             },
             {
@@ -156,13 +156,54 @@ class ParityInvariantTest(unittest.TestCase):
                 "exit": 0,
                 "status": "ready_for_integration",
                 "plan_statuses": ["implemented", "implemented"],
-                "handoff_heads": ["<git-head-0>", "<git-head-1>"],
-                "verification_set_digest": "<sha256>",
+                "handoff_heads": ["1" * 40, self.head],
+                "verification_set_digest": hashlib.sha256(
+                    canonical(
+                        {
+                            "candidate_head": self.head,
+                            "commands": self.final_set["commands"],
+                        }
+                    )
+                ).hexdigest(),
                 "required_receipt_count": 1,
                 "session_action": "resume_root",
                 "integration": "not_observed",
             },
         )
+
+    def test_expected_outcome_rejects_valid_but_different_heads_and_digest(
+        self,
+    ) -> None:
+        expected = {
+            "exit": 0,
+            "status": "ready_for_integration",
+            "plan_statuses": ["implemented", "implemented"],
+            "handoff_heads": ["1" * 40, "2" * 40],
+            "verification_set_digest": "3" * 64,
+            "required_receipt_count": 1,
+            "session_action": None,
+            "integration": "not_observed",
+        }
+        differences = {
+            "heads": dict(
+                expected,
+                handoff_heads=["4" * 40, "5" * 40],
+            ),
+            "digest": dict(
+                expected,
+                verification_set_digest="6" * 64,
+            ),
+        }
+        for field, different in differences.items():
+            with self.subTest(field=field), self.assertRaisesRegex(
+                PARITY.ParityFailure,
+                "expectation mismatch",
+            ):
+                PARITY._require_expected_outcome(
+                    "codex",
+                    expected,
+                    different,
+                )
 
     def test_active_root_fixtures_are_version_two_external_contracts(self) -> None:
         contract = json.loads(PARITY.CONTRACT.read_text(encoding="utf-8"))
@@ -185,8 +226,19 @@ class ParityInvariantTest(unittest.TestCase):
         )
         self.assertNotIn("task_statuses", contract)
         self.assertEqual(fixture["fixture_version"], 2)
+        by_id = {scenario["id"]: scenario for scenario in fixture["scenarios"]}
+        self.assertEqual(
+            by_id["healthy-resume"]["fake_sequence"][0],
+            "clean-interrupted",
+        )
         for scenario in fixture["scenarios"]:
             self.assertNotIn("finalized", scenario["fake_sequence"])
+            self.assertIn("expected_handoff_heads", scenario)
+            self.assertIn("expected_verification_set_digest", scenario)
+            self.assertEqual(
+                list(PARITY._expected(scenario)),
+                contract["parity_fields"],
+            )
             self.assertFalse(
                 {
                     "expected_task_statuses",

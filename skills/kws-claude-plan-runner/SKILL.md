@@ -78,6 +78,10 @@ at one unchanged candidate HEAD. The runner executes exact argv without a
 shell, enforces each deadline, and seals each receipt. A HEAD change invalidates
 verification and review.
 
+The final helper derives the exact ordered duplicate-free union of all sealed
+plan verification declarations at the final HEAD. The final handoff and
+accepted verification digest bind that run-level union.
+
 A dirty checkpoint records HEAD, branch, porcelain, and bounded content digests
 for drift detection. It is not a backup and cannot restore files.
 

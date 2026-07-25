@@ -201,7 +201,7 @@ def generic_main(sequence_path: Path) -> int:
             )
         time.sleep(2)
         return 7
-    if action in {"interrupted", "same-failure"}:
+    if action in {"interrupted", "clean-interrupted", "same-failure"}:
         return 7
     if action in {"implemented", "resume-dirty-implemented"}:
         index = packet["current_plan"]["index"]
@@ -214,6 +214,13 @@ def generic_main(sequence_path: Path) -> int:
                 raise ValueError("sealed partial implementation is missing")
             paths.append(partial.name)
         subprocess.run(["git", "add", *paths], check=True)
+        commit_environment = dict(os.environ)
+        commit_environment.update(
+            {
+                "GIT_AUTHOR_DATE": "2026-01-01T00:00:00+00:00",
+                "GIT_COMMITTER_DATE": "2026-01-01T00:00:00+00:00",
+            }
+        )
         subprocess.run(
             [
                 "git",
@@ -226,6 +233,7 @@ def generic_main(sequence_path: Path) -> int:
                 f"implement plan {index}",
             ],
             check=True,
+            env=commit_environment,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
