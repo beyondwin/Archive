@@ -2041,12 +2041,34 @@ def probe_runner(provider: str) -> dict[str, object]:
             )
 
 
+def _scenario_mode(
+    result: Mapping[str, object], mode: str
+) -> dict[str, object]:
+    remapped = dict(result)
+    remapped["mode"] = mode
+    if len(json.dumps(remapped, sort_keys=True)) > RESULT_LIMIT:
+        raise CanaryError("normalized_result_too_large")
+    return remapped
+
+
+def probe_ownership(provider: str) -> dict[str, object]:
+    return _scenario_mode(probe_runner(provider), "ownership")
+
+
+def probe_interruption(provider: str) -> dict[str, object]:
+    return _scenario_mode(probe_session(provider), "interruption")
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = ContractArgumentParser(prog="plan-runner-live-canary")
     parser.add_argument(
         "--provider", choices=("codex", "claude", "all"), required=True
     )
-    parser.add_argument("--mode", choices=("session", "runner", "all"), required=True)
+    parser.add_argument(
+        "--mode",
+        choices=("session", "runner", "ownership", "interruption", "all"),
+        required=True,
+    )
     return parser
 
 
@@ -2096,14 +2118,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
         return 3
     results: list[Mapping[str, object]] = []
+    probes = {
+        "session": probe_session,
+        "runner": probe_runner,
+        "ownership": probe_ownership,
+        "interruption": probe_interruption,
+    }
     try:
         for provider in _requested(arguments.provider, ("codex", "claude")):
             for mode in _requested(arguments.mode, ("session", "runner")):
-                result = (
-                    probe_session(provider)
-                    if mode == "session"
-                    else probe_runner(provider)
-                )
+                result = probes[mode](provider)
                 results.append(result)
                 print(json.dumps(result, sort_keys=True))
     except _SignalInterrupt as error:
