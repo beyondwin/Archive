@@ -4,6 +4,9 @@
 
 This subtree is an independent Claude runner. Do not import production runtime
 code from the Codex runner, root parity fixtures, or legacy executor state.
+Version 2 is the active run/resume contract; Version 1 state is inspect-only.
+The runner reports exact external facts and does not reinterpret Superpowers
+task, review, or fix workflow meaning.
 
 ## Runtime contract
 

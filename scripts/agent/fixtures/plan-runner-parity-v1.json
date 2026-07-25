@@ -1,69 +1,65 @@
 {
-  "fixture_version": 1,
+  "fixture_version": 2,
   "scenarios": [
     {
       "id": "ordered-two-plan-ready",
-      "fake_sequence": ["implemented", "implemented", "finalized"],
+      "fake_sequence": [
+        "implemented",
+        "implemented"
+      ],
       "expected_status": "ready_for_integration",
-      "expected_plan_statuses": ["implemented", "implemented"],
-      "expected_task_statuses": [],
+      "expected_plan_statuses": [
+        "implemented",
+        "implemented"
+      ],
       "expected_required_receipt_count": 1,
-      "expected_all_required_receipts": true,
-      "expected_final_head_equal": true,
-      "expected_review_outcome": "approved",
-      "expected_review_approved": true,
       "expected_integration": "not_observed",
       "expected_exit": 0
     },
     {
       "id": "authority-blocked",
-      "fake_sequence": ["blocked"],
+      "fake_sequence": [
+        "blocked"
+      ],
       "expected_status": "blocked",
-      "expected_plan_statuses": ["running", "pending"],
-      "expected_task_statuses": [],
-      "expected_failure": "external_authority_required",
+      "expected_plan_statuses": [
+        "running",
+        "pending"
+      ],
+      "expected_required_receipt_count": 0,
+      "expected_integration": "not_observed",
       "expected_exit": 3
     },
     {
-      "id": "healthy-resume",
-      "fake_sequence": ["interrupted", "implemented", "implemented", "finalized"],
-      "provider_fake_sequences": {
-        "codex": ["interrupted", "resume-dirty-implemented", "implemented", "finalized"]
-      },
-      "expected_status": "ready_for_integration",
-      "expected_plan_statuses": ["implemented", "implemented"],
-      "expected_task_statuses": [],
-      "expected_required_receipt_count": 1,
-      "expected_all_required_receipts": true,
-      "expected_final_head_equal": true,
-      "expected_review_outcome": "approved",
-      "expected_review_approved": true,
-      "expected_integration": "not_observed",
-      "expected_session_action": "recovered",
-      "expected_exit": 0
-    },
-    {
       "id": "stalled-fresh-strategy",
-      "fake_sequence": ["stalled", "implemented", "implemented", "finalized"],
+      "fake_sequence": [
+        "stalled",
+        "implemented",
+        "implemented"
+      ],
       "expected_status": "ready_for_integration",
-      "expected_plan_statuses": ["implemented", "implemented"],
-      "expected_task_statuses": [],
+      "expected_plan_statuses": [
+        "implemented",
+        "implemented"
+      ],
       "expected_required_receipt_count": 1,
-      "expected_all_required_receipts": true,
-      "expected_final_head_equal": true,
-      "expected_review_outcome": "approved",
-      "expected_review_approved": true,
       "expected_integration": "not_observed",
-      "expected_session_action": "fresh",
+      "expected_session_action": "fresh_root",
       "expected_exit": 0
     },
     {
       "id": "recovery-exhausted",
-      "fake_sequence": ["same-failure", "same-failure", "same-failure", "same-failure"],
+      "fake_sequence": [
+        "stalled",
+        "stalled"
+      ],
       "expected_status": "failed",
-      "expected_plan_statuses": ["running", "pending"],
-      "expected_task_statuses": [],
-      "expected_failure": "recovery_exhausted",
+      "expected_plan_statuses": [
+        "running",
+        "pending"
+      ],
+      "expected_required_receipt_count": 0,
+      "expected_integration": "not_observed",
       "expected_exit": 4
     }
   ]

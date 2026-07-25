@@ -1,27 +1,21 @@
 # KWS Claude Plan Runner
 
-An independent quality-first controller for approved Superpowers
-specifications and ordered implementation plans executed through Claude Code.
-Claude/Superpowers owns engineering decisions; the controller supplies durable,
-fail-closed recovery and completion evidence.
+An independent thin wrapper for approved Superpowers specifications and ordered
+plans executed through Claude Code. Superpowers owns task decomposition, SDD
+dispatch, TDD, task review, fixes, and the final whole-branch review. The
+runner owns exact external facts and fail-closed evidence.
 
 ## Runtime
-
-Install the managed interpreter before starting or resuming:
 
 ```bash
 uv python install 3.13
 ```
 
 The runtime is uv-managed normal-GIL CPython `>=3.13,<3.14`. Production Python
-uses only the standard library. The self-locating launcher resolves its own
-directory and an already-installed managed interpreter with
-`--no-python-downloads`; active commands never download Python or use system
-Python fallback.
+is standard-library-only. Active commands never download Python or fall back to
+system Python.
 
 ## Public commands
-
-Run from this directory. Input paths should be absolute.
 
 ```bash
 ./scripts/runner run \
@@ -40,85 +34,61 @@ Run from this directory. Input paths should be absolute.
 ./scripts/runner inspect --run-id RUN_ID
 ```
 
-`--spec` and `--plan` preserve CLI order. Inputs are snapshotted by absolute
-path and digest. Specs are immutable common context with no positional pairing
-to plans. Plans execute sequentially in one isolated worktree/branch. Provider
-packets expose all specs and only the current plan; prior plans pass forward
-through Git, ledger, and receipts, not conversation history.
+`--spec` and `--plan` preserve CLI order with no positional pairing. They are
+immutable inputs handed unchanged to Superpowers. Every provider root receives
+all specifications and the current plan only; prior plans pass forward through
+ordered Git handoff HEADs, digests, and receipts.
 
-`--model` is an explicit user choice, never automatic escalation. The stall
-lease defaults to 3600 seconds and renews only on material progress, not mere
-process existence or repeated output.
+## Thin Superpowers boundary
 
-## Claude sessions and recovery
+Superpowers owns the task/review/fix workflow and its ledger. The runner does
+not mirror that state. It owns immutable input digests, one worktree, plan
+order, root recovery actions, ordered handoff HEADs, accepted verification
+digests, exact receipts, and the final run/integration outcome.
 
-Initial attempts use `claude -p --output-format stream-json --verbose`, an
-inline JSON schema, and an explicit new UUID through `--session-id`. Healthy
-same-plan recovery uses the recorded UUID through `--resume`. Each new plan
-always uses a fresh session. Nested Claude markers and unrelated credentials
-are removed before launch.
+Every plan starts with a fresh root. Each plan has at most one healthy root
+resume and one fresh-root fallback. The transport uses an explicit new UUID for
+the fresh root and the recorded UUID for `--resume`; provider-private UUIDs and
+stream details are not part of cross-provider parity.
 
-One variadic `--disallowedTools` flag reduces accidental remote mutation. It is
-not same-UID containment; hard isolation is a Waygent/kernel responsibility.
-
-Plain `resume` reconciles durable state with the exact worktree and Git
-identity. Simple interruptions prefer healthy session resume. Repeated failure,
-stall, context overflow, abnormal compaction, session damage, or failed resume
-uses a durable fresh session with a changed strategy.
-
-`SIGINT` and `SIGTERM` terminate and reap the isolated provider process group
-before atomically exposing an external `resumable` state. An interrupted
-implementation may resume an uncommitted partial tree only when its HEAD,
-branch, porcelain digest, and bounded content digest exactly match the sealed
-checkpoint; arbitrary dirty state or later drift fails closed without launching
-another provider.
-
-While the controller is alive, provider/session loss and stalls enter a bounded
-automatic `recovering` loop. `resumable` is reserved for a stopped controller
-requiring another invocation. `--retry-blocked` follows correction of a real
-external blocker. `--retry-failed` requires a non-empty `--strategy-note`.
-
-Canonical recovery state lives under `~/.claude/plan-runner`; isolated
-worktrees live under `~/.claude/worktrees/plan-runner`. This 1.0.0 greenfield
-runner has no legacy run-state compatibility.
+An interrupted dirty checkpoint seals HEAD, branch, porcelain, and bounded
+content digests for drift detection. It is not a backup and cannot restore
+files.
 
 ## Verification and completion
 
-The provider declares the final command set for a candidate HEAD. A
-parent-owned helper executes exact argv without a shell, applies command
-deadlines, and seals immutable receipts. Every required command and a
-structured fresh final review must succeed at the same unchanged HEAD. When no
-executable verification applies, a structured rationale and approving final
-review are still required.
+The final plan carries all immutable requirements and owns the single final
+whole-branch review. The runner executes declared exact argv without a shell,
+applies deadlines, and seals receipts. Every required command and the review
+must accept one unchanged candidate HEAD.
 
-Task status is `pending/running/reported_done`; plan status is
-`pending/running/implemented`. Only run status `ready_for_integration` is final
-success. The runner never merges, pushes, or deploys and records
-`integration=not_observed`.
+Do not merge, push, or deploy. Provider packets set
+`integration_policy=keep`; success records `integration=not_observed`.
+
+Version 1 state is inspect-only. Version 2 is required for active run, resume,
+and recovery.
 
 `run` and `resume` exit 0 only for `ready_for_integration`.
 `inspect` exits 0 for any valid, readable run state; it reports state rather
-than asserting completion. `inspect` exits 64 for an unknown run and 65 for invalid state.
+than asserting completion.
+`inspect` exits 64 for an unknown run and 65 for invalid state.
 
 | Exit code | Contract |
 |---:|---|
 | `run`/`resume`: 0 | Run is `ready_for_integration`. |
-| `inspect`: 0 | Valid state was read, regardless of lifecycle status. |
-| 2 | Controller stopped with durable externally `resumable` state. |
-| 3 | External/runtime/provider authority is `blocked`. |
-| 4 | Run failed after bounded recovery or provider failure. |
+| `inspect`: 0 | Valid state was read. |
+| 2 | Externally `resumable`. |
+| 3 | External authority is `blocked`. |
+| 4 | Bounded recovery or provider failure. |
 | 64 | Invocation or immutable input is invalid. |
-| 65 | State, Git, receipt, or helper integrity failed. |
+| 65 | State, Git, receipt, or integrity failure. |
 | 70 | Unexpected internal failure. |
 
 ## Validation
-
-Deterministic validation uses the fake Claude provider and never invokes a real
-model:
 
 ```bash
 ./evals/run.sh
 ```
 
-A real Claude canary is separate opt-in evidence. Offline success must not be
-reported as live provider compatibility.
+The fake-provider suite is deterministic. A live Claude canary is separate
+opt-in evidence.

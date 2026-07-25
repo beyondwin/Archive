@@ -18,7 +18,7 @@ class SkillContractTests(unittest.TestCase):
             "durable recovery and fail-closed ready-for-integration evidence.",
             skill,
         )
-        self.assertIn('version: "1.1.0"', skill)
+        self.assertIn('version: "2.0.0"', skill)
         self.assertIn('updated_at: "2026-07-25"', skill)
 
     def test_skill_closes_the_baseline_pressure_failures(self) -> None:
@@ -29,7 +29,7 @@ class SkillContractTests(unittest.TestCase):
             "current plan only",
             "durable state, Git HEAD, ledger, and receipts",
             "same-plan session resume",
-            "fresh-session fallback",
+            "one fresh-root fallback",
             "A live controller continues the bounded recovery loop itself",
             "`recovering`",
             "`resumable`",
@@ -38,6 +38,7 @@ class SkillContractTests(unittest.TestCase):
             "`ready_for_integration`",
             "Do not merge, push, or deploy",
             "`integration=not_observed`",
+            "`integration_policy=keep`",
             "same-UID",
         ):
             with self.subTest(required=required):
@@ -102,12 +103,13 @@ class SkillContractTests(unittest.TestCase):
             with self.subTest(forbidden=forbidden):
                 self.assertIn(f"Do not use {forbidden}", guidance)
 
-    def test_changelog_describes_a_greenfield_release(self) -> None:
+    def test_changelog_preserves_v1_history_and_publishes_v2(self) -> None:
         changelog = (SKILL_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
 
+        self.assertIn("## 2.0.0 - 2026-07-25", changelog)
         self.assertIn("## 1.0.0 - 2026-07-23", changelog)
         self.assertIn("greenfield", changelog.lower())
-        self.assertIn("does not claim compatibility with legacy run state", changelog)
+        self.assertIn("Version 1 state is inspect-only", changelog)
 
     def test_public_contract_documents_the_thin_superpowers_boundary(self) -> None:
         documents = {
@@ -126,8 +128,12 @@ class SkillContractTests(unittest.TestCase):
             "--ignore-rules",
             "matching_run_exists",
             "volatile-codex-turn-refs",
-            "unsealed-provider-partial",
             "bun run agent:verify -- --base",
+            "execpolicy rules",
+            "drift detection",
+            "cannot restore",
+            "whole-branch review",
+            "all immutable requirements",
         ):
             with self.subTest(required=required):
                 self.assertIn(required, combined)
@@ -137,7 +143,7 @@ class SkillContractTests(unittest.TestCase):
             with self.subTest(document=document, ownership="superpowers"):
                 self.assertIn(
                     "Superpowers owns task decomposition, SDD dispatch, TDD, task review, "
-                    "and its ledger",
+                    "fixes, and the final whole-branch review",
                     text,
                 )
             with self.subTest(document=document, ownership="runner"):
@@ -158,7 +164,6 @@ class SkillContractTests(unittest.TestCase):
             "./scripts/runner repair --run-id",
             "--expected-revision",
             "--repair-kind volatile-codex-turn-refs",
-            "--repair-kind unsealed-provider-partial",
             "refs/codex/turn-diffs/captures/",
             "refs/codex/turn-diffs/checkpoints/",
             "host_permission_blocked",
@@ -181,8 +186,6 @@ class SkillContractTests(unittest.TestCase):
             "execution_profile_transition",
             "provider_capability_blocked",
             "Recorded process group and descendant PID quiescence is necessary",
-            "unsealed partial repair is",
-            "disabled pending a complete descendant proof",
             "prior plan handoff HEAD is an ancestor",
             "sdd-workspace",
             "task-brief",
@@ -190,6 +193,21 @@ class SkillContractTests(unittest.TestCase):
         ):
             with self.subTest(required=required):
                 self.assertIn(required, combined)
+
+    def test_public_contract_removes_old_runner_owned_workflow_semantics(self) -> None:
+        combined = "\n".join(
+            (SKILL_ROOT / name).read_text(encoding="utf-8")
+            for name in ("SKILL.md", "README.md", "CHANGELOG.md")
+        )
+
+        for forbidden in (
+            "unsealed-provider-partial",
+            "Task status is",
+            "finalization",
+            "final_review_receipt",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, combined)
 
 
 if __name__ == "__main__":
