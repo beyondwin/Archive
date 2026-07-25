@@ -1,0 +1,220 @@
+"""One durable CPE run around one Superpowers root controller."""
+from __future__ import annotations
+import os, secrets, subprocess
+from dataclasses import replace
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Sequence
+from .controller import CodexController, ControllerOutcome, ControllerRequest
+from .git import (
+    WorktreeAssignment, _absolute_git_path, _cleanup_claimed_worktree, _commit_at,
+    _common_repository, _git, adopt_worktree, capture_git_identity, create_worktree,
+    observe_git, require_ancestor,
+)
+from .state import DocumentSource, RunManifest, RunState, RunStore, snapshot_documents
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+def new_run_id() -> str:
+    return f"cpe-{secrets.token_hex(8)}"
+def resolve_repository(workspace: Path) -> Path:
+    return _common_repository(workspace)[0]
+def resolve_head(repository: Path) -> str:
+    return _commit_at(repository, "HEAD")
+def render_initial_prompt(
+    manifest: RunManifest, *, manifest_path: Path, git_common_dir: Path,
+    schema_path: Path,
+) -> str:
+    lines = [
+        "Execute the immutable CPE document bundle in the assigned worktree.",
+        "Read repository AGENTS.md. The manifest entries are caller-supplied documents "
+        "in caller order; interpret and use them under Superpowers without asking CPE "
+        "for document roles or validation.",
+        "Use the installed Superpowers skill named in SUPERPOWERS_SKILL.",
+        "Superpowers and Git own semantic progress and recovery.",
+        "Do not merge, push, open a PR, tag, publish, release, or deploy.",
+        "Return only the terminal envelope required by TERMINAL_SCHEMA.",
+        "", f"MANIFEST={manifest_path}", f"RUN_ID={manifest.run_id}",
+        f"SOURCE_REPOSITORY={manifest.source_repository}",
+        f"BASE_COMMIT={manifest.base_commit}", f"BRANCH={manifest.branch}",
+        f"WORKTREE={manifest.worktree}", f"GIT_COMMON_DIR={git_common_dir}",
+        f"SUPERPOWERS_SKILL={manifest.superpowers_skill}",
+        f"SANDBOX={manifest.sandbox}", f"APPROVAL_POLICY={manifest.approval_policy}",
+        f"INTEGRATION_POLICY={manifest.integration_policy}",
+        f"REMOTE_ACTION_POLICY={manifest.remote_action_policy}",
+        f"TERMINAL_SCHEMA={schema_path}", "DOCUMENTS_IN_CALLER_ORDER:",
+    ]
+    lines += [f"DOCUMENT_{item.order:03d}={item.snapshot_path}"
+              for item in manifest.documents]
+    return "\n".join(lines) + "\n"
+def _save(store: RunStore, state: RunState, **changes: object) -> RunState:
+    state = replace(state, updated_at=utc_now(), **changes)
+    store.save_state(state); return state
+def _current(assignment: WorktreeAssignment) -> bool:
+    try:
+        return (
+            Path(_git(assignment.worktree, "rev-parse", "--show-toplevel")
+                 ).resolve(strict=True) == assignment.worktree
+            and _absolute_git_path(assignment.worktree, "--git-common-dir")
+            == assignment.git_common_dir
+            and _git(assignment.worktree, "symbolic-ref", "--quiet", "--short", "HEAD")
+            == assignment.branch
+        )
+    except (OSError, subprocess.CalledProcessError, ValueError):
+        return False
+def _capsule(outcome: ControllerOutcome) -> dict[str, object] | None:
+    terminal = outcome.terminal
+    if terminal is None or terminal.resume_capsule is None:
+        return None
+    value = terminal.resume_capsule
+    return {"head_commit": value.head_commit, "worktree_status_digest": value.worktree_status_digest,
+        "note": value.note, "evidence_refs": list(value.evidence_refs),
+    }
+class CpeRuntime:
+    def __init__(
+        self, *, codex_home: Path | None = None, worktree_root: Path | None = None,
+        controller: CodexController | None = None, schema_path: Path | None = None,
+    ) -> None:
+        home = codex_home or Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex")))
+        self.codex_home = home.expanduser().resolve()
+        self.worktree_root = (worktree_root or self.codex_home / "worktrees").resolve()
+        self.controller = controller or CodexController()
+        default = Path(__file__).resolve().parents[2] / "templates" / "terminal-envelope.schema.json"
+        self.schema_path = (schema_path or default).resolve(strict=True)
+    def run(
+        self, *, workspace: Path, documents: Sequence[DocumentSource],
+        superpowers_skill: str, sandbox: str,
+        adopt_worktree_path: Path | None = None, base: str | None = None,
+    ) -> dict[str, object]:
+        repository = resolve_repository(workspace)
+        identity, run_id = capture_git_identity(repository), new_run_id()
+        selected_base = base if adopt_worktree_path is not None else resolve_head(repository)
+        if selected_base is None:
+            raise ValueError("--base is required with --adopt-worktree")
+        assignment = (
+            adopt_worktree(repository, worktree=adopt_worktree_path, base=selected_base)
+            if adopt_worktree_path is not None else
+            create_worktree(repository, base=selected_base, run_id=run_id,
+                            root=self.worktree_root)
+        )
+        try:
+            root = self.codex_home / "cpe-v3" / "runs" / run_id
+            records = snapshot_documents(run_root=root, sources=documents)
+            facts = observe_git(assignment.worktree)
+            manifest = RunManifest(
+                5, 3, run_id, str(assignment.repository), assignment.base_commit,
+                assignment.branch, str(assignment.worktree), tuple(records),
+                superpowers_skill, identity, sandbox, "never", "local-handoff-only",
+                "prohibited", utc_now(),
+            )
+            state = RunState(
+                "prepared", None, 0, False, None, None, facts.head,
+                facts.tracked_clean, facts.untracked_present, facts.status_digest,
+                None, None, None, None, utc_now(),
+            )
+            store = RunStore.create(self.codex_home, manifest, state)
+        except BaseException:
+            if adopt_worktree_path is None:
+                _cleanup_claimed_worktree(
+                    assignment.repository, worktree=assignment.worktree,
+                    branch=assignment.branch, path_claimed=True,
+                )
+            raise
+        return self._launch(store, assignment)
+    def _launch(
+        self, store: RunStore, assignment: WorktreeAssignment,
+    ) -> dict[str, object]:
+        with store.lock() as lock:
+            state = _save(store, store.state, status="running")
+            def persist(**changes: object) -> None:
+                nonlocal state
+                state = _save(store, state, **changes)
+            request = ControllerRequest(
+                "initial", assignment.worktree, assignment.git_common_dir,
+                store.manifest.sandbox,
+                render_initial_prompt(
+                    store.manifest, manifest_path=store.manifest_path,
+                    git_common_dir=assignment.git_common_dir,
+                    schema_path=self.schema_path,
+                ),
+                self.schema_path, None, 0, store.manifest.git_identity, lock.fileno(),
+            )
+            try:
+                outcome = self.controller.launch(
+                    request,
+                    on_session_id=lambda value: persist(controller_session_id=value),
+                    on_process_started=lambda pid, group: persist(
+                        active_pid=pid, active_process_group=group),
+                )
+            except KeyboardInterrupt:
+                return self._launch_error(store, state, assignment, "interrupted")
+            except Exception:
+                return self._launch_error(store, state, assignment, "failed")
+            return self._finish(store, state, assignment, outcome)
+    def _launch_error(
+        self, store: RunStore, state: RunState, assignment: WorktreeAssignment,
+        status: str,
+    ) -> dict[str, object]:
+        changes: dict[str, object] = {
+            "status": status, "active_pid": None, "active_process_group": None,
+            "last_process_class": status, "last_exit_code": None,
+        }
+        try:
+            facts = observe_git(assignment.worktree)
+            changes.update(
+                last_observed_head=facts.head, tracked_clean=facts.tracked_clean,
+                untracked_present=facts.untracked_present,
+                status_digest=facts.status_digest,
+            )
+        except ValueError:
+            pass
+        _save(store, state, **changes)
+        return {"status": status, "run_id": store.manifest.run_id}
+    def _finish(
+        self, store: RunStore, state: RunState, assignment: WorktreeAssignment,
+        outcome: ControllerOutcome,
+    ) -> dict[str, object]:
+        try:
+            facts = observe_git(assignment.worktree)
+        except ValueError:
+            return self._launch_error(store, state, assignment, "failed")
+        terminal = outcome.terminal
+        status = {"blocked": "blocked", "failed": "failed"}.get(
+            outcome.process_class, "interrupted")
+        state = _save(
+            store, state, status=status, active_pid=None, active_process_group=None,
+            last_observed_head=facts.head, tracked_clean=facts.tracked_clean,
+            untracked_present=facts.untracked_present, status_digest=facts.status_digest,
+            last_process_class=outcome.process_class, last_exit_code=outcome.exit_code,
+            resume_capsule=_capsule(outcome),
+            blocker=terminal.blocker if terminal is not None else None,
+        )
+        if outcome.process_class != "completed" or terminal is None:
+            return {"status": status, "run_id": store.manifest.run_id,
+                    "reason": outcome.process_class}
+        complete = (
+            terminal.claim == "completed" and terminal.head_commit == facts.head
+            and facts.tracked_clean and state.controller_session_id is not None
+            and _current(assignment)
+        )
+        try:
+            require_ancestor(assignment.worktree, assignment.base_commit, facts.head)
+        except ValueError:
+            complete = False
+        if not complete:
+            return {"status": "interrupted", "run_id": store.manifest.run_id,
+                    "reason": "handoff_incomplete"}
+        handoff = {
+            "format_version": 1, "run_id": store.manifest.run_id,
+            "branch": assignment.branch, "saved_worktree": str(assignment.worktree),
+            "base_commit": assignment.base_commit, "observed_head": facts.head,
+            "tracked_clean": facts.tracked_clean,
+            "untracked_present": facts.untracked_present,
+            "controller_claim": "completed",
+            "controller_session_id": state.controller_session_id,
+            "controller_generation": state.controller_generation,
+            "integration": "not_observed", "remote_actions_by_cpe": "none",
+        }
+        path = store.write_handoff(handoff)
+        _save(store, state, status="handed_off")
+        return {"status": "handed_off", "run_id": store.manifest.run_id,
+                "handoff_path": str(path)}
