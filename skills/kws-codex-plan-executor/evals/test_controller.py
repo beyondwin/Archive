@@ -733,6 +733,92 @@ raise SystemExit(7)
         self.assertTrue(lock_available)
         self.assertTrue(term_observed)
 
+    def test_group_signals_keep_exited_leader_as_identity_anchor(self) -> None:
+        leader = subprocess.Popen(
+            [sys.executable, "-c", "pass"],
+            start_new_session=True,
+        )
+        wait_flags = os.WEXITED | os.WNOHANG | os.WNOWAIT
+        deadline = time.monotonic() + 2
+        while os.waitid(os.P_PID, leader.pid, wait_flags) is None:
+            self.assertLess(time.monotonic(), deadline)
+            time.sleep(0.01)
+
+        real_killpg = os.killpg
+        anchor_observations: list[bool] = []
+
+        def probe_killpg(process_group: int, signal_number: int) -> None:
+            try:
+                waitable = os.waitid(os.P_PID, leader.pid, wait_flags)
+            except ChildProcessError:
+                waitable = None
+            anchor_observations.append(
+                waitable is not None and waitable.si_pid == leader.pid
+            )
+            real_killpg(process_group, signal_number)
+
+        try:
+            with mock.patch(
+                "cpe_runtime.controller.os.killpg",
+                side_effect=probe_killpg,
+            ):
+                CodexController(termination_grace_seconds=0)._terminate(leader)
+        finally:
+            if leader.returncode is None:
+                leader.wait()
+
+        self.assertTrue(anchor_observations)
+        self.assertTrue(
+            all(anchor_observations),
+            "numeric PGID access occurred after the leader PID was reaped",
+        )
+
+    def test_group_disappearance_still_unconditionally_reaps_leader(self) -> None:
+        leader = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+            start_new_session=True,
+        )
+        real_killpg = os.killpg
+        wait_flags = os.WEXITED | os.WNOHANG | os.WNOWAIT
+        disappeared = False
+
+        def disappear_on_probe(
+            process_group: int,
+            signal_number: int,
+        ) -> None:
+            nonlocal disappeared
+            if signal_number == 0 and not disappeared:
+                disappeared = True
+                real_killpg(process_group, signal.SIGKILL)
+                deadline = time.monotonic() + 2
+                while os.waitid(os.P_PID, leader.pid, wait_flags) is None:
+                    if time.monotonic() >= deadline:
+                        self.fail("leader did not exit during disappearance probe")
+                    time.sleep(0.01)
+                raise ProcessLookupError
+            real_killpg(process_group, signal_number)
+
+        return_code: int | None = None
+        reaped = False
+        try:
+            with mock.patch(
+                "cpe_runtime.controller.os.killpg",
+                side_effect=disappear_on_probe,
+            ):
+                CodexController(termination_grace_seconds=0)._terminate(leader)
+            return_code = leader.returncode
+            try:
+                os.waitid(os.P_PID, leader.pid, wait_flags)
+            except ChildProcessError:
+                reaped = True
+        finally:
+            if leader.returncode is None:
+                leader.wait()
+
+        self.assertTrue(disappeared)
+        self.assertEqual(return_code, -signal.SIGKILL)
+        self.assertTrue(reaped, "group disappearance left an exited leader unreaped")
+
     def test_large_prompt_and_provider_output_do_not_deadlock(self) -> None:
         provider = self.write_provider(
             "write-before-read-provider",
@@ -924,6 +1010,21 @@ print(json.dumps({"type": "turn.completed"}), flush=True)
         for payload in invalid_payloads:
             with self.subTest(payload=payload):
                 outcome = self.launch_terminal_text(json.dumps(payload))
+                self.assertEqual(outcome.process_class, "invalid_envelope")
+                self.assertIsNone(outcome.terminal)
+
+    def test_explicit_null_terminal_objects_are_invalid(self) -> None:
+        for field in ("resume_capsule", "blocker"):
+            with self.subTest(field=field):
+                outcome = self.launch_terminal_text(
+                    json.dumps(
+                        {
+                            "claim": "completed",
+                            "head_commit": "a" * 40,
+                            field: None,
+                        }
+                    )
+                )
                 self.assertEqual(outcome.process_class, "invalid_envelope")
                 self.assertIsNone(outcome.terminal)
 

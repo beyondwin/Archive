@@ -105,6 +105,8 @@ def _envelope(text: str) -> TerminalEnvelope:
     head = payload["head_commit"]
     if claim not in TERMINAL_CLAIMS or not isinstance(head, str) or not SHA40.fullmatch(head):
         raise ValueError("terminal envelope is invalid")
+    if any(key in payload and payload[key] is None for key in ("resume_capsule", "blocker")):
+        raise ValueError("terminal envelope is invalid")
     capsule, blocker = _capsule(payload.get("resume_capsule")), _blocker(payload.get("blocker"))
     invalid_combo = ((claim == "completed" and (capsule is not None or blocker is not None))
                      or (claim == "interrupted" and (capsule is None or blocker is not None))
@@ -331,10 +333,11 @@ class CodexController:
                     self._forward(label, chunk, forwarded)
                     if label == "stdout":
                         parser.feed(chunk)
-                if process.poll() is not None and final_deadline is None:
+                if (final_deadline is None and os.waitid(
+                    os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT,
+                ) is not None):
                     self._unregister_close(selector, process.stdin)
-                    if self._group_exists(process.pid):
-                        self._terminate(process)
+                    self._terminate(process)
                     final_deadline = time.monotonic() + 0.25
                 if final_deadline is not None and time.monotonic() >= final_deadline:
                     break
@@ -361,33 +364,28 @@ class CodexController:
 
     def _terminate(self, process: subprocess.Popen[bytes]) -> None:
         group = process.pid
-        process.poll()
-        if not self._group_exists(group):
-            return
+        exited = process.returncode is not None or os.waitid(
+            os.P_PID, group, os.WEXITED | os.WNOHANG | os.WNOWAIT,
+        ) is not None
         try:
-            os.killpg(group, signal.SIGTERM)
-        except ProcessLookupError:
-            return
-        except PermissionError:
-            pass
-        deadline = time.monotonic() + self.termination_grace_seconds
-        while self._group_exists(group) and time.monotonic() < deadline:
-            process.poll()
-            time.sleep(0.01)
-        if self._group_exists(group):
+            if not self._group_exists(group):
+                return
             try:
-                os.killpg(group, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
+                os.killpg(group, signal.SIGTERM)
+            except ProcessLookupError:
+                return
+            except PermissionError:
                 pass
-            deadline = time.monotonic() + 1.0
+            deadline = time.monotonic() + (0 if exited else self.termination_grace_seconds)
             while self._group_exists(group) and time.monotonic() < deadline:
-                process.poll()
                 time.sleep(0.01)
-        if process.poll() is None:
-            try:
-                process.wait(timeout=0.1)
-            except subprocess.TimeoutExpired:
-                pass
+            if self._group_exists(group):
+                try:
+                    os.killpg(group, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    pass
+        finally:
+            process.wait()
 
     @staticmethod
     def _group_exists(group: int) -> bool:
