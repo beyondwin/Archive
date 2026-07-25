@@ -14,3 +14,5 @@
   and requires explicit immutable opt-in for `danger-full-access`.
 - Keeps deterministic offline gates separate from explicitly opt-in live
   provider canaries.
+- Reconciles a strictly validated orphan handoff under the run lock before any
+  resumed controller launch after parent interruption.

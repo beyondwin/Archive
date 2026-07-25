@@ -58,6 +58,10 @@ run, worktree, documents, sandbox, Git identity, and selected skill. Only an
 explicit saved-session-unavailable outcome permits one fresh fallback. The
 generation can advance from zero to one once and never to generation two.
 
+Before launching a controller, `resume` reconciles a strictly valid handoff
+left by interruption between receipt publication and terminal state save.
+Malformed, mismatched, or stale orphan handoffs fail closed.
+
 Superpowers owns engineering completion; CPE only reports a mechanical
 `handed_off`, `failed`, `blocked`, or `interrupted` status.
 CPE has no public retry, recovery, or verification command.
