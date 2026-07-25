@@ -50,7 +50,9 @@ def parse_frontmatter_metadata(skill: str) -> dict[str, str]:
         raise AssertionError("SKILL.md must begin with bounded frontmatter")
     frontmatter_lines = frontmatter.group("body").splitlines()
     metadata_indexes = [
-        index for index, line in enumerate(frontmatter_lines) if line == "metadata:"
+        index
+        for index, line in enumerate(frontmatter_lines)
+        if re.match(r"^metadata\s*:", line)
     ]
     if len(metadata_indexes) != 1:
         raise AssertionError("SKILL.md frontmatter must contain one metadata mapping")
@@ -80,6 +82,10 @@ def markdown_section(document: str, level: str, heading: str) -> str:
     next_heading = re.search(rf"^{re.escape(level)} ", document[start:], re.MULTILINE)
     end = start + next_heading.start() if next_heading is not None else len(document)
     return document[start:end]
+
+
+def without_html_comments(document: str) -> str:
+    return re.sub(r"<!--.*?-->", "", document, flags=re.DOTALL)
 
 
 def cpe_install_entries(section: str, home: str) -> list[str]:
@@ -129,6 +135,20 @@ class ReleaseContractTests(unittest.TestCase):
         finally:
             path.write_text(original, encoding="utf-8")
 
+    def assert_check_rejects_transform(
+        self,
+        path: Path,
+        transform: object,
+        check: object,
+    ) -> None:
+        original = path.read_text(encoding="utf-8")
+        try:
+            path.write_text(transform(original), encoding="utf-8")
+            with self.assertRaises(AssertionError):
+                check()
+        finally:
+            path.write_text(original, encoding="utf-8")
+
     def test_release_check_rejects_body_version_comment_when_frontmatter_is_wrong(
         self,
     ) -> None:
@@ -148,6 +168,17 @@ class ReleaseContractTests(unittest.TestCase):
                 '  updated_at: "2026-07-25"',
                 '  updated_at: "2026-07-25"\nmetadata:\n'
                 '  version: "9.9.9"\n  updated_at: "2026-07-26"',
+            ),
+            self.test_release_documents_use_the_same_version_and_date,
+        )
+
+    def test_release_check_rejects_inline_frontmatter_metadata_mapping(self) -> None:
+        self.assert_check_rejects_mutation(
+            ROOT / "SKILL.md",
+            (
+                '  updated_at: "2026-07-25"',
+                '  updated_at: "2026-07-25"\nmetadata: '
+                '{version: "9.9.9", updated_at: "2026-07-26"}',
             ),
             self.test_release_documents_use_the_same_version_and_date,
         )
@@ -238,6 +269,28 @@ class ReleaseContractTests(unittest.TestCase):
                     self.test_skills_catalog_advertises_cpe_as_its_own_local_contract,
                 )
 
+    def test_catalog_check_rejects_multiline_comment_wrapped_sections(self) -> None:
+        def wrap_sections(catalog: str) -> str:
+            start = catalog.index("## 포함된 스킬")
+            end = catalog.index("### 확인")
+            return catalog[:start] + "<!--\n" + catalog[start:end] + "-->\n" + catalog[end:]
+
+        self.assert_check_rejects_transform(
+            REPOSITORY_ROOT / "skills" / "README.md",
+            wrap_sections,
+            self.test_skills_catalog_advertises_cpe_as_its_own_local_contract,
+        )
+
+    def test_catalog_check_rejects_global_duplicate_cpe_install_command(self) -> None:
+        self.assert_check_rejects_mutation(
+            REPOSITORY_ROOT / "skills" / "README.md",
+            (
+                "## 수정 워크플로",
+                cpe_install_entry("~/.codex/skills") + "\n\n## 수정 워크플로",
+            ),
+            self.test_skills_catalog_advertises_cpe_as_its_own_local_contract,
+        )
+
     def test_release_documents_use_the_same_version_and_date(self) -> None:
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
@@ -272,11 +325,12 @@ class ReleaseContractTests(unittest.TestCase):
         catalog = (REPOSITORY_ROOT / "skills" / "README.md").read_text(
             encoding="utf-8"
         )
+        live_catalog = without_html_comments(catalog)
 
         catalog_rows = re.findall(
             r"^\| \[`kws-codex-plan-executor`\]"
             r"\(\./kws-codex-plan-executor/\) \| (?P<purpose>.+) \|$",
-            markdown_section(catalog, "##", "포함된 스킬"),
+            markdown_section(live_catalog, "##", "포함된 스킬"),
             re.MULTILINE,
         )
         self.assertEqual(
@@ -292,7 +346,7 @@ class ReleaseContractTests(unittest.TestCase):
                 r"^`kws-codex-plan-executor`의 현재 릴리스는 `3\.0\.0`입니다\. "
                 r"CPE 3\.0\.0 source of truth is the tracked "
                 r"`skills/kws-codex-plan-executor/` directory\.$",
-                markdown_section(catalog, "##", "버전과 릴리스 상태"),
+                markdown_section(live_catalog, "##", "버전과 릴리스 상태"),
                 re.MULTILINE,
             ),
             [
@@ -303,17 +357,23 @@ class ReleaseContractTests(unittest.TestCase):
         )
         self.assertEqual(
             cpe_install_entries(
-                markdown_section(catalog, "###", CLAUDE_HEADING),
+                markdown_section(live_catalog, "###", CLAUDE_HEADING),
                 "~/.claude/skills",
             ),
             [cpe_install_entry("~/.claude/skills")],
         )
         self.assertEqual(
             cpe_install_entries(
-                markdown_section(catalog, "###", CODEX_HEADING),
+                markdown_section(live_catalog, "###", CODEX_HEADING),
                 "~/.codex/skills",
             ),
             [cpe_install_entry("~/.codex/skills")],
+        )
+        self.assertEqual(
+            live_catalog.count(
+                'ln -sfn "$ARCHIVE_REPO/skills/kws-codex-plan-executor"'
+            ),
+            2,
         )
 
     def test_readme_inventory_is_the_exact_tracked_release_tree(self) -> None:
