@@ -286,6 +286,15 @@ class ClaudeProviderTest(unittest.TestCase):
         )
         self.assertEqual(record["helper_socket"], str(self.helper.socket_path))
 
+    def test_child_environment_preserves_claude_oauth_but_not_session_token(self):
+        source_env = dict(self.adapter()._source_env)
+        source_env.pop("ANTHROPIC_API_KEY")
+        source_env["CLAUDE_CODE_OAUTH_TOKEN"] = "oauth-secret"
+        source_env["CLAUDE_CODE_SESSION_ACCESS_TOKEN"] = "nested-secret"
+        child = self.adapter(source_env=source_env)._child_env(self.git_identity)
+        self.assertEqual(child["CLAUDE_CODE_OAUTH_TOKEN"], "oauth-secret")
+        self.assertNotIn("CLAUDE_CODE_SESSION_ACCESS_TOKEN", child)
+
     def test_provider_child_nested_git_uses_only_sealed_identity(self):
         nested_root = self.root / "nested"
         nested_root.mkdir()

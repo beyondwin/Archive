@@ -562,7 +562,7 @@ class ClaudeAdapter:
     def _child_env(self, git_identity: GitIdentity) -> dict[str, str]:
         env = sanitized_child_env(
             self._source_env,
-            provider_auth_prefixes=("ANTHROPIC_",),
+            provider_auth_prefixes=("ANTHROPIC_", "CLAUDE_CODE_OAUTH_"),
             remotes=self._remotes,
             run_id=self._run_id,
             git_identity=git_identity,

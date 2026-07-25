@@ -859,59 +859,50 @@ def _read_nonce(path: Path) -> str | None:
     return nonce if isinstance(nonce, str) else None
 
 
-def _copy_private_regular(source: Path, target: Path) -> bool:
-    try:
-        metadata = source.lstat()
-    except FileNotFoundError:
-        return False
-    if (
-        not stat.S_ISREG(metadata.st_mode)
-        or metadata.st_uid != os.getuid()
-        or stat.S_IMODE(metadata.st_mode) & 0o022
-        or metadata.st_size > STREAM_LIMIT
-    ):
-        raise CanaryError("provider_auth_blocked")
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-    descriptor = os.open(source, flags)
-    try:
-        opened = os.fstat(descriptor)
-        if (
-            not stat.S_ISREG(opened.st_mode)
-            or opened.st_dev != metadata.st_dev
-            or opened.st_ino != metadata.st_ino
-            or opened.st_size != metadata.st_size
-        ):
-            raise CanaryError("provider_auth_blocked")
-        payload = b""
-        while len(payload) <= STREAM_LIMIT:
-            chunk = os.read(descriptor, min(65_536, STREAM_LIMIT + 1 - len(payload)))
-            if not chunk:
-                break
-            payload += chunk
-        if len(payload) != metadata.st_size:
-            raise CanaryError("provider_auth_blocked")
-    finally:
-        os.close(descriptor)
-    target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    target_descriptor = os.open(
-        target,
-        os.O_WRONLY
-        | os.O_CREAT
-        | os.O_EXCL
-        | getattr(os, "O_NOFOLLOW", 0),
-        0o600,
+def _without_agentlens_shims(path: str) -> str:
+    retained: list[str] = []
+    for entry in path.split(os.pathsep):
+        if not entry:
+            continue
+        parts = Path(entry).parts
+        if len(parts) >= 2 and parts[-2:] == (".agentlens", "shims"):
+            continue
+        retained.append(entry)
+    return os.pathsep.join(retained)
+
+
+def _claude_keychain_oauth_token(env: Mapping[str, str]) -> str | None:
+    security = Path("/usr/bin/security")
+    if sys.platform != "darwin" or not security.is_file():
+        return None
+    result = run_bounded(
+        [
+            str(security),
+            "find-generic-password",
+            "-w",
+            "-s",
+            "Claude Code-credentials",
+        ],
+        cwd=REPO_ROOT,
+        timeout=10,
+        env=env,
     )
+    if result.timed_out or result.returncode != 0:
+        return None
     try:
-        view = memoryview(payload)
-        while view:
-            written = os.write(target_descriptor, view)
-            if written <= 0:
-                raise CanaryError("provider_auth_blocked")
-            view = view[written:]
-        os.fchmod(target_descriptor, 0o600)
-    finally:
-        os.close(target_descriptor)
-    return True
+        payload = json.loads(result.stdout)
+    except (json.JSONDecodeError, UnicodeError):
+        return None
+    oauth = payload.get("claudeAiOauth") if isinstance(payload, Mapping) else None
+    token = oauth.get("accessToken") if isinstance(oauth, Mapping) else None
+    if (
+        not isinstance(token, str)
+        or not token
+        or len(token) > STREAM_LIMIT
+        or any(ord(character) < 32 or ord(character) == 127 for character in token)
+    ):
+        return None
+    return token
 
 
 def isolated_provider_environment(
@@ -925,6 +916,14 @@ def isolated_provider_environment(
         raise ValueError("unknown provider")
     operator = Path.home() if operator_home is None else operator_home
     env = dict(os.environ if source_env is None else source_env)
+    operator_env = {
+        key: env[key]
+        for key in ("LANG", "LC_ALL", "LC_CTYPE", "LOGNAME", "TMPDIR", "USER")
+        if isinstance(env.get(key), str)
+    }
+    operator_env["HOME"] = str(operator)
+    operator_env["PATH"] = "/usr/bin:/bin"
+    effective_codex_home = env.get("CODEX_HOME")
     isolated_home.mkdir(mode=0o700, parents=True, exist_ok=True)
     isolated_home.chmod(0o700)
     env["HOME"] = str(isolated_home)
@@ -937,14 +936,34 @@ def isolated_provider_environment(
     ):
         env.pop(key, None)
     if provider == "codex":
-        config = isolated_home / ".codex"
-        config.mkdir(mode=0o700)
-        _copy_private_regular(operator / ".codex/auth.json", config / "auth.json")
+        if effective_codex_home in (None, ""):
+            config = operator / ".codex"
+        elif (
+            not isinstance(effective_codex_home, str)
+            or "\0" in effective_codex_home
+        ):
+            raise CanaryError("provider_auth_blocked")
+        else:
+            config = Path(effective_codex_home)
+            if not config.is_absolute():
+                raise CanaryError("provider_auth_blocked")
         env["CODEX_HOME"] = str(config)
     else:
+        env["PATH"] = _without_agentlens_shims(env.get("PATH", ""))
         config = isolated_home / ".claude"
         config.mkdir(mode=0o700)
         env["CLAUDE_CONFIG_DIR"] = str(config)
+        if not any(
+            isinstance(env.get(key), str) and bool(env[key].strip())
+            for key in (
+                "ANTHROPIC_API_KEY",
+                "ANTHROPIC_AUTH_TOKEN",
+                "CLAUDE_CODE_OAUTH_TOKEN",
+            )
+        ):
+            token = _claude_keychain_oauth_token(operator_env)
+            if token is not None:
+                env["CLAUDE_CODE_OAUTH_TOKEN"] = token
     return env
 
 
