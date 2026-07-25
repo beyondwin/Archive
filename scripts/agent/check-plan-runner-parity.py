@@ -33,10 +33,51 @@ OUTPUT_LIMIT = 4_096
 PARITY_STALL_SECONDS = 1.5
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 GIT_HEAD = re.compile(r"^[0-9a-f]{40}(?:[0-9a-f]{24})?$")
-GIT_ENV = {
+SEALED_GIT_ENV = {
+    "GIT_AUTHOR_NAME": "Plan Runner Parity",
+    "GIT_AUTHOR_EMAIL": "parity@example.test",
     "GIT_AUTHOR_DATE": "2026-01-01T00:00:00+00:00",
+    "GIT_COMMITTER_NAME": "Plan Runner Parity",
+    "GIT_COMMITTER_EMAIL": "parity@example.test",
     "GIT_COMMITTER_DATE": "2026-01-01T00:00:00+00:00",
+    "GIT_CONFIG_GLOBAL": os.devnull,
+    "GIT_CONFIG_NOSYSTEM": "1",
+    "GIT_DEFAULT_HASH": "sha1",
 }
+AMBIENT_GIT_KEYS = frozenset(
+    (
+        "EMAIL",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_AUTHOR_DATE",
+        "GIT_AUTHOR_EMAIL",
+        "GIT_AUTHOR_NAME",
+        "GIT_CEILING_DIRECTORIES",
+        "GIT_COMMON_DIR",
+        "GIT_COMMITTER_DATE",
+        "GIT_COMMITTER_EMAIL",
+        "GIT_COMMITTER_NAME",
+        "GIT_CONFIG",
+        "GIT_CONFIG_COUNT",
+        "GIT_CONFIG_GLOBAL",
+        "GIT_CONFIG_NOSYSTEM",
+        "GIT_CONFIG_PARAMETERS",
+        "GIT_CONFIG_SYSTEM",
+        "GIT_DEFAULT_HASH",
+        "GIT_DIR",
+        "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+        "GIT_GRAFT_FILE",
+        "GIT_INDEX_FILE",
+        "GIT_INTERNAL_SUPER_PREFIX",
+        "GIT_NAMESPACE",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_PREFIX",
+        "GIT_QUARANTINE_PATH",
+        "GIT_REPLACE_REF_BASE",
+        "GIT_SHALLOW_FILE",
+        "GIT_WORK_TREE",
+    )
+)
+AMBIENT_GIT_PREFIXES = ("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_")
 FAKE_FILE_LIMIT = 4_096
 CODEX_SDD_RELATIVE_PATHS = (
     Path("skills/subagent-driven-development/SKILL.md"),
@@ -112,6 +153,17 @@ def _checked_git(
     return result.stdout.strip()
 
 
+def _sealed_git_environment(source: Mapping[str, str]) -> dict[str, str]:
+    environment = {
+        str(key): str(value)
+        for key, value in source.items()
+        if key not in AMBIENT_GIT_KEYS
+        and not key.startswith(AMBIENT_GIT_PREFIXES)
+    }
+    environment.update(SEALED_GIT_ENV)
+    return environment
+
+
 def validate_external_contract(contract: Mapping[str, Any]) -> None:
     expected_fields = [
         "exit",
@@ -134,9 +186,31 @@ def validate_external_contract(contract: Mapping[str, Any]) -> None:
 def _init_source(root: Path, env: Mapping[str, str]) -> Path:
     source = root / "source"
     source.mkdir(parents=True)
-    _checked_git(source, ("init", "-b", "main"), env)
-    _checked_git(source, ("config", "user.name", "Plan Runner Parity"), env)
-    _checked_git(source, ("config", "user.email", "parity@example.test"), env)
+    _checked_git(
+        source,
+        ("init", "--object-format=sha1", "-b", "main"),
+        env,
+    )
+    _checked_git(
+        source,
+        ("config", "--local", "user.name", "Plan Runner Parity"),
+        env,
+    )
+    _checked_git(
+        source,
+        ("config", "--local", "user.email", "parity@example.test"),
+        env,
+    )
+    _checked_git(
+        source,
+        ("config", "--local", "user.useConfigOnly", "true"),
+        env,
+    )
+    _checked_git(
+        source,
+        ("config", "--local", "commit.gpgSign", "false"),
+        env,
+    )
     (source / "README.md").write_text("parity source\n", encoding="utf-8")
     _checked_git(source, ("add", "README.md"), env)
     _checked_git(source, ("commit", "-m", "parity source"), env)
@@ -476,8 +550,7 @@ def run_provider(
     root = temporary_root / provider / scenario["id"]
     home = root / "home"
     home.mkdir(parents=True)
-    env = dict(os.environ)
-    env.update(GIT_ENV)
+    env = _sealed_git_environment(os.environ)
     env["HOME"] = str(home)
     if provider == "codex":
         _prepare_fake_codex_environment(root, env)
