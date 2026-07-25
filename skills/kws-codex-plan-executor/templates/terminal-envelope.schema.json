@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["claim", "head_commit"],
+  "properties": {
+    "claim": {
+      "enum": ["completed", "interrupted", "blocked"]
+    },
+    "head_commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "resume_capsule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "head_commit",
+        "worktree_status_digest",
+        "note",
+        "evidence_refs"
+      ],
+      "properties": {
+        "head_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "worktree_status_digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 2048
+        },
+        "evidence_refs": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          }
+        }
+      }
+    },
+    "blocker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "class",
+        "code",
+        "resource",
+        "operation",
+        "retry_condition"
+      ],
+      "properties": {
+        "class": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "code": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "resource": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "operation": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "retry_condition": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "provider_code": {
+          "type": ["string", "null"],
+          "maxLength": 128
+        }
+      }
+    }
+  }
+}
