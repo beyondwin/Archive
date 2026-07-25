@@ -344,6 +344,7 @@ class RunStore:
     def create(cls, *, run_root: Path, manifest: RunManifest, state: RunState) -> "RunStore":
         if run_root.is_symlink() or not run_root.is_dir() or run_root.parent.is_symlink():
             raise ValueError("prepared run root is invalid")
+        run_root = run_root.resolve(strict=True)
         _private_directory(run_root)
         inputs = run_root / "inputs"
         if inputs.is_symlink() or not inputs.is_dir() or set(run_root.iterdir()) != {inputs}:
@@ -352,18 +353,21 @@ class RunStore:
         state_payload = state.to_payload()
         if manifest.run_id != state.run_id:
             raise ValueError("format-5 run identity is invalid")
-        snapshots = {Path(record.snapshot_path).resolve(strict=True) for record in manifest.documents}
-        actual_snapshots = {entry.resolve(strict=True) for entry in inputs.iterdir()}
-        if not snapshots or snapshots != actual_snapshots:
+        snapshots = {Path(record.snapshot_path) for record in manifest.documents}
+        actual_snapshots = set(inputs.iterdir())
+        if (
+            not snapshots
+            or snapshots != actual_snapshots
+            or any(snapshot.parent != inputs for snapshot in snapshots)
+            or any(not stat.S_ISREG(entry.lstat().st_mode) for entry in actual_snapshots)
+        ):
             raise ValueError("manifest documents do not match input snapshots")
         for record in manifest.documents:
-            snapshot = Path(record.snapshot_path).resolve(strict=True)
-            if snapshot.is_symlink() or not snapshot.is_file() or _inside(snapshot, inputs, "snapshot") != snapshot:
-                raise ValueError("manifest snapshot is invalid")
+            snapshot = Path(record.snapshot_path)
             payload = snapshot.read_bytes()
             if hashlib.sha256(payload).hexdigest() != record.sha256 or len(payload) != record.byte_length:
                 raise ValueError("manifest snapshot digest is invalid")
-        store = cls(run_root.resolve(strict=True), manifest, state)
+        store = cls(run_root, manifest, state)
         atomic_private_write(
             store.manifest_path,
             json.dumps(manifest_payload, sort_keys=True, separators=(",", ":")).encode("utf-8"),

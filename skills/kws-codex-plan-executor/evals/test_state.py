@@ -210,6 +210,18 @@ class StateContractTests(unittest.TestCase):
                 state=self.state(),
             )
 
+    def test_store_rejects_undeclared_input_symlink_to_declared_snapshot(self) -> None:
+        records = self.snapshot_one_document()
+        (self.root / "inputs" / "undeclared-link.md").symlink_to(
+            records[0].snapshot_path,
+        )
+        with self.assertRaisesRegex(ValueError, "manifest documents"):
+            RunStore.create(
+                run_root=self.root,
+                manifest=self.manifest(records),
+                state=self.state(),
+            )
+
     def test_run_lock_refuses_a_second_writer(self) -> None:
         store = self.create_store()
         with RunLock(store.lock_path) as lock:
