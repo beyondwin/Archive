@@ -6,13 +6,14 @@ import re
 from enum import IntEnum
 from typing import Any
 
-CONTRACT_VERSION = FORMAT_VERSION = 1
+CONTRACT_VERSION = FORMAT_VERSION = 2
 
 RUN_STATUSES = frozenset(
     ("running", "recovering", "resumable", "blocked", "failed", "ready_for_integration")
 )
 PLAN_STATUSES = frozenset(("pending", "running", "implemented"))
-TASK_STATUSES = frozenset(("pending", "running", "reported_done"))
+TASK_STATUSES = frozenset()
+NEXT_STRATEGIES = frozenset(("resume_root", "fresh_root", "block"))
 RUNNER_RUNTIME_CONTRACT = {
     "implementation": "cpython",
     "requires_python": ">=3.13,<3.14",
@@ -31,7 +32,6 @@ FAILURE_TAXONOMY = frozenset(
         "provider_unavailable",
         "provider_usage_blocked",
         "recovery_exhausted",
-        "review_failed",
         "runtime_incompatible",
         "runtime_missing",
         "session_invalid",

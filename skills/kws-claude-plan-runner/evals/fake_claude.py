@@ -101,69 +101,52 @@ def generic_result(packet: dict[str, object], action: str) -> dict[str, object]:
             "status": "blocked",
             "head_commit": head,
             "summary": "external authority is required",
-            "task_ledger": packet["task_ledger"],
-            "open_obligation_ids": [],
-            "failure_signature": None,
-            "strategy_note": None,
+            "verification_set_digest": None,
             "blocker": {
                 "kind": "external_authority_required",
                 "detail": "provider-neutral parity blocker",
             },
         }
+    command = {
+        "command_id": f"handoff-{packet['current_plan']['index']}",
+        "command_role": "handoff",
+        "argv": ["/usr/bin/true"],
+        "cwd": ".",
+        "input_digest": "a" * 64,
+        "deadline_seconds": 10,
+    }
+    declaration = helper_call(
+        packet,
+        "declare_verification",
+        {
+            "candidate_head": head,
+            "plan_index": packet["current_plan"]["index"],
+            "verification": {
+                "kind": "commands",
+                "candidate_head": head,
+                "commands": [command],
+            },
+            "prior_set_digests": packet["prior_verification_sets"],
+            "is_final_plan": packet["is_final_plan"],
+        },
+    )
+    digest = declaration["artifact"]["digest"]
+    helper_call(
+        packet,
+        "run_verification",
+        {
+            "candidate_head": head,
+            "set_digest": digest,
+            "command_index": 0,
+            "deadline_seconds": 10,
+        },
+    )
     return {
         "status": "implemented",
         "head_commit": head,
         "summary": "provider-neutral implementation",
-        "task_ledger": packet["task_ledger"],
-        "open_obligation_ids": [],
-        "failure_signature": None,
-        "strategy_note": None,
-        "blocker": None,
-    }
-
-
-def generic_finalization(packet: dict[str, object]) -> dict[str, object]:
-    head = packet["candidate_head"]
-    digest = packet.get("sealed_verification_set_digest")
-    if digest is None:
-        final_set = {
-            "kind": "commands",
-            "candidate_head": head,
-            "commands": [
-                {
-                    "command_id": "parity-final",
-                    "command_role": "final",
-                    "argv": ["/usr/bin/true"],
-                    "cwd": ".",
-                    "input_digest": "a" * 64,
-                    "deadline_seconds": 10,
-                }
-            ],
-        }
-        declaration = helper_call(
-            packet,
-            "declare_final_set",
-            {"candidate_head": head, "final_set": final_set},
-        )
-        digest = declaration["artifact"]["digest"]
-        helper_call(
-            packet,
-            "verify_final",
-            {
-                "candidate_head": head,
-                "set_digest": digest,
-                "command_index": 0,
-                "deadline_seconds": 10,
-            },
-        )
-    return {
-        "status": "reviewed",
-        "review_head": head,
         "verification_set_digest": digest,
-        "open_findings": [],
-        "open_obligation_ids": [],
-        "no_applicable_verification_approved": False,
-        "summary": "provider-neutral whole-branch review",
+        "blocker": None,
     }
 
 
@@ -249,8 +232,6 @@ def generic_main(sequence_path: Path) -> int:
         structured = generic_result(packet, "implemented")
     elif action == "blocked":
         structured = generic_result(packet, action)
-    elif action == "finalized":
-        structured = generic_finalization(packet)
     else:
         raise ValueError(f"unknown provider-neutral action: {action}")
     generic_emit_result(session_id, structured)

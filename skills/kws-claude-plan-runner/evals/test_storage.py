@@ -72,6 +72,26 @@ class DurableClaudeStateTest(unittest.TestCase):
         self.assertEqual(reopened["provider"], "claude")
         self.assertTrue(reopened["repository"]["branch"].startswith("claude-plan/"))
 
+    def test_version_two_state_contains_no_superpowers_workflow_state(self):
+        state = self.create().snapshot()
+        self.assertEqual(state["format_version"], 2)
+        self.assertEqual(state["contract_version"], 2)
+        self.assertNotIn("task_ledger", state)
+        self.assertNotIn("finalization", state)
+        self.assertEqual(
+            set(state["plans"][0]),
+            {
+                "plan_id",
+                "status",
+                "input_order",
+                "source_path",
+                "snapshot_path",
+                "sha256",
+                "byte_length",
+                "handoff_digest",
+            },
+        )
+
     def test_artifact_becomes_authoritative_only_after_state_reference(self):
         store = self.create()
         orphan = store.put_artifact("receipt", {"ok": True})
