@@ -291,6 +291,9 @@ class EvidenceStore:
         is_final_plan: bool,
     ) -> ArtifactRef:
         self._observation(candidate_head)
+        expected_prior = self.implemented_prior_set_digests(plan_index)
+        if prior_set_digests != expected_prior:
+            raise ValueError("verification prior plan-set provenance is invalid")
         if not isinstance(payload, Mapping) or payload.get("candidate_head") != candidate_head:
             raise ValueError("verification candidate HEAD is invalid")
         kind = payload.get("kind")
@@ -313,7 +316,7 @@ class EvidenceStore:
         if not is_final_plan:
             return plan
         command_documents: list[dict[str, object]] = []
-        for digest in [*prior_set_digests, plan.digest]:
+        for digest in [*expected_prior, plan.digest]:
             command_documents.extend(self._verification_commands(digest))
         deduplicated: list[dict[str, object]] = []
         seen: set[str] = set()
@@ -322,9 +325,52 @@ class EvidenceStore:
             if identity not in seen:
                 seen.add(identity)
                 deduplicated.append(command)
-        run = self.state.put_artifact("run_verification_set", {"kind": "commands", "candidate_head": candidate_head, "plan_set_digests": [*prior_set_digests, plan.digest], "commands": deduplicated})
+        run = self.state.put_artifact("run_verification_set", {"kind": "commands", "candidate_head": candidate_head, "plan_set_digests": [*expected_prior, plan.digest], "commands": deduplicated})
         self._append_artifact(run)
         return run
+
+    def implemented_prior_set_digests(self, plan_index: int) -> list[str]:
+        """Return the runner-owned, ordered verification lineage before a plan."""
+        if not isinstance(plan_index, int) or isinstance(plan_index, bool) or plan_index < 0:
+            raise ValueError("plan index is invalid")
+        state = self.state.snapshot()
+        plans = state.get("plans")
+        references = state.get("artifact_refs")
+        if not isinstance(plans, list) or not isinstance(references, list) or plan_index > len(plans):
+            raise ValueError("plan verification lineage is invalid")
+        artifacts = {
+            reference.get("digest"): ArtifactRef(**reference)
+            for reference in references
+            if isinstance(reference, dict)
+            and reference.get("kind") == "plan_handoff"
+            and isinstance(reference.get("digest"), str)
+        }
+        digests: list[str] = []
+        for expected_index, plan in enumerate(plans[:plan_index]):
+            if not isinstance(plan, Mapping) or plan.get("status") != "implemented":
+                raise ValueError("prior plan is not implemented")
+            handoff_digest = plan.get("handoff_digest")
+            if not isinstance(handoff_digest, str) or handoff_digest not in artifacts:
+                raise ValueError("prior plan handoff is not sealed")
+            handoff = self._artifact_document(artifacts[handoff_digest])
+            if handoff.get("plan_index") != expected_index:
+                raise ValueError("prior plan handoff identity is invalid")
+            verification_digest = handoff.get("verification_set_digest")
+            if not isinstance(verification_digest, str):
+                raise ValueError("prior plan verification set is invalid")
+            self._plan_set_payload(verification_digest, expected_index)
+            digests.append(verification_digest)
+        return digests
+
+    def _plan_set_payload(self, digest: str, plan_index: int) -> Mapping[str, object]:
+        require_digest(digest)
+        for reference in self.state.snapshot()["artifact_refs"]:
+            if isinstance(reference, dict) and reference.get("kind") == "plan_verification_set" and reference.get("digest") == digest:
+                payload = self._artifact_document(ArtifactRef(**reference))
+                if payload.get("plan_index") != plan_index:
+                    raise ValueError("plan verification set identity is invalid")
+                return payload
+        raise ValueError("plan verification set is not sealed")
 
     def _verification_commands(self, digest: str) -> list[dict[str, object]]:
         require_digest(digest)
@@ -379,6 +425,13 @@ class EvidenceStore:
             plan_sets = payload.get("plan_set_digests")
             if not isinstance(plan_sets, list) or not plan_sets:
                 raise ValueError("run verification plan declarations are invalid")
+            expected_prior = self.implemented_prior_set_digests(plan_index)
+            if plan_sets[:-1] != expected_prior:
+                raise ValueError("run verification plan provenance is invalid")
+            for prior_index, prior_digest in enumerate(expected_prior):
+                if not isinstance(prior_digest, str):
+                    raise ValueError("run verification plan declaration is invalid")
+                self._plan_set_payload(prior_digest, prior_index)
             final_plan_set = plan_sets[-1]
             if not isinstance(final_plan_set, str):
                 raise ValueError("run verification plan declaration is invalid")

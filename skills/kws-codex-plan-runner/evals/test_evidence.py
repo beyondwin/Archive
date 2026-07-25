@@ -275,14 +275,14 @@ class EvidenceStoreTest(unittest.TestCase):
         (self.worktree_path / "drift.txt").write_text("drift", encoding="utf-8")
         self.assertNotEqual(first.identity_digest, self.evidence.identity_digest(success, candidate_head=self.head))
 
-    def test_final_commands_require_a_sealed_candidate_head_set_or_structured_no_applicable(self):
+    def test_plan_verification_commands_require_a_sealed_candidate_head_set(self):
         payload = {
             "kind": "commands",
             "candidate_head": self.head,
             "commands": [
                 {
-                    "command_id": "final-unit",
-                    "command_role": "final",
+                    "command_id": "handoff-unit",
+                    "command_role": "handoff",
                     "argv": list(python_command("print('ok')")),
                     "cwd": ".",
                     "input_digest": self.input_digest,
@@ -290,29 +290,24 @@ class EvidenceStoreTest(unittest.TestCase):
                 }
             ],
         }
-        artifact = self.evidence.declare_final_set(payload, self.head)
-        loaded = self.evidence.load_final_command(artifact.digest, 0)
-        self.assertEqual(loaded.command_id, "final-unit")
+        artifact = self.evidence.declare_verification(payload, self.head, plan_index=0, prior_set_digests=[], is_final_plan=False)
+        loaded = self.evidence.load_verification_command(artifact.digest, 0)
+        self.assertEqual(loaded.command_id, "handoff-unit")
         with self.assertRaises(ValueError):
-            self.evidence.load_final_command("a" * 64, 0)
+            self.evidence.load_verification_command("a" * 64, 0)
         for invalid in (
             {"kind": "commands", "candidate_head": self.head, "commands": []},
             {"kind": "no_applicable_verification", "candidate_head": self.head, "rationale": ""},
             {"kind": "commands", "candidate_head": self.head, "commands": [{**payload["commands"][0], "cwd": "../escape"}]},
-            {"kind": "commands", "candidate_head": self.head, "commands": [{**payload["commands"][0], "command_role": "affected"}]},
+            {"kind": "commands", "candidate_head": self.head, "commands": [{**payload["commands"][0], "command_role": "affected", "cwd": "../escape"}]},
             {"kind": "commands", "candidate_head": "a" * 40, "commands": payload["commands"]},
         ):
             with self.subTest(invalid=invalid):
                 with self.assertRaises(ValueError):
-                    self.evidence.declare_final_set(invalid, self.head)
-        no_applicable = self.evidence.declare_final_set(
-            {"kind": "no_applicable_verification", "candidate_head": self.head, "rationale": "documentation only"},
-            self.head,
-        )
-        self.assertTrue(self.state.referenced_artifact(no_applicable.as_dict()).exists())
+                    self.evidence.declare_verification(invalid, self.head, plan_index=0, prior_set_digests=[], is_final_plan=False)
         (self.state.root / artifact.relative_path).write_text('{"tampered":true}', encoding="utf-8")
         with self.assertRaises(ValueError):
-            self.evidence.load_final_command(artifact.digest, 0)
+            self.evidence.load_verification_command(artifact.digest, 0)
 
     def test_receipts_are_durable_before_state_reference_and_liveness_is_not_progress(self):
         receipt = self.evidence.execute(self.command(python_command("print('ok')")), candidate_head=self.head)

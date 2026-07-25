@@ -284,12 +284,12 @@ class HelperProtocolTest(unittest.TestCase):
         self.assertFalse(response["ok"])
         self.assertEqual(response["error_code"], "request_timeout")
 
-    def test_schema_is_closed_and_has_required_verification_variants(self):
-        schema = json.loads((SKILL_ROOT / "templates" / "final-verification-set.schema.json").read_text(encoding="utf-8"))
+    def test_plan_result_schema_is_closed_and_requires_handoff_evidence(self):
+        schema = json.loads((SKILL_ROOT / "templates" / "plan-result.schema.json").read_text(encoding="utf-8"))
         self.assertFalse(schema["additionalProperties"])
-        self.assertEqual(len(schema["oneOf"]), 2)
-        self.assertIn("^[0-9a-f]{40}$", json.dumps(schema))
-        self.assertIn("^[0-9a-f]{64}$", json.dumps(schema))
+        self.assertIn("verification_set_digest", schema["properties"])
+        self.assertIn("verification_set_digest", schema["required"])
+        self.assertIn("head_commit", schema["required"])
 
 
 if __name__ == "__main__":
