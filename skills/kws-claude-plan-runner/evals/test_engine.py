@@ -531,6 +531,159 @@ class EngineTest(unittest.TestCase):
         )
         self.assertEqual(len(self.requests), 1)
 
+    def test_restart_reconciles_completed_blocker_without_relaunch(self):
+        blocker = {
+            "kind": "permission_required",
+            "detail": "deployment approval is required",
+        }
+        self.outcome_hook = (
+            lambda _adapter, _request, _packet, session_id: ProviderOutcome(
+                "blocked",
+                1,
+                session_id,
+                {
+                    "status": "blocked",
+                    "head_commit": self.starting_head,
+                    "summary": "approval required",
+                    "verification_set_digest": None,
+                    "blocker": blocker,
+                },
+                "provider_auth_blocked",
+                {},
+                (),
+                "",
+            )
+        )
+        with mock.patch.object(
+            PlanRunner,
+            "_block",
+            side_effect=SimulatedCrash(
+                "controller crashed after durable blocked outcome"
+            ),
+        ):
+            with self.assertRaises(SimulatedCrash):
+                self.create_v2_run(self.plans[:1])
+        state = self.current_state()
+        self.assertTrue(state["attempts"][-1]["completed"])
+        result_reference = state["attempts"][-1]["result_artifact"]
+        durable_result = json.loads(
+            (
+                self.paths.state_home
+                / state["run_id"]
+                / result_reference["relative_path"]
+            ).read_text(encoding="utf-8")
+        )
+        self.assertEqual(durable_result["blocker"], blocker)
+
+        self.assertEqual(
+            self.runner().resume(
+                state["run_id"],
+                retry_blocked=False,
+                retry_failed=False,
+                strategy_note=None,
+            ),
+            ExitCode.BLOCKED,
+        )
+        self.assertEqual(len(self.requests), 1)
+        failure = self.current_state()["failure"]
+        self.assertEqual(failure["reason_code"], "permission_required")
+        self.assertEqual(failure["provider_code"], "provider_auth_blocked")
+
+    def test_restart_reconciles_completed_provider_failure_without_relaunch(self):
+        self.outcome_hook = (
+            lambda _adapter, _request, _packet, session_id: ProviderOutcome(
+                "transport_failed",
+                72,
+                session_id,
+                None,
+                "provider_unavailable",
+                {},
+                (),
+                "",
+            )
+        )
+        with mock.patch.object(
+            PlanRunner,
+            "_recover",
+            side_effect=SimulatedCrash(
+                "controller crashed after durable provider failure"
+            ),
+        ):
+            with self.assertRaises(SimulatedCrash):
+                self.create_v2_run(self.plans[:1])
+        state = self.current_state()
+        self.assertTrue(state["attempts"][-1]["completed"])
+
+        self.assertEqual(
+            self.runner().resume(
+                state["run_id"],
+                retry_blocked=False,
+                retry_failed=False,
+                strategy_note=None,
+            ),
+            ExitCode.RESUMABLE,
+        )
+        self.assertEqual(len(self.requests), 1)
+        recovered = self.current_state()
+        self.assertEqual(recovered["status"], "resumable")
+        self.assertEqual(recovered["failure"]["reason_code"], "provider_unavailable")
+        self.assertEqual(
+            recovered["failure"]["provider_code"],
+            "provider_unavailable",
+        )
+        self.assertEqual(
+            recovered["failure"]["outcome_kind"],
+            "transport_failed",
+        )
+        self.assertEqual(recovered["failure"]["return_code"], 72)
+        self.assertEqual(len(recovered["failure"]["failure_sequence"]), 1)
+
+    def test_restart_during_recovery_preserves_sequence_and_exhausts(self):
+        def fail_until_third_request_crashes(
+            _adapter,
+            _request,
+            _packet,
+            session_id,
+        ):
+            if len(self.requests) == 3:
+                raise SimulatedCrash("controller crashed during fresh recovery")
+            return ProviderOutcome(
+                "failed",
+                1,
+                session_id,
+                None,
+                "controller_transport_failed",
+                {},
+                (),
+                "",
+            )
+
+        self.outcome_hook = fail_until_third_request_crashes
+        with self.assertRaises(SimulatedCrash):
+            self.create_v2_run(self.plans[:1])
+        state = self.current_state()
+        prior_sequence = state["failure"]["failure_sequence"]
+        self.assertEqual(len(prior_sequence), 2)
+        self.assertFalse(prior_sequence[0]["fresh_root_attempted"])
+        self.assertTrue(prior_sequence[1]["fresh_root_attempted"])
+
+        self.assertEqual(
+            self.runner().resume(
+                state["run_id"],
+                retry_blocked=False,
+                retry_failed=False,
+                strategy_note=None,
+            ),
+            ExitCode.FAILED,
+        )
+        self.assertEqual(len(self.requests), 4)
+        failure = self.current_state()["failure"]
+        self.assertEqual(failure["reason_code"], "recovery_exhausted")
+        self.assertEqual(
+            failure["failure_sequence"][:2],
+            prior_sequence,
+        )
+
     def test_single_plan_all_rationale_run_closes_without_synthetic_command(self):
         self.rationale_only = True
         self.assertEqual(

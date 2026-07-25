@@ -236,6 +236,17 @@ def _artifact_payload(
     return value
 
 
+def _plain_json(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {
+            key: _plain_json(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_plain_json(item) for item in value]
+    return value
+
+
 class PlanRunner:
     def __init__(
         self,
@@ -487,7 +498,9 @@ class PlanRunner:
                     repository["branch"],
                 )
                 self._require_git(state, workspace)
-                self._reconcile_controller(store, workspace)
+                reconciled = self._reconcile_controller(store, workspace)
+                if reconciled is not None:
+                    return reconciled
                 state = store.snapshot()
                 failure = (
                     state.get("failure")
@@ -614,9 +627,18 @@ class PlanRunner:
         )
         self._complete_attempt(store, attempt_id, outcome)
         if outcome.kind == "controller_stopped":
-            return self._pause(store, workspace, outcome)
+            return self._pause(
+                store,
+                workspace,
+                outcome,
+                reconciled_attempt_id=attempt_id,
+            )
         if outcome.kind == "blocked":
-            return self._block(store, outcome)
+            return self._block(
+                store,
+                outcome,
+                reconciled_attempt_id=attempt_id,
+            )
         if outcome.kind == "implemented":
             try:
                 self._accept_implemented(
@@ -633,7 +655,13 @@ class PlanRunner:
                 )
                 return int(ExitCode.INTEGRITY)
             return None
-        return self._recover(store, workspace, index, outcome)
+        return self._recover(
+            store,
+            workspace,
+            index,
+            outcome,
+            reconciled_attempt_id=attempt_id,
+        )
 
     def _launch(
         self,
@@ -902,6 +930,9 @@ class PlanRunner:
         workspace: GitWorkspace,
         index: int,
         outcome: ProviderOutcome,
+        *,
+        controller_alive: bool = True,
+        reconciled_attempt_id: str | None = None,
     ) -> int | None:
         state = store.snapshot()
         progress = self._progress(store, workspace)
@@ -919,7 +950,7 @@ class PlanRunner:
         )
         decision = self._recovery.decide(
             {
-                "controller_alive": True,
+                "controller_alive": controller_alive,
                 "input_digest": state["immutable_config"][
                     "input_snapshot_digest"
                 ],
@@ -957,12 +988,28 @@ class PlanRunner:
         state["status"] = decision.run_status
         state["failure"] = {
             "reason_code": decision.reason_code,
+            "provider_code": outcome.provider_code,
+            "outcome_kind": outcome.kind,
+            "return_code": outcome.return_code,
             "failure_signature": decision.failure_signature,
             "failure_sequence": sequence,
             "next_strategy": decision.session_action,
             "next_session_action": decision.session_action,
+            "session_id": (
+                outcome.session_id
+                if decision.session_action == "resume_root"
+                else None
+            ),
         }
+        self._mark_reconciled(
+            state,
+            reconciled_attempt_id,
+            "recorded_completed_failure",
+        )
         store.commit(state)
+        if decision.action == "resume":
+            self._emit_summary(store.snapshot())
+            return int(ExitCode.RESUMABLE)
         if decision.action != "recover":
             self._emit_summary(store.snapshot())
             return int(ExitCode.FAILED)
@@ -985,13 +1032,24 @@ class PlanRunner:
         store: StateStore,
         workspace: GitWorkspace,
         outcome: ProviderOutcome,
+        *,
+        reconciled_attempt_id: str | None = None,
     ) -> int:
         state = store.snapshot()
         observed = workspace.observe()
+        prior_failure = (
+            state.get("failure")
+            if isinstance(state.get("failure"), Mapping)
+            else {}
+        )
+        sequence = list(prior_failure.get("failure_sequence", []))
         state["status"] = "resumable"
         state["failure"] = {
             "reason_code": "controller_transport_failed",
-            "failure_sequence": [],
+            "provider_code": outcome.provider_code,
+            "outcome_kind": outcome.kind,
+            "return_code": outcome.return_code,
+            "failure_sequence": sequence,
             "next_strategy": "resume_root",
             "next_session_action": "resume_root",
             "session_id": outcome.session_id,
@@ -1005,6 +1063,11 @@ class PlanRunner:
                 }
             ),
         }
+        self._mark_reconciled(
+            state,
+            reconciled_attempt_id,
+            "recorded_completed_stop",
+        )
         store.commit(state)
         self._emit_summary(store.snapshot())
         return int(ExitCode.RESUMABLE)
@@ -1013,6 +1076,8 @@ class PlanRunner:
         self,
         store: StateStore,
         outcome: ProviderOutcome,
+        *,
+        reconciled_attempt_id: str | None = None,
     ) -> int:
         result = (
             self._validated_plan_result(outcome.result)
@@ -1028,9 +1093,17 @@ class PlanRunner:
         state["status"] = "blocked"
         state["failure"] = {
             "reason_code": reason,
+            "provider_code": outcome.provider_code,
+            "outcome_kind": outcome.kind,
+            "return_code": outcome.return_code,
             "next_strategy": "block",
             "next_session_action": "none",
         }
+        self._mark_reconciled(
+            state,
+            reconciled_attempt_id,
+            "recorded_completed_blocker",
+        )
         store.commit(state)
         self._emit_summary(store.snapshot())
         return int(ExitCode.BLOCKED)
@@ -1149,7 +1222,7 @@ class PlanRunner:
         if outcome.result is not None:
             result_artifact = store.put_artifact(
                 "provider_result",
-                dict(outcome.result),
+                _plain_json(outcome.result),
             )
             if result_artifact.as_dict() not in state["artifact_refs"]:
                 state["artifact_refs"].append(result_artifact.as_dict())
@@ -1160,7 +1233,7 @@ class PlanRunner:
         self,
         store: StateStore,
         workspace: GitWorkspace,
-    ) -> None:
+    ) -> int | None:
         state = store.snapshot()
         if state["current_plan_index"] >= len(state["plans"]):
             return
@@ -1186,27 +1259,39 @@ class PlanRunner:
             if not isinstance(session_id, str):
                 return
             attempt["reconciled"] = "controller_not_live"
+            prior_failure = (
+                state.get("failure")
+                if isinstance(state.get("failure"), Mapping)
+                else {}
+            )
+            sequence = list(prior_failure.get("failure_sequence", []))
             state["status"] = "resumable"
             state["failure"] = {
+                **dict(prior_failure),
                 "reason_code": "controller_transport_failed",
-                "failure_sequence": [],
+                "failure_sequence": sequence,
                 "next_strategy": "resume_root",
                 "next_session_action": "resume_root",
                 "session_id": session_id,
             }
             store.commit(state)
             return
-        if attempt.get("outcome") != "implemented":
-            return
+        outcome_kind = attempt.get("outcome")
+        if not isinstance(outcome_kind, str) or not outcome_kind:
+            raise ValueError("completed provider outcome is invalid")
         result_reference = attempt.get("result_artifact")
-        if (
-            not isinstance(result_reference, Mapping)
-            or result_reference.get("kind") != "provider_result"
-        ):
+        result = None
+        if result_reference is not None:
+            if (
+                not isinstance(result_reference, Mapping)
+                or result_reference.get("kind") != "provider_result"
+            ):
+                raise ValueError("completed provider result is not durable")
+            result = _artifact_payload(store, result_reference)
+        if outcome_kind == "implemented" and result is None:
             raise ValueError("completed provider result is not durable")
-        result = _artifact_payload(store, result_reference)
         outcome = ProviderOutcome(
-            "implemented",
+            outcome_kind,
             attempt.get("return_code"),
             attempt.get("session_id"),
             result,
@@ -1215,6 +1300,29 @@ class PlanRunner:
             (),
             "",
         )
+        attempt_id = attempt["attempt_id"]
+        if outcome.kind == "controller_stopped":
+            return self._pause(
+                store,
+                workspace,
+                outcome,
+                reconciled_attempt_id=attempt_id,
+            )
+        if outcome.kind == "blocked":
+            return self._block(
+                store,
+                outcome,
+                reconciled_attempt_id=attempt_id,
+            )
+        if outcome.kind != "implemented":
+            return self._recover(
+                store,
+                workspace,
+                index,
+                outcome,
+                controller_alive=False,
+                reconciled_attempt_id=attempt_id,
+            )
         self._accept_implemented(store, workspace, index, outcome)
         state = store.snapshot()
         reconciled = next(
@@ -1225,6 +1333,28 @@ class PlanRunner:
         )
         reconciled["reconciled"] = "accepted_completed_result"
         store.commit(state)
+        return None
+
+    @staticmethod
+    def _mark_reconciled(
+        state: dict[str, object],
+        attempt_id: str | None,
+        disposition: str,
+    ) -> None:
+        if attempt_id is None:
+            return
+        attempt = next(
+            (
+                item
+                for item in reversed(state["attempts"])
+                if isinstance(item, dict)
+                and item.get("attempt_id") == attempt_id
+            ),
+            None,
+        )
+        if not isinstance(attempt, dict):
+            raise ValueError("completed provider attempt is unavailable")
+        attempt["reconciled"] = disposition
 
     def _adapter(
         self,
