@@ -73,7 +73,7 @@ integration contract"다.
 
 | 검증 | 결과 |
 | --- | --- |
-| 전체 Bun suite | 819 pass, 10 opt-in skip, 0 fail |
+| 저장소 전체 테스트 (`bun test` 실행) | 819 pass, 10 opt-in skip, 0 fail |
 | Codex deterministic runner eval | 189/189 pass |
 | Claude deterministic runner eval | 108/108 pass |
 | Root parity | PASS |
@@ -84,6 +84,13 @@ integration contract"다.
 | Claude live interruption | 미수행; PASS 없음 |
 | Post-merge canonical verifier | exit 0 |
 | Push, PR, tag, publish, deploy | 수행하지 않음 |
+
+여기서 Bun은 저장소에 구현된 제품 component가 아니라 테스트 실행에 사용한
+외부 runtime이다. 당시 Codex 실행 환경에서는 `bun`이
+`/Users/kws/.bun/bin/bun`의 Bun `1.3.10`으로 resolve됐고, 저장소의
+`package.json`은 전체 테스트 command를 `bun test ...`로 정의하며
+`bun.lock`도 추적한다. 따라서 "Bun suite"보다 "저장소 전체 테스트를
+Bun test runner로 실행한 결과"가 정확한 표현이다.
 
 Claude deterministic 결과와 Codex live 결과는 Claude live success의
 대체물이 아니다. 사용자의 명시적 예외는 local main 병합에만 적용됐고
