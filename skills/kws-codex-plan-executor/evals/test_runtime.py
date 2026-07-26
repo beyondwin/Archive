@@ -1330,6 +1330,35 @@ class RuntimeContractTests(unittest.TestCase):
             },
         )
 
+    def test_runtime_rejects_capsule_evidence_symlink_escape_before_state_save(self) -> None:
+        outside = self.temp / "outside"
+        outside.mkdir()
+        self.controller.claim = "interrupted"
+        self.controller.process_class = "interrupted"
+        self.controller.exit_code = 130
+        self.controller.resume_capsule = ResumeCapsule(
+            head_commit=self.base,
+            worktree_status_digest="a" * 64,
+            note="Continue from Git and Superpowers.",
+            evidence_refs=("escape/missing.txt",),
+        )
+
+        def create_escape(request: ControllerRequest) -> str:
+            (request.worktree / "escape").symlink_to(
+                outside,
+                target_is_directory=True,
+            )
+            return self.git_at(request.worktree, "rev-parse", "HEAD")
+
+        self.controller.action = create_escape
+
+        with self.assertRaisesRegex(ValueError, "resume capsule"):
+            self.run_once()
+
+        run_root = next((self.codex_home / "cpe-v3" / "runs").iterdir())
+        state = json.loads((run_root / "state.json").read_text(encoding="utf-8"))
+        self.assertIsNone(state["resume_capsule"])
+
     def test_tracked_dirt_wrong_branch_and_ancestry_violation_do_not_handoff(self) -> None:
         def tracked_dirt(request: ControllerRequest) -> str:
             (request.worktree / "tracked.txt").write_text("dirty\n", encoding="utf-8")
