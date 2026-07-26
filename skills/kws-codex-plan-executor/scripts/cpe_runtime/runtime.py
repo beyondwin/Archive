@@ -34,6 +34,7 @@ def render_initial_prompt(
         "Superpowers and Git own semantic progress and recovery.",
         "Do not merge, push, open a PR, tag, publish, release, or deploy.",
         "Return only the terminal envelope required by TERMINAL_SCHEMA.",
+        "Use null resume_capsule and blocker for completed; use a resume_capsule and null blocker for interrupted; blocked requires a blocker.",
         "", f"MANIFEST={manifest_path}", f"RUN_ID={manifest.run_id}",
         f"SOURCE_REPOSITORY={manifest.source_repository}",
         f"BASE_COMMIT={manifest.base_commit}", f"BRANCH={manifest.branch}",
