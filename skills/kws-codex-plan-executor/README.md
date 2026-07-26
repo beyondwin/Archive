@@ -1,140 +1,97 @@
 # KWS Codex Plan Executor
 
-Version 2.1.1 publishes format 3 run state for CPE, a small local harness for
-approved Superpowers implementation plans. It keeps ordered input snapshots,
-one reused isolated worktree, durable run facts, and a bounded resume boundary.
-It is not a product orchestrator or a replacement for Superpowers.
+Version 3.0.0 — 2026-07-25 is a small, local durability capsule for one
+execution contract.
+Use direct Superpowers when bounded work fits one controller session. Use CPE
+when that contract needs immutable inputs, one stable worktree, a durable run
+ID, and Codex process or session continuity.
 
-## Ownership And Installation
+## Boundary
 
-CPE maintains one execution environment and verifies submitted facts.
-Superpowers decides what work and verification are correct.
+CPE accepts multiple documents through repeated `--document` options. It
+preserves exact bytes and caller order, including repeated basenames and
+unfamiliar structures. Inputs are opaque: there is no document review, role
+assignment, plan queue, content linting, or cross-document approval in CPE.
 
-The runner performs a direct Superpowers launch inside its one reused isolated
-worktree. It supplies immutable submitted inputs and factual execution context;
-Superpowers owns plan interpretation, implementation, tests, reviews, fixes,
-subagents, commits, and the decision to perform a final integration review.
-Plans and resumes retain the same worktree and use same-HEAD cross-phase reuse
-only for identical verification execution facts at the same HEAD.
+One explicitly selected Superpowers skill owns interpretation, implementation,
+testing, review, commits, and engineering completion. CPE owns only the
+document bundle, local Git/worktree identity, controller transport, bounded
+resume facts, and mechanical handoff.
+
+New runs persist format-5 state under public contract 3.
 
 This tracked directory is the release source of truth. Install the source of
 truth with the Codex and Claude Code symlinks in [`../README.md`](../README.md).
 Do not copy the skill into tool directories and do not modify Superpowers
 upstream.
 
-## Requirements And Commands
+## Requirements
 
 - Python 3 standard library
 - Git
 - `codex` on `PATH`
-- a clean Git workspace, absolute readable UTF-8 spec/plan paths, and one or
-  more plans
+- POSIX advisory locks and process groups
+- a Git workspace with repository-local or otherwise effective Git identity
+- absolute readable document paths
+
+## Commands
 
 ```bash
 python3 scripts/cpe.py run \
-  --spec /abs/spec-a.md --spec /abs/spec-b.md \
-  --plan /abs/plan-01.md --plan /abs/plan-02.md \
-  --workspace /abs/repository
-python3 scripts/cpe.py run --plan /abs/plan.md --workspace /abs/repository \
-  --sandbox workspace-write --controller-slice-seconds 1800
+  --document /abs/design.md --document /abs/implementation.md \
+  --workspace /abs/repository \
+  --superpowers-skill subagent-driven-development
 python3 scripts/cpe.py resume --run-id RUN_ID
-python3 scripts/cpe.py resume --run-id RUN_ID --retry-blocked
-python3 scripts/cpe.py resume --run-id RUN_ID --retry-failed
-python3 scripts/cpe.py recover-ledger --run-id RUN_ID \
-  --sha256 EXACT_INVALID_LEDGER_SHA256 \
-  --authority-profile local-implementation-with-evidence-approvals
 python3 scripts/cpe.py inspect --run-id RUN_ID
 ```
 
-`run` defaults to `danger-full-access` and 1200 seconds. The accepted range is
-1200 through 3600 seconds. `--sandbox` and `--controller-slice-seconds` are
-immutable run configuration: `resume` cannot replace them. Exit statuses are
-`completed` (0), `failed` (1), `blocked` (2), and `checkpointed` (3); `inspect`
-is read-only and exits 0 for an existing run.
+The active CPE commands are exactly `run`, `resume`, and `inspect`.
+`run` defaults to `workspace-write`.
+`danger-full-access` is an explicit immutable run-creation opt-in.
+The required `--superpowers-skill` is immutable and accepts
+`subagent-driven-development` or `executing-plans`.
 
-With `danger-full-access`, writes outside the worktree are not fully observable
-or reversible. The launcher removes selected secret variables and its prompt
-prohibits remote actions and outside-worktree writes, while Git gates retain
-local evidence; those controls are not a sandbox substitute. Choose
-`workspace-write` when its narrower boundary fits the approved run.
+## Resume And Local Handoff
 
-## Execution And Resume Contract
+`resume --run-id RUN_ID` performs same-session resume first, using the same
+run, worktree, documents, sandbox, Git identity, and selected skill. Only an
+explicit saved-session-unavailable outcome permits one fresh fallback. The
+generation can advance from zero to one once and never to generation two.
 
-Inputs are snapshotted before launch. The direct Superpowers child receives the
-current plan, all submitted specification snapshots, the run's one reused
-isolated worktree, current Git facts, and a strict result shape. CPE does not
-compile a plan or reconstruct workflow semantics.
+Before launching a controller, `resume` reconciles a strictly valid handoff
+left by interruption between receipt publication and terminal state save.
+Malformed, mismatched, or stale orphan handoffs fail closed.
 
-Plain resume produces zero controller launches for an unchanged known
-parent-observed capability blocker or unchanged pre-execution worktree blocker.
-An unknown blocked run is retried only with `--retry-blocked`; a failed run is
-retried only with `--retry-failed`. A timeout can continue only within its
-bounded launch and wall-time limits; an unchanged timeout stops without a
-follow-up timeout policy.
+Superpowers owns engineering completion; CPE only reports a mechanical
+`handed_off`, `failed`, `blocked`, or `interrupted` status.
+CPE has no public retry, recovery, or verification command.
 
-An `execution_ledger_invalid` failure has one explicit recovery path.
-`recover-ledger` accepts the exact SHA-256 of the currently invalid ledger,
-holds the run lock, rejects symlinks, valid ledgers, changed digests, accepted
-ledger history, and unrelated terminal failures, then atomically quarantines
-the file under the private run root. It also records the explicit local
-implementation authority profile. A subsequent same-run `--retry-failed`
-launch receives the execution-ledger schema plus that durable authority fact.
-The profile is limited to implementation, local checkpoint commits, and
-evidence-gated approvals inside the saved CPE worktree; outside-worktree and
-remote actions remain prohibited.
+A `handed_off` receipt records branch, saved worktree, base and observed
+HEAD, tracked and untracked status facts, controller session generation, and
+`integration=not_observed`. It never claims merge, push, deployment,
+publication, or product acceptance.
 
-Transport outcomes are factual and bounded. Provider conditions are classified
-as `provider_usage_blocked`, `provider_auth_blocked`, or
-`provider_unavailable` and become operator-owned blocked facts. CPE separately
-records `controller_spawn_failed`, `controller_transport_failed`,
-`controller_result_missing`, `controller_result_invalid`, and
-`controller_timed_out`; raw provider messages are not retained as a second
-transcript. None of these facts lets CPE choose the semantic recovery work.
+Run state lives under
+`${CODEX_HOME:-~/.codex}/cpe-v3/runs/<run-id>/`; a linked worktree normally
+lives under `${CODEX_HOME:-~/.codex}/worktrees/`.
 
-## Caller-Selected Verification
+## Legacy And Security
 
-CPE never selects or runs a full suite by itself. The approved plan or
-Superpowers selects verification. CPE's `verify` command only executes the
-exact submitted argv, without shell expansion or a hidden suite selection:
+`inspect` is read-only. A recognized older root returns `legacy_read_only`.
+Continuation requires a distinct v3 run with explicit
+`--adopt-worktree /abs/worktree --base COMMIT`; the older root remains
+untouched and is never converted.
 
-```bash
-python3 scripts/cpe.py verify --run-id RUN_ID --command-id unit \
-  --phase task --input-digest SHA256 --mutable-input-policy immutable \
-  --cwd /abs/worktree -- python3 -m unittest
-```
+CPE is local-only and prohibits remote actions. It targets POSIX hosts. A
+same-UID controller can still tamper with accessible files, and direct operator
+changes are outside CPE's threat model. With explicit `danger-full-access`,
+writes outside the worktree may be neither observable nor reversible.
+Worktree checks and prompt restrictions are not a sandbox substitute.
 
-The supplied argv, cwd, `HEAD`, sanitized execution environment, executable
-identity, input digest, and mutable-input policy are the execution identity.
-Command ID and requested phase are observations. Same-HEAD cross-phase reuse
-is allowed only for a successful deterministic receipt with the same identity.
-A dirty worktree, changed input digest, changed identity fact, or
-`always_execute` policy runs the exact submitted argv again. An untrusted
-receipt also falls back to one exact submitted argv execution, not a suite
-chosen by CPE.
+## Offline And Opt-In Live Evidence
 
-## Completion And Handoff
-
-CPE completes fail closed: the submitted result must contain safe
-`ledger_path` and `final_review_path`, a `final_review_head` equal to the clean
-worktree `HEAD`, empty `open_finding_ids` and `open_obligation_ids`, successful
-verification outcomes, and valid ancestry. These are submitted facts. CPE does
-not infer whether a review lifecycle happened or whether the work is correct.
-
-`results/branch-handoff.json` contains branch, saved worktree, observed `HEAD`,
-last-known `HEAD`, accepted plan evidence, and `integration=not_observed`.
-It is local factual evidence only and never claims merge, push, deploy,
-publication, product acceptance, or observed external integration.
-
-Run state is stored outside the source repository under
-`~/.codex/orchestrator/<run-id>/`; the linked worktree is normally
-`~/.codex/worktrees/<run-id>/`. An explicit `CODEX_HOME` changes that prefix.
-
-## Verify
-
-Add or update a focused deterministic eval before changing the public contract.
-During implementation, run the exact affected tests and static checks. At the
-final clean revision, after the externally owned integration review, run the
-complete local gate once:
+Offline verification is sequential, network-free, credential-free, and
+model-free:
 
 ```bash
 ./evals/run.sh
@@ -142,37 +99,41 @@ python3 -m py_compile scripts/cpe.py scripts/cpe_runtime/*.py evals/*.py
 bash -n evals/run.sh
 ```
 
-The deterministic evals are sequential, network-free, credential-free, and
-model-free. A retained `evals/fixtures/canvas-direct-run-format2.json` is
-historical format 2, non-resumable audit evidence only; it is not active run
-state or a current contract.
+Real-provider canaries are separate and opt-in:
+
+```bash
+CPE_LIVE_CANARY=1 python3 evals/live_canary.py --scenario sdd-multi-document
+CPE_LIVE_CANARY=1 python3 evals/live_canary.py --scenario session-loss
+CPE_LIVE_CANARY=1 python3 evals/live_canary.py --scenario legacy-adoption
+```
+
+Without the exact environment opt-in, the harness exits before creating a
+temporary repository or run. Successful roots and bounded receipts are
+preserved for operator inspection. Offline gates do not invoke live canaries.
 
 ## Tracked Inventory
 
 ```text
+AGENTS.md
+CHANGELOG.md
 README.md
 SKILL.md
-evals/check_cli.py
-evals/check_runner.py
+evals/check_architecture.py
 evals/fake_codex.py
-evals/fixtures/canvas-direct-run-format2.json
-evals/fixtures/canvas-format1-token-forensic.json
-evals/fixtures/cpe-2-1-retry-forensic.json
-evals/fixtures/gasstation-comparative.json
-evals/fixtures/readmates-comparative.json
+evals/live_canary.py
 evals/run.sh
+evals/test_cli.py
+evals/test_controller.py
+evals/test_git.py
+evals/test_live_canary.py
+evals/test_release.py
+evals/test_runtime.py
+evals/test_state.py
 scripts/cpe.py
 scripts/cpe_runtime/__init__.py
-scripts/cpe_runtime/capabilities.py
-scripts/cpe_runtime/evidence.py
-scripts/cpe_runtime/launcher.py
-scripts/cpe_runtime/progress.py
-scripts/cpe_runtime/reporting.py
-scripts/cpe_runtime/result_validation.py
-scripts/cpe_runtime/runner.py
+scripts/cpe_runtime/controller.py
+scripts/cpe_runtime/git.py
+scripts/cpe_runtime/runtime.py
 scripts/cpe_runtime/state.py
-scripts/cpe_runtime/verification.py
-templates/execution-ledger.schema.json
-templates/optimization-report.schema.json
-templates/plan-result-schema.json
+templates/terminal-envelope.schema.json
 ```

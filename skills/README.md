@@ -8,6 +8,7 @@
 
 | 스킬 | 용도 |
 |------|------|
+| [`kws-codex-plan-executor`](./kws-codex-plan-executor/) | 하나의 승인된 Superpowers 실행 계약을 위한 Codex local durability capsule. 순차 plan runner와 별도인 strict-thin `run`/`resume`/`inspect` 계약입니다. |
 | [`kws-codex-plan-runner`](./kws-codex-plan-runner/) | 승인된 Superpowers spec과 순서가 있는 plan들을 Codex로 자율 구현하는 durable sequential runner. |
 | [`kws-claude-plan-runner`](./kws-claude-plan-runner/) | 같은 공통 완료·복구 계약을 Claude Code transport로 독립 구현한 durable sequential runner. |
 | [`kws-claude-multi-agent-executor`](./kws-claude-multi-agent-executor/) | Opus orchestrator와 Sonnet sub-agent 역할 분리를 사용하는 전문화된 multi-agent executor. 순차 Claude runner와 독립적으로 설치·사용합니다. |
@@ -19,6 +20,7 @@
 
 ## 버전과 릴리스 상태
 
+`kws-codex-plan-executor`의 현재 릴리스는 `3.0.0`입니다. CPE 3.0.0 source of truth is the tracked `skills/kws-codex-plan-executor/` directory.
 `kws-codex-plan-runner`와 `kws-claude-plan-runner`의 최초 greenfield
 릴리스는 각각 `1.0.0`입니다. 발견성에 사용하는 현재 버전은 각
 `SKILL.md`의 `metadata.version`, 릴리스 이력은 같은 디렉터리의
@@ -88,6 +90,8 @@ Claude multi-agent executor와 Waygent는 필요한 도구 쪽에 별도로 설�
 ```bash
 ln -sfn "$ARCHIVE_REPO/skills/kws-claude-plan-runner" \
         ~/.claude/skills/kws-claude-plan-runner
+ln -sfn "$ARCHIVE_REPO/skills/kws-codex-plan-executor" \
+        ~/.claude/skills/kws-codex-plan-executor
 ln -sfn "$ARCHIVE_REPO/skills/kws-claude-multi-agent-executor" \
         ~/.claude/skills/kws-claude-multi-agent-executor
 ln -sfn "$ARCHIVE_REPO/skills/waygent" \
@@ -99,6 +103,8 @@ ln -sfn "$ARCHIVE_REPO/skills/waygent" \
 ```bash
 ln -sfn "$ARCHIVE_REPO/skills/kws-codex-plan-runner" \
         ~/.codex/skills/kws-codex-plan-runner
+ln -sfn "$ARCHIVE_REPO/skills/kws-codex-plan-executor" \
+        ~/.codex/skills/kws-codex-plan-executor
 ln -sfn "$ARCHIVE_REPO/skills/waygent" \
         ~/.codex/skills/waygent
 ```
@@ -116,8 +122,9 @@ ls -l ~/.claude/skills/ | grep -E 'kws-|waygent'
 ls -l ~/.codex/skills/  | grep -E 'kws-|waygent'
 ```
 
-신규 설치 대상은 Codex 홈의 Codex plan runner와 Claude 홈의 Claude plan
-runner입니다. Claude multi-agent executor는 위의 독립 링크로 유지합니다.
+신규 설치 대상은 Codex 홈의 Codex plan runner와 Codex plan executor,
+Claude 홈의 Claude plan runner와 Codex plan executor입니다. Claude multi-agent
+executor는 위의 독립 링크로 유지합니다.
 모든 링크가 `ARCHIVE_REPO/skills/...` 아래의 정확한 source를 가리키는지
 확인하세요.
 

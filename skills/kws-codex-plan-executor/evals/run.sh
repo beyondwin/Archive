@@ -1,8 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-python3 "$(dirname "$0")/check_runner.py"
-echo "PASS check_runner.py"
-python3 "$(dirname "$0")/check_cli.py"
-echo "PASS check_cli.py"
-echo "2 suites passed"
+cd "$(dirname "$0")/.."
+python3 -m unittest -v \
+  evals.test_state \
+  evals.test_git \
+  evals.test_controller \
+  evals.test_runtime \
+  evals.test_cli \
+  evals.test_live_canary \
+  evals.test_release
+python3 evals/check_architecture.py
+python3 -m py_compile scripts/cpe.py scripts/cpe_runtime/*.py evals/*.py
+bash -n evals/run.sh
