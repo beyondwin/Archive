@@ -1,131 +1,125 @@
-"""Private atomic state and input snapshots for the sequential CPE runner."""
-
+"""Private format-5 state and opaque input snapshots for CPE."""
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
 import re
 import stat
 import uuid
-from datetime import datetime, timezone
+from dataclasses import dataclass, fields
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Mapping, Sequence
 
-
-FORMAT_VERSION = 3
-DEFAULT_SANDBOX_MODE = "danger-full-access"
-DEFAULT_CONTROLLER_SLICE_SECONDS = 1200
-MIN_CONTROLLER_SLICE_SECONDS = 1200
-MAX_CONTROLLER_SLICE_SECONDS = 3600
-SANDBOX_MODES = {"danger-full-access", "workspace-write"}
-RUN_STATUSES = {
-    "preparing",
-    "ready",
-    "running",
-    "checkpointed",
-    "completed",
-    "blocked",
-    "failed",
-}
-TRUST_LEVELS = {"parent_observed", "child_attested", "derived", "hypothesis"}
-PLAN_STATUSES = {
-    "pending",
-    "running",
-    "checkpointed",
-    "completed",
-    "blocked",
-    "failed",
-}
-DEFAULT_PLAN_BUDGET = {
-    "controller_slice_timeout_seconds": DEFAULT_CONTROLLER_SLICE_SECONDS,
-    "plan_wall_budget_seconds": 7200,
-    "max_controller_launches": 6,
-}
-PRE_EXECUTION_WORKTREE_BLOCKER = {
-    "kind": "verification_environment",
-    "code": "worktree_creation_failed",
-    "operation": "create_or_reconcile_worktree",
-    "owner": "operator",
-}
-_SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
-_DIGEST_PATTERN = re.compile(r"^[0-9a-f]{64}$")
-_DECISION_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
-_RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
-_DECISION_REASONS = {
-    "continue": {"productive_timeout"},
-    "checkpoint": {"child_checkpointed"},
-    "block": {"child_blocked"},
-    "fail": {"child_failed"},
-    "stop_stalled": {"no_progress_timeout", "child_stopped_without_completion"},
-    "stop_budget": {
-        "launch_budget_exhausted",
-        "wall_budget_exhausted",
-    },
-    "finish": {"child_completed"},
-}
-
-
-def validate_run_config(
-    *, sandbox_mode: object, controller_slice_seconds: object,
-) -> dict[str, object]:
-    if sandbox_mode not in SANDBOX_MODES:
-        raise ValueError("controller sandbox is invalid")
-    if (
-        not isinstance(controller_slice_seconds, int)
-        or isinstance(controller_slice_seconds, bool)
-        or not MIN_CONTROLLER_SLICE_SECONDS
-        <= controller_slice_seconds
-        <= MAX_CONTROLLER_SLICE_SECONDS
-    ):
-        raise ValueError("controller slice must be between 1200 and 3600 seconds")
-    return {
-        "sandbox_mode": sandbox_mode,
-        "controller_slice_seconds": controller_slice_seconds,
-    }
-
-
-def _plan_budget(run_config: dict[str, object]) -> dict[str, int]:
-    return {
-        **DEFAULT_PLAN_BUDGET,
-        "controller_slice_timeout_seconds": int(
-            run_config["controller_slice_seconds"]
-        ),
-    }
-
-
+FORMAT_VERSION = 5
+CONTRACT_VERSION = 3
+SUPERPOWERS_SKILLS = ("subagent-driven-development", "executing-plans")
+SANDBOXES = ("workspace-write", "danger-full-access")
+STATUSES = ("prepared", "running", "interrupted", "blocked", "failed", "handed_off")
+RUN_ID = re.compile(r"^cpe-[0-9a-f]{16}$")
+SHA40 = re.compile(r"^[0-9a-f]{40}$")
+SHA256 = re.compile(r"^[0-9a-f]{64}$")
+MAX_RESUME_NOTE_BYTES = 2048
+MAX_EVIDENCE_REFS = 16
+_MAX_PERSISTED_JSON_BYTES = 16 * 1024 * 1024
+_MAX_LEGACY_STATE_BYTES = 64 * 1024
+_MANIFEST_ERROR = "format-5 manifest is invalid"
+_STATE_ERROR = "format-5 state is invalid"
+_RESUME_ERROR = "resume capsule is invalid"
+_UNAVAILABLE_ERROR = "format-5 run state is unavailable"
+_LEGACY_ERROR = "legacy run state is unavailable"
+_RESUME_KEYS = ("head_commit", "worktree_status_digest", "note", "evidence_refs")
+def _require(condition: bool, error: str) -> None:
+    if not condition:
+        raise ValueError(error)
+def _names(model: object) -> tuple[str, ...]:
+    return tuple(field.name for field in fields(model))
+def _payload(record: object) -> dict[str, object]:
+    return {field.name: getattr(record, field.name) for field in fields(record)}
+def _exact(value: object, names: Sequence[str], error: str, *, mapping: bool = False) -> dict[str, object]:
+    expected_type = Mapping if mapping else dict
+    _require(isinstance(value, expected_type) and set(value) == set(names), error)
+    return dict(value)
+def _matches(value: object, pattern: re.Pattern[str]) -> bool:
+    return isinstance(value, str) and pattern.fullmatch(value) is not None
+def _integer(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+def _require_utf8_bytes(value: object, *, maximum: int, name: str, minimum: int = 0) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{name} is invalid")
+    try:
+        length = len(value.encode("utf-8"))
+    except UnicodeEncodeError as exc:
+        raise ValueError(f"{name} is invalid") from exc
+    _require(minimum <= length <= maximum, f"{name} is invalid")
+    return value
+def _json_bytes(payload: Mapping[str, object]) -> bytes:
+    return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+def _read_private_json(path: Path, maximum: int = _MAX_PERSISTED_JSON_BYTES,
+                       error: str = _UNAVAILABLE_ERROR) -> object:
+    no_follow = getattr(os, "O_NOFOLLOW", None)
+    _require(isinstance(no_follow, int) and no_follow != 0, _UNAVAILABLE_ERROR)
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(path, os.O_RDONLY | no_follow | os.O_NONBLOCK)
+        metadata = os.fstat(descriptor)
+        _require(
+            stat.S_ISREG(metadata.st_mode)
+            and metadata.st_size <= maximum,
+            error,
+        )
+        with os.fdopen(descriptor, "rb", closefd=True) as stream:
+            descriptor = None
+            payload = stream.read(maximum + 1)
+        _require(len(payload) <= maximum, error)
+        return json.loads(payload.decode("utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError, RecursionError) as exc:
+        raise ValueError(error) from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+def read_legacy_format(codex_home: Path, run_id: str) -> tuple[int, Path]:
+    """Read only the root version from the exact bounded legacy state path."""
+    _require(isinstance(codex_home, Path) and _matches(run_id, RUN_ID), _LEGACY_ERROR)
+    root = codex_home.resolve() / "orchestrator" / run_id
+    payload = _read_private_json(root / "state.json", _MAX_LEGACY_STATE_BYTES, _LEGACY_ERROR)
+    _require(isinstance(payload, dict), _LEGACY_ERROR)
+    version = payload.get("format_version")
+    _require(_integer(version) and version in (1, 2, 3, 4), _LEGACY_ERROR)
+    return version, root
 def _write_all(descriptor: int, payload: bytes) -> None:
     remaining = memoryview(payload)
     while remaining:
         written = os.write(descriptor, remaining)
         if written <= 0:
-            raise OSError("short write while persisting run state")
+            raise OSError("short write while persisting format-5 state")
         remaining = remaining[written:]
-
-
+def _private_directory(path: Path) -> None:
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    _require(not path.is_symlink() and path.is_dir(), "private run directory is invalid")
+    path.chmod(0o700)
 def atomic_private_write(path: Path, payload: bytes, mode: int = 0o600) -> None:
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    """Atomically write one private regular file beside its destination."""
+    _require(not path.parent.is_symlink() and path.parent.is_dir(), "private artifact parent is invalid")
     temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
     descriptor: int | None = None
     try:
         descriptor = os.open(
-            temporary,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
-            mode,
+            temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), mode,
         )
-        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-            raise ValueError("private artifact must be a regular file")
+        _require(stat.S_ISREG(os.fstat(descriptor).st_mode), "private artifact must be a regular file")
         _write_all(descriptor, payload)
         os.fchmod(descriptor, mode)
         os.fsync(descriptor)
         os.close(descriptor)
         descriptor = None
         os.replace(temporary, path)
-        directory = os.open(path.parent, os.O_RDONLY)
+        directory_descriptor = os.open(path.parent, os.O_RDONLY)
         try:
-            os.fsync(directory)
+            os.fsync(directory_descriptor)
         finally:
-            os.close(directory)
+            os.close(directory_descriptor)
     finally:
         if descriptor is not None:
             os.close(descriptor)
@@ -133,628 +127,256 @@ def atomic_private_write(path: Path, payload: bytes, mode: int = 0o600) -> None:
             temporary.unlink()
         except FileNotFoundError:
             pass
+@dataclass(frozen=True)
+class DocumentSource:
+    path: Path
+@dataclass(frozen=True)
+class DocumentRecord:
+    order: int; source_path: str; snapshot_path: str
+    sha256: str; byte_length: int
 
+    def to_payload(self) -> dict[str, object]:
+        return _payload(self)
+@dataclass(frozen=True)
+class GitIdentity:
+    author_name: str; author_email: str
+    committer_name: str; committer_email: str
 
-def _private_directory(path: Path) -> None:
-    path.mkdir(mode=0o700, parents=True, exist_ok=True)
-    path.chmod(0o700)
+    def to_payload(self) -> dict[str, object]:
+        values = _payload(self)
+        for name, value in values.items():
+            _require_utf8_bytes(value, maximum=256, minimum=1, name=f"Git identity {name}")
+        return values
+@dataclass(frozen=True)
+class RunManifest:
+    format_version: int; contract_version: int; run_id: str
+    source_repository: str; base_commit: str; branch: str; worktree: str
+    documents: tuple[DocumentRecord, ...]; superpowers_skill: str
+    git_identity: GitIdentity; sandbox: str; approval_policy: str
+    integration_policy: str; remote_action_policy: str; created_at: str
 
+    def to_payload(self) -> dict[str, object]:
+        payload = _payload(self)
+        payload["documents"] = [record.to_payload() for record in self.documents]
+        payload["git_identity"] = self.git_identity.to_payload()
+        RunStore.validate_manifest_payload(payload)
+        return payload
+@dataclass(frozen=True)
+class RunState:
+    status: str; controller_session_id: str | None; controller_generation: int
+    fresh_fallback_used: bool; active_pid: int | None
+    active_process_group: int | None; last_observed_head: str
+    tracked_clean: bool; untracked_present: bool; status_digest: str
+    last_process_class: str | None; last_exit_code: int | None
+    resume_capsule: Mapping[str, object] | None
+    blocker: Mapping[str, object] | None; updated_at: str
 
-def _inside(path: Path, parent: Path, name: str) -> Path:
-    resolved = path.resolve(strict=True)
-    try:
-        resolved.relative_to(parent.resolve(strict=True))
-    except ValueError as exc:
-        raise ValueError(f"{name} is outside the private run root") from exc
-    return resolved
-
-
-def _read_document(path: Path) -> tuple[Path, bytes]:
+    def to_payload(self) -> dict[str, object]:
+        payload = _payload(self)
+        for name in ("resume_capsule", "blocker"):
+            if payload[name] is not None:
+                payload[name] = dict(payload[name])
+        RunStore.validate_state_payload(payload)
+        return payload
+def _open_source(path: Path) -> tuple[tuple[int, int], bytes]:
     if not path.is_absolute() or path.is_symlink():
         raise ValueError("input paths must be absolute regular files")
     try:
-        resolved = path.resolve(strict=True)
-        metadata = resolved.stat()
-        payload = resolved.read_bytes()
-        payload.decode("utf-8")
-    except (OSError, UnicodeDecodeError) as exc:
-        raise ValueError(f"input is not a readable UTF-8 file: {path}") from exc
-    if not stat.S_ISREG(metadata.st_mode):
-        raise ValueError(f"input is not a regular file: {path}")
-    return resolved, payload
-
-
-class StateStore:
-    """Own one format-version-3 state file beneath a private run root."""
-
-    def __init__(self, root: Path, state: dict[str, Any]) -> None:
-        self.root = root
-        self.state_path = root / "state.json"
-        self.events_path = root / "events.jsonl"
-        self.state = state
-
-    @classmethod
-    def create(
-        cls,
-        *,
-        run_root: Path,
-        run_id: str,
-        source_repository: Path,
-        source_commit: str,
-        worktree: Path,
-        branch: str,
-        specs: Sequence[Path],
-        plans: Sequence[Path],
-        sandbox_mode: str = DEFAULT_SANDBOX_MODE,
-        controller_slice_seconds: int = DEFAULT_CONTROLLER_SLICE_SECONDS,
-        initial_status: str = "preparing",
-    ) -> "StateStore":
-        if not plans:
-            raise ValueError("at least one plan is required")
-        if initial_status not in {"preparing", "ready", "running"}:
-            raise ValueError("initial run status is invalid")
-        if run_root.exists():
-            raise ValueError("run root already exists")
-        if not _RUN_ID_PATTERN.fullmatch(run_id) or branch != f"codex/{run_id}":
-            raise ValueError("run identity is invalid")
-        if not _SHA_PATTERN.fullmatch(source_commit):
-            raise ValueError("source commit must be a full Git object ID")
-        run_config = validate_run_config(
-            sandbox_mode=sandbox_mode,
-            controller_slice_seconds=controller_slice_seconds,
-        )
-        repository = source_repository.resolve(strict=True)
-        if not repository.is_dir() or repository.is_symlink():
-            raise ValueError("source repository must be a real directory")
-        prepared: list[tuple[str, int, Path, bytes]] = []
-        seen: set[Path] = set()
-        for role, paths in (("spec", specs), ("plan", plans)):
-            for order, declared in enumerate(paths):
-                source, payload = _read_document(declared)
-                if source in seen:
-                    raise ValueError("duplicate input paths are not allowed")
-                seen.add(source)
-                prepared.append((role, order, source, payload))
-
-        _private_directory(run_root.parent)
-        _private_directory(run_root)
-        for name in ("inputs", "results", "logs", "evidence", "reports"):
-            _private_directory(run_root / name)
-
-        records: list[dict[str, Any]] = []
-        for role, order, source, payload in prepared:
-            document_id = f"{role}-{order + 1:02d}"
-            suffix = source.suffix if source.suffix else ".txt"
-            snapshot = run_root / "inputs" / f"{document_id}{suffix}"
-            snapshot.write_bytes(payload)
-            snapshot.chmod(0o600)
-            records.append(
-                {
-                    "document_id": document_id,
-                    "role": role,
-                    "source_path": str(source),
-                    "snapshot_path": str(snapshot.resolve()),
-                    "sha256": hashlib.sha256(payload).hexdigest(),
-                    "byte_length": len(payload),
-                    "input_order": order,
-                }
-            )
-
-        plan_records = [
-            {
-                "plan_id": record["document_id"],
-                "status": "pending",
-                "starting_commit": None,
-                "accepted_commit": None,
-                "attempt_count": 0,
-                "controller_launch_count": 0,
-                "checkpoint_count": 0,
-                "progress_fingerprint": None,
-                "execution_ledger_event_digests": [],
-                "pending_checkpoint_decision": None,
-                "environment_fingerprint": None,
-                "capability_probe_ids": [],
-                "blocker": None,
-                "plan_started_at": None,
-                "plan_elapsed_seconds": 0,
-                "last_known_head": None,
-                "result_path": None,
-                "original_result_path": None,
-                "budget": _plan_budget(run_config),
-            }
-            for record in records
-            if record["role"] == "plan"
-        ]
-        state = {
-            "format_version": FORMAT_VERSION,
-            "run_id": run_id,
-            "status": initial_status,
-            "source_repository": str(repository),
-            "source_commit": source_commit,
-            "worktree": str(worktree.resolve()),
-            "branch": branch,
-            "run_config": run_config,
-            "current_plan_index": 0,
-            "inputs": records,
-            "plans": plan_records,
-            "pre_execution_blocker": None,
-        }
-        store = cls(run_root.resolve(), state)
-        store._validate()
-        store.save()
-        store.events_path.touch(mode=0o600)
-        store.events_path.chmod(0o600)
-        store.append_event("run.created", status=initial_status)
-        return store
-
-    @classmethod
-    def open(cls, run_root: Path) -> "StateStore":
-        if run_root.is_symlink():
-            raise ValueError("run root must not be a symlink")
-        try:
-            root = run_root.resolve(strict=True)
-            payload = json.loads((root / "state.json").read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise ValueError("run state is unavailable or invalid") from exc
-        version = payload.get("format_version") if isinstance(payload, dict) else None
-        if version in {1, 2}:
-            raise ValueError("unsupported_legacy_run")
-        if version != FORMAT_VERSION:
-            raise ValueError("unsupported_run_format")
-        store = cls(root, payload)
-        store._validate()
-        return store
-
-    def _validate(self) -> None:
-        state = self.state
-        required = {
-            "format_version", "run_id", "status", "source_repository", "source_commit",
-            "worktree", "branch", "current_plan_index", "inputs", "plans",
-            "run_config",
-            "pre_execution_blocker",
-        }
-        if set(state) != required or state.get("format_version") != FORMAT_VERSION:
-            raise ValueError("invalid format-version-3 state")
-        run_config = state["run_config"]
-        if not isinstance(run_config, dict) or set(run_config) != {
-            "sandbox_mode", "controller_slice_seconds",
-        }:
-            raise ValueError("run config is invalid")
-        if validate_run_config(**run_config) != run_config:
-            raise ValueError("run config is invalid")
-        if not isinstance(state["run_id"], str) or not _RUN_ID_PATTERN.fullmatch(state["run_id"]) or state["branch"] != f"codex/{state['run_id']}":
-            raise ValueError("run identity is invalid")
-        if not all(isinstance(state[name], str) and Path(state[name]).is_absolute() for name in ("source_repository", "worktree")):
-            raise ValueError("recorded repository paths are invalid")
-        if state["status"] not in RUN_STATUSES:
-            raise ValueError("unknown run status")
-        if not _SHA_PATTERN.fullmatch(str(state["source_commit"])):
-            raise ValueError("invalid source commit")
-        if not isinstance(state["inputs"], list) or not isinstance(state["plans"], list) or not state["plans"]:
-            raise ValueError("state inputs and plans are invalid")
-        blocker = state["pre_execution_blocker"]
-        if blocker is not None and blocker != PRE_EXECUTION_WORKTREE_BLOCKER:
-            raise ValueError("pre-execution blocker is invalid")
-        index = state["current_plan_index"]
-        if not isinstance(index, int) or isinstance(index, bool) or not 0 <= index <= len(state["plans"]):
-            raise ValueError("current plan index is invalid")
-
-        owned_directories = [
-            self.root / name
-            for name in ("inputs", "results", "logs", "evidence", "reports")
-        ]
-        for directory in owned_directories:
-            if directory.is_symlink() or not directory.is_dir():
-                raise ValueError("private run directory is missing or redirected")
-            _inside(directory, self.root, "private run directory")
-        inputs_root, results_root, _, _, _ = owned_directories
-        plan_ids = []
-        role_orders = {"spec": 0, "plan": 0}
-        for record in state["inputs"]:
-            if not isinstance(record, dict) or set(record) != {
-                "document_id", "role", "source_path", "snapshot_path", "sha256", "byte_length", "input_order"
-            }:
-                raise ValueError("input record is invalid")
-            if not isinstance(record["role"], str) or record["role"] not in {"spec", "plan"}:
-                raise ValueError("input role is invalid")
-            expected_order = role_orders[record["role"]]
-            expected_id = f"{record['role']}-{expected_order + 1:02d}"
-            if record["document_id"] != expected_id or record["input_order"] != expected_order:
-                raise ValueError("input identity or order is invalid")
-            role_orders[record["role"]] += 1
-            source_path = Path(record["source_path"])
-            if not source_path.is_absolute() or not isinstance(record["byte_length"], int) or isinstance(record["byte_length"], bool) or record["byte_length"] < 0 or not isinstance(record["sha256"], str) or not _DIGEST_PATTERN.fullmatch(record["sha256"]):
-                raise ValueError("input metadata is invalid")
-            snapshot = _inside(Path(record["snapshot_path"]), inputs_root, "snapshot")
-            if not snapshot.is_file() or snapshot.is_symlink():
-                raise ValueError("snapshot is not a regular file")
-            payload = snapshot.read_bytes()
-            try:
-                payload.decode("utf-8")
-            except UnicodeDecodeError as exc:
-                raise ValueError("snapshot is not UTF-8") from exc
-            if hashlib.sha256(payload).hexdigest() != record["sha256"] or len(payload) != record["byte_length"]:
-                raise ValueError("snapshot digest or size changed")
-            if record["role"] == "plan":
-                plan_ids.append(record["document_id"])
-
-        if len(plan_ids) != len(state["plans"]):
-            raise ValueError("plan input count does not match plan state")
-        for position, record in enumerate(state["plans"]):
-            if not isinstance(record, dict) or set(record) != {
-                "plan_id", "status", "starting_commit", "accepted_commit",
-                "attempt_count", "controller_launch_count", "checkpoint_count",
-                "progress_fingerprint", "execution_ledger_event_digests",
-                "pending_checkpoint_decision", "environment_fingerprint",
-                "capability_probe_ids", "blocker", "plan_started_at", "plan_elapsed_seconds",
-                "last_known_head", "result_path", "original_result_path", "budget",
-            }:
-                raise ValueError("plan record is invalid")
-            if record["plan_id"] != plan_ids[position] or record["status"] not in PLAN_STATUSES:
-                raise ValueError("plan identity or status is invalid")
-            if not isinstance(record["attempt_count"], int) or isinstance(record["attempt_count"], bool) or record["attempt_count"] < 0:
-                raise ValueError("plan attempt count is invalid")
-            for name in (
-                "controller_launch_count", "checkpoint_count",
-                "plan_elapsed_seconds",
-            ):
-                value = record[name]
-                if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-                    raise ValueError(f"plan {name} is invalid")
-            for name in ("starting_commit", "accepted_commit", "last_known_head"):
-                value = record[name]
-                if value is not None and not _SHA_PATTERN.fullmatch(str(value)):
-                    raise ValueError(f"plan {name} is invalid")
-            for name in ("progress_fingerprint", "environment_fingerprint"):
-                value = record[name]
-                if value is not None and (
-                    not isinstance(value, str) or not _DIGEST_PATTERN.fullmatch(value)
-                ):
-                    raise ValueError(f"plan {name} is invalid")
-            if record["plan_started_at"] is not None and not isinstance(
-                record["plan_started_at"], str,
-            ):
-                raise ValueError("plan plan_started_at is invalid")
-            event_digests = record["execution_ledger_event_digests"]
-            if (
-                not isinstance(event_digests, list)
-                or len(event_digests) > 4096
-                or not all(
-                    isinstance(value, str) and _DIGEST_PATTERN.fullmatch(value)
-                    for value in event_digests
-                )
-                or len(event_digests) != len(set(event_digests))
-            ):
-                raise ValueError("plan execution ledger event digests are invalid")
-            pending = record["pending_checkpoint_decision"]
-            if pending is not None:
-                pending_fields = {
-                    "decision_id", "plan_id", "attempt", "decision", "reason",
-                    "progress_fingerprint", "previous_progress_fingerprint",
-                    "timed_out", "head", "evidence_manifest_sha256",
-                }
-                if (
-                    not isinstance(pending, dict)
-                    or set(pending) != pending_fields
-                    or not isinstance(pending["decision_id"], str)
-                    or not _DECISION_ID_PATTERN.fullmatch(pending["decision_id"])
-                    or pending["plan_id"] != record["plan_id"]
-                    or not isinstance(pending["attempt"], int)
-                    or isinstance(pending["attempt"], bool)
-                    or pending["attempt"] != record["attempt_count"]
-                    or pending["decision"] not in _DECISION_REASONS
-                    or pending["reason"] not in _DECISION_REASONS[pending["decision"]]
-                    or not isinstance(pending["progress_fingerprint"], str)
-                    or not _DIGEST_PATTERN.fullmatch(pending["progress_fingerprint"])
-                    or not isinstance(pending["previous_progress_fingerprint"], str)
-                    or not _DIGEST_PATTERN.fullmatch(
-                        pending["previous_progress_fingerprint"]
-                    )
-                    or pending["previous_progress_fingerprint"]
-                    != record["progress_fingerprint"]
-                    or not isinstance(pending["timed_out"], bool)
-                    or not isinstance(pending["head"], str)
-                    or not _SHA_PATTERN.fullmatch(pending["head"])
-                    or pending["head"] != record["last_known_head"]
-                    or (
-                        pending["decision"] == "finish"
-                        and (
-                            not isinstance(pending["evidence_manifest_sha256"], str)
-                            or not _DIGEST_PATTERN.fullmatch(
-                                pending["evidence_manifest_sha256"]
-                            )
-                        )
-                    )
-                    or (
-                        pending["decision"] != "finish"
-                        and pending["evidence_manifest_sha256"] is not None
-                    )
-                    or (
-                        pending["timed_out"]
-                        and pending["decision"] not in {
-                            "continue", "stop_stalled", "stop_budget",
-                        }
-                    )
-                    or (
-                        not pending["timed_out"]
-                        and (
-                            pending["decision"] == "continue"
-                            or (
-                                pending["decision"] == "stop_stalled"
-                                and pending["reason"]
-                                != "child_stopped_without_completion"
-                            )
-                        )
-                    )
-                    or state["status"] != "running"
-                    or record["status"] != "running"
-                    or position != state["current_plan_index"]
-                ):
-                    raise ValueError("pending checkpoint decision is invalid")
-            if (
-                not isinstance(record["capability_probe_ids"], list)
-                or not all(isinstance(value, str) for value in record["capability_probe_ids"])
-            ):
-                raise ValueError("plan capability probe IDs are invalid")
-            blocker = record["blocker"]
-            if blocker is not None:
-                expected_blocker = {
-                    "kind", "code", "resource", "parent_fingerprint",
-                    "fingerprint_available", "parent_observed", "explicit_retry_count",
-                }
-                if (
-                    not isinstance(blocker, dict)
-                    or set(blocker) != expected_blocker
-                    or not all(
-                        isinstance(blocker[name], str) and blocker[name]
-                        and len(blocker[name]) <= 128
-                        for name in ("kind", "code", "resource")
-                    )
-                    or blocker["parent_fingerprint"] is not None
-                    and (not isinstance(blocker["parent_fingerprint"], str)
-                         or not _DIGEST_PATTERN.fullmatch(blocker["parent_fingerprint"]))
-                    or not isinstance(blocker["fingerprint_available"], bool)
-                    or blocker["fingerprint_available"] != (blocker["parent_fingerprint"] is not None)
-                    or not isinstance(blocker["parent_observed"], bool)
-                    or not isinstance(blocker["explicit_retry_count"], int)
-                    or isinstance(blocker["explicit_retry_count"], bool)
-                    or blocker["explicit_retry_count"] < 0
-                ):
-                    raise ValueError("plan blocker facts are invalid")
-            budget = record["budget"]
-            if (
-                not isinstance(budget, dict)
-                or set(budget) != set(DEFAULT_PLAN_BUDGET)
-                or not all(
-                    isinstance(value, int) and not isinstance(value, bool)
-                    for value in budget.values()
-                )
-                or budget != _plan_budget(run_config)
-            ):
-                raise ValueError("plan budget is invalid")
-            if pending is not None:
-                changed = (
-                    pending["progress_fingerprint"]
-                    != pending["previous_progress_fingerprint"]
-                )
-                launches_exhausted = (
-                    record["controller_launch_count"]
-                    >= budget["max_controller_launches"]
-                )
-                wall_exhausted = (
-                    record["plan_elapsed_seconds"]
-                    >= budget["plan_wall_budget_seconds"]
-                )
-                reason = pending["reason"]
-                reason_matches_state = {
-                    "child_completed": not pending["timed_out"],
-                    "child_checkpointed": (
-                        not pending["timed_out"]
-                        and not launches_exhausted
-                        and not wall_exhausted
-                    ),
-                    "child_blocked": not pending["timed_out"],
-                    "child_failed": not pending["timed_out"],
-                    "productive_timeout": (
-                        pending["timed_out"]
-                        and changed
-                        and not launches_exhausted
-                        and not wall_exhausted
-                    ),
-                    "no_progress_timeout": (
-                        pending["timed_out"]
-                        and not changed
-                        and not launches_exhausted
-                        and not wall_exhausted
-                    ),
-                    "child_stopped_without_completion": (
-                        not pending["timed_out"]
-                        and not launches_exhausted
-                        and not wall_exhausted
-                    ),
-                    "launch_budget_exhausted": (
-                        launches_exhausted
-                    ),
-                    "wall_budget_exhausted": (
-                        not launches_exhausted
-                        and wall_exhausted
-                    ),
-                }.get(reason, False)
-                if not reason_matches_state:
-                    raise ValueError("pending checkpoint decision is invalid")
-            if record["result_path"] is not None:
-                declared_result = Path(record["result_path"])
-                if declared_result.is_symlink():
-                    raise ValueError("result must not be a symlink")
-                result = _inside(declared_result, results_root, "result")
-                if not result.is_file():
-                    raise ValueError("result must be a regular file")
-            original_result_path = record["original_result_path"]
-            if original_result_path is not None:
-                if record["result_path"] is None:
-                    raise ValueError("original result requires a repaired result")
-                declared_original = Path(original_result_path)
-                if declared_original.is_symlink():
-                    raise ValueError("original result must not be a symlink")
-                original = _inside(
-                    declared_original, results_root, "original result",
-                )
-                if not original.is_file() or original == result:
-                    raise ValueError("original result must be a distinct regular file")
-                try:
-                    result.relative_to(results_root / "repaired")
-                except ValueError as exc:
-                    raise ValueError(
-                        "repaired result is outside the repaired result root"
-                    ) from exc
-
-        self._validate_semantics(plan_ids)
-
-    def _validate_semantics(self, plan_ids: list[str]) -> None:
-        state = self.state
-        plans = state["plans"]
-        if len(plan_ids) != len(plans):
-            raise ValueError("plan input count does not match plan state")
-
-        completed_prefix = 0
-        for plan in plans:
-            if plan["status"] != "completed":
-                break
-            completed_prefix += 1
-        if state["current_plan_index"] != completed_prefix:
-            raise ValueError("current plan index does not match completed prefix")
-
-        pristine_fields = {
-            "status": "pending",
-            "starting_commit": None,
-            "accepted_commit": None,
-            "attempt_count": 0,
-            "controller_launch_count": 0,
-            "checkpoint_count": 0,
-            "progress_fingerprint": None,
-            "execution_ledger_event_digests": [],
-            "pending_checkpoint_decision": None,
-            "environment_fingerprint": None,
-            "capability_probe_ids": [],
-            "blocker": None,
-            "plan_started_at": None,
-            "plan_elapsed_seconds": 0,
-            "last_known_head": None,
-            "result_path": None,
-            "original_result_path": None,
-            "budget": _plan_budget(state["run_config"]),
-        }
-        for position, plan in enumerate(plans):
-            if position < completed_prefix:
-                if not all(
-                    plan[name] is not None
-                    for name in ("starting_commit", "accepted_commit", "result_path")
-                ):
-                    raise ValueError("completed plan evidence is incomplete")
-                if plan["attempt_count"] < 1:
-                    raise ValueError("completed plan attempt count is invalid")
-            elif position > completed_prefix:
-                expected = {"plan_id": plan["plan_id"], **pristine_fields}
-                if plan != expected:
-                    raise ValueError("future plan is not pristine")
-
-        if completed_prefix == len(plans):
-            if state["pre_execution_blocker"] is not None:
-                raise ValueError("completed run cannot retain a pre-execution blocker")
-            if state["status"] not in {"completed", "failed"}:
-                raise ValueError("all plans complete but run is not terminal")
-            return
-
-        current = plans[completed_prefix]
-        if state["pre_execution_blocker"] is not None:
-            expected = {"plan_id": current["plan_id"], **pristine_fields}
-            expected["status"] = "blocked"
-            if (
-                state["status"] != "blocked"
-                or current != expected
-            ):
-                raise ValueError("pre-execution blocker state is invalid")
-        elif current["status"] == "pending":
-            expected = {"plan_id": current["plan_id"], **pristine_fields}
-            if current != expected:
-                raise ValueError("pending current plan is not pristine")
-        elif (
-            current["status"] == "blocked"
-            and current["blocker"] is not None
-            and current["result_path"] is not None
-        ):
-            pass
-        elif (
-            current["attempt_count"] < 1
-            or current["starting_commit"] is None
-            or current["result_path"] is None
-            or current["accepted_commit"] is not None
-        ):
-            raise ValueError("active current plan evidence is incomplete")
-
-        allowed = {
-            "preparing": {"pending"},
-            "ready": {"pending"},
-            "running": {"pending", "running"},
-            "checkpointed": {"checkpointed"},
-            "blocked": {"blocked"},
-            "failed": {"failed", "pending"},
-        }
-        if current["status"] not in allowed.get(state["status"], set()):
-            raise ValueError("run and current plan statuses disagree")
-
-    def save(self) -> None:
-        self._validate()
-        payload = json.dumps(
-            self.state, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-        ).encode("utf-8")
-        atomic_private_write(self.state_path, payload)
-
-    def append_event(
-        self,
-        action: str,
-        *,
-        source: str = "parent_observed",
-        **details: object,
-    ) -> None:
-        if source not in TRUST_LEVELS:
-            raise ValueError("event source is invalid")
-        if not action or len(action) > 100:
-            raise ValueError("event action must be bounded")
-        reserved = {"event_id", "at", "source", "run_id", "category", "action"}
-        if reserved & set(details):
-            raise ValueError("event contains reserved envelope field")
-        forbidden = {"prompt", "transcript", "raw_output", "environment", "secret", "token"}
-        if forbidden & set(details):
-            raise ValueError("event contains forbidden content field")
-        event = {
-            "event_id": uuid.uuid4().hex,
-            "at": datetime.now(timezone.utc).isoformat(),
-            "source": source,
-            "run_id": self.state["run_id"],
-            "category": action.split(".", 1)[0],
-            "action": action,
-            **details,
-        }
-        encoded = (
-            json.dumps(event, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-            + "\n"
-        ).encode("utf-8")
-        if len(encoded) > 16_384:
-            raise ValueError("event record exceeds the bounded event contract")
-        self._append_event_bytes(encoded)
-
-    def _append_event_bytes(self, encoded: bytes) -> None:
-        descriptor = os.open(
-            self.events_path,
-            os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
-            0o600,
-        )
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except OSError as exc:
+        raise ValueError(f"input is not a readable regular file: {path}") from exc
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise ValueError(f"input is not a regular file: {path}")
+        with os.fdopen(descriptor, "rb", closefd=True) as source:
+            descriptor = -1
+            return (metadata.st_dev, metadata.st_ino), source.read()
+    finally:
+        if descriptor != -1:
+            os.close(descriptor)
+def snapshot_documents(*, run_root: Path, sources: Sequence[DocumentSource]) -> tuple[DocumentRecord, ...]:
+    """Copy opaque absolute regular files once into global-order snapshots."""
+    _require(bool(sources), "at least one input document is required")
+    _require(not run_root.exists() or (not run_root.is_symlink() and run_root.is_dir()), "private run directory is invalid")
+    _private_directory(run_root)
+    inputs = run_root / "inputs"
+    _private_directory(inputs)
+    _require(set(run_root.iterdir()) == {inputs}, "prepared run root contains non-input artifacts")
+    _require(not any(inputs.iterdir()), "input snapshots already exist")
+    records: list[DocumentRecord] = []
+    identities: set[tuple[int, int]] = set()
+    for ordinal, declared in enumerate(sources, start=1):
+        _require(isinstance(declared, DocumentSource) and isinstance(declared.path, Path), "input source is invalid")
+        identity, payload = _open_source(declared.path)
+        _require(identity not in identities, "duplicate input file identity")
+        identities.add(identity)
+        snapshot = inputs / f"document-{ordinal:03d}-{declared.path.name}"
+        atomic_private_write(snapshot, payload)
+        records.append(DocumentRecord(
+            ordinal, str(declared.path.resolve(strict=True)), str(snapshot.resolve(strict=True)),
+            hashlib.sha256(payload).hexdigest(), len(payload),
+        ))
+    return tuple(records)
+def validate_resume_capsule(value: object) -> dict[str, object]:
+    payload = _exact(value, _RESUME_KEYS, _RESUME_ERROR, mapping=True)
+    _require(_matches(payload["head_commit"], SHA40), _RESUME_ERROR)
+    _require(_matches(payload["worktree_status_digest"], SHA256), _RESUME_ERROR)
+    note = _require_utf8_bytes(payload["note"], maximum=MAX_RESUME_NOTE_BYTES, name="resume capsule")
+    references = payload["evidence_refs"]
+    _require(isinstance(references, list) and len(references) <= MAX_EVIDENCE_REFS, _RESUME_ERROR)
+    normalized_refs = [
+        _require_utf8_bytes(reference, maximum=512, minimum=1, name="resume capsule")
+        for reference in references
+    ]
+    return dict(head_commit=payload["head_commit"], worktree_status_digest=payload["worktree_status_digest"],
+                note=note, evidence_refs=normalized_refs)
+class RunLock:
+    """An advisory exclusive writer lock that children may inherit."""
+    def __init__(self, path: Path, *, shared: bool = False) -> None:
+        self.path, self.shared, self.descriptor = path, shared, None
+    def __enter__(self) -> "RunLock":
+        self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        descriptor = os.open(self.path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        self.descriptor = descriptor
         try:
             if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-                raise ValueError("event stream must be a regular file")
-            _write_all(descriptor, encoded)
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
-        self.events_path.chmod(0o600)
+                raise ValueError("run lock must be a regular file")
+            os.fchmod(descriptor, 0o600)
+            operation = fcntl.LOCK_SH if self.shared else fcntl.LOCK_EX
+            fcntl.flock(descriptor, operation | fcntl.LOCK_NB)
+        except BaseException:
+            try:
+                os.close(descriptor)
+            finally:
+                self.descriptor = None
+            raise
+        return self
+    def fileno(self) -> int:
+        if self.descriptor is None:
+            raise RuntimeError("run lock is not held")
+        return self.descriptor
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        if self.descriptor is not None:
+            fcntl.flock(self.descriptor, fcntl.LOCK_UN)
+            os.close(self.descriptor)
+            self.descriptor = None
+class RunStore:
+    """Own mutable state beside an immutable format-5 manifest."""
+    def __init__(self, root: Path, manifest: RunManifest, state: RunState) -> None:
+        self.root, self.manifest, self.state = root, manifest, state
+        self.manifest_path = root / "manifest.json"
+        self.state_path = root / "state.json"
+        self.lock_path = root / "run.lock"
+        self.handoff_path = root / "handoff.json"
+    @staticmethod
+    def validate_manifest_payload(payload: object) -> dict[str, object]:
+        data = _exact(payload, _names(RunManifest), _MANIFEST_ERROR)
+        _require(data["format_version"] == FORMAT_VERSION and data["contract_version"] == CONTRACT_VERSION, _MANIFEST_ERROR)
+        _require(_matches(data["run_id"], RUN_ID), _MANIFEST_ERROR)
+        for name in ("source_repository", "worktree"):
+            _require(isinstance(data[name], str) and Path(data[name]).is_absolute(), _MANIFEST_ERROR)
+        _require(_matches(data["base_commit"], SHA40), _MANIFEST_ERROR)
+        _require(data["sandbox"] in SANDBOXES and data["superpowers_skill"] in SUPERPOWERS_SKILLS, _MANIFEST_ERROR)
+        for name in ("branch", "approval_policy", "integration_policy", "remote_action_policy", "created_at"):
+            _require_utf8_bytes(data[name], maximum=512, minimum=1, name="format-5 manifest")
+        identity = _exact(data["git_identity"], _names(GitIdentity), _MANIFEST_ERROR)
+        GitIdentity(**identity).to_payload()
+        documents = data["documents"]
+        _require(isinstance(documents, list) and bool(documents), _MANIFEST_ERROR)
+        for expected_order, value in enumerate(documents, start=1):
+            record = _exact(value, _names(DocumentRecord), _MANIFEST_ERROR)
+            _require(_integer(record["order"]) and record["order"] == expected_order, _MANIFEST_ERROR)
+            for name in ("source_path", "snapshot_path"):
+                _require(isinstance(record[name], str) and Path(record[name]).is_absolute(), _MANIFEST_ERROR)
+            _require(_matches(record["sha256"], SHA256), _MANIFEST_ERROR)
+            _require(_integer(record["byte_length"]) and record["byte_length"] >= 0, _MANIFEST_ERROR)
+        return data
+    @staticmethod
+    def validate_state_payload(payload: object) -> dict[str, object]:
+        data = _exact(payload, _names(RunState), _STATE_ERROR)
+        _require(data["status"] in STATUSES, _STATE_ERROR)
+        generation, fallback = data["controller_generation"], data["fresh_fallback_used"]
+        _require(_integer(generation) and generation in (0, 1) and isinstance(fallback, bool)
+                 and fallback == (generation == 1), _STATE_ERROR)
+        for name in ("active_pid", "active_process_group"):
+            value = data[name]
+            _require(value is None or (_integer(value) and value > 0), _STATE_ERROR)
+        _require(_matches(data["last_observed_head"], SHA40), _STATE_ERROR)
+        _require(_matches(data["status_digest"], SHA256), _STATE_ERROR)
+        _require(isinstance(data["tracked_clean"], bool) and isinstance(data["untracked_present"], bool), _STATE_ERROR)
+        for name in ("controller_session_id", "last_process_class"):
+            if data[name] is not None:
+                _require_utf8_bytes(data[name], maximum=512, minimum=1, name="format-5 state")
+        exit_code = data["last_exit_code"]
+        _require(exit_code is None or _integer(exit_code), _STATE_ERROR)
+        if data["resume_capsule"] is not None:
+            validate_resume_capsule(data["resume_capsule"])
+        _require(data["blocker"] is None or isinstance(data["blocker"], Mapping), _STATE_ERROR)
+        _require_utf8_bytes(data["updated_at"], maximum=128, minimum=1, name="format-5 state")
+        return data
+    @classmethod
+    def _run_root(cls, codex_home: Path, run_id: str) -> Path:
+        _require(isinstance(codex_home, Path) and _matches(run_id, RUN_ID), "format-5 run identity is invalid")
+        return codex_home.resolve() / "cpe-v3" / "runs" / run_id
+    @classmethod
+    def _validate_document_snapshots(cls, run_root: Path, manifest: RunManifest) -> None:
+        inputs = run_root / "inputs"
+        _require(not inputs.is_symlink() and inputs.is_dir(), "prepared run root must contain only input snapshots")
+        snapshots = {Path(record.snapshot_path) for record in manifest.documents}
+        actual_snapshots = set(inputs.iterdir())
+        _require(bool(snapshots) and snapshots == actual_snapshots
+                 and all(snapshot.parent == inputs for snapshot in snapshots)
+                 and all(stat.S_ISREG(entry.lstat().st_mode) for entry in actual_snapshots),
+                 "manifest documents do not match input snapshots")
+        for record in manifest.documents:
+            payload = Path(record.snapshot_path).read_bytes()
+            _require(hashlib.sha256(payload).hexdigest() == record.sha256
+                     and len(payload) == record.byte_length, "manifest snapshot digest is invalid")
+    @classmethod
+    def create(cls, codex_home: Path, manifest: RunManifest, state: RunState) -> "RunStore":
+        run_root = cls._run_root(codex_home, manifest.run_id)
+        _require(not run_root.is_symlink() and run_root.is_dir() and not run_root.parent.is_symlink(),
+                 "prepared run root is invalid")
+        run_root = run_root.resolve(strict=True)
+        _private_directory(run_root)
+        _require(set(run_root.iterdir()) == {run_root / "inputs"},
+                 "prepared run root must contain only input snapshots")
+        manifest_payload, state_payload = manifest.to_payload(), state.to_payload()
+        cls._validate_document_snapshots(run_root, manifest)
+        store = cls(run_root, manifest, state)
+        atomic_private_write(store.manifest_path, _json_bytes(manifest_payload), 0o400)
+        atomic_private_write(store.state_path, _json_bytes(state_payload), 0o600)
+        return store
+    @classmethod
+    def open(cls, codex_home: Path, run_id: str) -> "RunStore":
+        run_root = cls._run_root(codex_home, run_id)
+        _require(not run_root.is_symlink() and run_root.is_dir(), "format-5 run root is unavailable")
+        run_root = run_root.resolve(strict=True)
+        manifest_payload = _read_private_json(run_root / "manifest.json")
+        state_payload = _read_private_json(run_root / "state.json")
+        manifest = cls._manifest_from_payload(cls.validate_manifest_payload(manifest_payload))
+        _require(manifest.run_id == run_id, "format-5 run identity is invalid")
+        state = cls._state_from_payload(cls.validate_state_payload(state_payload))
+        cls._validate_document_snapshots(run_root, manifest)
+        return cls(run_root, manifest, state)
+    @staticmethod
+    def _manifest_from_payload(payload: Mapping[str, object]) -> RunManifest:
+        values = dict(payload)
+        values["documents"] = tuple(DocumentRecord(**record) for record in values["documents"])
+        values["git_identity"] = GitIdentity(**values["git_identity"])
+        return RunManifest(**values)
+    @staticmethod
+    def _state_from_payload(payload: Mapping[str, object]) -> RunState:
+        return RunState(**dict(payload))
+    def save_state(self, state: RunState) -> None:
+        atomic_private_write(self.state_path, _json_bytes(state.to_payload()), 0o600)
+        self.state = state
+    def write_handoff(self, payload: Mapping[str, object]) -> Path:
+        _require(isinstance(payload, Mapping), "handoff is invalid")
+        atomic_private_write(self.handoff_path, _json_bytes(dict(payload)), 0o600)
+        return self.handoff_path
+    def read_handoff(self) -> object:
+        return _read_private_json(self.handoff_path, 64 * 1024, "handoff is invalid")
+    def lock(self, shared: bool = False) -> RunLock:
+        return RunLock(self.lock_path, shared=shared)
