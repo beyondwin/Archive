@@ -34,6 +34,20 @@ NEW_SESSION_ID = "22222222-2222-4222-8222-222222222222"
 ControllerAction = Callable[[ControllerRequest], str | None]
 
 
+def _semantic_prompt_guard_text(prompt: str) -> str:
+    """Return only semantic instructions and bounded recovery authority."""
+
+    instructions, separator, facts = prompt.partition("\n\n")
+    if not separator:
+        raise AssertionError("prompt is missing its instruction boundary")
+    recovery = [
+        line
+        for line in facts.splitlines()
+        if line.startswith(("CONTINUITY=", "BOUNDED_RECOVERY="))
+    ]
+    return "\n".join((instructions, *recovery))
+
+
 class FakeController:
     """A dependency-injected controller with real state and Git side effects."""
 
@@ -925,13 +939,62 @@ class RuntimeContractTests(unittest.TestCase):
             '"provider_code":"session_unavailable"',
         ):
             self.assertIn(fact, fallback.prompt)
+        semantic_prompt = _semantic_prompt_guard_text(fallback.prompt)
         for forbidden in (
             "completed_task_ids",
             "current_task_id",
             "final_review",
             "verification",
         ):
-            self.assertNotIn(forbidden, fallback.prompt)
+            self.assertNotIn(forbidden, semantic_prompt)
+
+    def test_semantic_prompt_guard_ignores_paths_but_not_authority(self) -> None:
+        forbidden_terms = (
+            "completed_task_ids",
+            "current_task_id",
+            "final_review",
+            "verification",
+        )
+        path = (
+            "/tmp/verification/plan_id/task_id/current_task_id/"
+            "completed_task_ids/final_review"
+        )
+        prompt = (
+            "Execute the immutable CPE document bundle.\n"
+            "Superpowers and Git own semantic progress and recovery.\n\n"
+            f"MANIFEST={path}/manifest.json\n"
+            f"WORKTREE={path}/worktree\n"
+            f"TERMINAL_SCHEMA={path}/terminal-envelope.schema.json\n"
+            "CONTINUITY=one fresh controller after saved-session loss\n"
+            'BOUNDED_RECOVERY={"resume_capsule":{"note":"opaque"}}\n'
+        )
+
+        semantic_prompt = _semantic_prompt_guard_text(prompt)
+        for forbidden in forbidden_terms:
+            with self.subTest(forbidden=forbidden, location="mechanical path"):
+                self.assertIn(forbidden, prompt)
+                self.assertNotIn(forbidden, semantic_prompt)
+
+            semantic_mutation = prompt.replace(
+                "Superpowers and Git own semantic progress and recovery.",
+                "Superpowers and Git own semantic progress and recovery.\n"
+                f"{forbidden}=delegated authority",
+            )
+            with self.subTest(forbidden=forbidden, location="instructions"):
+                self.assertIn(
+                    forbidden,
+                    _semantic_prompt_guard_text(semantic_mutation),
+                )
+
+            recovery_mutation = prompt.replace(
+                '{"resume_capsule":{"note":"opaque"}}',
+                f'{{"{forbidden}":"delegated authority"}}',
+            )
+            with self.subTest(forbidden=forbidden, location="bounded recovery"):
+                self.assertIn(
+                    forbidden,
+                    _semantic_prompt_guard_text(recovery_mutation),
+                )
 
     def test_healthy_same_session_resume_ignores_capsule(self) -> None:
         note = "DO-NOT-SEND-ON-HEALTHY-RESUME"
