@@ -411,6 +411,91 @@ class StateContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "resume capsule"):
             validate_resume_capsule(non_ascii)
 
+    def test_resume_capsule_rejects_uncontained_or_ambiguous_evidence_refs(self) -> None:
+        valid = {
+            "head_commit": "a" * 40,
+            "worktree_status_digest": "b" * 64,
+            "note": "continue from the existing worktree",
+            "evidence_refs": [],
+        }
+        invalid_refs = (
+            "",
+            ".",
+            "./evidence.txt",
+            "evidence/./result.txt",
+            "../outside",
+            "evidence/../outside",
+            "/etc/passwd",
+            "evidence//result.txt",
+            "evidence/result.txt/",
+            "C:/outside",
+            r"C:\outside",
+            r"evidence\result.txt",
+            r"\\server\share\evidence.txt",
+        )
+        for reference in invalid_refs:
+            with self.subTest(reference=reference):
+                with self.assertRaisesRegex(ValueError, "resume capsule"):
+                    validate_resume_capsule({**valid, "evidence_refs": [reference]})
+
+    def test_resume_capsule_preserves_valid_relative_opaque_evidence_refs(self) -> None:
+        references = [
+            "evidence/result.txt",
+            ".evidence/space name.json",
+            "records/opaque:ref@v1",
+            "증거/결과.txt",
+        ]
+        capsule = {
+            "head_commit": "a" * 40,
+            "worktree_status_digest": "b" * 64,
+            "note": "continue from the existing worktree",
+            "evidence_refs": references,
+        }
+
+        self.assertEqual(validate_resume_capsule(capsule)["evidence_refs"], references)
+
+    def test_store_open_rejects_evidence_ref_symlink_escape(self) -> None:
+        worktree = self.base / "worktree"
+        outside = self.base / "outside"
+        worktree.mkdir()
+        outside.mkdir()
+        (worktree / "escape").symlink_to(outside, target_is_directory=True)
+        store = self.create_store()
+        payload = store.state.to_payload()
+        payload["resume_capsule"] = {
+            "head_commit": "a" * 40,
+            "worktree_status_digest": "b" * 64,
+            "note": "continue from the existing worktree",
+            "evidence_refs": ["escape/missing.txt"],
+        }
+        store.state_path.write_text(json.dumps(payload), encoding="utf-8")
+
+        with self.assertRaisesRegex(ValueError, "resume capsule"):
+            RunStore.open(self.codex_home, self.run_id)
+
+    def test_store_accepts_nonexistent_contained_evidence_ref(self) -> None:
+        (self.base / "worktree").mkdir()
+        state = replace(
+            self.state(),
+            resume_capsule={
+                "head_commit": "a" * 40,
+                "worktree_status_digest": "b" * 64,
+                "note": "continue from the existing worktree",
+                "evidence_refs": ["missing/deep/evidence.txt"],
+            },
+        )
+
+        store = RunStore.create(
+            codex_home=self.codex_home,
+            manifest=self.manifest(self.snapshot_one_document()),
+            state=state,
+        )
+
+        self.assertEqual(
+            store.state.resume_capsule["evidence_refs"],
+            ["missing/deep/evidence.txt"],
+        )
+
     def test_legacy_reader_uses_only_root_format_and_preserves_bytes(self) -> None:
         for format_version in range(1, 5):
             with self.subTest(format_version=format_version):

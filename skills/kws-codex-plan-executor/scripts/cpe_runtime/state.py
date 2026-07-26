@@ -20,31 +20,20 @@ STATUSES = ("prepared", "running", "interrupted", "blocked", "failed", "handed_o
 RUN_ID = re.compile(r"^cpe-[0-9a-f]{16}$")
 SHA40 = re.compile(r"^[0-9a-f]{40}$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
-MAX_RESUME_NOTE_BYTES = 2048
-MAX_EVIDENCE_REFS = 16
-_MAX_PERSISTED_JSON_BYTES = 16 * 1024 * 1024
-_MAX_LEGACY_STATE_BYTES = 64 * 1024
-_MANIFEST_ERROR = "format-5 manifest is invalid"
-_STATE_ERROR = "format-5 state is invalid"
-_RESUME_ERROR = "resume capsule is invalid"
-_UNAVAILABLE_ERROR = "format-5 run state is unavailable"
-_LEGACY_ERROR = "legacy run state is unavailable"
-_RESUME_KEYS = ("head_commit", "worktree_status_digest", "note", "evidence_refs")
+MAX_RESUME_NOTE_BYTES = 2048; MAX_EVIDENCE_REFS = 16
+_MAX_PERSISTED_JSON_BYTES = 16 * 1024 * 1024; _MAX_LEGACY_STATE_BYTES = 64 * 1024
+_MANIFEST_ERROR = "format-5 manifest is invalid"; _STATE_ERROR = "format-5 state is invalid"
+_RESUME_ERROR = "resume capsule is invalid"; _UNAVAILABLE_ERROR = "format-5 run state is unavailable"; _LEGACY_ERROR = "legacy run state is unavailable"; _RESUME_KEYS = ("head_commit", "worktree_status_digest", "note", "evidence_refs")
 def _require(condition: bool, error: str) -> None:
-    if not condition:
-        raise ValueError(error)
-def _names(model: object) -> tuple[str, ...]:
-    return tuple(field.name for field in fields(model))
-def _payload(record: object) -> dict[str, object]:
-    return {field.name: getattr(record, field.name) for field in fields(record)}
+    if not condition: raise ValueError(error)
+def _names(model: object) -> tuple[str, ...]: return tuple(field.name for field in fields(model))
+def _payload(record: object) -> dict[str, object]: return {field.name: getattr(record, field.name) for field in fields(record)}
 def _exact(value: object, names: Sequence[str], error: str, *, mapping: bool = False) -> dict[str, object]:
     expected_type = Mapping if mapping else dict
     _require(isinstance(value, expected_type) and set(value) == set(names), error)
     return dict(value)
-def _matches(value: object, pattern: re.Pattern[str]) -> bool:
-    return isinstance(value, str) and pattern.fullmatch(value) is not None
-def _integer(value: object) -> bool:
-    return isinstance(value, int) and not isinstance(value, bool)
+def _matches(value: object, pattern: re.Pattern[str]) -> bool: return isinstance(value, str) and pattern.fullmatch(value) is not None
+def _integer(value: object) -> bool: return isinstance(value, int) and not isinstance(value, bool)
 def _require_utf8_bytes(value: object, *, maximum: int, name: str, minimum: int = 0) -> str:
     if not isinstance(value, str):
         raise ValueError(f"{name} is invalid")
@@ -54,8 +43,7 @@ def _require_utf8_bytes(value: object, *, maximum: int, name: str, minimum: int 
         raise ValueError(f"{name} is invalid") from exc
     _require(minimum <= length <= maximum, f"{name} is invalid")
     return value
-def _json_bytes(payload: Mapping[str, object]) -> bytes:
-    return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+def _json_bytes(payload: Mapping[str, object]) -> bytes: return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
 def _read_private_json(path: Path, maximum: int = _MAX_PERSISTED_JSON_BYTES,
                        error: str = _UNAVAILABLE_ERROR) -> object:
     no_follow = getattr(os, "O_NOFOLLOW", None)
@@ -171,12 +159,12 @@ class RunState:
     resume_capsule: Mapping[str, object] | None
     blocker: Mapping[str, object] | None; updated_at: str
 
-    def to_payload(self) -> dict[str, object]:
+    def to_payload(self, *, worktree: Path | None = None) -> dict[str, object]:
         payload = _payload(self)
         for name in ("resume_capsule", "blocker"):
             if payload[name] is not None:
                 payload[name] = dict(payload[name])
-        RunStore.validate_state_payload(payload)
+        RunStore.validate_state_payload(payload, worktree=worktree)
         return payload
 def _open_source(path: Path) -> tuple[tuple[int, int], bytes]:
     if not path.is_absolute() or path.is_symlink():
@@ -218,17 +206,25 @@ def snapshot_documents(*, run_root: Path, sources: Sequence[DocumentSource]) -> 
             hashlib.sha256(payload).hexdigest(), len(payload),
         ))
     return tuple(records)
-def validate_resume_capsule(value: object) -> dict[str, object]:
+def _evidence_ref(value: object, worktree: Path | None) -> str:
+    reference = _require_utf8_bytes(value, maximum=512, minimum=1, name="resume capsule")
+    _require("\x00" not in reference and "\\" not in reference and not reference.startswith("/")
+             and re.match(r"^[A-Za-z]:", reference) is None
+             and all(part not in ("", ".", "..") for part in reference.split("/")), _RESUME_ERROR)
+    if worktree is None: return reference
+    _require(isinstance(worktree, Path) and worktree.is_absolute(), _RESUME_ERROR)
+    try: root = worktree.resolve(strict=True); target = (root / reference).resolve(strict=False)
+    except (OSError, RuntimeError) as exc: raise ValueError(_RESUME_ERROR) from exc
+    _require(root.is_dir() and (target == root or root in target.parents), _RESUME_ERROR)
+    return reference
+def validate_resume_capsule(value: object, *, worktree: Path | None = None) -> dict[str, object]:
     payload = _exact(value, _RESUME_KEYS, _RESUME_ERROR, mapping=True)
     _require(_matches(payload["head_commit"], SHA40), _RESUME_ERROR)
     _require(_matches(payload["worktree_status_digest"], SHA256), _RESUME_ERROR)
     note = _require_utf8_bytes(payload["note"], maximum=MAX_RESUME_NOTE_BYTES, name="resume capsule")
     references = payload["evidence_refs"]
     _require(isinstance(references, list) and len(references) <= MAX_EVIDENCE_REFS, _RESUME_ERROR)
-    normalized_refs = [
-        _require_utf8_bytes(reference, maximum=512, minimum=1, name="resume capsule")
-        for reference in references
-    ]
+    normalized_refs = [_evidence_ref(reference, worktree) for reference in references]
     return dict(head_commit=payload["head_commit"], worktree_status_digest=payload["worktree_status_digest"],
                 note=note, evidence_refs=normalized_refs)
 class RunLock:
@@ -293,7 +289,7 @@ class RunStore:
             _require(_integer(record["byte_length"]) and record["byte_length"] >= 0, _MANIFEST_ERROR)
         return data
     @staticmethod
-    def validate_state_payload(payload: object) -> dict[str, object]:
+    def validate_state_payload(payload: object, *, worktree: Path | None = None) -> dict[str, object]:
         data = _exact(payload, _names(RunState), _STATE_ERROR)
         _require(data["status"] in STATUSES, _STATE_ERROR)
         generation, fallback = data["controller_generation"], data["fresh_fallback_used"]
@@ -311,7 +307,7 @@ class RunStore:
         exit_code = data["last_exit_code"]
         _require(exit_code is None or _integer(exit_code), _STATE_ERROR)
         if data["resume_capsule"] is not None:
-            validate_resume_capsule(data["resume_capsule"])
+            validate_resume_capsule(data["resume_capsule"], worktree=worktree)
         _require(data["blocker"] is None or isinstance(data["blocker"], Mapping), _STATE_ERROR)
         _require_utf8_bytes(data["updated_at"], maximum=128, minimum=1, name="format-5 state")
         return data
@@ -342,7 +338,8 @@ class RunStore:
         _private_directory(run_root)
         _require(set(run_root.iterdir()) == {run_root / "inputs"},
                  "prepared run root must contain only input snapshots")
-        manifest_payload, state_payload = manifest.to_payload(), state.to_payload()
+        manifest_payload = manifest.to_payload()
+        state_payload = state.to_payload(worktree=Path(manifest.worktree))
         cls._validate_document_snapshots(run_root, manifest)
         store = cls(run_root, manifest, state)
         atomic_private_write(store.manifest_path, _json_bytes(manifest_payload), 0o400)
@@ -357,7 +354,8 @@ class RunStore:
         state_payload = _read_private_json(run_root / "state.json")
         manifest = cls._manifest_from_payload(cls.validate_manifest_payload(manifest_payload))
         _require(manifest.run_id == run_id, "format-5 run identity is invalid")
-        state = cls._state_from_payload(cls.validate_state_payload(state_payload))
+        state = cls._state_from_payload(cls.validate_state_payload(
+            state_payload, worktree=Path(manifest.worktree)))
         cls._validate_document_snapshots(run_root, manifest)
         return cls(run_root, manifest, state)
     @staticmethod
@@ -370,7 +368,8 @@ class RunStore:
     def _state_from_payload(payload: Mapping[str, object]) -> RunState:
         return RunState(**dict(payload))
     def save_state(self, state: RunState) -> None:
-        atomic_private_write(self.state_path, _json_bytes(state.to_payload()), 0o600)
+        payload = state.to_payload(worktree=Path(self.manifest.worktree))
+        atomic_private_write(self.state_path, _json_bytes(payload), 0o600)
         self.state = state
     def write_handoff(self, payload: Mapping[str, object]) -> Path:
         _require(isinstance(payload, Mapping), "handoff is invalid")

@@ -1051,6 +1051,26 @@ print(json.dumps({"type": "turn.completed"}), flush=True)
                 self.assertEqual(rejected.process_class, "invalid_envelope")
                 self.assertIsNone(rejected.terminal)
 
+    def test_resume_capsule_rejects_evidence_ref_symlink_escape(self) -> None:
+        outside = self.base / "outside"
+        outside.mkdir()
+        (self.worktree / "escape").symlink_to(outside, target_is_directory=True)
+        payload = {
+            "claim": "interrupted",
+            "head_commit": "a" * 40,
+            "resume_capsule": {
+                "head_commit": "b" * 40,
+                "worktree_status_digest": "c" * 64,
+                "note": "resume locally",
+                "evidence_refs": ["escape/missing.txt"],
+            },
+        }
+
+        rejected = self.launch_terminal_text(json.dumps(payload))
+
+        self.assertEqual(rejected.process_class, "invalid_envelope")
+        self.assertIsNone(rejected.terminal)
+
     def test_terminal_claims_require_their_approved_optional_fields(self) -> None:
         capsule = {
             "head_commit": "b" * 40,

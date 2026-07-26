@@ -62,9 +62,9 @@ def _provider_code(event: Mapping[str, object]) -> str:
     for classification, patterns in _PROVIDER_PATTERNS.items():
         if any(pattern in code for pattern in patterns): return classification
     return "unknown"
-def _capsule(value: object) -> ResumeCapsule | None:
+def _capsule(value: object, worktree: Path) -> ResumeCapsule | None:
     if value is None: return None
-    normalized = validate_resume_capsule(value); refs = normalized["evidence_refs"]
+    normalized = validate_resume_capsule(value, worktree=worktree); refs = normalized["evidence_refs"]
     assert isinstance(refs, list)
     return ResumeCapsule(str(normalized["head_commit"]), str(normalized["worktree_status_digest"]),
                          str(normalized["note"]), tuple(map(str, refs)))
@@ -81,7 +81,7 @@ def _blocker(value: object) -> dict[str, object] | None:
         normalized["provider_code"] = (None if provider is None else
                                        _bounded(provider, 128, "terminal blocker"))
     return normalized
-def _envelope(text: str) -> TerminalEnvelope:
+def _envelope(text: str, worktree: Path) -> TerminalEnvelope:
     _bounded(text, MAX_TERMINAL_ENVELOPE_BYTES, "terminal envelope")
     try: payload = json.loads(text)
     except (json.JSONDecodeError, RecursionError) as exc:
@@ -94,7 +94,8 @@ def _envelope(text: str) -> TerminalEnvelope:
     claim, head = _bounded(payload["claim"], 64, "terminal claim"), payload["head_commit"]
     _require(claim in TERMINAL_CLAIMS and isinstance(head, str) and bool(SHA40.fullmatch(head)),
              "terminal envelope is invalid")
-    capsule, blocker = _capsule(payload.get("resume_capsule")), _blocker(payload.get("blocker"))
+    capsule, blocker = (_capsule(payload.get("resume_capsule"), worktree),
+                        _blocker(payload.get("blocker")))
     _require(not ((claim == "completed" and (capsule is not None or blocker is not None))
                   or (claim == "interrupted" and (capsule is None or blocker is not None))
                   or (claim == "blocked" and blocker is None)), "terminal envelope is invalid")
@@ -218,7 +219,7 @@ class CodexController:
                 self._close(process.stdin); self._terminate(process)
                 self._close(process.stdout, process.stderr); raise
             self._close(process.stdout, process.stderr)
-            return self._outcome(parser, exit_code)
+            return self._outcome(parser, exit_code, request.worktree)
         finally:
             if main_thread and previous_sigterm is not None:
                 signal.signal(signal.SIGTERM, previous_sigterm)
@@ -307,10 +308,10 @@ class CodexController:
         for stream in streams:
             if stream is not None and not stream.closed: stream.close()
     @staticmethod
-    def _outcome(parser: _JsonlParser, exit_code: int) -> ControllerOutcome:
+    def _outcome(parser: _JsonlParser, exit_code: int, worktree: Path) -> ControllerOutcome:
         terminal, invalid = None, parser.invalid
         if not invalid and parser.terminal_text is not None:
-            try: terminal = _envelope(parser.terminal_text)
+            try: terminal = _envelope(parser.terminal_text, worktree)
             except ValueError: invalid = True
         elif not invalid and exit_code == 0: invalid = True
         if terminal is not None and parser.session_id is None: terminal, invalid = None, True
