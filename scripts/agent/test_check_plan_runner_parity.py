@@ -8,6 +8,7 @@ import stat
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 SCRIPT = Path(__file__).with_name("check-plan-runner-parity.py")
@@ -32,24 +33,6 @@ class ParityInvariantTest(unittest.TestCase):
         self.run_root.mkdir()
         self.worktree.mkdir()
         self.head = "a" * 40
-        executable = Path("/usr/bin/true").resolve()
-        metadata = executable.stat()
-        executable_digest = hashlib.sha256(executable.read_bytes()).hexdigest()
-        self.identity = {
-            "argv": ["/usr/bin/true"],
-            "candidate_head": self.head,
-            "command_role": "final",
-            "cwd": str(self.worktree),
-            "environment_fingerprint": "b" * 64,
-            "executable_identity": {
-                "path": str(executable),
-                "sha256": executable_digest,
-                "mode": metadata.st_mode,
-                "size": metadata.st_size,
-            },
-            "input_digest": "c" * 64,
-            "worktree_digest": "d" * 64,
-        }
         self.final_set = {
             "kind": "commands",
             "candidate_head": self.head,
@@ -63,53 +46,6 @@ class ParityInvariantTest(unittest.TestCase):
                     "deadline_seconds": 10,
                 }
             ],
-        }
-        self.set_ref = self.put("final_verification_set", self.final_set)
-        self.receipt = {
-            "schema_version": 1,
-            "identity": self.identity,
-            "identity_digest": hashlib.sha256(canonical(self.identity)).hexdigest(),
-            "outcome": "success",
-            "exit_code": 0,
-            "process": {},
-            "stdout_tail": "",
-            "stderr_tail": "",
-        }
-        self.receipt_ref = self.put("verification_receipt", self.receipt)
-        self.review = {
-            "status": "reviewed",
-            "candidate_head": self.head,
-            "review_head": self.head,
-            "verification_set_digest": self.set_ref["digest"],
-            "open_findings": [],
-            "open_obligation_ids": [],
-            "no_applicable_verification_approved": False,
-        }
-        self.review_ref = self.put("final_review_receipt", self.review)
-        self.handoff = {
-            "status": "ready_for_integration",
-            "candidate_head": self.head,
-            "review_head": self.head,
-            "verification_set_digest": self.set_ref["digest"],
-            "verification_receipts": [self.receipt_ref],
-            "review_receipt": self.review_ref,
-            "integration": "not_observed",
-        }
-        self.handoff_ref = self.put("branch_handoff", self.handoff)
-        self.state = {
-            "status": "ready_for_integration",
-            "integration": "not_observed",
-            "artifact_refs": [
-                self.set_ref,
-                self.receipt_ref,
-                self.review_ref,
-                self.handoff_ref,
-            ],
-            "finalization": {
-                "candidate_head": self.head,
-                "review_head": self.head,
-                "verification_set_digest": self.set_ref["digest"],
-            },
         }
 
     def tearDown(self) -> None:
@@ -128,133 +64,354 @@ class ParityInvariantTest(unittest.TestCase):
             "relative_path": str(relative),
         }
 
-    def test_ready_evidence_requires_every_command_and_matching_handoff(self) -> None:
-        summary = PARITY._validate_ready_evidence(
-            self.state, self.run_root, self.worktree, self.head
+    def assert_ready_outcome_survives_hostile_git_environment(
+        self,
+        provider: str,
+        additional_hostile: dict[str, str] | None = None,
+    ) -> None:
+        fixture = json.loads(PARITY.FIXTURE.read_text(encoding="utf-8"))
+        scenario = next(
+            item
+            for item in fixture["scenarios"]
+            if item["id"] == "ordered-two-plan-ready"
         )
-        self.assertEqual(summary["required_receipt_count"], 1)
-        self.assertTrue(summary["all_required_receipts"])
-        self.assertTrue(summary["final_head_equal"])
-        self.assertTrue(summary["review_approved"])
-
-        empty_set = dict(self.final_set, commands=[])
-        empty_ref = self.put("final_verification_set", empty_set)
-        broken = dict(self.state)
-        broken["artifact_refs"] = [
-            empty_ref,
-            self.receipt_ref,
-            self.review_ref,
-            self.handoff_ref,
-        ]
-        broken["finalization"] = dict(
-            self.state["finalization"], verification_set_digest=empty_ref["digest"]
+        hostile_global = self.root / "hostile-global.gitconfig"
+        hostile_global.write_text(
+            "[user]\n"
+            "\tname = Hostile Global\n"
+            "\temail = hostile-global@example.test\n"
+            "[init]\n"
+            "\tdefaultObjectFormat = sha256\n",
+            encoding="utf-8",
         )
-        with self.assertRaisesRegex(PARITY.ParityFailure, "nonempty"):
-            PARITY._validate_ready_evidence(
-                broken, self.run_root, self.worktree, self.head
-            )
+        hostile = {
+            "EMAIL": "hostile-email@example.test",
+            "GIT_AUTHOR_NAME": "Hostile Author",
+            "GIT_AUTHOR_EMAIL": "hostile-author@example.test",
+            "GIT_AUTHOR_DATE": "2037-12-31T23:59:59+00:00",
+            "GIT_COMMITTER_NAME": "Hostile Committer",
+            "GIT_COMMITTER_EMAIL": "hostile-committer@example.test",
+            "GIT_COMMITTER_DATE": "2038-01-01T00:00:00+00:00",
+            "GIT_DEFAULT_HASH": "sha256",
+            "GIT_CONFIG_GLOBAL": str(hostile_global),
+            "GIT_CONFIG_SYSTEM": str(hostile_global),
+            "GIT_CONFIG_NOSYSTEM": "0",
+            "GIT_CONFIG_COUNT": "2",
+            "GIT_CONFIG_KEY_0": "user.name",
+            "GIT_CONFIG_VALUE_0": "Hostile Inline",
+            "GIT_CONFIG_KEY_1": "user.email",
+            "GIT_CONFIG_VALUE_1": "hostile-inline@example.test",
+            "GIT_DIR": str(self.root / "hostile.git"),
+            "GIT_WORK_TREE": str(self.root / "hostile-worktree"),
+            "GIT_INDEX_FILE": str(self.root / "hostile-index"),
+            "GIT_OBJECT_DIRECTORY": str(self.root / "hostile-objects"),
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES": str(
+                self.root / "hostile-alternates"
+            ),
+            "GIT_COMMON_DIR": str(self.root / "hostile-common"),
+            "GIT_CEILING_DIRECTORIES": str(self.root),
+        }
+        if additional_hostile is not None:
+            hostile.update(additional_hostile)
+        with mock.patch.dict(os.environ, hostile):
+            try:
+                actual = PARITY.run_provider(
+                    provider,
+                    scenario,
+                    self.root / "parity",
+                )
+            except PARITY.ParityFailure as error:
+                self.fail(f"hostile Git environment escaped sealing: {error}")
 
-        wrong_head_set = dict(self.final_set, candidate_head="9" * 40)
-        wrong_head_ref = self.put("final_verification_set", wrong_head_set)
-        wrong_head = dict(self.state)
-        wrong_head["artifact_refs"] = [
-            wrong_head_ref,
-            self.receipt_ref,
-            self.review_ref,
-            self.handoff_ref,
-        ]
-        wrong_head["finalization"] = dict(
-            self.state["finalization"],
-            verification_set_digest=wrong_head_ref["digest"],
+        self.assertEqual(
+            actual,
+            {
+                "exit": 0,
+                "status": "ready_for_integration",
+                "plan_statuses": ["implemented", "implemented"],
+                "handoff_heads": [
+                    "bd543a5d1bb6df4281554f9203fbe5cb7092d603",
+                    "f73c30696405350ab1ae7902906b14c2ef332a27",
+                ],
+                "verification_set_digest": (
+                    "efbbd878b2b01230cd635bf195785a177"
+                    "f97e1477a35cf0b1096d39ea0845755"
+                ),
+                "required_receipt_count": 1,
+                "session_action": None,
+                "integration": "not_observed",
+            },
         )
-        with self.assertRaisesRegex(PARITY.ParityFailure, "command set HEAD"):
-            PARITY._validate_ready_evidence(
-                wrong_head, self.run_root, self.worktree, self.head
-            )
 
-    def test_receipt_reference_and_executable_identity_are_fail_closed(self) -> None:
-        normalized = PARITY._normalized_receipts(
-            self.state, self.run_root, self.worktree
+    def test_codex_disposable_setup_ignores_hostile_git_environment(self) -> None:
+        self.assert_ready_outcome_survives_hostile_git_environment("codex")
+
+    def test_claude_disposable_setup_ignores_hostile_git_environment(self) -> None:
+        self.assert_ready_outcome_survives_hostile_git_environment("claude")
+
+    def assert_provider_child_nested_git_init_uses_sealed_template(
+        self,
+        provider: str,
+    ) -> None:
+        template = self.root / "hostile-template"
+        hooks = template / "hooks"
+        hooks.mkdir(parents=True)
+        template_marker = template / "parity-hostile-template-marker"
+        template_marker.write_text("must not be copied\n", encoding="utf-8")
+        marker = self.root / "hostile-hook-ran"
+        probe_root = self.root / f"{provider}-provider-child-git-init"
+        hook = hooks / "pre-commit"
+        hook.write_text(
+            "#!/bin/sh\n"
+            'printf "hostile hook executed\\n" > "$PARITY_HOSTILE_HOOK_MARKER"\n'
+            "exit 99\n",
+            encoding="utf-8",
         )
-        self.assertEqual(normalized[0]["outcome"], "success")
+        hook.chmod(0o700)
 
-        receipt_path = self.run_root / self.receipt_ref["relative_path"]
-        receipt_path.write_bytes(canonical(dict(self.receipt, outcome="failed")))
-        with self.assertRaisesRegex(PARITY.ParityFailure, "digest"):
-            PARITY._normalized_receipts(self.state, self.run_root, self.worktree)
-
-        receipt_path.write_bytes(canonical(self.receipt))
-        bad_identity = dict(self.identity)
-        bad_identity["executable_identity"] = dict(
-            self.identity["executable_identity"], unexpected=True
+        self.assert_ready_outcome_survives_hostile_git_environment(
+            provider,
+            {
+                "GIT_TEMPLATE_DIR": str(template),
+                "PARITY_HOSTILE_HOOK_MARKER": str(marker),
+                "PLAN_RUNNER_FAKE_NESTED_GIT_INIT_ROOT": str(probe_root),
+            },
         )
-        bad_receipt = dict(
-            self.receipt,
-            identity=bad_identity,
-            identity_digest=hashlib.sha256(canonical(bad_identity)).hexdigest(),
-        )
-        bad_ref = self.put("verification_receipt", bad_receipt)
-        broken = dict(self.state, artifact_refs=[bad_ref])
-        with self.assertRaisesRegex(PARITY.ParityFailure, "executable identity"):
-            PARITY._normalized_receipts(broken, self.run_root, self.worktree)
 
-    def test_recovery_binds_exact_session_and_changed_strategy_packet(self) -> None:
+        fake_log = (
+            self.root
+            / "parity"
+            / provider
+            / "ordered-two-plan-ready"
+            / "fake.jsonl"
+        )
+        first_record = json.loads(
+            fake_log.read_text(encoding="utf-8").splitlines()[0]
+        )
+        nested_init = first_record.get("nested_git_init")
+        self.assertIsInstance(nested_init, dict)
+        assert isinstance(nested_init, dict)
+        sealed_template = (
+            self.root
+            / "parity"
+            / provider
+            / "ordered-two-plan-ready"
+            / "empty-git-template"
+        )
+        nested_repository = probe_root / "action-0"
+        self.assertEqual(
+            nested_init["init_argv"],
+            ["git", "init", str(nested_repository)],
+        )
+        self.assertEqual(
+            nested_init["git_template_dir"],
+            str(sealed_template),
+        )
+        self.assertEqual(nested_init["init_returncode"], 0)
+        self.assertEqual(nested_init["commit_returncode"], 0)
+        self.assertFalse(nested_init["hostile_template_marker_copied"])
+        self.assertFalse(nested_init["hostile_hook_copied"])
+        self.assertFalse(nested_init["hostile_hook_executed"])
+        self.assertEqual(stat.S_IMODE(sealed_template.stat().st_mode), 0o700)
+        self.assertEqual(list(sealed_template.iterdir()), [])
+        self.assertFalse(marker.exists())
+
+    def test_codex_provider_child_nested_git_init_inherits_sealed_template(
+        self,
+    ) -> None:
+        self.assert_provider_child_nested_git_init_uses_sealed_template("codex")
+
+    def test_claude_provider_child_nested_git_init_inherits_sealed_template(
+        self,
+    ) -> None:
+        self.assert_provider_child_nested_git_init_uses_sealed_template("claude")
+
+    def test_recovery_reports_only_the_external_root_action(self) -> None:
         healthy = [
             {
-                "action": "interrupted",
+                "action": "clean-interrupted",
                 "session_action": "fresh",
-                "session_id": "00000000-0000-4000-8000-000000000001",
-                "required_strategy_change": False,
-                "packet_digest": "e" * 64,
             },
             {
                 "action": "implemented",
                 "session_action": "resume",
-                "session_id": "00000000-0000-4000-8000-000000000001",
-                "required_strategy_change": False,
-                "packet_digest": "f" * 64,
+                "session_id": "provider-private-and-ignored",
             },
         ]
         self.assertEqual(
             PARITY._validate_recovery_evidence("healthy-resume", healthy),
-            "recovered",
+            "resume_root",
         )
-        healthy[1]["session_id"] = "00000000-0000-4000-8000-000000000002"
-        with self.assertRaisesRegex(PARITY.ParityFailure, "exact healthy session"):
-            PARITY._validate_recovery_evidence("healthy-resume", healthy)
 
         stalled = [
             {
                 "action": "stalled",
                 "session_action": "fresh",
-                "session_id": "00000000-0000-4000-8000-000000000001",
-                "required_strategy_change": False,
-                "packet_digest": "e" * 64,
             },
             {
                 "action": "implemented",
                 "session_action": "fresh",
-                "session_id": "00000000-0000-4000-8000-000000000002",
-                "required_strategy_change": True,
-                "packet_digest": "f" * 64,
+                "stream_event": "provider-private-and-ignored",
             },
         ]
         self.assertEqual(
             PARITY._validate_recovery_evidence(
                 "stalled-fresh-strategy", stalled
             ),
-            "fresh",
+            "fresh_root",
         )
-        stalled[1]["required_strategy_change"] = False
-        with self.assertRaisesRegex(PARITY.ParityFailure, "changed-strategy"):
-            PARITY._validate_recovery_evidence(
-                "stalled-fresh-strategy", stalled
+
+    def test_external_parity_output_excludes_provider_private_structure(self) -> None:
+        handoff_one = self.put(
+            "plan_handoff",
+            {
+                "plan_index": 0,
+                "head_commit": "1" * 40,
+                "verification_set_digest": "2" * 64,
+                "provider_private": {"session_id": "not-a-parity-field"},
+            },
+        )
+        accepted_set = self.put(
+            "run_verification_set",
+            {
+                "kind": "commands",
+                "candidate_head": self.head,
+                "commands": [self.final_set["commands"][0]],
+                "private_review_shape": {"findings": ["not-compared"]},
+            },
+        )
+        handoff_two = self.put(
+            "plan_handoff",
+            {
+                "plan_index": 1,
+                "head_commit": self.head,
+                "verification_set_digest": accepted_set["digest"],
+                "private_finalization_shape": {"review_receipt": "not-compared"},
+            },
+        )
+        state = {
+            "status": "ready_for_integration",
+            "integration": "not_observed",
+            "plans": [
+                {
+                    "status": "implemented",
+                    "handoff_digest": handoff_one["digest"],
+                },
+                {
+                    "status": "implemented",
+                    "handoff_digest": handoff_two["digest"],
+                },
+            ],
+            "artifact_refs": [handoff_one, accepted_set, handoff_two],
+            "sessions": [{"session_id": "not-compared"}],
+            "task_ledger": [{"status": "reported_done"}],
+            "finalization": {"review_head": "not-compared"},
+        }
+
+        self.assertEqual(
+            PARITY._external_outcome(
+                exit_code=0,
+                state=state,
+                run_root=self.run_root,
+                session_action="resume_root",
+            ),
+            {
+                "exit": 0,
+                "status": "ready_for_integration",
+                "plan_statuses": ["implemented", "implemented"],
+                "handoff_heads": ["1" * 40, self.head],
+                "verification_set_digest": hashlib.sha256(
+                    canonical(
+                        {
+                            "candidate_head": self.head,
+                            "commands": self.final_set["commands"],
+                        }
+                    )
+                ).hexdigest(),
+                "required_receipt_count": 1,
+                "session_action": "resume_root",
+                "integration": "not_observed",
+            },
+        )
+
+    def test_expected_outcome_rejects_valid_but_different_heads_and_digest(
+        self,
+    ) -> None:
+        expected = {
+            "exit": 0,
+            "status": "ready_for_integration",
+            "plan_statuses": ["implemented", "implemented"],
+            "handoff_heads": ["1" * 40, "2" * 40],
+            "verification_set_digest": "3" * 64,
+            "required_receipt_count": 1,
+            "session_action": None,
+            "integration": "not_observed",
+        }
+        differences = {
+            "heads": dict(
+                expected,
+                handoff_heads=["4" * 40, "5" * 40],
+            ),
+            "digest": dict(
+                expected,
+                verification_set_digest="6" * 64,
+            ),
+        }
+        for field, different in differences.items():
+            with self.subTest(field=field), self.assertRaisesRegex(
+                PARITY.ParityFailure,
+                "expectation mismatch",
+            ):
+                PARITY._require_expected_outcome(
+                    "codex",
+                    expected,
+                    different,
+                )
+
+    def test_active_root_fixtures_are_version_two_external_contracts(self) -> None:
+        contract = json.loads(PARITY.CONTRACT.read_text(encoding="utf-8"))
+        fixture = json.loads(PARITY.FIXTURE.read_text(encoding="utf-8"))
+
+        self.assertEqual(contract["contract_version"], 2)
+        self.assertEqual(contract["state_format_version"], 2)
+        self.assertEqual(
+            contract["parity_fields"],
+            [
+                "exit",
+                "status",
+                "plan_statuses",
+                "handoff_heads",
+                "verification_set_digest",
+                "required_receipt_count",
+                "session_action",
+                "integration",
+            ],
+        )
+        self.assertNotIn("task_statuses", contract)
+        self.assertEqual(fixture["fixture_version"], 2)
+        by_id = {scenario["id"]: scenario for scenario in fixture["scenarios"]}
+        self.assertEqual(
+            by_id["healthy-resume"]["fake_sequence"][0],
+            "clean-interrupted",
+        )
+        for scenario in fixture["scenarios"]:
+            self.assertNotIn("finalized", scenario["fake_sequence"])
+            self.assertIn("expected_handoff_heads", scenario)
+            self.assertIn("expected_verification_set_digest", scenario)
+            self.assertEqual(
+                list(PARITY._expected(scenario)),
+                contract["parity_fields"],
             )
-        stalled[1]["required_strategy_change"] = True
-        stalled[1]["packet_digest"] = stalled[0]["packet_digest"]
-        with self.assertRaisesRegex(PARITY.ParityFailure, "distinct packet"):
-            PARITY._validate_recovery_evidence(
-                "stalled-fresh-strategy", stalled
+            self.assertFalse(
+                {
+                    "expected_task_statuses",
+                    "expected_failure",
+                    "expected_all_required_receipts",
+                    "expected_final_head_equal",
+                    "expected_review_outcome",
+                    "expected_review_approved",
+                }
+                & scenario.keys()
             )
 
     def test_parity_stall_lease_allows_provider_startup_jitter(self) -> None:

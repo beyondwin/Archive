@@ -67,23 +67,20 @@ _KNOWN_PROVIDER_SECRET = re.compile(
 )
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _NOTE_LIMIT = 4096
-_MAX_CHANGES = 3
 
 
 @dataclass(frozen=True)
 class ProgressSnapshot:
     git_tree_digest: str
-    reported_done_ids: tuple[str, ...]
     successful_receipt_digests: tuple[str, ...]
-    resolved_finding_ids: tuple[str, ...]
+    plan_handoff_digests: tuple[str, ...]
 
     def __post_init__(self) -> None:
         if not isinstance(self.git_tree_digest, str) or not self.git_tree_digest:
             raise ValueError("Git tree digest must be a non-empty string")
         for label, values in (
-            ("reported-done IDs", self.reported_done_ids),
             ("successful receipt digests", self.successful_receipt_digests),
-            ("resolved finding IDs", self.resolved_finding_ids),
+            ("plan handoff digests", self.plan_handoff_digests),
         ):
             if not isinstance(values, tuple) or len(values) != len(set(values)):
                 raise ValueError(f"{label} must be a tuple of unique strings")
@@ -198,16 +195,11 @@ def _progressed(state: Mapping[str, object], current: ProgressSnapshot) -> bool:
     trees = set(observed) if isinstance(observed, Sequence) and not isinstance(observed, (str, bytes)) else {baseline.git_tree_digest}
     novel_tree = current.git_tree_digest != baseline.git_tree_digest and current.git_tree_digest not in trees
     novel_receipt = bool(set(current.successful_receipt_digests) - set(baseline.successful_receipt_digests))
-    novel_finding = bool(set(current.resolved_finding_ids) - set(baseline.resolved_finding_ids))
-    old_evidence = state.get("reported_done_evidence", {})
-    new_evidence = state.get("_current_reported_done_evidence", {})
-    known = set(old_evidence.values()) if isinstance(old_evidence, Mapping) else set()
-    task_progress = False
-    if isinstance(new_evidence, Mapping):
-        for task in set(current.reported_done_ids) - set(baseline.reported_done_ids):
-            digest = new_evidence.get(task)
-            task_progress |= isinstance(digest, str) and _SHA256.fullmatch(digest) is not None and digest not in known
-    return novel_tree or novel_receipt or novel_finding or task_progress
+    novel_handoff = bool(
+        set(current.plan_handoff_digests)
+        - set(baseline.plan_handoff_digests)
+    )
+    return novel_tree or novel_receipt or novel_handoff
 
 
 class RecoveryPolicy:
@@ -224,25 +216,21 @@ class RecoveryPolicy:
         current = outcome.get("progress")
         if not isinstance(current, ProgressSnapshot):
             raise ValueError("outcome progress is invalid")
-        augmented = dict(state)
-        augmented["_current_reported_done_evidence"] = outcome.get("reported_done_evidence", {})
-        reset = _progressed(augmented, current)
+        reset = _progressed(state, current)
         signature = canonical_failure_signature(outcome)
         session_action = self._session_action(state, outcome, signature, reset)
         if not state.get("controller_alive"):
             return RecoveryDecision("resume", "resumable", session_action, signature, True, reason)
         sequence = [] if reset else list(_entries(state.get("failure_sequence", ())))
-        try:
-            proposed = strategy_note_digest(outcome.get("strategy_note"))
-        except ValueError:
-            return self._exhausted(signature)
-        prior = {
-            row.get("strategy_note_digest")
+        matching = [
+            row
             for row in sequence
             if row.get("failure_signature") == signature
-            and isinstance(row.get("strategy_note_digest"), str)
-        }
-        if proposed in prior or len(prior) >= _MAX_CHANGES:
+        ]
+        if (
+            len(matching) >= 2
+            or any(row.get("fresh_root_attempted") is True for row in matching)
+        ):
             return self._exhausted(signature)
         return RecoveryDecision("recover", "recovering", session_action, signature, True, reason)
 
@@ -265,7 +253,7 @@ class RecoveryPolicy:
             or outcome.get("interruption") in _CONTAMINATED_INTERRUPTS
             or repeated
         )
-        return "fresh_session" if invalid else "explicit_resume"
+        return "fresh_root" if invalid else "resume_root"
 
     @staticmethod
     def _exhausted(signature: str) -> RecoveryDecision:

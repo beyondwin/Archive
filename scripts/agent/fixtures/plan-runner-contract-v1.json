@@ -1,91 +1,14 @@
 {
-  "contract_version": 1,
-  "state_format_version": 1,
-  "run_statuses": [
-    "blocked",
-    "failed",
-    "ready_for_integration",
-    "recovering",
-    "resumable",
-    "running"
-  ],
-  "plan_statuses": [
-    "implemented",
-    "pending",
-    "running"
-  ],
-  "task_statuses": [
-    "pending",
-    "reported_done",
-    "running"
-  ],
-  "runner_runtime": {
-    "free_threaded": false,
-    "implementation": "cpython",
-    "managed_by": "uv",
-    "requires_python": ">=3.13,<3.14"
-  },
-  "exit_codes": {
-    "blocked": 3,
-    "failed": 4,
-    "integrity": 65,
-    "internal": 70,
-    "invalid": 64,
-    "ready": 0,
-    "resumable": 2
-  },
-  "failure_taxonomy": [
-    "controller_spawn_failed",
-    "controller_transport_failed",
-    "destructive_authorization_required",
-    "external_authority_required",
-    "input_changed_requires_new_run",
-    "irreconcilable_requirements",
-    "provider_auth_blocked",
-    "provider_unavailable",
-    "provider_usage_blocked",
-    "recovery_exhausted",
-    "review_failed",
-    "runtime_incompatible",
-    "runtime_missing",
-    "session_invalid",
-    "session_resume_failed",
-    "stall_expired",
-    "state_integrity_failed",
-    "verification_failed",
-    "verification_timed_out"
-  ],
-  "provider_failure_taxonomy_extensions": {
-    "claude": [],
-    "codex": [
-      "host_permission_blocked",
-      "provider_capability_blocked",
-      "provider_result_invalid",
-      "provider_stream_malformed",
-      "provider_stream_oversized",
-      "sandbox_capability_blocked"
-    ]
-  },
-  "next_strategies": [
-    "block",
-    "fresh_root_full_diff",
-    "resume_root"
-  ],
-  "volatile_ref_policy": {
-    "version": 1,
-    "prefixes": [
-      "refs/codex/turn-diffs/captures/",
-      "refs/codex/turn-diffs/checkpoints/"
-    ]
-  },
-  "receipt_identity_fields": [
-    "argv",
-    "candidate_head",
-    "command_role",
-    "cwd",
-    "environment_fingerprint",
-    "executable_identity",
-    "input_digest",
-    "worktree_digest"
+  "contract_version": 2,
+  "state_format_version": 2,
+  "parity_fields": [
+    "exit",
+    "status",
+    "plan_statuses",
+    "handoff_heads",
+    "verification_set_digest",
+    "required_receipt_count",
+    "session_action",
+    "integration"
   ]
 }

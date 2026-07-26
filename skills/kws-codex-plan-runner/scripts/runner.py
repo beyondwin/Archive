@@ -59,7 +59,7 @@ def _parser() -> argparse.ArgumentParser:
     repair.add_argument(
         "--repair-kind",
         required=True,
-        choices=("volatile-codex-turn-refs", "unsealed-provider-partial"),
+        choices=("volatile-codex-turn-refs",),
     )
     repair.add_argument("--strategy-note", required=True)
     repair.add_argument("--attempt-id")
@@ -132,11 +132,8 @@ def main(argv: list[str] | None = None) -> int:
             and arguments.attempt_id is not None
         ):
             return _invalid("--attempt-id is not valid for volatile repair")
-        if (
-            arguments.repair_kind == "unsealed-provider-partial"
-            and not arguments.attempt_id
-        ):
-            return _invalid("--attempt-id is required for partial repair")
+        if arguments.attempt_id is not None:
+            return _invalid("--attempt-id is not supported by version 2 repair")
     try:
         runtime = require_compatible_runtime()
     except RuntimeUnavailable as error:

@@ -1,3 +1,4 @@
+import json
 import os
 import signal
 import subprocess
@@ -43,15 +44,17 @@ class ExactEvidenceTest(unittest.TestCase):
         )
         self.spec = self.base / "spec.md"
         self.plan = self.base / "plan.md"
+        self.plan_two = self.base / "plan-two.md"
         self.spec.write_text("spec")
         self.plan.write_text("plan")
+        self.plan_two.write_text("plan two")
         state_root = self.base / "state-home" / self.run_id
         state_root.parent.mkdir(mode=0o700)
         self.state = StateStore.create(
             root=state_root, provider="claude", run_id=self.run_id,
             source_repository=self.source, source_commit=self.start,
             worktree=self.worktree_path, branch=f"claude-plan/{self.run_id}",
-            specs=[self.spec], plans=[self.plan],
+            specs=[self.spec], plans=[self.plan, self.plan_two],
             immutable_config={}, runner_runtime={},
         )
         self.env = {"PATH": os.environ.get("PATH", ""), "ANTHROPIC_API_KEY": "hidden"}
@@ -94,6 +97,55 @@ class ExactEvidenceTest(unittest.TestCase):
         receipt = self.evidence.execute(timeout, candidate_head=self.start)
         self.assertEqual((receipt.outcome, receipt.exit_code), ("timed_out", None))
 
+    def test_recovery_progress_includes_only_identity_valid_success_receipts(self):
+        success = self.evidence.execute(
+            self.command(
+                [sys.executable, "-c", "pass"],
+                command_id="success",
+            ),
+            candidate_head=self.start,
+        )
+        failed = self.evidence.execute(
+            self.command(
+                [sys.executable, "-c", "raise SystemExit(9)"],
+                command_id="failed",
+            ),
+            candidate_head=self.start,
+        )
+        timed_out = self.evidence.execute(
+            self.command(
+                [sys.executable, "-c", "import time;time.sleep(10)"],
+                deadline=0.1,
+                command_id="timed-out",
+            ),
+            candidate_head=self.start,
+        )
+        invalid = self.state.put_artifact(
+            "verification_receipt",
+            {"outcome": "success", "identity_digest": "a" * 64},
+        )
+        state = self.state.snapshot()
+        state["artifact_refs"].append(invalid.as_dict())
+        self.state.commit(state)
+
+        self.assertEqual(
+            self.evidence.successful_receipt_digests(),
+            (success.artifact.digest,),
+        )
+        referenced = {
+            reference["digest"]
+            for reference in self.state.snapshot()["artifact_refs"]
+            if reference["kind"] == "verification_receipt"
+        }
+        self.assertTrue(
+            {
+                success.artifact.digest,
+                failed.artifact.digest,
+                timed_out.artifact.digest,
+                invalid.digest,
+            }.issubset(referenced)
+        )
+
     def test_identity_changes_with_head_environment_tree_or_command(self):
         base = self.command([sys.executable, "-c", "pass"])
         original = self.evidence.identity_digest(base, candidate_head=self.start)
@@ -107,8 +159,11 @@ class ExactEvidenceTest(unittest.TestCase):
         self.assertNotEqual(original, dirty_identity)
         (self.worktree_path / "untracked").unlink()
 
-    def test_final_set_is_candidate_bound_nonempty_unique_and_loadable(self):
-        command = self.command([sys.executable, "-c", "pass"], role="final")
+    def test_plan_set_is_candidate_bound_nonempty_and_loadable(self):
+        command = self.command(
+            [sys.executable, "-c", "pass"],
+            role="handoff",
+        )
         payload = {
             "kind": "commands",
             "candidate_head": self.start,
@@ -121,22 +176,147 @@ class ExactEvidenceTest(unittest.TestCase):
                 "deadline_seconds": command.deadline_seconds,
             }],
         }
-        artifact = self.evidence.declare_final_set(payload, self.start)
-        self.assertEqual(self.evidence.load_final_command(artifact.digest, 0), command)
+        artifact = self.evidence.declare_verification(
+            payload,
+            self.start,
+            plan_index=0,
+            prior_set_digests=[],
+            is_final_plan=False,
+        )
+        self.assertEqual(
+            self.evidence.load_verification_command(artifact.digest, 0),
+            command,
+        )
         with self.assertRaises(ValueError):
-            self.evidence.declare_final_set(
+            self.evidence.declare_verification(
                 {"kind": "commands", "candidate_head": self.start, "commands": []},
                 self.start,
+                plan_index=0,
+                prior_set_digests=[],
+                is_final_plan=False,
             )
-        no_gate = self.evidence.declare_final_set(
+        no_gate = self.evidence.declare_verification(
             {
                 "kind": "no_applicable_verification",
                 "candidate_head": self.start,
                 "rationale": "Documentation-only update",
             },
             self.start,
+            plan_index=0,
+            prior_set_digests=[],
+            is_final_plan=False,
         )
         self.assertTrue(no_gate.digest)
+
+    def test_plan_verification_commands_require_a_sealed_candidate_head_set(self):
+        command = self.command(
+            [sys.executable, "-c", "pass"],
+            role="handoff",
+        )
+        payload = {
+            "kind": "commands",
+            "candidate_head": self.start,
+            "commands": [command.as_dict()],
+        }
+        artifact = self.evidence.declare_verification(
+            payload,
+            self.start,
+            plan_index=0,
+            prior_set_digests=[],
+            is_final_plan=False,
+        )
+        with self.assertRaisesRegex(ValueError, "receipt"):
+            self.evidence.require_successful_verification_set(
+                artifact.digest,
+                candidate_head=self.start,
+                artifact_kind="plan_verification_set",
+                plan_index=0,
+            )
+        receipt = self.evidence.execute(
+            command,
+            candidate_head=self.start,
+        )
+        self.assertEqual(receipt.outcome, "success")
+        self.evidence.require_successful_verification_set(
+            artifact.digest,
+            candidate_head=self.start,
+            artifact_kind="plan_verification_set",
+            plan_index=0,
+        )
+
+    def test_final_run_set_is_the_exact_ordered_duplicate_free_plan_union(self):
+        shared = self.command(
+            [sys.executable, "-c", "pass"],
+            role="handoff",
+            command_id="shared-first",
+        )
+        first = self.evidence.declare_verification(
+            {
+                "kind": "commands",
+                "candidate_head": self.start,
+                "commands": [shared.as_dict()],
+            },
+            self.start,
+            plan_index=0,
+            prior_set_digests=[],
+            is_final_plan=False,
+        )
+        self.evidence.execute(shared, candidate_head=self.start)
+        handoff = self.state.put_artifact(
+            "plan_handoff",
+            {
+                "plan_index": 0,
+                "verification_set_digest": first.digest,
+            },
+        )
+        state = self.state.snapshot()
+        state["artifact_refs"].append(handoff.as_dict())
+        state["plans"][0]["status"] = "implemented"
+        state["plans"][0]["handoff_digest"] = handoff.digest
+        state["current_plan_index"] = 1
+        self.state.commit(state)
+
+        duplicate = ExactCommand(
+            "shared-again",
+            shared.command_role,
+            shared.argv,
+            shared.cwd,
+            shared.input_digest,
+            shared.deadline_seconds,
+        )
+        unique = self.command(
+            [sys.executable, "-c", "print('second')"],
+            role="handoff",
+            command_id="unique-second",
+        )
+        final = self.evidence.declare_verification(
+            {
+                "kind": "commands",
+                "candidate_head": self.start,
+                "commands": [duplicate.as_dict(), unique.as_dict()],
+            },
+            self.start,
+            plan_index=1,
+            prior_set_digests=[first.digest],
+            is_final_plan=True,
+        )
+        document = json.loads(
+            self.state.referenced_artifact(final.as_dict()).read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(document["kind"], "run_verification")
+        self.assertEqual(
+            [command["command_id"] for command in document["commands"]],
+            ["shared-first", "unique-second"],
+        )
+        self.evidence.execute(unique, candidate_head=self.start)
+        self.evidence.require_successful_verification_set(
+            final.digest,
+            candidate_head=self.start,
+            artifact_kind="run_verification_set",
+            plan_index=1,
+        )
 
     def test_candidate_execution_requires_clean_exact_head(self):
         command = self.command([sys.executable, "-c", "pass"])

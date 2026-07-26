@@ -7,6 +7,13 @@ SKILL_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SKILL_ROOT / "scripts"))
 
 from plan_runner.contracts import (  # noqa: E402
+    CONTRACT_VERSION,
+    FAILURE_TAXONOMY,
+    FORMAT_VERSION,
+    NEXT_STRATEGIES,
+    PLAN_STATUSES,
+    RUNNER_RUNTIME_CONTRACT,
+    TASK_STATUSES,
     ExitCode,
     canonical_json,
     require_digest,
@@ -16,6 +23,28 @@ from plan_runner.contracts import (  # noqa: E402
 
 
 class ContractPrimitivesTest(unittest.TestCase):
+    def test_runtime_matches_versioned_test_contract(self):
+        self.assertEqual(CONTRACT_VERSION, 2)
+        self.assertEqual(FORMAT_VERSION, 2)
+        self.assertEqual(
+            PLAN_STATUSES,
+            frozenset({"pending", "running", "implemented"}),
+        )
+        self.assertNotIn("reported_done", TASK_STATUSES)
+        self.assertNotIn("review_failed", FAILURE_TAXONOMY)
+        self.assertEqual(
+            NEXT_STRATEGIES,
+            frozenset({"resume_root", "fresh_root", "block"}),
+        )
+        self.assertEqual(
+            RUNNER_RUNTIME_CONTRACT["requires_python"],
+            ">=3.13,<3.14",
+        )
+        self.assertEqual(
+            {item.name.lower(): int(item) for item in ExitCode}["ready"],
+            0,
+        )
+
     def test_provider_output_schemas_declare_items_for_every_array(self):
         for path in sorted((SKILL_ROOT / "templates").glob("*.schema.json")):
             document = json.loads(path.read_text(encoding="utf-8"))

@@ -2,21 +2,29 @@
 name: kws-claude-plan-runner
 description: Use when approved Superpowers specifications and one or more ordered implementation plans must run autonomously through Claude Code with durable recovery and fail-closed ready-for-integration evidence.
 metadata:
-  version: "1.0.0"
-  updated_at: "2026-07-23"
+  version: "2.0.0"
+  updated_at: "2026-07-25"
 ---
 
 # Claude Plan Runner
 
 ## Overview
 
-Claude/Superpowers owns engineering judgment; this thin controller owns
-immutable inputs, isolation, recovery, verification, and completion evidence.
+This thin wrapper gives specifications and plans to Superpowers as immutable
+inputs handed unchanged to Superpowers.
+Do not merge, rewrite, or positionally pair them. Superpowers owns task
+decomposition, SDD dispatch, TDD, task review, fixes, and the final whole-branch
+review.
+
+The runner owns exact external facts: immutable input digests, one worktree,
+plan order, root recovery actions, ordered plan handoff HEADs, accepted
+verification digests and receipts, and the run outcome. It does not mirror
+Superpowers task or review state.
 
 ## Run
 
 Preinstall uv-managed normal-GIL CPython `>=3.13,<3.14` with
-`uv python install 3.13`; then use the self-locating launcher:
+`uv python install 3.13`, then use the self-locating launcher:
 
 ```bash
 ./scripts/runner run \
@@ -30,68 +38,65 @@ Preinstall uv-managed normal-GIL CPython `>=3.13,<3.14` with
   --retry-failed --strategy-note "new evidence and changed strategy"
 ```
 
-Repeat inputs in source order. Do not merge, rewrite, or positionally pair
-them. Specs are immutable common context; plans run in one worktree and branch.
-Every packet names the current plan only and excludes future-plan paths. Each
-new plan starts a new UUID and session.
-
-Use `resume` after controller interruption, `--retry-blocked` after an external
-blocker changes, and `--retry-failed --strategy-note` only with meaningful new
-input.
-
-`SIGINT` and `SIGTERM` stop the active provider process group before exposing a
-durable `resumable` checkpoint. If an interrupted implementation left
-uncommitted work, that exact bounded Git worktree identity is sealed; resume
-accepts it only while unchanged and rejects any drift as an integrity failure.
+Every packet includes all immutable specifications and the current plan only;
+future plan paths are excluded. Every prior plan handoff HEAD remains an
+ancestor of the accepted candidate.
 
 ## Claude transport
 
-Initial attempts use `claude -p`, `stream-json`, `--verbose`, an inline JSON schema,
-and a new UUID through `--session-id`. Healthy same-plan continuation
-uses its recorded UUID with `--resume`; implicit selection is forbidden. The
+Initial roots use `claude -p`, `stream-json`, `--verbose`, an
+inline JSON schema, and a new UUID through `--session-id`. The one healthy root resume uses
+the recorded UUID with `--resume`; implicit selection is forbidden. The
 adapter scrubs nested-session markers and unrelated credentials.
 
 The adapter supplies one variadic `--disallowedTools` flag against accidental
-remote/destructive actions. It is not a security boundary against a same-UID
-process; hard isolation belongs to Waygent/kernel.
+remote mutation. It is
+not a security boundary against a same-UID process; hard isolation belongs to
+Waygent/kernel.
 
 ## Recovery and completion
 
-Canonical recovery sources are durable state, Git HEAD, ledger, and receipts,
-not conversation memory. Prefer healthy same-plan session resume after a simple
-interruption. Use a fresh-session fallback when resume fails or repeated
-failure, stall, context overflow, abnormal compaction, or session damage makes
-context suspect.
+The canonical recovery source is durable state, Git HEAD, ledger, and receipts,
+not conversation memory. Every plan starts with a fresh root. A plan gets at
+most one healthy same-plan session resume, expressed as one healthy root resume,
+and one fresh-root fallback when resume fails or context becomes suspect.
 
 A live controller continues the bounded recovery loop itself in `recovering`;
-it never delegates ordinary defect recovery to the user. Required retries use a
-materially changed strategy. `resumable` means an external invocation must
-restart a stopped controller. Only true external authority, unavailable
-provider/runtime, irreconcilable requirements, exhausted changed strategies, or
-integrity failure stop the run.
+`resumable` means an external invocation must restart a stopped controller.
+Only external authority, provider/runtime unavailability, irreconcilable
+requirements, exhausted strategies, or integrity failure stop the run.
 
-Keep lifecycle layers exact:
+Plan status is `pending`, `running`, or `implemented`. Run status carries
+`recovering`, `resumable`, and `ready_for_integration`; never assign those
+values to a plan. A plan becomes `implemented` only after its Superpowers
+ledger and Git handoff are sealed.
 
-- Task status is `pending`, `running`, or `reported_done`.
-- Plan status is `pending`, `running`, or `implemented`.
-- Run status carries `recovering`, `resumable`, and
-  `ready_for_integration`; never assign those values to a task or plan.
-
-A plan becomes `implemented` only after its Git result and ledger are sealed.
-The run becomes `ready_for_integration` only after every plan is implemented
-and the declared verification set plus fresh final review succeed at one
-unchanged candidate HEAD. The parent helper executes exact argv without a
-shell, enforces each deadline, and seals receipts. A HEAD change invalidates
+The final plan carries all immutable requirements and owns the single final
+whole-branch review. The run becomes `ready_for_integration` only after every
+plan is implemented and exact verification receipts plus that review succeed
+at one unchanged candidate HEAD. The runner executes exact argv without a
+shell, enforces each deadline, and seals each receipt. A HEAD change invalidates
 verification and review.
 
-Do not merge, push, or deploy. Successful handoff records
+The final helper derives the exact ordered duplicate-free union of all sealed
+plan verification declarations at the final HEAD. The final handoff and
+accepted verification digest bind that run-level union.
+
+A dirty checkpoint records HEAD, branch, porcelain, and bounded content digests
+for drift detection. It is not a backup and cannot restore files.
+
+Do not merge, push, or deploy. Every provider packet sets
+`integration_policy=keep`; successful handoff records
 `integration=not_observed`.
+
+Version 1 state is inspect-only. Version 2 is required for `run`, `resume`, and
+recovery; older state is never upgraded or reinterpreted in place.
 
 ## Runtime and validation
 
-Active commands never download Python or fall back to system Python. This
-greenfield runner has no legacy state support. `./evals/run.sh` is deterministic
-fake-provider validation; a live Claude canary is separate explicit evidence.
+Active commands never download Python or fall back to system Python.
+`./evals/run.sh` is deterministic fake-provider validation; a live Claude
+canary is separate explicit evidence.
 
 `run` and `resume` exit 0 only for `ready_for_integration`.
 `inspect` exits 0 for any valid, readable run state; it does not assert
