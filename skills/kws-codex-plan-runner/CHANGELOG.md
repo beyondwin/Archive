@@ -1,5 +1,31 @@
 # Changelog
 
+## 2.0.0 - 2026-07-25
+
+- Publishes the thin Superpowers boundary: specifications and plans remain
+  immutable, Superpowers owns task/review/fix meaning, and the runner owns only
+  exact external facts.
+- Starts every plan with a fresh root and bounds recovery to one healthy root
+  resume plus one fresh-root fallback.
+- Makes the final plan carry all immutable requirements and own the single
+  final whole-branch review.
+- Sets `integration_policy=keep`; the runner still never merges, pushes, or
+  deploys and reports `integration=not_observed`.
+- Clarifies that `--ignore-rules` disables Codex execpolicy rules for controlled
+  provider launches.
+- Defines dirty checkpoints as drift detection, not backups; they cannot
+  restore files.
+- Persists provider process identity, root-session action, and the exact dirty
+  worktree observation for controller interruption and recorded-session resume.
+- Binds final receipts to the complete command, executable, environment,
+  candidate, and worktree identity.
+- Adds provider-backed `ownership` and `interruption` canaries for the
+  `2.0.0` release gate.
+- Keeps the operator's effective `CODEX_HOME` visible in those disposable
+  canaries so both existing authentication and the required public SDD
+  capabilities remain available without copying provider state.
+- Version 1 state is inspect-only. Active execution requires Version 2.
+
 ## 1.1.0 - 2026-07-25
 
 - Defines the runner as a thin wrapper and strategic recovery shell around the

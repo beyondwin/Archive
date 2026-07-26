@@ -14,7 +14,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
-from .git_ops import sanitized_child_env
+from .git_ops import GitIdentity, sanitized_child_env
 from .helper import HelperDescriptor
 from .process import (
     _anchored_members,
@@ -31,7 +31,7 @@ MAX_RESULT_STRING_BYTES = 4_096
 MAX_RAW_STDERR_LINE_BYTES = 65_536
 _MAX_USAGE_FIELDS = 32
 _MAX_USAGE_VALUE = 2**63 - 1
-_RESULT_STATUSES = frozenset(("implemented", "blocked", "failed", "reviewed"))
+_RESULT_STATUSES = frozenset(("implemented", "blocked"))
 _AUTH_CODES = frozenset(
     (
         "authentication_failed",
@@ -212,6 +212,7 @@ class ProviderRequest:
     prompt: str
     output_schema: Mapping[str, Any]
     session_id: str
+    git_identity: GitIdentity
     resume: bool = False
     model: str | None = None
 
@@ -237,6 +238,8 @@ class ProviderRequest:
         ):
             raise ValueError("model must be a non-empty NUL-free string")
         _canonical_uuid(self.session_id)
+        if not isinstance(self.git_identity, GitIdentity):
+            raise ValueError("git_identity must be a sealed GitIdentity")
         if not isinstance(self.resume, bool):
             raise ValueError("resume must be a boolean")
 
@@ -330,11 +333,14 @@ class ClaudeAdapter:
         request: ProviderRequest,
         lease: ActivityLease,
         on_session_id: Callable[[str], None] | None = None,
+        on_process_observation: Callable[
+            [Mapping[str, object]], None
+        ] | None = None,
     ) -> ProviderOutcome:
         argv = self.build_argv(request)
         if not request.worktree.is_dir() or request.worktree.is_symlink():
             raise ValueError("provider worktree must be a real directory")
-        env = self._child_env()
+        env = self._child_env(request.git_identity)
         state = _StreamState()
         stdout_buffer = bytearray()
         stderr_tail = _RedactedStderrTail()
@@ -367,6 +373,14 @@ class ClaudeAdapter:
                             )
                     except ProcessLookupError:
                         pass
+                    if on_process_observation is not None:
+                        on_process_observation(
+                            {
+                                "provider_pid": process.pid,
+                                "provider_pgid": pgid,
+                                "descendant_pids": [],
+                            }
+                        )
                     assert process.stdout is not None and process.stderr is not None
                     selector = selectors.DefaultSelector()
                     selector.register(process.stdout, selectors.EVENT_READ, "stdout")
@@ -545,12 +559,13 @@ class ClaudeAdapter:
             _scrub(stderr_tail),
         )
 
-    def _child_env(self) -> dict[str, str]:
+    def _child_env(self, git_identity: GitIdentity) -> dict[str, str]:
         env = sanitized_child_env(
             self._source_env,
-            provider_auth_prefixes=("ANTHROPIC_",),
+            provider_auth_prefixes=("ANTHROPIC_", "CLAUDE_CODE_OAUTH_"),
             remotes=self._remotes,
             run_id=self._run_id,
+            git_identity=git_identity,
         )
         for key in _NESTING_MARKERS | _UNRELATED_CREDENTIALS:
             env.pop(key, None)

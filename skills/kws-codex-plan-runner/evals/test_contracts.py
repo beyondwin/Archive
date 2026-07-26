@@ -4,7 +4,6 @@ import unittest
 from pathlib import Path
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
-REPO_ROOT = SKILL_ROOT.parents[1]
 sys.path.insert(0, str(SKILL_ROOT / "scripts"))
 
 from plan_runner.contracts import (  # noqa: E402
@@ -50,7 +49,7 @@ class ContractVocabularyTest(unittest.TestCase):
             "then",
             "uniqueItems",
         }
-        for name in ("plan-result.schema.json", "finalization-result.schema.json"):
+        for name in ("plan-result.schema.json",):
             path = SKILL_ROOT / "templates" / name
             document = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual(document.get("type"), "object", str(path))
@@ -90,42 +89,22 @@ class ContractVocabularyTest(unittest.TestCase):
                     pending.extend(value)
 
     def test_runtime_matches_versioned_test_contract(self):
-        fixture = json.loads(
-            (REPO_ROOT / "scripts/agent/fixtures/plan-runner-contract-v1.json")
-            .read_text(encoding="utf-8")
-        )
-        self.assertEqual(CONTRACT_VERSION, fixture["contract_version"])
-        self.assertEqual(FORMAT_VERSION, fixture["state_format_version"])
-        self.assertEqual(sorted(RUN_STATUSES), sorted(fixture["run_statuses"]))
-        self.assertEqual(sorted(PLAN_STATUSES), sorted(fixture["plan_statuses"]))
-        self.assertEqual(sorted(TASK_STATUSES), sorted(fixture["task_statuses"]))
-        expected_failures = set(fixture["failure_taxonomy"])
-        expected_failures.update(
-            fixture["provider_failure_taxonomy_extensions"]["codex"]
-        )
-        self.assertEqual(sorted(FAILURE_TAXONOMY), sorted(expected_failures))
-        self.assertEqual(sorted(NEXT_STRATEGIES), sorted(fixture["next_strategies"]))
-        self.assertEqual(RUNNER_RUNTIME_CONTRACT, fixture["runner_runtime"])
-        self.assertEqual(
-            {item.name.lower(): int(item) for item in ExitCode},
-            fixture["exit_codes"],
-        )
+        self.assertEqual(CONTRACT_VERSION, 2)
+        self.assertEqual(FORMAT_VERSION, 2)
+        self.assertEqual(PLAN_STATUSES, frozenset({"pending", "running", "implemented"}))
+        self.assertNotIn("reported_done", TASK_STATUSES)
+        self.assertNotIn("review_failed", FAILURE_TAXONOMY)
+        self.assertEqual(NEXT_STRATEGIES, frozenset({"resume_root", "fresh_root", "block"}))
+        self.assertEqual(RUNNER_RUNTIME_CONTRACT["requires_python"], ">=3.13,<3.14")
+        self.assertEqual({item.name.lower(): int(item) for item in ExitCode}["ready"], 0)
 
-    def test_versioned_contract_seals_the_volatile_ref_policy(self):
-        fixture = json.loads(
-            (REPO_ROOT / "scripts/agent/fixtures/plan-runner-contract-v1.json")
-            .read_text(encoding="utf-8")
+    def test_provider_local_contract_seals_the_volatile_ref_policy(self):
+        self.assertEqual(VOLATILE_REF_POLICY_VERSION, 1)
+        prefixes = (
+            "refs/codex/turn-diffs/captures/",
+            "refs/codex/turn-diffs/checkpoints/",
         )
-        policy = fixture["volatile_ref_policy"]
-        self.assertEqual(VOLATILE_REF_POLICY_VERSION, policy["version"])
-        self.assertEqual(
-            [
-                "refs/codex/turn-diffs/captures/",
-                "refs/codex/turn-diffs/checkpoints/",
-            ],
-            policy["prefixes"],
-        )
-        for prefix in policy["prefixes"]:
+        for prefix in prefixes:
             with self.subTest(prefix=prefix):
                 self.assertTrue(is_volatile_ref(f"{prefix}candidate"))
         for protected in (

@@ -30,7 +30,7 @@ from .git_ops import GitIdentity
 BEFORE_STATE_REPLACE = "artifact_durable_before_state_replace"
 AFTER_STATE_REPLACE = "state_replaced"
 
-_CONTRACT_VERSION = 1
+_CONTRACT_VERSION = 2
 _PROVIDER = "codex"
 _RUN_ID = re.compile(
     r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?"
@@ -81,12 +81,10 @@ _STATE_KEYS = {
     "inputs",
     "plans",
     "current_plan_index",
-    "task_ledger",
     "sessions",
     "attempts",
     "artifact_refs",
     "failure",
-    "finalization",
 }
 _IMMUTABLE_STATE_KEYS = (
     "format_version",
@@ -750,6 +748,7 @@ def _validate_state(
             "snapshot_path",
             "sha256",
             "byte_length",
+            "handoff_digest",
         }:
             raise ValueError("plan record is invalid")
         if plan["status"] not in PLAN_STATUSES:
@@ -764,6 +763,8 @@ def _validate_state(
         }
         if any(plan[name] != value for name, value in expected.items()):
             raise ValueError("plan identity is invalid")
+        if plan["handoff_digest"] is not None:
+            require_digest(plan["handoff_digest"])
 
     current_index = state["current_plan_index"]
     if (
@@ -772,7 +773,7 @@ def _validate_state(
         or not 0 <= current_index <= len(plans)
     ):
         raise ValueError("current plan index is invalid")
-    for name in ("task_ledger", "sessions", "attempts", "artifact_refs"):
+    for name in ("sessions", "attempts", "artifact_refs"):
         if not isinstance(state[name], list):
             raise ValueError(f"{name} must be a list")
     for attempt in state["attempts"]:
@@ -821,7 +822,7 @@ def _validate_state(
                 not isinstance(failure.get("partial_attempt_id"), str)
                 or not failure["partial_attempt_id"]
                 or failure.get("partial_mode")
-                not in {"implementation", "final_review_fix"}
+                != "implementation"
             ):
                 raise ValueError("partial worktree checkpoint is invalid")
         for name in ("next_strategy", "previous_failed_strategy"):
@@ -966,7 +967,8 @@ class StateStore:
                 "source_path": item["source_path"],
                 "snapshot_path": item["snapshot_path"],
                 "sha256": item["sha256"],
-                "byte_length": item["byte_length"],
+            "byte_length": item["byte_length"],
+            "handoff_digest": None,
             }
             for item in records
             if item["role"] == "plan"
@@ -991,12 +993,10 @@ class StateStore:
             "inputs": records,
             "plans": plan_records,
             "current_plan_index": 0,
-            "task_ledger": [],
             "sessions": [],
             "attempts": [],
             "artifact_refs": [],
             "failure": None,
-            "finalization": None,
         }
         state["state_digest"] = _state_digest(state)
         _validate_state(root, state, expected_revision=1)
@@ -1017,6 +1017,14 @@ class StateStore:
             state = json.loads(state_path.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
             raise ValueError("run state is unavailable or invalid") from error
+        if (
+            isinstance(state, dict)
+            and state.get("format_version") == 1
+            and state.get("contract_version") == 1
+        ):
+            # The cutover deliberately preserves old state only as bytes that
+            # can be inspected; version 2 never normalizes or rewrites it.
+            return cls(root, state)
         validated = _validate_state(root, state)
         _require_intent_envelope(root, validated)
         return cls(root, validated)

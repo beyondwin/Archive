@@ -38,10 +38,10 @@ _STATE_FIELDS = frozenset(
         "format_version", "contract_version", "provider", "run_id", "revision",
         "state_digest", "status", "integration", "immutable_config",
         "runner_runtime", "repository", "inputs", "plans", "current_plan_index",
-        "task_ledger", "sessions", "attempts", "artifact_refs", "failure",
-        "finalization",
+        "sessions", "attempts", "artifact_refs", "failure",
     )
 )
+_LEGACY_STATE_FIELDS = _STATE_FIELDS | {"task_ledger", "finalization"}
 _IMMUTABLE_FIELDS = (
     "format_version", "contract_version", "provider", "run_id", "integration",
     "immutable_config", "runner_runtime", "repository", "inputs",
@@ -206,10 +206,24 @@ def _artifact(root: Path, value: object, *, require_file: bool) -> tuple[Artifac
 
 
 def _validate(root: Path, value: object, expected_revision: int | None = None) -> dict[str, object]:
-    if not isinstance(value, dict) or set(value) != _STATE_FIELDS:
+    if not isinstance(value, dict):
         raise ValueError("run state envelope is invalid")
-    if value["format_version"] != FORMAT_VERSION or value["contract_version"] != CONTRACT_VERSION:
+    version = (value.get("format_version"), value.get("contract_version"))
+    if version not in {
+        (FORMAT_VERSION, CONTRACT_VERSION),
+        (1, 1),
+    }:
         raise ValueError("unknown state version")
+    has_v2_shape = set(value) == _STATE_FIELDS
+    expected_fields = (
+        _STATE_FIELDS
+        if version == (FORMAT_VERSION, CONTRACT_VERSION)
+        else _STATE_FIELDS
+        if has_v2_shape
+        else _LEGACY_STATE_FIELDS
+    )
+    if set(value) != expected_fields:
+        raise ValueError("run state envelope is invalid")
     if value["provider"] != _PROVIDER:
         raise ValueError("wrong provider")
     _run_id(value["run_id"])
@@ -284,14 +298,26 @@ def _validate(root: Path, value: object, expected_revision: int | None = None) -
             "sha256": source["sha256"],
             "byte_length": source["byte_length"],
         }
+        if version == (FORMAT_VERSION, CONTRACT_VERSION) or has_v2_shape:
+            handoff = plan.get("handoff_digest")
+            if handoff is not None and (
+                not isinstance(handoff, str)
+                or _DIGEST.fullmatch(handoff) is None
+            ):
+                raise ValueError("plan handoff digest is invalid")
+            expected["handoff_digest"] = handoff
         if plan != expected:
             raise ValueError("plan identity is invalid")
     index = value["current_plan_index"]
     if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index <= len(plans):
         raise ValueError("current plan index is invalid")
-    for name in ("task_ledger", "sessions", "attempts", "artifact_refs"):
+    for name in ("sessions", "attempts", "artifact_refs"):
         if not isinstance(value[name], list):
             raise ValueError(f"{name} must be a list")
+    if version == (1, 1):
+        for name in ("task_ledger",):
+            if name in value and not isinstance(value[name], list):
+                raise ValueError(f"{name} must be a list")
     for reference in value["artifact_refs"]:
         _artifact(root, reference, require_file=True)
     return value
@@ -381,6 +407,7 @@ class StateStore:
                 "snapshot_path": item["snapshot_path"],
                 "sha256": item["sha256"],
                 "byte_length": item["byte_length"],
+                "handoff_digest": None,
             }
             for item in records if item["role"] == "plan"
         ]
@@ -404,12 +431,10 @@ class StateStore:
             "inputs": records,
             "plans": plan_records,
             "current_plan_index": 0,
-            "task_ledger": [],
             "sessions": [],
             "attempts": [],
             "artifact_refs": [],
             "failure": None,
-            "finalization": None,
         }
         state["state_digest"] = _state_digest(state)
         _validate(root, state, 1)
@@ -451,6 +476,11 @@ class StateStore:
         return ref
 
     def commit(self, next_state: Mapping[str, object]) -> dict[str, object]:
+        if (
+            self._state.get("format_version"),
+            self._state.get("contract_version"),
+        ) != (FORMAT_VERSION, CONTRACT_VERSION):
+            raise ValueError("legacy_contract_requires_v1_runner")
         _private_file(self.state_path, "run state")
         try:
             disk = _validate(self.root, json.loads(self.state_path.read_text()))

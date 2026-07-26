@@ -29,11 +29,10 @@ class FakeClock:
 def progress(
     tree: str = "tree-a",
     *,
-    done: tuple[str, ...] = (),
     receipts: tuple[str, ...] = (),
-    findings: tuple[str, ...] = (),
+    handoffs: tuple[str, ...] = (),
 ) -> ProgressSnapshot:
-    return ProgressSnapshot(tree, done, receipts, findings)
+    return ProgressSnapshot(tree, receipts, handoffs)
 
 
 def state(**overrides):
@@ -45,7 +44,6 @@ def state(**overrides):
         "resume_failed": False,
         "failure_sequence": (),
         "failure_baseline_progress": progress(),
-        "reported_done_evidence": {},
         "observed_tree_digests": ("tree-a",),
     }
     values.update(overrides)
@@ -62,7 +60,6 @@ def outcome(**overrides):
         "interruption": "simple",
         "strategy_note": "retry through the alternate transport",
         "progress": progress(),
-        "reported_done_evidence": {},
         "logs": ["unstable"],
         "timestamp": "2026-07-23T00:00:00Z",
         "token_output": 100,
@@ -251,6 +248,27 @@ class RecoveryPolicyTest(unittest.TestCase):
         with self.assertRaises(dataclasses.FrozenInstanceError):
             decision.action = "changed"
 
+    def test_fixed_resume_then_fresh_then_exhaustion(self):
+        first = self.policy.decide(state(), outcome())
+        self.assertEqual(first.session_action, "explicit_resume")
+        entry = {
+            "failure_signature": first.failure_signature,
+            "strategy_note_digest": strategy_note_digest(outcome()["strategy_note"]),
+        }
+        second = self.policy.decide(
+            state(resume_failed=True, failure_sequence=(entry,)),
+            outcome(),
+        )
+        self.assertEqual(second.session_action, "fresh_session")
+        third = self.policy.decide(
+            state(
+                resume_failed=True,
+                failure_sequence=({**entry, "fresh_session_attempted": True},),
+            ),
+            outcome(),
+        )
+        self.assertEqual((third.action, third.run_status), ("fail", "failed"))
+
     def test_live_controller_recovers_while_absent_controller_is_resumable(self):
         live = self.policy.decide(state(), outcome())
         self.assertEqual((live.action, live.run_status), ("recover", "recovering"))
@@ -296,28 +314,22 @@ class RecoveryPolicyTest(unittest.TestCase):
         self.assertEqual(decision.session_action, "none")
         self.assertEqual(decision.reason_code, "input_changed_requires_new_run")
 
-    def test_initial_attempt_plus_three_distinct_changed_strategies_are_allowed(self):
+    def test_one_changed_strategy_is_allowed_before_exhaustion(self):
         failure = canonical_failure_signature(outcome())
-        notes = tuple(
-            strategy_note_digest(note)
-            for note in ("strategy one", "strategy two", "strategy three")
-        )
-        for prior_count in range(4):
+        changed = strategy_note_digest("strategy one")
+        for prior_count in range(2):
             sequence = (
                 {"failure_signature": failure, "strategy_note_digest": None},
-                *(
-                    {
-                        "failure_signature": failure,
-                        "strategy_note_digest": digest,
-                    }
-                    for digest in notes[:prior_count]
-                ),
+                *([{
+                    "failure_signature": failure,
+                    "strategy_note_digest": changed,
+                }] if prior_count else []),
             )
             decision = self.policy.decide(
                 state(failure_sequence=sequence),
-                outcome(strategy_note=f"strategy {prior_count + 1} changed"),
+                outcome(strategy_note="strategy two changed"),
             )
-            if prior_count < 3:
+            if prior_count == 0:
                 self.assertEqual(decision.run_status, "recovering")
             else:
                 self.assertEqual(decision.run_status, "failed")
@@ -358,6 +370,7 @@ class RecoveryPolicyTest(unittest.TestCase):
                     {
                         "failure_signature": failure,
                         "strategy_note_digest": repeated,
+                        "fresh_session_attempted": True,
                     },
                 )
             ),
@@ -376,38 +389,20 @@ class RecoveryPolicyTest(unittest.TestCase):
             for index in range(4)
         )
         baselines_and_currents = (
-            (progress("tree-a"), progress("tree-b"), {}, {}),
-            (
-                progress(done=("T1",)),
-                progress(done=("T1", "T2")),
-                {"T1": "1" * 64},
-                {"T1": "1" * 64, "T2": "2" * 64},
-            ),
-            (
-                progress(receipts=("r1",)),
-                progress(receipts=("r1", "r2")),
-                {},
-                {},
-            ),
-            (
-                progress(findings=("F1",)),
-                progress(findings=("F1", "F2")),
-                {},
-                {},
-            ),
+            (progress("tree-a"), progress("tree-b")),
+            (progress(receipts=("r1",)), progress(receipts=("r1", "r2"))),
+            (progress(handoffs=("h1",)), progress(handoffs=("h1", "h2"))),
         )
-        for baseline, current, prior_evidence, current_evidence in baselines_and_currents:
+        for baseline, current in baselines_and_currents:
             with self.subTest(current=current):
                 decision = self.policy.decide(
                     state(
                         failure_sequence=exhausted,
                         failure_baseline_progress=baseline,
-                        reported_done_evidence=prior_evidence,
                     ),
                     outcome(
                         progress=current,
                         strategy_note="new reset strategy",
-                        reported_done_evidence=current_evidence,
                     ),
                 )
                 self.assertEqual(decision.run_status, "recovering")
@@ -432,55 +427,6 @@ class RecoveryPolicyTest(unittest.TestCase):
         )
         self.assertEqual(decision.run_status, "failed")
         self.assertEqual(decision.reason_code, "recovery_exhausted")
-
-    def test_reported_done_requires_novel_sha256_evidence_association(self):
-        failure = canonical_failure_signature(outcome())
-        exhausted = tuple(
-            {
-                "failure_signature": failure,
-                "strategy_note_digest": strategy_note_digest(f"prior-{index}"),
-            }
-            for index in range(3)
-        )
-        baseline = progress(done=("T1",))
-        current = progress(done=("T1", "T2"))
-        prior = {"T1": "1" * 64}
-
-        positive = self.policy.decide(
-            state(
-                failure_sequence=exhausted,
-                failure_baseline_progress=baseline,
-                reported_done_evidence=prior,
-            ),
-            outcome(
-                progress=current,
-                reported_done_evidence={**prior, "T2": "2" * 64},
-                strategy_note="evidence-backed progress",
-            ),
-        )
-        self.assertEqual(positive.run_status, "recovering")
-
-        invalid_evidence = (
-            {},
-            {**prior, "T2": "not-a-sha256"},
-            {**prior, "T2": "1" * 64},
-        )
-        for evidence in invalid_evidence:
-            with self.subTest(evidence=evidence):
-                decision = self.policy.decide(
-                    state(
-                        failure_sequence=exhausted,
-                        failure_baseline_progress=baseline,
-                        reported_done_evidence=prior,
-                    ),
-                    outcome(
-                        progress=current,
-                        reported_done_evidence=evidence,
-                        strategy_note="unsupported claimed progress",
-                    ),
-                )
-                self.assertEqual(decision.run_status, "failed")
-                self.assertEqual(decision.reason_code, "recovery_exhausted")
 
     def test_non_material_observations_and_returned_tree_do_not_reset_sequence(self):
         failure = canonical_failure_signature(outcome())

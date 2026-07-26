@@ -1,95 +1,20 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Codex plan implementation result",
+  "title": "Codex plan handoff result",
   "type": "object",
   "additionalProperties": false,
-  "required": [
-    "status",
-    "head_commit",
-    "summary",
-    "task_ledger",
-    "open_obligation_ids",
-    "failure_signature",
-    "strategy_note",
-    "blocker"
-  ],
+  "required": ["status", "head_commit", "summary", "verification_set_digest", "blocker"],
   "properties": {
-    "status": {"enum": ["implemented", "blocked", "failed"]},
-    "head_commit": {
-      "type": "string",
-      "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
-    },
+    "status": {"enum": ["implemented", "blocked"]},
+    "head_commit": {"type": "string", "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"},
     "summary": {"type": "string"},
-    "task_ledger": {"$ref": "#/$defs/taskLedger"},
-    "open_obligation_ids": {"$ref": "#/$defs/identifierList"},
-    "failure_signature": {
-      "anyOf": [
-        {"type": "null"},
-        {"type": "string", "pattern": "^[0-9a-f]{64}$"}
-      ]
-    },
-    "strategy_note": {
-      "anyOf": [
-        {"type": "null"},
-        {"type": "string"}
-      ]
-    },
+    "verification_set_digest": {"type": ["string", "null"]},
     "blocker": {
-      "anyOf": [
-        {"type": "null"},
-        {"$ref": "#/$defs/blocker"}
-      ]
-    }
-  },
-  "$defs": {
-    "identifier": {
-      "type": "string",
-      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
-    },
-    "identifierList": {
-      "type": "array",
-      "maxItems": 1024,
-      "items": {"$ref": "#/$defs/identifier"}
-    },
-    "taskLedger": {
-      "type": "array",
-      "maxItems": 4096,
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["task_id", "status", "evidence_digests"],
-        "properties": {
-          "task_id": {"$ref": "#/$defs/identifier"},
-          "status": {"enum": ["pending", "running", "reported_done"]},
-          "evidence_digests": {
-            "type": "array",
-            "maxItems": 256,
-            "items": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{64}$"
-            }
-          }
-        }
-      }
-    },
-    "blocker": {
-      "type": "object",
+      "type": ["object", "null"],
       "additionalProperties": false,
       "required": ["kind", "detail"],
       "properties": {
-        "kind": {
-          "enum": [
-            "credentials_unavailable",
-            "destructive_authorization_required",
-            "external_authority_required",
-            "external_state_unavailable",
-            "irreconcilable_requirements",
-            "permission_required",
-            "provider_auth_blocked",
-            "provider_unavailable",
-            "provider_usage_blocked"
-          ]
-        },
+        "kind": {"enum": ["credentials_unavailable", "destructive_authorization_required", "external_authority_required", "external_state_unavailable", "irreconcilable_requirements", "permission_required", "provider_auth_blocked", "provider_unavailable", "provider_usage_blocked"]},
         "detail": {"type": "string"}
       }
     }

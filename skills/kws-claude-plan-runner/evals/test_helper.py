@@ -75,7 +75,7 @@ class ParentHelperTest(unittest.TestCase):
             "deadline_seconds": 3,
         }
 
-    def test_private_socket_executes_focused_command_and_tracks_deadline_callbacks(self):
+    def test_private_socket_executes_declared_command_and_tracks_deadline_callbacks(self):
         started, finished = [], []
         with HelperServer(
             run_id=self.run_id, worktree=self.worktree,
@@ -88,13 +88,38 @@ class ParentHelperTest(unittest.TestCase):
             descriptor = server.descriptor
             self.assertEqual(descriptor.socket_path.parent, self.worktree)
             self.assertEqual(descriptor.socket_path.stat().st_mode & 0o777, 0o600)
+            declaration = {
+                "candidate_head": self.head,
+                "plan_index": 0,
+                "verification": {
+                    "kind": "commands",
+                    "candidate_head": self.head,
+                    "commands": [self.command("handoff")],
+                },
+                "prior_set_digests": [],
+                "is_final_plan": False,
+            }
+            declared = helper_client(
+                descriptor.socket_path,
+                descriptor.nonce,
+                self.envelope(
+                    descriptor,
+                    "declare_verification",
+                    declaration,
+                ),
+            )
             response = helper_client(
                 descriptor.socket_path,
                 descriptor.nonce,
                 self.envelope(
                     descriptor,
-                    "verify_focused",
-                    {"candidate_head": self.head, "command": self.command("focused")},
+                    "run_verification",
+                    {
+                        "candidate_head": self.head,
+                        "set_digest": declared["artifact"]["digest"],
+                        "command_index": 0,
+                        "deadline_seconds": 3,
+                    },
                 ),
             )
             self.assertTrue(response["ok"])
@@ -102,7 +127,7 @@ class ParentHelperTest(unittest.TestCase):
         self.assertEqual(len(finished), 1)
         self.assertFalse(descriptor.socket_path.exists())
 
-    def test_final_declaration_seals_exact_set_and_index(self):
+    def test_verification_declaration_seals_exact_set_and_index(self):
         with HelperServer(
             run_id=self.run_id, worktree=self.worktree,
             evidence_store=self.evidence,
@@ -110,20 +135,26 @@ class ParentHelperTest(unittest.TestCase):
             state_store=self.state,
         ) as server:
             d = server.descriptor
-            final_set = {
-                "kind": "commands",
+            declaration = {
                 "candidate_head": self.head,
-                "commands": [self.command("final")],
+                "plan_index": 0,
+                "verification": {
+                    "kind": "commands",
+                    "candidate_head": self.head,
+                    "commands": [self.command("handoff")],
+                },
+                "prior_set_digests": [],
+                "is_final_plan": False,
             }
             declared = helper_client(
                 d.socket_path, d.nonce,
-                self.envelope(d, "declare_final_set", {"candidate_head": self.head, "final_set": final_set}),
+                self.envelope(d, "declare_verification", declaration),
             )
             digest = declared["artifact"]["digest"]
             verified = helper_client(
                 d.socket_path, d.nonce,
                 self.envelope(
-                    d, "verify_final",
+                    d, "run_verification",
                     {
                         "candidate_head": self.head,
                         "set_digest": digest,
@@ -136,8 +167,67 @@ class ParentHelperTest(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 helper_client(
                     d.socket_path, d.nonce,
-                    self.envelope(d, "declare_final_set", {"candidate_head": self.head, "final_set": final_set}),
+                    self.envelope(d, "declare_verification", declaration),
                 )
+
+    def test_plan_and_run_verification_use_one_helper_path(self):
+        declaration = {
+            "candidate_head": self.head,
+            "plan_index": 0,
+            "verification": {
+                "kind": "commands",
+                "candidate_head": self.head,
+                "commands": [self.command("handoff")],
+            },
+            "prior_set_digests": [],
+            "is_final_plan": True,
+        }
+        with HelperServer(
+            run_id=self.run_id,
+            worktree=self.worktree,
+            evidence_store=self.evidence,
+            client_argv=(sys.executable, "/absolute/runner.py"),
+            state_store=self.state,
+        ) as server:
+            descriptor = server.descriptor
+            declared = helper_client(
+                descriptor.socket_path,
+                descriptor.nonce,
+                self.envelope(
+                    descriptor,
+                    "declare_verification",
+                    declaration,
+                ),
+            )
+            digest = declared["artifact"]["digest"]
+            completed = helper_client(
+                descriptor.socket_path,
+                descriptor.nonce,
+                self.envelope(
+                    descriptor,
+                    "run_verification",
+                    {
+                        "candidate_head": self.head,
+                        "set_digest": digest,
+                        "command_index": 0,
+                        "deadline_seconds": 3,
+                    },
+                ),
+            )
+        self.assertTrue(completed["ok"])
+        artifact = self.state.referenced_artifact(
+            next(
+                reference
+                for reference in self.state.snapshot()["artifact_refs"]
+                if reference["digest"] == digest
+            )
+        )
+        document = json.loads(artifact.read_text(encoding="utf-8"))
+        self.assertEqual(document["kind"], "run_verification")
+        self.assertEqual(
+            [item["command_id"] for item in document["commands"]],
+            ["handoff-1"],
+        )
 
     def test_wrong_nonce_noncanonical_and_heartbeat_do_not_execute_commands(self):
         with HelperServer(
@@ -157,16 +247,12 @@ class ParentHelperTest(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 helper_client(d.socket_path, "0" * 64, bad)
 
-    def test_schema_is_closed_and_supports_commands_or_rationale(self):
+    def test_plan_result_schema_is_closed_and_requires_handoff_evidence(self):
         schema = json.loads(
-            (SKILL_ROOT / "templates" / "final-verification-set.schema.json").read_text()
+            (SKILL_ROOT / "templates" / "plan-result.schema.json").read_text()
         )
         self.assertFalse(schema["additionalProperties"])
-        kinds = {
-            branch["properties"]["kind"]["const"]
-            for branch in schema["oneOf"]
-        }
-        self.assertEqual(kinds, {"commands", "no_applicable_verification"})
+        self.assertIn("verification_set_digest", schema["required"])
 
 
 if __name__ == "__main__":

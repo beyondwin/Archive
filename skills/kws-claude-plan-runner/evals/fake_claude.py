@@ -67,6 +67,87 @@ def consume_action(path: Path) -> tuple[int, str]:
         return index, actions[index]
 
 
+def nested_git_init_probe(action_index: int) -> dict[str, object] | None:
+    probe_root = os.environ.get("PLAN_RUNNER_FAKE_NESTED_GIT_INIT_ROOT")
+    if probe_root is None:
+        return None
+
+    repository = Path(probe_root) / f"action-{action_index}"
+    init_argv = ["git", "init", str(repository)]
+    initialized = subprocess.run(
+        init_argv,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    add_returncode: int | None = None
+    commit_returncode: int | None = None
+    if initialized.returncode == 0:
+        probe_file = repository / "provider-child-probe.txt"
+        probe_file.write_text("provider child nested git init\n", encoding="utf-8")
+        added = subprocess.run(
+            ["git", "-C", str(repository), "add", probe_file.name],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        add_returncode = added.returncode
+        if added.returncode == 0:
+            committed = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(repository),
+                    "commit",
+                    "-m",
+                    "provider child probe",
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            commit_returncode = committed.returncode
+
+    git_dir = repository / ".git"
+    hook_marker = os.environ.get("PARITY_HOSTILE_HOOK_MARKER")
+    identity = None
+    if commit_returncode == 0:
+        raw_identity = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(repository),
+                "log",
+                "-1",
+                "--format=%an%x00%ae%x00%cn%x00%ce",
+            ],
+            text=True,
+            capture_output=True,
+            check=True,
+        ).stdout.rstrip("\n").split("\0")
+        identity = {
+            "author_name": raw_identity[0],
+            "author_email": raw_identity[1],
+            "committer_name": raw_identity[2],
+            "committer_email": raw_identity[3],
+        }
+    return {
+        "add_returncode": add_returncode,
+        "commit_returncode": commit_returncode,
+        "git_template_dir": os.environ.get("GIT_TEMPLATE_DIR"),
+        "identity": identity,
+        "hostile_hook_copied": (git_dir / "hooks" / "pre-commit").exists(),
+        "hostile_hook_executed": (
+            hook_marker is not None and Path(hook_marker).exists()
+        ),
+        "hostile_template_marker_copied": (
+            git_dir / "parity-hostile-template-marker"
+        ).exists(),
+        "init_argv": init_argv,
+        "init_returncode": initialized.returncode,
+    }
+
+
 def helper_call(packet: dict[str, object], operation: str, payload: object) -> dict:
     helper = packet["helper"]
     envelope = {
@@ -101,69 +182,52 @@ def generic_result(packet: dict[str, object], action: str) -> dict[str, object]:
             "status": "blocked",
             "head_commit": head,
             "summary": "external authority is required",
-            "task_ledger": packet["task_ledger"],
-            "open_obligation_ids": [],
-            "failure_signature": None,
-            "strategy_note": None,
+            "verification_set_digest": None,
             "blocker": {
                 "kind": "external_authority_required",
                 "detail": "provider-neutral parity blocker",
             },
         }
+    command = {
+        "command_id": f"handoff-{packet['current_plan']['index']}",
+        "command_role": "handoff",
+        "argv": ["/usr/bin/true"],
+        "cwd": ".",
+        "input_digest": "a" * 64,
+        "deadline_seconds": 10,
+    }
+    declaration = helper_call(
+        packet,
+        "declare_verification",
+        {
+            "candidate_head": head,
+            "plan_index": packet["current_plan"]["index"],
+            "verification": {
+                "kind": "commands",
+                "candidate_head": head,
+                "commands": [command],
+            },
+            "prior_set_digests": packet["prior_verification_sets"],
+            "is_final_plan": packet["is_final_plan"],
+        },
+    )
+    digest = declaration["artifact"]["digest"]
+    helper_call(
+        packet,
+        "run_verification",
+        {
+            "candidate_head": head,
+            "set_digest": digest,
+            "command_index": 0,
+            "deadline_seconds": 10,
+        },
+    )
     return {
         "status": "implemented",
         "head_commit": head,
         "summary": "provider-neutral implementation",
-        "task_ledger": packet["task_ledger"],
-        "open_obligation_ids": [],
-        "failure_signature": None,
-        "strategy_note": None,
-        "blocker": None,
-    }
-
-
-def generic_finalization(packet: dict[str, object]) -> dict[str, object]:
-    head = packet["candidate_head"]
-    digest = packet.get("sealed_verification_set_digest")
-    if digest is None:
-        final_set = {
-            "kind": "commands",
-            "candidate_head": head,
-            "commands": [
-                {
-                    "command_id": "parity-final",
-                    "command_role": "final",
-                    "argv": ["/usr/bin/true"],
-                    "cwd": ".",
-                    "input_digest": "a" * 64,
-                    "deadline_seconds": 10,
-                }
-            ],
-        }
-        declaration = helper_call(
-            packet,
-            "declare_final_set",
-            {"candidate_head": head, "final_set": final_set},
-        )
-        digest = declaration["artifact"]["digest"]
-        helper_call(
-            packet,
-            "verify_final",
-            {
-                "candidate_head": head,
-                "set_digest": digest,
-                "command_index": 0,
-                "deadline_seconds": 10,
-            },
-        )
-    return {
-        "status": "reviewed",
-        "review_head": head,
         "verification_set_digest": digest,
-        "open_findings": [],
-        "open_obligation_ids": [],
-        "no_applicable_verification_approved": False,
-        "summary": "provider-neutral whole-branch review",
+        "blocker": None,
     }
 
 
@@ -208,29 +272,67 @@ def generic_main(sequence_path: Path) -> int:
         "session_action": "resume" if "--resume" in sys.argv else "fresh",
         "session_id": session_id,
     }
+    nested_git_init = nested_git_init_probe(action_index)
+    if nested_git_init is not None:
+        record["nested_git_init"] = nested_git_init
     with log_path.open("a", encoding="utf-8") as stream:
         stream.write(json.dumps(record, sort_keys=True) + "\n")
     emit({"type": "system", "subtype": "init", "session_id": session_id})
-    if action in {"stalled", "dirty-stalled"}:
+    if action in {"stalled", "dirty-stalled", "canary-interrupt"}:
         if action == "dirty-stalled":
             Path("partial-provider-edit.txt").write_text(
                 "partial implementation\n", encoding="utf-8"
             )
+        if action == "canary-interrupt":
+            Path("resume-marker.txt").write_text(
+                "first plan handoff complete\n", encoding="utf-8"
+            )
+            subprocess.run(["git", "add", "resume-marker.txt"], check=True)
+            subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "user.name=Plan Runner Parity",
+                    "-c",
+                    "user.email=parity@example.test",
+                    "commit",
+                    "-m",
+                    "canary interruption boundary",
+                ],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            Path("dirty-checkpoint.txt").write_text(
+                "resume this exact checkpoint\n", encoding="utf-8"
+            )
+            time.sleep(300)
         time.sleep(2)
         return 7
-    if action in {"interrupted", "same-failure"}:
+    if action in {"interrupted", "clean-interrupted", "same-failure"}:
         return 7
     if action in {"implemented", "resume-dirty-implemented"}:
         index = packet["current_plan"]["index"]
         marker = Path(f"plan-{index}.txt")
         marker.write_text("implemented\n", encoding="utf-8")
         paths = [marker.name]
-        partial = Path("partial-provider-edit.txt")
+        partial = (
+            Path("partial-provider-edit.txt")
+            if Path("partial-provider-edit.txt").exists()
+            else Path("dirty-checkpoint.txt")
+        )
         if action == "resume-dirty-implemented":
             if not partial.is_file():
                 raise ValueError("sealed partial implementation is missing")
             paths.append(partial.name)
         subprocess.run(["git", "add", *paths], check=True)
+        commit_environment = dict(os.environ)
+        commit_environment.update(
+            {
+                "GIT_AUTHOR_DATE": "2026-01-01T00:00:00+00:00",
+                "GIT_COMMITTER_DATE": "2026-01-01T00:00:00+00:00",
+            }
+        )
         subprocess.run(
             [
                 "git",
@@ -243,14 +345,13 @@ def generic_main(sequence_path: Path) -> int:
                 f"implement plan {index}",
             ],
             check=True,
+            env=commit_environment,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
         structured = generic_result(packet, "implemented")
     elif action == "blocked":
         structured = generic_result(packet, action)
-    elif action == "finalized":
-        structured = generic_finalization(packet)
     else:
         raise ValueError(f"unknown provider-neutral action: {action}")
     generic_emit_result(session_id, structured)
@@ -305,9 +406,28 @@ record = {
     },
     "git_terminal_prompt": os.environ.get("GIT_TERMINAL_PROMPT"),
     "git_config_count": os.environ.get("GIT_CONFIG_COUNT"),
-    "git_pushurl": os.environ.get("GIT_CONFIG_VALUE_0"),
+    "git_pushurl": next(
+        (
+            os.environ.get(f"GIT_CONFIG_VALUE_{index}")
+            for index in range(
+                int(os.environ.get("GIT_CONFIG_COUNT", "0"))
+            )
+            if os.environ.get(f"GIT_CONFIG_KEY_{index}")
+            == "remote.origin.pushurl"
+        ),
+        None,
+    ),
+    "git_identity": {
+        "author_name": os.environ.get("GIT_AUTHOR_NAME"),
+        "author_email": os.environ.get("GIT_AUTHOR_EMAIL"),
+        "committer_name": os.environ.get("GIT_COMMITTER_NAME"),
+        "committer_email": os.environ.get("GIT_COMMITTER_EMAIL"),
+    },
     "helper_socket": os.environ.get("KWS_PLAN_RUNNER_HELPER_SOCKET"),
 }
+nested_git_init = nested_git_init_probe(launch_count - 1)
+if nested_git_init is not None:
+    record["nested_git_init"] = nested_git_init
 with log_path.open("a", encoding="utf-8") as stream:
     stream.write(json.dumps(record, sort_keys=True) + "\n")
 

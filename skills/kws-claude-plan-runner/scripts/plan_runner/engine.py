@@ -3,11 +3,9 @@ from __future__ import annotations
 import dataclasses
 import json
 import os
-import re
 import signal
 import subprocess
 import sys
-import threading
 import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
@@ -15,50 +13,56 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .contracts import ExitCode, TASK_STATUSES, canonical_json, sha256_json
+from .contracts import (
+    CONTRACT_VERSION,
+    FORMAT_VERSION,
+    ExitCode,
+    canonical_json,
+    require_digest,
+    require_full_sha,
+    sha256_json,
+)
 from .evidence import EvidenceStore
-from .git_ops import GitWorkspace, WorktreeObservation
+from .git_ops import (
+    GitIdentity,
+    GitWorkspace,
+    WorktreeObservation,
+    configured_git_identity,
+    sanitized_controller_env,
+    validate_commit_identities,
+)
 from .helper import HelperDescriptor, HelperServer
-from .provider import ClaudeAdapter, DENY_TOOLS, ProviderOutcome, ProviderRequest
+from .provider import (
+    DENY_TOOLS,
+    ClaudeAdapter,
+    ProviderOutcome,
+    ProviderRequest,
+)
 from .recovery import (
     ActivityLease,
-    normalize_strategy_note,
     ProgressSnapshot,
     RecoveryPolicy,
     strategy_note_digest,
 )
-from .runtime import RuntimeIdentity, RuntimeUnavailable, require_compatible_runtime
-from .storage import ArtifactRef, RunLock, StateStore, atomic_private_write
+from .runtime import (
+    RuntimeIdentity,
+    RuntimeUnavailable,
+    require_compatible_runtime,
+)
+from .storage import (
+    RunLock,
+    StateStore,
+    atomic_private_write,
+)
 
 
 IMPLEMENTATION_PROMPT = """Read the execution packet and immutable source documents.
-Use Superpowers to implement CURRENT_PLAN only.
-All SPECIFICATIONS are source-of-truth context; there is no positional
-spec-to-plan pairing.
-Choose implementation, tests, reviews, subagents, and technical recovery
-strategies yourself. Quality and completion outrank token use.
-Resolve ordinary defects autonomously. Do not ask the user.
-Use the supplied helper for verification. Do not merge, push, deploy, or
-modify files outside WORKTREE.
-Return only the enforced structured result."""
+Use Superpowers to implement CURRENT_PLAN only. Superpowers owns engineering
+judgment, TDD, internal review, and progress tracking. The controller owns only
+immutable inputs, Git identity, bounded recovery, exact verification, and the
+handoff. Use the supplied helper for handoff verification. Do not merge, push,
+deploy, or leave WORKTREE. Return only the enforced structured result."""
 
-FINALIZATION_PROMPT = """This is a fresh finalization context for CANDIDATE_HEAD.
-Review the full starting-commit-to-candidate diff against every immutable spec
-and plan. First declare the complete final verification set through the
-helper, then execute every declared command through the helper, then return
-one structured whole-branch review. Do not modify the worktree and do not
-repeat existing exact successful evidence."""
-
-FINAL_REVIEW_FIX_PROMPT = """This is a fresh implementation context for bundled
-whole-branch review findings at CANDIDATE_HEAD. Fix only the supplied
-REVIEW_FINDINGS against the immutable specifications and already implemented
-plans. Preserve the implemented-plan ledger and do not invent plans, tasks, or
-verification requirements. Resolve the findings autonomously through
-Superpowers, use the supplied helper for focused verification, and return only
-the enforced structured result. Do not merge, push, deploy, or modify files
-outside WORKTREE."""
-
-_RUN_SLUG = re.compile(r"[^a-z0-9]+")
 _AUTHORITY_BLOCKERS = frozenset(
     {
         "credentials_unavailable",
@@ -72,17 +76,7 @@ _AUTHORITY_BLOCKERS = frozenset(
         "provider_usage_blocked",
     }
 )
-_CONTAMINATED_OUTCOMES = frozenset(
-    {
-        "abnormal_compaction",
-        "context_overflow",
-        "failed",
-        "resume_failed",
-        "session_damage",
-        "session_missing",
-        "stalled",
-    }
-)
+_RUN_ID_SAFE = "abcdefghijklmnopqrstuvwxyz0123456789"
 
 
 @dataclass(frozen=True)
@@ -93,148 +87,189 @@ class RuntimePaths:
     skill_root: Path
 
     def __post_init__(self) -> None:
-        for name in ("state_home", "worktree_home", "runner_script", "skill_root"):
-            value = Path(getattr(self, name))
+        for field in dataclasses.fields(self):
+            value = Path(getattr(self, field.name))
             if not value.is_absolute():
-                raise ValueError(f"{name} must be absolute")
-            object.__setattr__(self, name, value)
+                raise ValueError(f"{field.name} must be absolute")
+            object.__setattr__(self, field.name, value)
 
 
 class _SignalGate:
     def __init__(self) -> None:
-        self._event = threading.Event()
-        self._previous: dict[int, object] = {}
+        self._requested = False
+        self._previous: dict[int, Any] = {}
 
     def requested(self) -> bool:
-        return self._event.is_set()
+        return self._requested
 
     def __enter__(self) -> "_SignalGate":
-        self._event.clear()
-        if threading.current_thread() is not threading.main_thread():
-            return self
-        for signum in (signal.SIGINT, signal.SIGTERM):
-            self._previous[signum] = signal.getsignal(signum)
-            signal.signal(signum, self._request_stop)
+        for number in (signal.SIGINT, signal.SIGTERM):
+            self._previous[number] = signal.getsignal(number)
+            signal.signal(number, self._stop)
         return self
 
-    def __exit__(self, _type: object, _value: object, _traceback: object) -> None:
-        for signum, previous in self._previous.items():
-            signal.signal(signum, previous)
+    def __exit__(
+        self,
+        _type: object,
+        _value: object,
+        _traceback: object,
+    ) -> None:
+        for number, handler in self._previous.items():
+            signal.signal(number, handler)
         self._previous.clear()
 
-    def _request_stop(self, _signum: int, _frame: object) -> None:
-        self._event.set()
+    def _stop(self, _number: int, _frame: object) -> None:
+        self._requested = True
+
+
+def _git(
+    workspace: Path,
+    *arguments: str,
+    environment: Mapping[str, str] | None = None,
+) -> str:
+    process = subprocess.run(
+        ["git", *arguments],
+        cwd=workspace,
+        env=sanitized_controller_env(environment),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if process.returncode:
+        detail = (process.stderr or process.stdout).strip()
+        raise ValueError(
+            f"git {' '.join(arguments)} failed: {detail or 'unknown error'}"
+        )
+    return process.stdout.strip()
+
+
+def _source_head(
+    workspace: Path,
+    environment: Mapping[str, str] | None = None,
+) -> str:
+    return require_full_sha(
+        _git(workspace, "rev-parse", "HEAD", environment=environment)
+    )
+
+
+def _common_directory(
+    workspace: Path,
+    environment: Mapping[str, str] | None = None,
+) -> Path:
+    raw = _git(
+        workspace,
+        "rev-parse",
+        "--git-common-dir",
+        environment=environment,
+    )
+    candidate = Path(raw)
+    return (
+        candidate
+        if candidate.is_absolute()
+        else workspace / candidate
+    ).resolve(strict=True)
+
+
+def _protected_refs(
+    workspace: Path,
+    assigned_branch: str,
+    environment: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    assigned = f"refs/heads/{assigned_branch}"
+    result: dict[str, str] = {}
+    for line in _git(
+        workspace,
+        "for-each-ref",
+        "--format=%(refname)\t%(objectname)",
+        environment=environment,
+    ).splitlines():
+        name, separator, sha = line.partition("\t")
+        if separator and name != assigned:
+            result[name] = require_full_sha(sha)
+    return result
+
+
+def _input_fingerprint(
+    specs: Sequence[Path],
+    plans: Sequence[Path],
+) -> str:
+    documents = []
+    for role, paths in (("spec", specs), ("plan", plans)):
+        for position, path in enumerate(paths):
+            source = Path(path)
+            payload = source.read_bytes()
+            payload.decode("utf-8")
+            documents.append(
+                {
+                    "role": role,
+                    "position": position,
+                    "path": str(source),
+                    "content_digest": sha256_json(
+                        {"utf8": payload.decode("utf-8")}
+                    ),
+                }
+            )
+    return sha256_json(documents)
+
+
+def _snapshot_fingerprint(state: Mapping[str, object]) -> str:
+    documents = []
+    inputs = state.get("inputs")
+    if not isinstance(inputs, list):
+        raise ValueError("input snapshots are unavailable")
+    for record in inputs:
+        if not isinstance(record, Mapping):
+            raise ValueError("input snapshot record is invalid")
+        path = Path(str(record.get("snapshot_path", "")))
+        payload = path.read_bytes()
+        payload.decode("utf-8")
+        documents.append(
+            {
+                "role": record.get("role"),
+                "position": record.get("input_order"),
+                "path": record.get("source_path"),
+                "content_digest": sha256_json(
+                    {"utf8": payload.decode("utf-8")}
+                ),
+            }
+        )
+    return sha256_json(documents)
 
 
 def _runtime_document(identity: RuntimeIdentity) -> dict[str, object]:
     return dataclasses.asdict(identity)
 
 
-def _run_id(first_plan: Path) -> str:
-    slug = _RUN_SLUG.sub("-", first_plan.stem.lower()).strip("-")[:48] or "plan"
-    return f"{slug}-{uuid.uuid4()}"
+def _slug(path: Path) -> str:
+    lowered = path.stem.lower()
+    characters = [
+        character if character in _RUN_ID_SAFE else "-"
+        for character in lowered
+    ]
+    value = "".join(characters).strip("-")[:40]
+    return value or "plan"
 
 
-def _git_text(workspace: Path, *arguments: str) -> str:
-    result = subprocess.run(
-        ["git", *arguments],
-        cwd=workspace,
-        check=False,
-        capture_output=True,
-        text=True,
+def _artifact_payload(
+    store: StateStore,
+    reference: Mapping[str, object],
+) -> dict[str, object]:
+    value = json.loads(
+        store.referenced_artifact(reference).read_text(encoding="utf-8")
     )
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout).strip()
-        raise ValueError(detail or f"git {' '.join(arguments)} failed")
-    return result.stdout.strip()
-
-
-def _source_head(workspace: Path) -> str:
-    return _git_text(workspace, "rev-parse", "HEAD")
-
-
-def _git_common_dir(workspace: Path) -> Path:
-    value = Path(_git_text(workspace, "rev-parse", "--git-common-dir"))
-    if not value.is_absolute():
-        value = workspace / value
-    return value.resolve(strict=True)
-
-
-def _protected_refs(workspace: Path, assigned_branch: str) -> dict[str, str]:
-    result: dict[str, str] = {}
-    assigned = f"refs/heads/{assigned_branch}"
-    raw = _git_text(
-        workspace, "for-each-ref", "--format=%(refname)%09%(objectname)"
-    )
-    for line in raw.splitlines():
-        name, separator, value = line.partition("\t")
-        if separator and name != assigned:
-            result[name] = value
-    return result
-
-
-def _input_digest(specs: Sequence[Path], plans: Sequence[Path]) -> str:
-    import hashlib
-
-    records = []
-    for role, paths in (("spec", specs), ("plan", plans)):
-        for index, path in enumerate(paths):
-            payload = Path(path).read_bytes()
-            records.append(
-                {
-                    "role": role,
-                    "input_order": index,
-                    "source_path": str(Path(path).absolute()),
-                    "sha256": hashlib.sha256(payload).hexdigest(),
-                    "byte_length": len(payload),
-                }
-            )
-    return sha256_json(records)
-
-
-def _snapshot_input_digest(state: Mapping[str, object]) -> str:
-    records = []
-    inputs = state.get("inputs")
-    if not isinstance(inputs, list):
-        raise ValueError("input records are invalid")
-    for item in inputs:
-        if not isinstance(item, Mapping):
-            raise ValueError("input record is invalid")
-        records.append(
-            {
-                "role": item.get("role"),
-                "input_order": item.get("input_order"),
-                "source_path": item.get("source_path"),
-                "sha256": item.get("sha256"),
-                "byte_length": item.get("byte_length"),
-            }
-        )
-    return sha256_json(records)
-
-
-def _descriptor_document(descriptor: HelperDescriptor) -> dict[str, object]:
-    return {
-        "protocol_version": descriptor.protocol_version,
-        "socket_path": str(descriptor.socket_path),
-        "nonce": descriptor.nonce,
-        "client_argv": list(descriptor.client_argv),
-    }
-
-
-def _artifact_payload(store: StateStore, reference: Mapping[str, object]) -> object:
-    return json.loads(store.referenced_artifact(reference).read_text(encoding="utf-8"))
-
-
-def _json_array(value: object) -> bool:
-    """Accept immutable provider tuples as JSON arrays without accepting text."""
-    return isinstance(value, Sequence) and not isinstance(value, (str, bytes))
+    if not isinstance(value, dict):
+        raise ValueError("artifact payload is invalid")
+    return value
 
 
 def _plain_json(value: object) -> object:
-    """Thaw provider-owned immutable JSON before durable serialization."""
     if isinstance(value, Mapping):
-        return {str(key): _plain_json(item) for key, item in value.items()}
-    if _json_array(value):
+        return {
+            key: _plain_json(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
         return [_plain_json(item) for item in value]
     return value
 
@@ -245,7 +280,7 @@ class PlanRunner:
         paths: RuntimePaths,
         *,
         runtime_checker: Callable[[], RuntimeIdentity] | None = None,
-        adapter_factory: Callable[..., Any] | None = None,
+        adapter_factory: Callable[..., object] | None = None,
         output: Callable[[str], None] = print,
         environment: Mapping[str, str] | None = None,
         clock: Callable[[], float] = time.monotonic,
@@ -257,10 +292,12 @@ class PlanRunner:
         self._runtime_checker = runtime_checker
         self._adapter_factory = adapter_factory
         self._output = output
-        self._environment = dict(os.environ if environment is None else environment)
+        self._environment = dict(
+            os.environ if environment is None else environment
+        )
         self._clock = clock
-        self._recovery = RecoveryPolicy()
         self._event_hook = event_hook
+        self._recovery = RecoveryPolicy()
         self._signals = _SignalGate()
 
     def _event(self, stage: str) -> None:
@@ -276,74 +313,97 @@ class PlanRunner:
         stall_seconds: float,
         model: str | None = None,
     ) -> int:
+        store: StateStore | None = None
         try:
+            runtime = self._runtime()
             if not specs or not plans:
                 raise ValueError("at least one spec and one plan are required")
             if (
-                not isinstance(stall_seconds, (int, float))
-                or isinstance(stall_seconds, bool)
+                isinstance(stall_seconds, bool)
+                or not isinstance(stall_seconds, (int, float))
                 or stall_seconds <= 0
             ):
                 raise ValueError("stall-seconds must be positive")
-            ordered_specs = tuple(Path(item) for item in specs)
-            ordered_plans = tuple(Path(item) for item in plans)
-            workspace = Path(workspace)
-            for path in (*ordered_specs, *ordered_plans, workspace):
-                if not path.is_absolute():
-                    raise ValueError("all input and workspace paths must be absolute")
-            runtime = self._require_runtime()
+            ordered_specs = tuple(Path(path) for path in specs)
+            ordered_plans = tuple(Path(path) for path in plans)
+            source = Path(workspace)
+            if (
+                not source.is_absolute()
+                or any(
+                    not path.is_absolute()
+                    for path in (*ordered_specs, *ordered_plans)
+                )
+            ):
+                raise ValueError("workspace and inputs must be absolute")
+            source = source.resolve(strict=True)
+            starting_commit = _source_head(source, self._environment)
+            common = _common_directory(source, self._environment)
+            git_identity = configured_git_identity(
+                source,
+                self._environment,
+            )
+            input_digest = _input_fingerprint(
+                ordered_specs,
+                ordered_plans,
+            )
+            intent_digest = sha256_json(
+                {
+                    "provider": "claude",
+                    "git_common_dir": str(common),
+                    "starting_commit": starting_commit,
+                    "input_digest": input_digest,
+                }
+            )
+            lock_home = self.paths.state_home.with_name(
+                f".{self.paths.state_home.name}-intent-locks"
+            )
+            lock_home.mkdir(mode=0o700, parents=True, exist_ok=True)
+            with RunLock(lock_home / f"{intent_digest}.lock"):
+                match = self._admitted_run(lock_home, intent_digest)
+                if match is not None:
+                    return self._report_existing(match)
+                run_id = f"{_slug(ordered_plans[0])}-{uuid.uuid4()}"
+                branch = f"claude-plan/{run_id}"
+                worktree = self.paths.worktree_home / run_id
+                root = self.paths.state_home / run_id
+                self._write_admission(lock_home, intent_digest, run_id)
+                store = StateStore.create(
+                    root=root,
+                    provider="claude",
+                    run_id=run_id,
+                    source_repository=source,
+                    source_commit=starting_commit,
+                    worktree=worktree,
+                    branch=branch,
+                    specs=ordered_specs,
+                    plans=ordered_plans,
+                    immutable_config={
+                        "stall_seconds": float(stall_seconds),
+                        "model": model,
+                        "permission_mode": "bypassPermissions",
+                        "deny_tools_digest": sha256_json(list(DENY_TOOLS)),
+                        "input_snapshot_digest": input_digest,
+                        "execution_intent_digest": intent_digest,
+                        "git_common_dir": str(common),
+                        "protected_refs": _protected_refs(
+                            source,
+                            branch,
+                            self._environment,
+                        ),
+                        "git_identity": git_identity.as_dict(),
+                    },
+                    runner_runtime=_runtime_document(runtime),
+                )
+                GitWorkspace.create(source, worktree, branch)
         except RuntimeUnavailable as error:
             return self._runtime_blocked(str(error))
-        except (OSError, ValueError, TypeError) as error:
-            self._emit_error("invalid_invocation", error)
-            return int(ExitCode.INVALID)
-
-        run_id = _run_id(ordered_plans[0])
-        branch = f"claude-plan/{run_id}"
-        worktree = self.paths.worktree_home / run_id
-        root = self.paths.state_home / run_id
-        try:
-            starting_commit = _source_head(workspace)
-            common_dir = _git_common_dir(workspace)
-            input_digest = _input_digest(ordered_specs, ordered_plans)
-            immutable_config = {
-                "stall_seconds": float(stall_seconds),
-                "model": model,
-                "permission_mode": "bypassPermissions",
-                "deny_tools_digest": sha256_json(list(DENY_TOOLS)),
-                "input_snapshot_digest": input_digest,
-                "git_common_dir": str(common_dir),
-                "protected_refs": _protected_refs(workspace, branch),
-            }
-            store = StateStore.create(
-                root=root,
-                provider="claude",
-                run_id=run_id,
-                source_repository=workspace,
-                source_commit=starting_commit,
-                worktree=worktree,
-                branch=branch,
-                specs=ordered_specs,
-                plans=ordered_plans,
-                immutable_config=immutable_config,
-                runner_runtime=_runtime_document(runtime),
-            )
-            # The runtime identity is now durable. No worktree or provider
-            # mutation occurs before this point.
-            GitWorkspace.create(workspace, worktree, branch)
-        except (OSError, ValueError, TypeError) as error:
-            if root.exists():
-                try:
-                    store = StateStore.open(root)
-                    state = store.snapshot()
-                    state["status"] = "failed"
-                    state["failure"] = {
-                        "reason_code": "state_integrity_failed",
-                        "detail": str(error)[:512],
-                    }
-                    store.commit(state)
-                except (OSError, ValueError):
-                    pass
+        except (OSError, TypeError, ValueError) as error:
+            if store is not None:
+                self._mark_failure(
+                    store,
+                    "state_integrity_failed",
+                    str(error),
+                )
             self._emit_error("state_integrity_failed", error)
             return int(ExitCode.INTEGRITY)
         return self._execute(store)
@@ -356,172 +416,78 @@ class PlanRunner:
         retry_failed: bool,
         strategy_note: str | None,
     ) -> int:
-        if strategy_note is not None and not retry_failed:
-            self._emit_error(
-                "invalid_invocation", "--strategy-note requires --retry-failed"
-            )
-            return int(ExitCode.INVALID)
-        if retry_failed and (not isinstance(strategy_note, str) or not strategy_note.strip()):
-            self._emit_error(
-                "invalid_invocation",
-                "--retry-failed requires a nonempty --strategy-note",
-            )
-            return int(ExitCode.INVALID)
         try:
-            self._require_runtime()
-            run_root = self.paths.state_home / run_id
-            if not run_root.exists():
+            root = self.paths.state_home / run_id
+            if not root.exists():
                 raise FileNotFoundError(f"unknown run: {run_id}")
-            store = StateStore.open(run_root)
+            store = StateStore.open(root)
             state = store.snapshot()
+            if (
+                state.get("format_version"),
+                state.get("contract_version"),
+            ) != (FORMAT_VERSION, CONTRACT_VERSION):
+                self._emit_error(
+                    "legacy_contract_requires_v1_runner",
+                    "version 1 state is inspect-only",
+                )
+                return int(ExitCode.INVALID)
+            self._runtime()
             status = state["status"]
             if status == "ready_for_integration":
+                self._require_ready_handoff(store)
                 self._emit_summary(state)
                 return int(ExitCode.READY)
-            if status == "blocked" and not retry_blocked:
-                self._emit_summary(state)
-                return int(ExitCode.BLOCKED)
+            if status == "blocked":
+                if not retry_blocked:
+                    self._emit_summary(state)
+                    return int(ExitCode.BLOCKED)
+                state["status"] = "resumable"
+                state["failure"] = None
+                store.commit(state)
+            elif retry_blocked:
+                raise ValueError("--retry-blocked requires a blocked run")
             if status == "failed":
                 if not retry_failed:
                     self._emit_summary(state)
                     return int(ExitCode.FAILED)
-                failure = state.get("failure")
-                failure_signature = (
-                    failure.get("failure_signature")
-                    if isinstance(failure, Mapping)
-                    else None
-                )
+                if not isinstance(strategy_note, str) or not strategy_note.strip():
+                    raise ValueError(
+                        "--retry-failed requires a nonempty --strategy-note"
+                    )
+                digest = strategy_note_digest(strategy_note)
                 prior = (
-                    failure.get("strategy_digests", [])
-                    if isinstance(failure, Mapping)
+                    state["failure"].get("strategy_digests", [])
+                    if isinstance(state.get("failure"), Mapping)
                     else []
                 )
-                for reference in state["artifact_refs"]:
-                    if (
-                        not isinstance(reference, Mapping)
-                        or reference.get("kind") != "strategy_note"
-                    ):
-                        continue
-                    payload = _artifact_payload(store, reference)
-                    if (
-                        isinstance(payload, Mapping)
-                        and payload.get("failure_signature") == failure_signature
-                        and isinstance(payload.get("strategy_note_digest"), str)
-                    ):
-                        prior = [*prior, payload["strategy_note_digest"]]
-                digest = strategy_note_digest(strategy_note)
                 if digest in prior:
                     raise ValueError("strategy note duplicates a prior strategy")
-                normalized_note = normalize_strategy_note(strategy_note)
-                strategy_mode = (
-                    failure.get("mode")
-                    if isinstance(failure, Mapping)
-                    and failure.get("mode")
-                    in {
-                        "implementation",
-                        "finalization",
-                        "final_review_fix",
-                    }
-                    else (
-                        "implementation"
-                        if state["current_plan_index"] < len(state["plans"])
-                        else "finalization"
-                    )
-                )
-                strategy_plan_index = (
-                    failure.get("plan_index")
-                    if isinstance(failure, Mapping)
-                    and "plan_index" in failure
-                    else (
-                        state["current_plan_index"]
-                        if state["current_plan_index"] < len(state["plans"])
-                        else None
-                    )
-                )
-                audit_artifact = store.put_artifact(
-                    "recovery_audit",
-                    {
-                        "run_id": state["run_id"],
-                        "failed_revision": state["revision"],
-                        "failure": (
-                            dict(failure) if isinstance(failure, Mapping) else None
-                        ),
-                    },
-                )
-                strategy_artifact = store.put_artifact(
-                    "strategy_note",
-                    {
-                        "run_id": state["run_id"],
-                        "failure_signature": failure_signature,
-                        "mode": strategy_mode,
-                        "plan_index": strategy_plan_index,
-                        "strategy_note": normalized_note,
-                        "strategy_note_digest": digest,
-                    },
-                )
-                for artifact in (audit_artifact, strategy_artifact):
-                    if artifact.as_dict() not in state["artifact_refs"]:
-                        state["artifact_refs"].append(artifact.as_dict())
                 state["status"] = "resumable"
                 state["failure"] = {
-                    "reason_code": (
-                        failure.get("reason_code")
-                        if isinstance(failure, Mapping)
-                        else "recovery_exhausted"
-                    ),
-                    "mode": strategy_mode,
-                    "plan_index": strategy_plan_index,
-                    "failure_signature": failure_signature,
+                    "reason_code": "operator_retry",
                     "failure_sequence": [],
-                    "operator_strategy_note": normalized_note,
-                    "operator_strategy_artifact": strategy_artifact.as_dict(),
-                    "recovery_audit_artifact": audit_artifact.as_dict(),
-                    "required_strategy_change": True,
-                    "strategy_digests": [digest],
-                    "next_session_action": "fresh_session",
+                    "next_session_action": "fresh_root",
+                    "strategy_digests": [*prior, digest],
                 }
                 store.commit(state)
             elif retry_failed:
-                raise ValueError("--retry-failed is valid only for a failed run")
-            elif status == "blocked":
-                state["status"] = "resumable"
-                store.commit(state)
-            elif retry_blocked:
-                raise ValueError("--retry-blocked is valid only for a blocked run")
+                raise ValueError("--retry-failed requires a failed run")
             return self._execute(store)
         except RuntimeUnavailable as error:
             return self._runtime_blocked(str(error))
         except FileNotFoundError as error:
             self._emit_error("unknown_run", error)
             return int(ExitCode.INVALID)
-        except ValueError as error:
-            message = str(error)
-            code = (
-                ExitCode.INVALID
-                if "input snapshot digest" in message
-                or "unknown run" in message
-                or "strategy" in message
-                or "--retry" in message
-                else ExitCode.INTEGRITY
-            )
-            self._emit_error(
-                "input_changed_requires_new_run"
-                if code == ExitCode.INVALID and "input snapshot" in message
-                else "invalid_state",
-                error,
-            )
-            return int(code)
-        except Exception as error:
-            self._emit_error("internal_error", error)
-            return int(ExitCode.INTERNAL)
+        except (OSError, TypeError, ValueError) as error:
+            self._emit_error("invalid_state", error)
+            return int(ExitCode.INTEGRITY)
 
     def inspect(self, run_id: str) -> int:
         try:
-            run_root = self.paths.state_home / run_id
-            if not run_root.exists():
+            root = self.paths.state_home / run_id
+            if not root.exists():
                 raise FileNotFoundError(f"unknown run: {run_id}")
-            store = StateStore.open(run_root)
-            self._emit_summary(store.snapshot())
+            self._emit_summary(StateStore.open(root).snapshot())
             return int(ExitCode.READY)
         except FileNotFoundError as error:
             self._emit_error("unknown_run", error)
@@ -530,7 +496,7 @@ class PlanRunner:
             self._emit_error("state_integrity_failed", error)
             return int(ExitCode.INTEGRITY)
 
-    def _require_runtime(self) -> RuntimeIdentity:
+    def _runtime(self) -> RuntimeIdentity:
         if self._runtime_checker is None:
             return require_compatible_runtime()
         return require_compatible_runtime(self._runtime_checker())
@@ -541,33 +507,25 @@ class PlanRunner:
             if reason in {"runtime_missing", "runtime_incompatible"}
             else "runtime_incompatible"
         )
-        document = {
-            "status": "blocked",
-            "reason_code": reason_code,
-            "detail": "required uv-managed CPython 3.13 runtime is unavailable",
-        }
-        # Preserve a bounded preflight record without snapshotting inputs or
-        # creating a worktree.
-        try:
-            self.paths.state_home.mkdir(mode=0o700, parents=True, exist_ok=True)
-            atomic_private_write(
-                self.paths.state_home / "last-runtime-blocked.json",
-                canonical_json(document),
+        self._output(
+            json.dumps(
+                {
+                    "status": "blocked",
+                    "reason_code": reason_code,
+                    "detail": "uv-managed CPython 3.13 is unavailable",
+                },
+                sort_keys=True,
             )
-        except OSError:
-            pass
-        self._output(json.dumps(document, sort_keys=True))
+        )
         return int(ExitCode.BLOCKED)
 
     def _execute(self, store: StateStore) -> int:
         try:
             with self._signals, RunLock(store.root / "run.lock"):
                 state = store.snapshot()
-                self._reconcile_controller(store, state)
-                state = store.snapshot()
                 if (
-                    _snapshot_input_digest(state)
-                    != state["immutable_config"].get("input_snapshot_digest")
+                    _snapshot_fingerprint(state)
+                    != state["immutable_config"]["input_snapshot_digest"]
                 ):
                     raise ValueError("input snapshot digest changed")
                 repository = state["repository"]
@@ -576,320 +534,218 @@ class PlanRunner:
                     Path(repository["worktree"]),
                     repository["branch"],
                 )
-                self._require_git_contract(state, workspace)
-                self._reconcile_completed_attempt(store, workspace)
+                self._require_git(state, workspace)
+                reconciled = self._reconcile_controller(store, workspace)
+                if reconciled is not None:
+                    return reconciled
                 state = store.snapshot()
-                while state["current_plan_index"] < len(state["plans"]):
-                    code = self._execute_current_plan(store, workspace)
-                    if code is not None:
-                        return code
-                    state = store.snapshot()
-                if self._pending_review_fix(state):
-                    finalization = state["finalization"]
-                    code = self._recover_review_findings(
+                failure = (
+                    state.get("failure")
+                    if isinstance(state.get("failure"), Mapping)
+                    else {}
+                )
+                recorded_session = (
+                    failure.get("session_id")
+                    if failure.get("next_session_action") == "resume_root"
+                    and isinstance(failure.get("session_id"), str)
+                    else None
+                )
+                if (
+                    recorded_session is not None
+                    and self._resume_consumed(
+                        state,
+                        state["current_plan_index"],
+                    )
+                ):
+                    recorded_session = None
+                while (
+                    store.snapshot()["current_plan_index"]
+                    < len(store.snapshot()["plans"])
+                ):
+                    result = self._execute_plan(
                         store,
                         workspace,
-                        finalization["review_findings"],
-                        initialize=False,
+                        session_id=recorded_session,
+                        resume_session=recorded_session is not None,
                     )
-                    if code is not None:
-                        return code
-                return self._finalize(store, workspace)
+                    recorded_session = None
+                    if result is not None:
+                        return result
+                self._require_ready_handoff(store, workspace)
+                state = store.snapshot()
+                state["status"] = "ready_for_integration"
+                state["failure"] = None
+                store.commit(state)
+                self._emit_summary(store.snapshot())
+                return int(ExitCode.READY)
         except ValueError as error:
-            if "input snapshot digest" in str(error):
-                self._emit_error("input_changed_requires_new_run", error)
-                return int(ExitCode.INVALID)
-            self._fail_closed(store, "state_integrity_failed", error)
+            self._mark_failure(
+                store,
+                "state_integrity_failed",
+                str(error),
+            )
+            self._emit_error("state_integrity_failed", error)
             return int(ExitCode.INTEGRITY)
         except RuntimeError as error:
-            self._fail_closed(store, "controller_transport_failed", error)
+            self._mark_failure(
+                store,
+                "controller_transport_failed",
+                str(error),
+            )
+            self._emit_error("controller_transport_failed", error)
             return int(ExitCode.INTERNAL)
         except Exception as error:
-            self._fail_closed(store, "internal_error", error)
+            self._mark_failure(store, "internal_error", str(error))
+            self._emit_error("internal_error", error)
             return int(ExitCode.INTERNAL)
 
-    def _require_git_contract(
+    def _require_git(
         self,
         state: Mapping[str, object],
         workspace: GitWorkspace,
     ) -> WorktreeObservation:
         config = state["immutable_config"]
-        if str(workspace._common_dir) != config.get("git_common_dir"):
+        if str(workspace._common_dir) != config["git_common_dir"]:
             raise ValueError("Git common directory drift detected")
-        if workspace.protected_refs() != config.get("protected_refs"):
+        if workspace.protected_refs() != config["protected_refs"]:
             raise ValueError("protected ref mutation detected")
-        observation = workspace.require_identity()
-        _git_text(
+        observed = workspace.require_identity()
+        _git(
             workspace.worktree,
             "merge-base",
             "--is-ancestor",
             state["repository"]["source_commit"],
-            observation.head,
+            observed.head,
         )
-        failure = state.get("failure")
-        sealed_partial = (
-            failure.get("partial_worktree")
-            if isinstance(failure, Mapping)
-            else None
-        )
-        if sealed_partial is not None or not observation.clean:
-            self._require_sealed_partial_worktree(state, observation)
-        return observation
-
-    @staticmethod
-    def _require_sealed_partial_worktree(
-        state: Mapping[str, object], observation: WorktreeObservation
-    ) -> None:
+        self._require_commit_identity(state, workspace, observed.head)
+        if observed.clean:
+            return observed
         failure = state.get("failure")
         sealed = (
             failure.get("partial_worktree")
             if isinstance(failure, Mapping)
             else None
         )
-        expected_keys = {
-            "version",
-            "attempt_id",
-            "mode",
-            "plan_index",
-            "head",
-            "branch",
-            "porcelain_digest",
-            "tree_digest",
-            "clean",
+        expected = {
+            "version": 1,
+            "plan_index": state.get("current_plan_index"),
+            **dataclasses.asdict(observed),
         }
-        if not isinstance(sealed, Mapping) or set(sealed) != expected_keys:
-            raise ValueError("dirty worktree has no exact resumable checkpoint")
-        identity = dataclasses.asdict(observation)
-        if any(sealed.get(key) != value for key, value in identity.items()):
-            raise ValueError("sealed partial worktree identity drift detected")
-        if sealed.get("version") != 1 or sealed.get("clean") is not False:
-            raise ValueError("sealed partial worktree checkpoint is invalid")
-        if sealed.get("mode") not in {"implementation", "final_review_fix"}:
-            raise ValueError("dirty worktree mode is not resumable")
-        attempts = state.get("attempts")
-        attempt = next(
-            (
-                item
-                for item in reversed(attempts)
-                if isinstance(item, Mapping)
-                and item.get("attempt_id") == sealed.get("attempt_id")
-            ),
-            None,
-        ) if isinstance(attempts, list) else None
-        if (
-            not isinstance(attempt, Mapping)
-            or attempt.get("mode") != sealed.get("mode")
-            or attempt.get("plan_index") != sealed.get("plan_index")
-            or attempt.get("outcome") != "controller_stopped"
-        ):
-            raise ValueError("sealed partial worktree attempt is invalid")
+        if sealed != expected:
+            raise ValueError("dirty worktree identity is not sealed")
+        return observed
 
     @staticmethod
-    def _pending_review_fix(state: Mapping[str, object]) -> bool:
-        finalization = state.get("finalization")
-        findings = (
-            finalization.get("review_findings")
-            if isinstance(finalization, Mapping)
-            else None
-        )
-        return (
-            isinstance(finalization, Mapping)
-            and finalization.get("pending_mode") == "final_review_fix"
-            and _json_array(findings)
-            and bool(findings)
-            and state.get("current_plan_index") == len(state.get("plans", []))
-        )
-
-    def _reconcile_controller(
-        self, store: StateStore, state: dict[str, object]
+    def _require_commit_identity(
+        state: Mapping[str, object],
+        workspace: GitWorkspace,
+        candidate_head: str,
     ) -> None:
-        if state["status"] not in {"running", "recovering"}:
-            return
-        attempts = state.get("attempts")
-        active = attempts[-1] if isinstance(attempts, list) and attempts else None
-        if isinstance(active, dict) and not active.get("completed", False):
-            state["status"] = "resumable"
-            active["reconciled"] = "controller_not_live"
-            store.commit(state)
-            return
-        if (
-            not isinstance(active, dict)
-            or active.get("completed") is not True
-            or active.get("outcome") in {"implemented", "reviewed"}
-        ):
-            return
-        outcome_kind = str(active.get("outcome") or "transport_failed")
-        reason = str(
-            active.get("provider_code") or "controller_transport_failed"
+        validate_commit_identities(
+            workspace.worktree,
+            state["repository"]["source_commit"],
+            candidate_head,
+            GitIdentity.from_mapping(
+                state["immutable_config"].get("git_identity")
+            ),
         )
-        strategy = (
-            f"controller crash recovery after {outcome_kind}: "
-            "start a fresh provider session with a changed strategy"
-        )
-        signature = sha256_json(
-            {
-                "reason_code": reason,
-                "provider_code": active.get("provider_code"),
-                "mode": active.get("mode"),
-                "plan_index": active.get("plan_index"),
-                "input_digest": state["immutable_config"].get(
-                    "input_snapshot_digest"
-                ),
-            }
-        )
-        strategy_ref = store.put_artifact(
-            "strategy_note",
-            {
-                "run_id": state["run_id"],
-                "mode": active.get("mode"),
-                "plan_index": active.get("plan_index"),
-                "strategy_note": strategy,
-                "failure_signature": signature,
-                "strategy_note_digest": strategy_note_digest(strategy),
-            },
-        )
-        state = store.snapshot()
-        active = state["attempts"][-1]
-        active["reconciled"] = "completed_nonterminal"
-        if strategy_ref.as_dict() not in state["artifact_refs"]:
-            state["artifact_refs"].append(strategy_ref.as_dict())
-        baseline = active.get("baseline_progress")
-        tree_digest = (
-            baseline.get("git_tree_digest")
-            if isinstance(baseline, Mapping)
-            else None
-        )
-        sequence_entry = {
-            "failure_signature": signature,
-            "strategy_note_digest": strategy_note_digest(strategy),
-            "tree_digest": tree_digest,
-        }
-        state["status"] = "recovering"
-        state["failure"] = {
-            "reason_code": reason,
-            "mode": active.get("mode"),
-            "plan_index": active.get("plan_index"),
-            "failure_signature": signature,
-            "failure_sequence": [sequence_entry],
-            "baseline_progress": baseline,
-            "required_strategy_change": True,
-            "next_session_action": "fresh_session",
-            "strategy_digests": [strategy_note_digest(strategy)],
-        }
-        store.commit(state)
 
-    def _execute_current_plan(
-        self, store: StateStore, workspace: GitWorkspace
+    def _execute_plan(
+        self,
+        store: StateStore,
+        workspace: GitWorkspace,
+        *,
+        session_id: str | None = None,
+        resume_session: bool = False,
     ) -> int | None:
         state = store.snapshot()
         index = state["current_plan_index"]
         plan = state["plans"][index]
-        if plan["status"] == "implemented":
-            state["current_plan_index"] = index + 1
-            store.commit(state)
-            return None
+        observed = self._require_git(state, workspace)
         plan["status"] = "running"
         state["status"] = "running"
-        state["failure"] = state.get("failure")
         attempt_id = str(uuid.uuid4())
         state["attempts"].append(
             {
                 "attempt_id": attempt_id,
                 "mode": "implementation",
                 "plan_index": index,
-                "controller_pid": os.getpid(),
                 "completed": False,
-                "baseline_progress": dataclasses.asdict(
-                    self._progress(state, workspace)
+                "session_action": (
+                    "resume_root" if resume_session else "fresh_root"
                 ),
             }
         )
         store.commit(state)
-        observation = self._require_git_contract(state, workspace)
-        session_id = self._implementation_session(state, index)
+        root_session = session_id or str(uuid.uuid4())
         outcome = self._launch(
             store,
             workspace,
-            mode="implementation",
-            observation_head=observation.head,
-            current_plan_index=index,
-            session_id=session_id,
+            index=index,
+            candidate_head=observed.head,
+            session_id=root_session,
+            resume_session=resume_session,
             attempt_id=attempt_id,
         )
-        self._event("provider_outcome_received")
-        if outcome.kind in {"implemented", "blocked", "failed"}:
-            try:
-                self._validated_plan_result(outcome.result)
-            except ValueError as error:
-                return self._integrity_failure(store, str(error))
-        if outcome.kind == "implemented":
-            return self._accept_implemented(
-                store, workspace, outcome, index, attempt_id
-            )
+        self._complete_attempt(store, attempt_id, outcome)
         if outcome.kind == "controller_stopped":
-            return self._pause_resumable(
-                store, workspace, outcome, attempt_id, index, "implementation"
+            return self._pause(
+                store,
+                workspace,
+                outcome,
+                reconciled_attempt_id=attempt_id,
             )
-        self._checkpoint_outcome(store, outcome, attempt_id, index, "implementation")
         if outcome.kind == "blocked":
-            return self._block(store, outcome)
-        return self._recover(store, workspace, outcome, index)
-
-    def _implementation_session(
-        self, state: Mapping[str, object], index: int
-    ) -> str | None:
-        failure = state.get("failure")
-        if (
-            isinstance(failure, Mapping)
-            and failure.get("next_session_action") == "fresh_session"
-        ):
+            return self._block(
+                store,
+                outcome,
+                reconciled_attempt_id=attempt_id,
+            )
+        if outcome.kind == "implemented":
+            try:
+                self._accept_implemented(
+                    store,
+                    workspace,
+                    index,
+                    outcome,
+                )
+            except ValueError as error:
+                self._mark_failure(
+                    store,
+                    "state_integrity_failed",
+                    str(error),
+                )
+                return int(ExitCode.INTEGRITY)
             return None
-        sessions = state.get("sessions")
-        if not isinstance(sessions, list):
-            return None
-        for session in reversed(sessions):
-            if (
-                isinstance(session, Mapping)
-                and session.get("mode") == "implementation"
-                and session.get("plan_index") == index
-                and session.get("health") == "healthy"
-                and isinstance(session.get("session_id"), str)
-            ):
-                return session["session_id"]
-        return None
+        return self._recover(
+            store,
+            workspace,
+            index,
+            outcome,
+            reconciled_attempt_id=attempt_id,
+        )
 
     def _launch(
         self,
         store: StateStore,
         workspace: GitWorkspace,
         *,
-        mode: str,
-        observation_head: str,
-        current_plan_index: int | None,
-        session_id: str | None,
+        index: int,
+        candidate_head: str,
+        session_id: str,
+        resume_session: bool,
         attempt_id: str,
     ) -> ProviderOutcome:
         state = store.snapshot()
+        evidence = EvidenceStore(store, workspace, self._environment)
+        lease = ActivityLease(
+            state["immutable_config"]["stall_seconds"],
+            self._clock(),
+        )
         client_argv = (
             str(Path(sys.executable).resolve()),
             str(self.paths.runner_script.resolve()),
             "_helper",
-        )
-        evidence = EvidenceStore(store, workspace, self._environment)
-        finalization = state.get("finalization")
-        sealed_digest = (
-            finalization.get("verification_set_digest")
-            if mode == "finalization" and isinstance(finalization, Mapping)
-            else None
-        )
-        sealed_head = (
-            finalization.get("candidate_head")
-            if isinstance(sealed_digest, str)
-            and isinstance(finalization, Mapping)
-            else None
-        )
-        lease = ActivityLease(
-            state["immutable_config"]["stall_seconds"], self._clock()
         )
         with HelperServer(
             run_id=state["run_id"],
@@ -897,1840 +753,1090 @@ class PlanRunner:
             evidence_store=evidence,
             client_argv=client_argv,
             state_store=store,
-            sealed_final_set_digest=sealed_digest,
-            sealed_candidate_head=sealed_head,
             on_command_started=lease.cover_command_until,
             on_command_finished=lease.command_finished,
         ) as helper:
-            if mode == "implementation":
-                packet = self._implementation_packet(
-                    store.snapshot(),
-                    observation_head,
-                    current_plan_index,
-                    helper.descriptor,
-                )
-                prompt = IMPLEMENTATION_PROMPT
-                schema = self.paths.skill_root / "templates" / "plan-result.schema.json"
-            elif mode == "final_review_fix":
-                packet = self._final_review_fix_packet(
-                    store.snapshot(), observation_head, helper.descriptor
-                )
-                prompt = FINAL_REVIEW_FIX_PROMPT
-                schema = self.paths.skill_root / "templates" / "plan-result.schema.json"
-            else:
-                packet = self._finalization_packet(
-                    store.snapshot(), observation_head, helper.descriptor
-                )
-                prompt = FINALIZATION_PROMPT
-                schema = (
-                    self.paths.skill_root
-                    / "templates"
-                    / "finalization-result.schema.json"
-                )
-            adapter = self._make_adapter(
-                state["run_id"], helper.descriptor, workspace
+            packet = self._packet(
+                store.snapshot(),
+                index,
+                candidate_head,
+                helper.descriptor,
             )
             request = ProviderRequest(
                 worktree=workspace.worktree,
-                prompt=prompt
-                + "\nEXECUTION_PACKET="
-                + canonical_json(packet).decode("utf-8"),
-                output_schema=json.loads(schema.read_text(encoding="utf-8")),
-                model=state["immutable_config"]["model"],
-                session_id=session_id or str(uuid.uuid4()),
-                resume=session_id is not None,
+                prompt=(
+                    IMPLEMENTATION_PROMPT
+                    + "\nEXECUTION_PACKET="
+                    + canonical_json(packet).decode("utf-8")
+                ),
+                output_schema=json.loads(
+                    (
+                        self.paths.skill_root
+                        / "templates"
+                        / "plan-result.schema.json"
+                    ).read_text(encoding="utf-8")
+                ),
+                session_id=session_id,
+                git_identity=GitIdentity.from_mapping(
+                    state["immutable_config"].get("git_identity")
+                ),
+                resume=resume_session,
+                model=state["immutable_config"].get("model"),
             )
             if self._signals.requested():
                 return ProviderOutcome(
                     "controller_stopped",
                     None,
-                    None,
+                    session_id,
                     None,
                     "controller_transport_failed",
                     {},
                     (),
                     "",
                 )
+            adapter = self._adapter(
+                state["run_id"],
+                helper.descriptor,
+                workspace,
+            )
             return adapter.launch(
                 request,
                 lease,
-                on_session_id=lambda captured: self._capture_session(
+                on_session_id=lambda captured: self._record_session(
                     store,
                     attempt_id=attempt_id,
-                    mode=mode,
-                    plan_index=current_plan_index,
+                    plan_index=index,
                     session_id=captured,
-                    candidate_head=observation_head,
+                    candidate_head=candidate_head,
+                ),
+                on_process_observation=lambda process: self._record_process(
+                    store,
+                    attempt_id=attempt_id,
+                    process=process,
                 ),
             )
 
-    def _make_adapter(
-        self, run_id: str, helper: HelperDescriptor, workspace: GitWorkspace
-    ) -> Any:
-        values = {
-            "source_env": self._environment,
-            "run_id": run_id,
-            "helper": helper,
-            "remotes": tuple(
-                line
-                for line in _git_text(workspace.worktree, "remote").splitlines()
-                if line
-            ),
-            "stop_requested": self._signals.requested,
-        }
-        if self._adapter_factory is None:
-            return ClaudeAdapter(**values)
-        return self._adapter_factory(**values)
-
-    def _implementation_packet(
+    def _packet(
         self,
         state: Mapping[str, object],
+        index: int,
         current_head: str,
-        current_index: int,
         helper: HelperDescriptor,
     ) -> dict[str, object]:
-        specs = [
-            item
-            for item in state["inputs"]
-            if item["role"] == "spec"
+        specifications = [
+            {
+                "snapshot_path": record["snapshot_path"],
+                "sha256": record["sha256"],
+            }
+            for record in state["inputs"]
+            if record["role"] == "spec"
         ]
-        plan = state["plans"][current_index]
-        handoffs = self._artifact_summaries(state, "plan_handoff")
-        receipts = self._artifact_summaries(state, "verification_receipt")
-        mode = "implementation"
-        operator_notes = self._operator_strategy_notes(
-            state, mode=mode, plan_index=current_index
-        )
-        recovery_context = self._recovery_context(
-            state,
-            current_head=current_head,
-            current_index=current_index,
-            current_mode=mode,
-            operator_notes=operator_notes,
-        )
+        plan = state["plans"][index]
+        prior_handoffs = [
+            prior["handoff_digest"]
+            for prior in state["plans"][:index]
+            if prior.get("handoff_digest") is not None
+        ]
+        prior_sets = []
+        for digest in prior_handoffs:
+            reference = next(
+                reference
+                for reference in state["artifact_refs"]
+                if reference["kind"] == "plan_handoff"
+                and reference["digest"] == digest
+            )
+            handoff = _artifact_payload(
+                StateStore.open(
+                    self.paths.state_home / state["run_id"]
+                ),
+                reference,
+            )
+            prior_sets.append(handoff["verification_set_digest"])
+        is_final = index == len(state["plans"]) - 1
         return {
-            "packet_version": 1,
+            "packet_version": 2,
             "mode": "implementation",
             "run_id": state["run_id"],
             "worktree": state["repository"]["worktree"],
             "branch": state["repository"]["branch"],
             "starting_commit": state["repository"]["source_commit"],
             "current_head": current_head,
-            "specifications": [
-                {
-                    "snapshot_path": item["snapshot_path"],
-                    "sha256": item["sha256"],
-                }
-                for item in specs
-            ],
+            "specifications": specifications,
             "current_plan": {
-                "index": current_index,
+                "index": index,
                 "total": len(state["plans"]),
                 "snapshot_path": plan["snapshot_path"],
                 "sha256": plan["sha256"],
             },
-            "implemented_plan_handoffs": handoffs,
-            "task_ledger": state["task_ledger"],
-            "verification_receipts": receipts,
-            "checkpoint_revision": state["revision"],
-            "recovery_context": recovery_context,
-            "required_strategy_change": recovery_context[
-                "required_strategy_change"
-            ],
-            "operator_strategy_notes": operator_notes,
-            "helper": _descriptor_document(helper),
-            "quality_profile": "quality_first",
-            "integration": "not_observed",
-        }
-
-    def _finalization_packet(
-        self,
-        state: Mapping[str, object],
-        candidate_head: str,
-        helper: HelperDescriptor,
-    ) -> dict[str, object]:
-        finalization = state.get("finalization")
-        mode = "finalization"
-        operator_notes = self._operator_strategy_notes(
-            state, mode=mode, plan_index=None
-        )
-        recovery_context = self._recovery_context(
-            state,
-            current_head=candidate_head,
-            current_index=None,
-            current_mode=mode,
-            operator_notes=operator_notes,
-        )
-        return {
-            "packet_version": 1,
-            "mode": "finalization",
-            "run_id": state["run_id"],
-            "worktree": state["repository"]["worktree"],
-            "branch": state["repository"]["branch"],
-            "starting_commit": state["repository"]["source_commit"],
-            "candidate_head": candidate_head,
-            "sealed_verification_set_digest": (
-                finalization.get("verification_set_digest")
-                if isinstance(finalization, Mapping)
-                and finalization.get("candidate_head") == candidate_head
-                else None
-            ),
-            "recovery_context": recovery_context,
-            "required_strategy_change": recovery_context[
-                "required_strategy_change"
-            ],
-            "operator_strategy_notes": operator_notes,
-            "specifications": [
-                {
-                    "snapshot_path": item["snapshot_path"],
-                    "sha256": item["sha256"],
-                }
-                for item in state["inputs"]
-                if item["role"] == "spec"
-            ],
-            "plans": [
-                {
-                    "snapshot_path": item["snapshot_path"],
-                    "sha256": item["sha256"],
-                }
-                for item in state["plans"]
-            ],
-            "implemented_plan_handoffs": self._artifact_summaries(
-                state, "plan_handoff"
-            ),
-            "verification_receipts": self._artifact_summaries(
-                state, "verification_receipt"
-            ),
-            "checkpoint_revision": state["revision"],
-            "helper": _descriptor_document(helper),
-            "quality_profile": "quality_first",
-            "integration": "not_observed",
-        }
-
-    def _final_review_fix_packet(
-        self,
-        state: Mapping[str, object],
-        candidate_head: str,
-        helper: HelperDescriptor,
-    ) -> dict[str, object]:
-        failure = state.get("failure")
-        finalization = state.get("finalization")
-        findings = (
-            finalization.get("review_findings")
-            if isinstance(finalization, Mapping)
-            else None
-        )
-        if not isinstance(findings, list) and isinstance(failure, Mapping):
-            findings = failure.get("review_findings")
-        if not isinstance(findings, list) or not findings:
-            raise ValueError("bundled review findings are unavailable")
-        mode = "final_review_fix"
-        current_index = len(state["plans"]) - 1
-        operator_notes = self._operator_strategy_notes(
-            state, mode=mode, plan_index=current_index
-        )
-        recovery_context = self._recovery_context(
-            state,
-            current_head=candidate_head,
-            current_index=current_index,
-            current_mode=mode,
-            operator_notes=operator_notes,
-        )
-        return {
-            "packet_version": 1,
-            "mode": "final_review_fix",
-            "run_id": state["run_id"],
-            "worktree": state["repository"]["worktree"],
-            "branch": state["repository"]["branch"],
-            "starting_commit": state["repository"]["source_commit"],
-            "candidate_head": candidate_head,
-            "review_findings": [_plain_json(item) for item in findings],
-            "specifications": [
-                {
-                    "snapshot_path": item["snapshot_path"],
-                    "sha256": item["sha256"],
-                }
-                for item in state["inputs"]
-                if item["role"] == "spec"
-            ],
-            "implemented_plans": [
-                {
-                    "plan_id": item["plan_id"],
-                    "status": item["status"],
-                    "snapshot_path": item["snapshot_path"],
-                    "sha256": item["sha256"],
-                }
-                for item in state["plans"]
-            ],
-            "implemented_plan_handoffs": self._artifact_summaries(
-                state, "plan_handoff"
-            ),
-            "task_ledger": state["task_ledger"],
-            "verification_receipts": self._artifact_summaries(
-                state, "verification_receipt"
-            ),
-            "invalidated_final_verification_set_digest": (
-                state["finalization"].get("verification_set_digest")
-                if isinstance(state.get("finalization"), Mapping)
-                else None
-            ),
-            "checkpoint_revision": state["revision"],
-            "recovery_context": recovery_context,
-            "required_strategy_change": recovery_context[
-                "required_strategy_change"
-            ],
-            "operator_strategy_notes": operator_notes,
-            "helper": _descriptor_document(helper),
-            "quality_profile": "quality_first",
-            "integration": "not_observed",
-        }
-
-    @staticmethod
-    def _artifact_summaries(
-        state: Mapping[str, object], kind: str
-    ) -> list[dict[str, object]]:
-        references = state.get("artifact_refs")
-        if not isinstance(references, list):
-            return []
-        return [
-            {
-                "kind": item["kind"],
-                "digest": item["digest"],
-                "relative_path": item["relative_path"],
-            }
-            for item in references
-            if isinstance(item, Mapping) and item.get("kind") == kind
-        ]
-
-    @staticmethod
-    def _operator_strategy_notes(
-        state: Mapping[str, object],
-        *,
-        mode: str,
-        plan_index: int | None,
-    ) -> list[dict[str, object]]:
-        inputs = state.get("inputs")
-        references = state.get("artifact_refs")
-        if not isinstance(inputs, list) or not inputs or not isinstance(references, list):
-            return []
-        failure = state.get("failure")
-        if (
-            not isinstance(failure, Mapping)
-            or failure.get("mode") != mode
-            or failure.get("plan_index") != plan_index
-        ):
-            return []
-        failure_signature = failure.get("failure_signature")
-        run_root = Path(inputs[0]["snapshot_path"]).parent.parent.resolve()
-        notes: list[dict[str, object]] = []
-        for reference in references:
-            if (
-                not isinstance(reference, Mapping)
-                or reference.get("kind") != "strategy_note"
-            ):
-                continue
-            path = (run_root / reference["relative_path"]).resolve()
-            if run_root not in path.parents:
-                raise ValueError("strategy note artifact escapes run root")
-            raw = path.read_bytes()
-            payload = json.loads(raw)
-            if (
-                canonical_json(payload) != raw
-                or sha256_json(payload) != reference.get("digest")
-                or not isinstance(payload.get("strategy_note"), str)
-                or not isinstance(payload.get("strategy_note_digest"), str)
-                or re.fullmatch(
-                    r"[0-9a-f]{64}", payload["strategy_note_digest"]
-                ) is None
-                or payload.get("mode") not in {
-                    "implementation",
-                    "finalization",
-                    "final_review_fix",
-                }
-                or (
-                    payload.get("plan_index") is not None
-                    and not isinstance(payload.get("plan_index"), int)
-                )
-            ):
-                raise ValueError("strategy note artifact is invalid")
-            if (
-                payload.get("failure_signature") != failure_signature
-                or payload.get("mode") != mode
-                or payload.get("plan_index") != plan_index
-            ):
-                continue
-            notes.append(
-                {
-                    "digest": reference["digest"],
-                    "snapshot_path": str(path),
-                    "strategy_note": payload["strategy_note"],
-                    "strategy_note_digest": payload["strategy_note_digest"],
-                    "failure_signature": payload.get("failure_signature"),
-                    "mode": payload["mode"],
-                    "plan_index": payload["plan_index"],
-                }
-            )
-        return notes[-3:]
-
-    @staticmethod
-    def _recovery_context(
-        state: Mapping[str, object],
-        *,
-        current_head: str,
-        current_index: int | None,
-        current_mode: str,
-        operator_notes: Sequence[Mapping[str, object]],
-    ) -> dict[str, object]:
-        failure = state.get("failure")
-        if (
-            not isinstance(failure, Mapping)
-            or failure.get("mode") != current_mode
-            or failure.get("plan_index") != current_index
-        ):
-            failure = {}
-        signature = failure.get("failure_signature")
-        if (
-            not isinstance(signature, str)
-            or re.fullmatch(r"[0-9a-f]{64}", signature) is None
-        ):
-            signature = None
-        reason = failure.get("reason_code")
-        if isinstance(reason, str) and reason.strip():
-            reason = normalize_strategy_note(reason)
-            reason = reason.encode("utf-8")[:256].decode("utf-8", "ignore")
-        else:
-            reason = None
-        known_digests = (
-            {
-                digest
-                for digest in failure.get("strategy_digests", [])
-                if isinstance(digest, str)
-                and re.fullmatch(r"[0-9a-f]{64}", digest)
-            }
-            if isinstance(failure.get("strategy_digests"), list)
-            else set()
-        )
-        attempted: list[dict[str, object]] = []
-        for note in operator_notes:
-            text = note.get("strategy_note")
-            digest = note.get("strategy_note_digest")
-            if (
-                not isinstance(text, str)
-                or not isinstance(digest, str)
-                or re.fullmatch(r"[0-9a-f]{64}", digest) is None
-            ):
-                continue
-            normalized = normalize_strategy_note(text)
-            if (
-                digest not in known_digests
-                or note.get("failure_signature") != signature
-            ):
-                continue
-            attempted.append(
-                {
-                    "failure_signature": signature,
-                    "strategy_note": normalized,
-                    "strategy_note_digest": digest,
-                }
-            )
-        return {
-            "scope": {"mode": current_mode, "plan_index": current_index},
-            "failure_reason": reason,
-            "failure_signature": signature,
-            "attempted_strategies": attempted[-3:],
-            "required_strategy_change": bool(
-                failure.get("required_strategy_change")
-            ),
-            "next_session_action": (
-                failure.get("next_session_action")
-                if failure.get("next_session_action")
-                in {"explicit_resume", "fresh_session", "none"}
-                else None
-            ),
-            "checkpoint": {
-                "revision": state["revision"],
-                "head": current_head,
-                "plan_index": current_index,
-            },
-        }
-
-    def _checkpoint_outcome(
-        self,
-        store: StateStore,
-        outcome: ProviderOutcome,
-        attempt_id: str,
-        plan_index: int | None,
-        mode: str,
-    ) -> None:
-        result_artifact = (
-            store.put_artifact("provider_result", _plain_json(outcome.result))
-            if outcome.kind == "reviewed"
-            and isinstance(outcome.result, Mapping)
-            else None
-        )
-        state = store.snapshot()
-        for attempt in reversed(state["attempts"]):
-            if attempt.get("attempt_id") == attempt_id:
-                attempt["completed"] = True
-                attempt["outcome"] = outcome.kind
-                attempt["provider_code"] = outcome.provider_code
-                if result_artifact is not None:
-                    attempt["result_artifact"] = result_artifact.as_dict()
-                break
-        if (
-            result_artifact is not None
-            and result_artifact.as_dict() not in state["artifact_refs"]
-        ):
-            state["artifact_refs"].append(result_artifact.as_dict())
-        session = next(
-            (
-                item
-                for item in reversed(state["sessions"])
-                if isinstance(item, dict)
-                and item.get("attempt_id") == attempt_id
-            ),
-            None,
-        )
-        attempt = next(
-            (
-                item
-                for item in reversed(state["attempts"])
-                if isinstance(item, dict)
-                and item.get("attempt_id") == attempt_id
-            ),
-            None,
-        )
-        if session is None:
-            if attempt is not None:
-                attempt["session_missing"] = True
-        elif outcome.session_id is not None:
-            if session.get("session_id") != outcome.session_id:
-                raise ValueError("provider outcome session does not match capture")
-            session["phase"] = "completed"
-            session["health"] = (
-                "invalid"
-                if outcome.kind in _CONTAMINATED_OUTCOMES
-                else "healthy"
-            )
-            if mode == "finalization":
-                candidate_head = session.get("candidate_head")
-                declaration = (
-                    self._existing_final_set(store, candidate_head)
-                    if isinstance(candidate_head, str)
-                    else None
-                )
-                if declaration is not None:
-                    session["verification_set_digest"] = declaration
-                    state["finalization"] = {
-                        "candidate_head": candidate_head,
-                        "verification_set_digest": declaration,
+            "implemented_plan_handoffs": prior_handoffs,
+            "prior_verification_sets": prior_sets,
+            "is_final_plan": is_final,
+            "final_review_requirements": (
+                [
+                    {
+                        "snapshot_path": record["snapshot_path"],
+                        "sha256": record["sha256"],
                     }
-        if isinstance(outcome.result, Mapping) and isinstance(
-            outcome.result.get("task_ledger"), list
-        ):
-            state["task_ledger"] = self._validated_task_ledger(
-                outcome.result["task_ledger"]
-            )
-        store.commit(state)
-
-    def _capture_session(
-        self,
-        store: StateStore,
-        *,
-        attempt_id: str,
-        mode: str,
-        plan_index: int | None,
-        session_id: str,
-        candidate_head: str,
-    ) -> None:
-        state = store.snapshot()
-        attempt = next(
-            (
-                item
-                for item in reversed(state["attempts"])
-                if isinstance(item, dict)
-                and item.get("attempt_id") == attempt_id
+                    for record in state["inputs"]
+                ]
+                if is_final
+                else None
             ),
-            None,
-        )
-        if attempt is None:
-            raise ValueError("provider attempt is unavailable at session capture")
-        existing = next(
-            (
-                item
-                for item in reversed(state["sessions"])
-                if isinstance(item, dict)
-                and item.get("attempt_id") == attempt_id
+            "checkpoint_revision": state["revision"],
+            "recovery_context": self._recovery_context(
+                state,
+                current_head=current_head,
             ),
-            None,
-        )
-        if existing is not None:
-            if existing.get("session_id") != session_id:
-                raise ValueError("provider session changed within one attempt")
-            return
-        attempt["session_id"] = session_id
-        finalization = state.get("finalization")
-        state["sessions"].append(
-            {
-                "attempt_id": attempt_id,
-                "mode": mode,
-                "plan_index": plan_index,
-                "session_id": session_id,
-                "phase": "captured",
-                "health": "healthy",
-                "candidate_head": candidate_head,
-                "verification_set_digest": (
-                    finalization.get("verification_set_digest")
-                    if mode == "finalization"
-                    and isinstance(finalization, Mapping)
-                    else None
-                ),
-            }
-        )
-        store.commit(state)
-
-    def _pause_resumable(
-        self,
-        store: StateStore,
-        workspace: GitWorkspace,
-        outcome: ProviderOutcome,
-        attempt_id: str,
-        plan_index: int | None,
-        mode: str,
-    ) -> int:
-        state = store.snapshot()
-        attempt = next(
-            (
-                item
-                for item in reversed(state["attempts"])
-                if isinstance(item, Mapping)
-                and item.get("attempt_id") == attempt_id
-            ),
-            None,
-        )
-        if not isinstance(attempt, dict):
-            raise ValueError("provider attempt is unavailable at signal checkpoint")
-        if attempt.get("mode") != mode or attempt.get("plan_index") != plan_index:
-            raise ValueError("provider attempt changed at signal checkpoint")
-        attempt["completed"] = True
-        attempt["outcome"] = "controller_stopped"
-        attempt["provider_code"] = outcome.provider_code
-        session = next(
-            (
-                item
-                for item in reversed(state["sessions"])
-                if isinstance(item, Mapping)
-                and item.get("attempt_id") == attempt_id
-                and item.get("health") == "healthy"
-                and isinstance(item.get("session_id"), str)
-            ),
-            None,
-        )
-        if session is None:
-            attempt["session_missing"] = True
-        elif outcome.session_id is not None:
-            if session.get("session_id") != outcome.session_id:
-                raise ValueError("provider outcome session does not match capture")
-            session["phase"] = "completed"
-            session["health"] = "healthy"
-        observation = workspace.require_identity()
-        partial = None
-        if not observation.clean:
-            if mode not in {"implementation", "final_review_fix"}:
-                raise ValueError("provider modified worktree in non-mutating mode")
-            partial = {
-                "version": 1,
-                "attempt_id": attempt_id,
-                "mode": mode,
-                "plan_index": plan_index,
-                **dataclasses.asdict(observation),
-            }
-        state["status"] = "resumable"
-        state["failure"] = {
-            "reason_code": "controller_transport_failed",
-            "detail": "controller_signal",
-            "mode": mode,
-            "plan_index": plan_index,
-            "required_strategy_change": session is None,
-            "next_session_action": (
-                "explicit_resume" if session is not None else "fresh_session"
-            ),
-            "pending_mode": mode,
-            "partial_worktree": partial,
+            "helper": {
+                "protocol_version": helper.protocol_version,
+                "socket_path": str(helper.socket_path),
+                "nonce": helper.nonce,
+                "client_argv": list(helper.client_argv),
+            },
+            "integration_policy": "keep",
         }
-        if mode == "final_review_fix":
-            finalization = dict(state.get("finalization") or {})
-            finalization["pending_mode"] = mode
-            state["finalization"] = finalization
-        store.commit(state)
-        self._emit_summary(store.snapshot())
-        return int(ExitCode.RESUMABLE)
 
     def _accept_implemented(
         self,
         store: StateStore,
         workspace: GitWorkspace,
-        outcome: ProviderOutcome,
         index: int,
-        attempt_id: str,
-    ) -> int | None:
-        result = outcome.result
-        if not isinstance(result, Mapping):
-            return self._integrity_failure(store, "missing implementation result")
-        observation = workspace.require_clean_ancestor(
-            store.snapshot()["repository"]["source_commit"]
-        )
-        if result.get("head_commit") != observation.head:
-            return self._integrity_failure(store, "implementation HEAD mismatch")
-        ledger = self._validated_task_ledger(result.get("task_ledger"))
-        self._require_all_tasks_reported_done(ledger)
-        obligations = result.get("open_obligation_ids")
-        if not _json_array(obligations) or obligations:
-            return self._integrity_failure(store, "implementation obligations remain")
+        outcome: ProviderOutcome,
+    ) -> None:
+        result = self._validated_plan_result(outcome.result)
+        if result["status"] != "implemented":
+            raise ValueError("implemented transport returned blocked result")
         state = store.snapshot()
-        result_artifact = store.put_artifact(
-            "provider_result", _plain_json(result)
+        observed = workspace.require_clean_ancestor(
+            state["repository"]["source_commit"]
         )
-        handoff_artifact = store.put_artifact(
+        if workspace.protected_refs() != state["immutable_config"]["protected_refs"]:
+            raise ValueError("protected refs changed during provider handoff")
+        if result["head_commit"] != observed.head:
+            raise ValueError("provider handoff HEAD does not match clean worktree")
+        self._require_plan_history(
+            store,
+            workspace,
+            observed.head,
+            index,
+        )
+        self._require_commit_identity(state, workspace, observed.head)
+        digest = require_digest(result["verification_set_digest"])
+        artifact_kind = (
+            "run_verification_set"
+            if index == len(state["plans"]) - 1
+            else "plan_verification_set"
+        )
+        evidence = EvidenceStore(store, workspace, self._environment)
+        verification_receipts = evidence.require_successful_verification_set(
+            digest,
+            candidate_head=observed.head,
+            artifact_kind=artifact_kind,
+            plan_index=index,
+        )
+        result_artifact = store.put_artifact(
+            "provider_result",
+            dict(result),
+        )
+        handoff = store.put_artifact(
             "plan_handoff",
             {
                 "plan_index": index,
-                "head_commit": observation.head,
-                "summary": str(result.get("summary", ""))[:4096],
-                "task_ledger": ledger,
+                "plan_id": state["plans"][index]["plan_id"],
+                "plan_sha256": state["plans"][index]["sha256"],
+                "head_commit": observed.head,
+                "starting_commit": state["repository"]["source_commit"],
+                "verification_artifact_kind": artifact_kind,
+                "verification_set_digest": digest,
+                "summary": result["summary"],
             },
         )
+        branch_handoff = None
+        if index == len(state["plans"]) - 1:
+            run_reference = self._artifact_reference(
+                store.snapshot(),
+                "run_verification_set",
+                digest,
+            )
+            run_document = _artifact_payload(store, run_reference)
+            plan_set_digests = run_document.get("plan_set_digests")
+            if not isinstance(plan_set_digests, list):
+                raise ValueError("final verification provenance is invalid")
+            prior_handoffs = self._ordered_plan_handoff_refs(
+                {
+                    **state,
+                    "plans": state["plans"][:index],
+                }
+            )
+            ordered_handoffs = [*prior_handoffs, handoff.as_dict()]
+            branch_handoff = store.put_artifact(
+                "branch_handoff",
+                {
+                    "schema_version": 1,
+                    "run_id": state["run_id"],
+                    "status": "ready_for_integration",
+                    "branch": state["repository"]["branch"],
+                    "worktree": state["repository"]["worktree"],
+                    "starting_commit": state["repository"][
+                        "source_commit"
+                    ],
+                    "candidate_head": observed.head,
+                    "ordered_plan_handoffs": ordered_handoffs,
+                    "final_plan_handoff": handoff.as_dict(),
+                    "review_receipt": result_artifact.as_dict(),
+                    "verification_set": run_reference,
+                    "plan_set_digests": list(plan_set_digests),
+                    "verification_receipts": verification_receipts,
+                    "integration": "not_observed",
+                },
+            )
         state = store.snapshot()
-        for artifact in (result_artifact, handoff_artifact):
+        for artifact in (result_artifact, handoff, branch_handoff):
+            if artifact is None:
+                continue
             if artifact.as_dict() not in state["artifact_refs"]:
                 state["artifact_refs"].append(artifact.as_dict())
-        attempt = next(
-            (
-                item
-                for item in reversed(state["attempts"])
-                if isinstance(item, dict)
-                and item.get("attempt_id") == attempt_id
-            ),
-            None,
-        )
-        if attempt is None:
-            raise ValueError("implementation attempt is unavailable")
-        attempt.update(
-            {
-                "completed": True,
-                "outcome": "implemented",
-                "provider_code": outcome.provider_code,
-                "result_artifact": result_artifact.as_dict(),
-            }
-        )
-        session = next(
-            (
-                item
-                for item in reversed(state["sessions"])
-                if isinstance(item, dict)
-                and item.get("attempt_id") == attempt_id
-            ),
-            None,
-        )
-        if session is None and outcome.session_id is not None:
-            session = {
-                "attempt_id": attempt_id,
-                "mode": "implementation",
-                "plan_index": index,
-                "session_id": outcome.session_id,
-            }
-            state["sessions"].append(session)
-        if session is not None:
-            session["phase"] = "completed"
-            session["health"] = "healthy"
-        state["task_ledger"] = ledger
         state["plans"][index]["status"] = "implemented"
+        state["plans"][index]["handoff_digest"] = handoff.digest
         state["current_plan_index"] = index + 1
         state["status"] = "resumable"
         state["failure"] = None
         store.commit(state)
-        return None
-
-    def _reconcile_completed_attempt(
-        self, store: StateStore, workspace: GitWorkspace
-    ) -> None:
-        state = store.snapshot()
-        index = state["current_plan_index"]
-        if index >= len(state["plans"]):
-            return
-        plan = state["plans"][index]
-        if plan["status"] != "running":
-            return
-        attempts = state.get("attempts")
-        if not isinstance(attempts, list) or not attempts:
-            return
-        attempt = attempts[-1]
-        if (
-            not isinstance(attempt, Mapping)
-            or attempt.get("plan_index") != index
-            or attempt.get("mode") != "implementation"
-            or attempt.get("completed") is not True
-            or attempt.get("outcome") != "implemented"
-            or not isinstance(attempt.get("result_artifact"), Mapping)
-        ):
-            return
-        result = _artifact_payload(store, attempt["result_artifact"])
-        if not isinstance(result, Mapping):
-            raise ValueError("completed provider result artifact is invalid")
-        session_id = attempt.get("session_id")
-        outcome = ProviderOutcome(
-            "implemented",
-            0,
-            session_id if isinstance(session_id, str) else None,
-            result,
-            None,
-            {},
-            (),
-            "",
-        )
-        self._accept_implemented(
-            store,
-            workspace,
-            outcome,
-            index,
-            attempt["attempt_id"],
-        )
 
     @staticmethod
-    def _validated_task_ledger(value: object) -> list[dict[str, object]]:
-        if not _json_array(value):
-            raise ValueError("task ledger must be a list")
-        result: list[dict[str, object]] = []
-        seen: set[str] = set()
-        for entry in value:
-            if not isinstance(entry, Mapping):
-                raise ValueError("task ledger entry is invalid")
-            task_id = entry.get("task_id")
-            status = entry.get("status")
-            evidence = entry.get("evidence_digests")
-            if (
-                not isinstance(task_id, str)
-                or not task_id
-                or task_id in seen
-                or status not in TASK_STATUSES
-                or not _json_array(evidence)
-                or len(evidence) > 256
-                or any(
-                    not isinstance(item, str)
-                    or re.fullmatch(r"[0-9a-f]{64}", item) is None
-                    for item in evidence
-                )
-                or len(set(evidence)) != len(evidence)
-            ):
-                raise ValueError("task ledger entry is invalid")
-            seen.add(task_id)
+    def _artifact_reference(
+        state: Mapping[str, object],
+        kind: str,
+        digest: str,
+    ) -> dict[str, str]:
+        require_digest(digest)
+        matches = [
+            reference
+            for reference in state["artifact_refs"]
+            if isinstance(reference, dict)
+            and reference.get("kind") == kind
+            and reference.get("digest") == digest
+        ]
+        if len(matches) != 1:
+            raise ValueError(f"{kind} artifact reference is invalid")
+        return dict(matches[0])
+
+    @classmethod
+    def _ordered_plan_handoff_refs(
+        cls,
+        state: Mapping[str, object],
+    ) -> list[dict[str, str]]:
+        result: list[dict[str, str]] = []
+        for plan in state["plans"]:
+            digest = plan.get("handoff_digest")
+            if not isinstance(digest, str):
+                raise ValueError("plan handoff is not sealed")
             result.append(
-                {
-                    "task_id": task_id,
-                    "status": status,
-                    "evidence_digests": list(evidence),
-                }
+                cls._artifact_reference(
+                    state,
+                    "plan_handoff",
+                    digest,
+                )
             )
         return result
 
-    @classmethod
-    def _validated_plan_result(
-        cls, value: object
-    ) -> list[dict[str, object]]:
-        if not isinstance(value, Mapping) or set(value) != {
+    @staticmethod
+    def _require_plan_history(
+        store: StateStore,
+        workspace: GitWorkspace,
+        candidate_head: str,
+        plan_index: int,
+    ) -> None:
+        state = store.snapshot()
+        for expected_index, plan in enumerate(state["plans"][:plan_index]):
+            digest = plan.get("handoff_digest")
+            if not isinstance(digest, str):
+                raise ValueError("prior plan handoff is not sealed")
+            reference = PlanRunner._artifact_reference(
+                state,
+                "plan_handoff",
+                digest,
+            )
+            handoff = _artifact_payload(store, reference)
+            handoff_head = (
+                handoff.get("head_commit")
+                if handoff.get("plan_index") == expected_index
+                else None
+            )
+            if not isinstance(handoff_head, str):
+                raise ValueError("prior plan handoff artifact is invalid")
+            try:
+                workspace.require_ancestor(
+                    handoff_head,
+                    candidate_head,
+                )
+            except ValueError as error:
+                raise ValueError(
+                    "prior plan handoff is not an ancestor of candidate HEAD"
+                ) from error
+
+    def _require_ready_handoff(
+        self,
+        store: StateStore,
+        workspace: GitWorkspace | None = None,
+    ) -> None:
+        state = store.snapshot()
+        repository = state["repository"]
+        if workspace is None:
+            workspace = GitWorkspace.open(
+                Path(repository["source_repository"]),
+                Path(repository["worktree"]),
+                repository["branch"],
+            )
+        observed = workspace.require_clean_ancestor(
+            repository["source_commit"]
+        )
+        self._require_commit_identity(state, workspace, observed.head)
+        if (
+            state["current_plan_index"] != len(state["plans"])
+            or any(
+                plan.get("status") != "implemented"
+                for plan in state["plans"]
+            )
+        ):
+            raise ValueError("branch handoff plans are incomplete")
+        self._require_plan_history(
+            store,
+            workspace,
+            observed.head,
+            len(state["plans"]),
+        )
+        branch_references = [
+            reference
+            for reference in state["artifact_refs"]
+            if isinstance(reference, dict)
+            and reference.get("kind") == "branch_handoff"
+        ]
+        if len(branch_references) != 1:
+            raise ValueError("branch handoff artifact is invalid")
+        branch = _artifact_payload(store, branch_references[0])
+        ordered_handoffs = self._ordered_plan_handoff_refs(state)
+        final_handoff = ordered_handoffs[-1]
+        final_document = _artifact_payload(store, final_handoff)
+        review_reference = branch.get("review_receipt")
+        if not isinstance(review_reference, Mapping):
+            raise ValueError("branch handoff review receipt is invalid")
+        review_digest = review_reference.get("digest")
+        if (
+            not isinstance(review_digest, str)
+            or dict(review_reference)
+            != self._artifact_reference(
+                state,
+                "provider_result",
+                review_digest,
+            )
+        ):
+            raise ValueError("branch handoff review receipt is invalid")
+        review = _artifact_payload(store, review_reference)
+        verification_digest = final_document.get(
+            "verification_set_digest"
+        )
+        if (
+            not isinstance(verification_digest, str)
+            or review.get("status") != "implemented"
+            or review.get("head_commit") != observed.head
+            or review.get("verification_set_digest")
+            != verification_digest
+        ):
+            raise ValueError("branch handoff review receipt is invalid")
+        run_reference = self._artifact_reference(
+            state,
+            "run_verification_set",
+            verification_digest,
+        )
+        run_document = _artifact_payload(store, run_reference)
+        plan_set_digests = run_document.get("plan_set_digests")
+        if not isinstance(plan_set_digests, list):
+            raise ValueError(
+                "branch handoff verification provenance is invalid"
+            )
+        receipts = EvidenceStore(
+            store,
+            workspace,
+            self._environment,
+        ).require_successful_verification_set(
+            verification_digest,
+            candidate_head=observed.head,
+            artifact_kind="run_verification_set",
+            plan_index=len(state["plans"]) - 1,
+        )
+        expected = {
+            "schema_version": 1,
+            "run_id": state["run_id"],
+            "status": "ready_for_integration",
+            "branch": repository["branch"],
+            "worktree": repository["worktree"],
+            "starting_commit": repository["source_commit"],
+            "candidate_head": observed.head,
+            "ordered_plan_handoffs": ordered_handoffs,
+            "final_plan_handoff": final_handoff,
+            "review_receipt": dict(review_reference),
+            "verification_set": run_reference,
+            "plan_set_digests": list(plan_set_digests),
+            "verification_receipts": receipts,
+            "integration": "not_observed",
+        }
+        if branch != expected:
+            raise ValueError("branch handoff completeness is invalid")
+
+    @staticmethod
+    def _validated_plan_result(value: object) -> dict[str, object]:
+        required = {
             "status",
             "head_commit",
             "summary",
-            "task_ledger",
-            "open_obligation_ids",
-            "failure_signature",
-            "strategy_note",
+            "verification_set_digest",
             "blocker",
-        }:
+        }
+        if not isinstance(value, Mapping) or set(value) != required:
             raise ValueError("plan result shape is invalid")
-        status = value.get("status")
-        summary = value.get("summary")
-        head = value.get("head_commit")
-        obligations = value.get("open_obligation_ids")
-        signature = value.get("failure_signature")
-        strategy = value.get("strategy_note")
-        blocker = value.get("blocker")
+        result = dict(value)
+        status = result["status"]
+        if status not in {"implemented", "blocked"}:
+            raise ValueError("plan result status is invalid")
+        require_full_sha(result["head_commit"])
         if (
-            status not in {"implemented", "blocked", "failed"}
-            or not isinstance(head, str)
-            or re.fullmatch(r"[0-9a-f]{40}([0-9a-f]{24})?", head) is None
-            or not isinstance(summary, str)
-            or not summary.strip()
-            or len(summary) > 4096
-            or not _json_array(obligations)
-            or len(obligations) > 1024
-            or any(
-                not isinstance(item, str)
-                or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", item)
-                is None
-                for item in obligations
-            )
-            or len(set(obligations)) != len(obligations)
-            or (
-                strategy is not None
-                and (
-                    not isinstance(strategy, str)
-                    or not strategy.strip()
-                    or len(strategy) > 4096
-                )
-            )
+            not isinstance(result["summary"], str)
+            or not result["summary"].strip()
         ):
-            raise ValueError("plan result contract is invalid")
-        ledger = cls._validated_task_ledger(value.get("task_ledger"))
+            raise ValueError("plan result summary is invalid")
+        blocker = result["blocker"]
         if status == "implemented":
-            if signature is not None or blocker is not None or obligations:
-                raise ValueError("implemented result contract is invalid")
-            cls._require_all_tasks_reported_done(ledger)
-        elif status == "blocked":
+            require_digest(result["verification_set_digest"])
+            if blocker is not None:
+                raise ValueError("implemented result cannot include a blocker")
+        else:
+            if result["verification_set_digest"] is not None:
+                raise ValueError("blocked result cannot include verification")
             if (
                 not isinstance(blocker, Mapping)
                 or set(blocker) != {"kind", "detail"}
                 or blocker.get("kind") not in _AUTHORITY_BLOCKERS
                 or not isinstance(blocker.get("detail"), str)
-                or not str(blocker["detail"]).strip()
-                or len(str(blocker["detail"])) > 2048
-                or (
-                    signature is not None
-                    and (
-                        not isinstance(signature, str)
-                        or re.fullmatch(r"[0-9a-f]{64}", signature) is None
-                    )
-                )
+                or not blocker["detail"].strip()
             ):
-                raise ValueError("blocked result contract is invalid")
-        elif (
-            blocker is not None
-            or not isinstance(signature, str)
-            or re.fullmatch(r"[0-9a-f]{64}", signature) is None
-            or not isinstance(strategy, str)
-            or not strategy.strip()
-        ):
-            raise ValueError("failed result contract is invalid")
-        return ledger
-
-    @staticmethod
-    def _require_all_tasks_reported_done(
-        ledger: Sequence[Mapping[str, object]],
-    ) -> None:
-        if any(entry.get("status") != "reported_done" for entry in ledger):
-            raise ValueError("all submitted tasks must be reported_done")
-
-    def _block(self, store: StateStore, outcome: ProviderOutcome) -> int:
-        result = outcome.result
-        blocker = result.get("blocker") if isinstance(result, Mapping) else None
-        kind = blocker.get("kind") if isinstance(blocker, Mapping) else None
-        reason = outcome.provider_code or kind
-        if reason not in _AUTHORITY_BLOCKERS:
-            return self._integrity_failure(store, "unapproved blocker kind")
-        state = store.snapshot()
-        state["status"] = "blocked"
-        state["failure"] = {
-            "reason_code": reason,
-            "blocker": dict(blocker) if isinstance(blocker, Mapping) else None,
-        }
-        store.commit(state)
-        self._emit_summary(store.snapshot())
-        return int(ExitCode.BLOCKED)
-
-    def _progress(
-        self, state: Mapping[str, object], workspace: GitWorkspace
-    ) -> ProgressSnapshot:
-        observation = workspace.observe()
-        done = tuple(
-            entry["task_id"]
-            for entry in state["task_ledger"]
-            if isinstance(entry, Mapping) and entry.get("status") == "reported_done"
-        )
-        receipts = tuple(
-            item["digest"]
-            for item in state["artifact_refs"]
-            if isinstance(item, Mapping)
-            and item.get("kind") == "verification_receipt"
-        )
-        return ProgressSnapshot(
-            sha256_json(
-                {
-                    "head": observation.head,
-                    "worktree": observation.tree_digest,
-                }
-            ),
-            done,
-            receipts,
-            (),
-        )
+                raise ValueError("blocked result blocker is invalid")
+        return result
 
     def _recover(
         self,
         store: StateStore,
         workspace: GitWorkspace,
-        outcome: ProviderOutcome,
         index: int,
+        outcome: ProviderOutcome,
         *,
-        mode: str = "implementation",
-        continue_execution: bool = True,
+        controller_alive: bool = True,
+        reconciled_attempt_id: str | None = None,
     ) -> int | None:
         state = store.snapshot()
-        failure = state.get("failure")
-        sequence = (
-            list(failure.get("failure_sequence", []))
-            if isinstance(failure, Mapping)
-            else []
+        progress = self._progress(store, workspace)
+        prior_failure = (
+            state.get("failure")
+            if isinstance(state.get("failure"), Mapping)
+            else {}
         )
-        baseline_document = (
-            failure.get("baseline_progress")
-            if isinstance(failure, Mapping)
-            else None
-        )
-        if baseline_document is None:
-            attempts = state.get("attempts")
-            if isinstance(attempts, list) and attempts:
-                baseline_document = attempts[-1].get("baseline_progress")
-        baseline = (
-            ProgressSnapshot(
-                baseline_document["git_tree_digest"],
-                tuple(baseline_document["reported_done_ids"]),
-                tuple(baseline_document["successful_receipt_digests"]),
-                tuple(baseline_document["resolved_finding_ids"]),
-            )
-            if isinstance(baseline_document, Mapping)
-            else self._progress(state, workspace)
-        )
-        current = self._progress(state, workspace)
-        progress_reset = self._is_material_progress(
-            baseline, current, sequence
-        )
-        active_sequence = [] if progress_reset else sequence
+        sequence = list(prior_failure.get("failure_sequence", []))
         reason = outcome.provider_code or "controller_transport_failed"
-        result = outcome.result if isinstance(outcome.result, Mapping) else {}
-        strategy = result.get("strategy_note")
-        if not isinstance(strategy, str) or not strategy.strip():
-            strategy = (
-                f"controller recovery {len(active_sequence) + 1}: "
-                + (
-                    "start a fresh provider session"
-                    if outcome.kind in _CONTAMINATED_OUTCOMES
-                    else "resume the explicit healthy session"
-                )
-            )
+        note = (
+            "continue the recorded Claude root after a simple interruption"
+            if not sequence
+            else "start one fresh Claude root with changed recovery context"
+        )
         decision = self._recovery.decide(
             {
-                "controller_alive": True,
-                "input_digest": state["immutable_config"]["input_snapshot_digest"],
+                "controller_alive": controller_alive,
+                "input_digest": state["immutable_config"][
+                    "input_snapshot_digest"
+                ],
                 "session_id": outcome.session_id,
-                "session_health": (
-                    "healthy"
-                    if outcome.kind not in _CONTAMINATED_OUTCOMES
-                    else "invalid"
-                ),
+                "session_health": "healthy",
                 "resume_failed": outcome.kind == "resume_failed",
-                "failure_sequence": tuple(active_sequence),
-                "failure_baseline_progress": baseline,
-                "reported_done_evidence": self._reported_done_evidence(state),
-                "observed_tree_digests": tuple(
-                    entry.get("tree_digest")
-                    for entry in sequence
-                    if isinstance(entry.get("tree_digest"), str)
-                )
-                or (baseline.git_tree_digest,),
+                "failure_sequence": tuple(sequence),
+                "failure_baseline_progress": progress,
+                "observed_tree_digests": (
+                    progress.git_tree_digest,
+                ),
             },
             {
                 "reason_code": reason,
                 "provider_code": outcome.provider_code,
                 "command_identity": None,
                 "candidate_head": workspace.observe().head,
-                "input_digest": state["immutable_config"]["input_snapshot_digest"],
-                "interruption": (
-                    "stall" if outcome.kind == "stalled" else outcome.kind
-                ),
-                "strategy_note": strategy,
-                "progress": current,
-                "reported_done_evidence": self._reported_done_evidence(state),
-            },
-        )
-        if decision.action != "recover":
-            unavailable = reason == "provider_unavailable"
-            state["status"] = "blocked" if unavailable else "failed"
-            state["failure"] = {
-                "reason_code": reason if unavailable else decision.reason_code,
-                "mode": mode,
-                "plan_index": index,
-                "failure_signature": decision.failure_signature,
-                "failure_sequence": active_sequence,
-                "strategy_digests": [
-                    item["strategy_note_digest"]
-                    for item in active_sequence
-                    if item.get("strategy_note_digest")
+                "input_digest": state["immutable_config"][
+                    "input_snapshot_digest"
                 ],
-            }
-            store.commit(state)
-            self._emit_summary(store.snapshot())
-            return int(ExitCode.BLOCKED if unavailable else ExitCode.FAILED)
-        active_sequence.append(
-            {
-                "failure_signature": decision.failure_signature,
-                "strategy_note_digest": strategy_note_digest(strategy),
-                "tree_digest": current.git_tree_digest,
-            }
-        )
-        strategy_artifact = store.put_artifact(
-            "strategy_note",
-            {
-                "run_id": state["run_id"],
-                "failure_signature": decision.failure_signature,
-                "mode": mode,
-                "plan_index": index,
-                "strategy_note": normalize_strategy_note(strategy),
-                "strategy_note_digest": strategy_note_digest(strategy),
+                "interruption": outcome.kind,
+                "strategy_note": note,
+                "progress": progress,
             },
         )
-        if strategy_artifact.as_dict() not in state["artifact_refs"]:
-            state["artifact_refs"].append(strategy_artifact.as_dict())
-        state["status"] = "recovering"
+        session_action = decision.session_action
+        if (
+            session_action == "resume_root"
+            and self._resume_consumed(state, index)
+        ):
+            session_action = "fresh_root"
+        sequence.append(
+            {
+                "failure_signature": decision.failure_signature,
+                "strategy_note_digest": strategy_note_digest(note),
+                "fresh_root_attempted": (
+                    session_action == "fresh_root"
+                ),
+            }
+        )
+        state["status"] = decision.run_status
         state["failure"] = {
-            "reason_code": reason,
-            "mode": mode,
-            "plan_index": index,
+            "reason_code": decision.reason_code,
+            "provider_code": outcome.provider_code,
+            "outcome_kind": outcome.kind,
+            "return_code": outcome.return_code,
             "failure_signature": decision.failure_signature,
-            "failure_sequence": active_sequence,
-            "baseline_progress": dataclasses.asdict(current),
-            "required_strategy_change": decision.required_strategy_change,
-            "next_session_action": decision.session_action,
-            "strategy_digests": [
-                item["strategy_note_digest"] for item in active_sequence
-            ],
-        }
-        store.commit(state)
-        if continue_execution:
-            return self._execute_current_plan(store, workspace)
-        return None
-
-    @staticmethod
-    def _reported_done_evidence(
-        state: Mapping[str, object],
-    ) -> dict[str, str]:
-        return {
-            entry["task_id"]: entry["evidence_digests"][0]
-            for entry in state["task_ledger"]
-            if isinstance(entry, Mapping)
-            and entry.get("status") == "reported_done"
-            and isinstance(entry.get("evidence_digests"), list)
-            and entry["evidence_digests"]
-        }
-
-    @staticmethod
-    def _is_material_progress(
-        baseline: ProgressSnapshot,
-        current: ProgressSnapshot,
-        sequence: Sequence[Mapping[str, object]],
-    ) -> bool:
-        observed_trees = {
-            baseline.git_tree_digest,
-            *(
-                item["tree_digest"]
-                for item in sequence
-                if isinstance(item.get("tree_digest"), str)
+            "failure_sequence": sequence,
+            "next_strategy": session_action,
+            "next_session_action": session_action,
+            "session_id": (
+                outcome.session_id
+                if session_action == "resume_root"
+                else None
             ),
         }
-        return (
-            (
-                current.git_tree_digest != baseline.git_tree_digest
-                and current.git_tree_digest not in observed_trees
+        self._mark_reconciled(
+            state,
+            reconciled_attempt_id,
+            "recorded_completed_failure",
+        )
+        store.commit(state)
+        if decision.action == "resume":
+            self._emit_summary(store.snapshot())
+            return int(ExitCode.RESUMABLE)
+        if decision.action != "recover":
+            self._emit_summary(store.snapshot())
+            return int(ExitCode.FAILED)
+        if session_action == "resume_root" and outcome.session_id:
+            return self._execute_plan(
+                store,
+                workspace,
+                session_id=outcome.session_id,
+                resume_session=True,
             )
-            or bool(
-                set(current.reported_done_ids)
-                - set(baseline.reported_done_ids)
-            )
-            or bool(
-                set(current.successful_receipt_digests)
-                - set(baseline.successful_receipt_digests)
-            )
-            or bool(
-                set(current.resolved_finding_ids)
-                - set(baseline.resolved_finding_ids)
-            )
+        return self._execute_plan(
+            store,
+            workspace,
+            session_id=None,
+            resume_session=False,
         )
 
-    def _finalize(
-        self, store: StateStore, workspace: GitWorkspace
-    ) -> int:
-        while True:
-            state = store.snapshot()
-            candidate = workspace.require_clean_ancestor(
-                state["repository"]["source_commit"]
-            )
-            self._require_git_contract(state, workspace)
-            outcome = self._completed_review_outcome(store, candidate.head)
-            if outcome is None:
-                failure = state.get("failure")
-                force_fresh = (
-                    isinstance(failure, Mapping)
-                    and failure.get("next_session_action") == "fresh_session"
-                )
-                existing_declaration = (
-                    None
-                    if force_fresh
-                    else self._existing_final_set(store, candidate.head)
-                )
-                if force_fresh:
-                    state["finalization"] = {
-                        "candidate_head": candidate.head,
-                        "verification_set_digest": None,
-                    }
-                elif existing_declaration is not None:
-                    state["finalization"] = {
-                        "candidate_head": candidate.head,
-                        "verification_set_digest": existing_declaration,
-                    }
-                session_id = self._finalization_resume_session(
-                    state, candidate.head
-                )
-                attempt_id = str(uuid.uuid4())
-                state["status"] = "running"
-                state["finalization"] = {
-                    "candidate_head": candidate.head,
-                    "verification_set_digest": (
-                        state["finalization"].get("verification_set_digest")
-                        if isinstance(state.get("finalization"), Mapping)
-                        and state["finalization"].get("candidate_head")
-                        == candidate.head
-                        else None
-                    ),
-                }
-                state["attempts"].append(
-                    {
-                        "attempt_id": attempt_id,
-                        "mode": "finalization",
-                        "plan_index": None,
-                        "controller_pid": os.getpid(),
-                        "completed": False,
-                    }
-                )
-                store.commit(state)
-                outcome = self._launch(
-                    store,
-                    workspace,
-                    mode="finalization",
-                    observation_head=candidate.head,
-                    current_plan_index=None,
-                    session_id=session_id,
-                    attempt_id=attempt_id,
-                )
-                self._event("provider_outcome_received")
-                if outcome.kind == "controller_stopped":
-                    return self._pause_resumable(
-                        store,
-                        workspace,
-                        outcome,
-                        attempt_id,
-                        None,
-                        "finalization",
-                    )
-                self._checkpoint_outcome(
-                    store, outcome, attempt_id, None, "finalization"
-                )
-            if outcome.kind != "reviewed" or not isinstance(
-                outcome.result, Mapping
-            ):
-                if outcome.kind == "blocked":
-                    return self._block(store, outcome)
-                recovery_code = self._recover_finalization(
-                    store, workspace, outcome, candidate.head
-                )
-                if recovery_code is not None:
-                    return recovery_code
-                continue
-            result = outcome.result
-            try:
-                verification_receipts = self._validate_final_result(
-                    store, workspace, candidate.head, result
-                )
-            except ValueError as error:
-                return self._integrity_failure(store, str(error))
-            important = [
-                item
-                for item in result["open_findings"]
-                if item["severity"] in {"Critical", "Important"}
-            ]
-            if important:
-                previous_head = candidate.head
-                code = self._recover_review_findings(
-                    store, workspace, important
-                )
-                if code is not None:
-                    return code
-                if workspace.observe().head == previous_head:
-                    return self._integrity_failure(
-                        store,
-                        "review recovery did not produce a new candidate HEAD",
-                    )
-                continue
-            review_receipt = store.put_artifact(
-                "final_review_receipt",
-                {
-                    "run_id": state["run_id"],
-                    "candidate_head": candidate.head,
-                    "review_session_id": outcome.session_id,
-                    **_plain_json(result),
-                },
-            )
-            handoff = store.put_artifact(
-                "branch_handoff",
-                {
-                    "run_id": state["run_id"],
-                    "status": "ready_for_integration",
-                    "branch": state["repository"]["branch"],
-                    "worktree": state["repository"]["worktree"],
-                    "starting_commit": state["repository"]["source_commit"],
-                    "candidate_head": candidate.head,
-                    "runner_identity": dict(state["runner_runtime"]),
-                    "provider_identity": {
-                        "provider": state["provider"],
-                        "model": state["immutable_config"]["model"],
-                    },
-                    "plan_implementations": self._plan_implementation_summaries(
-                        store, state
-                    ),
-                    "non_blocking_observations": [
-                        _plain_json(item)
-                        for item in result["open_findings"]
-                        if item["severity"] == "Minor"
-                    ],
-                    "verification_set_digest": result[
-                        "verification_set_digest"
-                    ],
-                    "review_head": result["review_head"],
-                    "review_receipt": review_receipt.as_dict(),
-                    "verification_receipts": verification_receipts,
-                    "integration": "not_observed",
-                },
-            )
-            state = store.snapshot()
-            if review_receipt.as_dict() not in state["artifact_refs"]:
-                state["artifact_refs"].append(review_receipt.as_dict())
-            if handoff.as_dict() not in state["artifact_refs"]:
-                state["artifact_refs"].append(handoff.as_dict())
-            state["finalization"] = {
-                "candidate_head": candidate.head,
-                "verification_set_digest": result[
-                    "verification_set_digest"
-                ],
-                "review_head": result["review_head"],
-                "review_session_id": outcome.session_id,
-            }
-            state["status"] = "ready_for_integration"
-            store.commit(state)
-            self._emit_summary(store.snapshot())
-            return int(ExitCode.READY)
-
-    @staticmethod
-    def _completed_review_outcome(
-        store: StateStore, candidate_head: str
-    ) -> ProviderOutcome | None:
-        state = store.snapshot()
-        for attempt in reversed(state["attempts"]):
-            if (
-                not isinstance(attempt, Mapping)
-                or attempt.get("mode") != "finalization"
-                or attempt.get("completed") is not True
-                or attempt.get("outcome") != "reviewed"
-                or not isinstance(attempt.get("result_artifact"), Mapping)
-            ):
-                continue
-            result = _artifact_payload(store, attempt["result_artifact"])
-            if (
-                not isinstance(result, Mapping)
-                or result.get("review_head") != candidate_head
-            ):
-                continue
-            session_id = attempt.get("session_id")
-            return ProviderOutcome(
-                "reviewed",
-                0,
-                session_id if isinstance(session_id, str) else None,
-                result,
-                attempt.get("provider_code"),
-                {},
-                (),
-                "",
-            )
-        return None
-
-    @staticmethod
-    def _plan_implementation_summaries(
-        store: StateStore, state: Mapping[str, object]
-    ) -> list[dict[str, object]]:
-        handoffs: dict[int, tuple[Mapping[str, object], Mapping[str, object]]] = {}
-        for reference in state["artifact_refs"]:
-            if (
-                not isinstance(reference, Mapping)
-                or reference.get("kind") != "plan_handoff"
-            ):
-                continue
-            payload = _artifact_payload(store, reference)
-            index = payload.get("plan_index") if isinstance(payload, Mapping) else None
-            if isinstance(index, int) and not isinstance(index, bool):
-                handoffs[index] = (reference, payload)
-        summaries: list[dict[str, object]] = []
-        for index, plan in enumerate(state["plans"]):
-            if index not in handoffs:
-                raise ValueError("implemented plan handoff is missing")
-            reference, payload = handoffs[index]
-            summaries.append(
-                {
-                    "plan_index": index,
-                    "plan_id": plan["plan_id"],
-                    "status": plan["status"],
-                    "snapshot_path": plan["snapshot_path"],
-                    "sha256": plan["sha256"],
-                    "head_commit": payload["head_commit"],
-                    "summary": payload["summary"],
-                    "handoff": dict(reference),
-                }
-            )
-        return summaries
-
-    @staticmethod
-    def _existing_final_set(
-        store: StateStore, candidate_head: str
-    ) -> str | None:
-        for reference in reversed(store.snapshot()["artifact_refs"]):
-            if (
-                not isinstance(reference, Mapping)
-                or reference.get("kind") != "final_verification_set"
-            ):
-                continue
-            payload = _artifact_payload(store, reference)
-            if (
-                isinstance(payload, Mapping)
-                and payload.get("candidate_head") == candidate_head
-                and isinstance(reference.get("digest"), str)
-            ):
-                return reference["digest"]
-        return None
-
-    def _finalization_resume_session(
-        self, state: Mapping[str, object], candidate_head: str
-    ) -> str | None:
-        finalization = state.get("finalization")
-        failure = state.get("failure")
-        if (
-            not isinstance(finalization, Mapping)
-            or finalization.get("candidate_head") != candidate_head
-            or (
-                isinstance(failure, Mapping)
-                and failure.get("next_session_action") == "fresh_session"
-            )
-        ):
-            return None
-        declaration = finalization.get("verification_set_digest")
-        for session in reversed(state["sessions"]):
-            if (
-                isinstance(session, Mapping)
-                and session.get("mode") == "finalization"
-                and session.get("health") == "healthy"
-                and session.get("candidate_head") == candidate_head
-                and session.get("verification_set_digest") == declaration
-                and isinstance(session.get("session_id"), str)
-            ):
-                return session["session_id"]
-        return None
-
-    def _recover_finalization(
+    def _pause(
         self,
         store: StateStore,
         workspace: GitWorkspace,
         outcome: ProviderOutcome,
-        candidate_head: str,
-    ) -> int | None:
+        *,
+        reconciled_attempt_id: str | None = None,
+    ) -> int:
         state = store.snapshot()
-        self._require_git_contract(state, workspace)
-        if workspace.observe().head != candidate_head:
-            return self._integrity_failure(
-                store, "finalization changed the candidate HEAD"
-            )
-        failure = state.get("failure")
-        sequence = (
-            list(failure.get("failure_sequence", []))
-            if isinstance(failure, Mapping)
-            else []
+        observed = workspace.observe()
+        prior_failure = (
+            state.get("failure")
+            if isinstance(state.get("failure"), Mapping)
+            else {}
         )
-        baseline_document = (
-            failure.get("baseline_progress")
-            if isinstance(failure, Mapping)
+        sequence = list(prior_failure.get("failure_sequence", []))
+        next_session_action = (
+            "fresh_root"
+            if self._resume_consumed(
+                state,
+                state["current_plan_index"],
+            )
+            else "resume_root"
+        )
+        state["status"] = "resumable"
+        state["failure"] = {
+            "reason_code": "controller_transport_failed",
+            "provider_code": outcome.provider_code,
+            "outcome_kind": outcome.kind,
+            "return_code": outcome.return_code,
+            "failure_sequence": sequence,
+            "next_strategy": next_session_action,
+            "next_session_action": next_session_action,
+            "session_id": (
+                outcome.session_id
+                if next_session_action == "resume_root"
+                else None
+            ),
+            "partial_worktree": (
+                None
+                if observed.clean
+                else {
+                    "version": 1,
+                    "plan_index": state["current_plan_index"],
+                    **dataclasses.asdict(observed),
+                }
+            ),
+        }
+        self._mark_reconciled(
+            state,
+            reconciled_attempt_id,
+            "recorded_completed_stop",
+        )
+        store.commit(state)
+        self._emit_summary(store.snapshot())
+        return int(ExitCode.RESUMABLE)
+
+    @staticmethod
+    def _resume_consumed(
+        state: Mapping[str, object],
+        plan_index: int,
+    ) -> bool:
+        return any(
+            isinstance(attempt, Mapping)
+            and attempt.get("mode") == "implementation"
+            and attempt.get("plan_index") == plan_index
+            and attempt.get("session_action") == "resume_root"
+            for attempt in state.get("attempts", [])
+        )
+
+    def _block(
+        self,
+        store: StateStore,
+        outcome: ProviderOutcome,
+        *,
+        reconciled_attempt_id: str | None = None,
+    ) -> int:
+        result = (
+            self._validated_plan_result(outcome.result)
+            if outcome.result is not None
             else None
         )
-        baseline = (
-            ProgressSnapshot(
-                baseline_document["git_tree_digest"],
-                tuple(baseline_document["reported_done_ids"]),
-                tuple(baseline_document["successful_receipt_digests"]),
-                tuple(baseline_document["resolved_finding_ids"]),
-            )
-            if isinstance(baseline_document, Mapping)
-            else self._progress(state, workspace)
+        reason = (
+            result["blocker"]["kind"]
+            if result is not None
+            else outcome.provider_code or "external_authority_required"
         )
-        current = self._progress(state, workspace)
-        progress_reset = self._is_material_progress(
-            baseline, current, sequence
-        )
-        active_sequence = [] if progress_reset else sequence
-        reason = outcome.provider_code or "controller_transport_failed"
-        result = outcome.result if isinstance(outcome.result, Mapping) else {}
-        strategy = result.get("strategy_note")
-        if not isinstance(strategy, str) or not strategy.strip():
-            strategy = (
-                f"finalization recovery {len(active_sequence) + 1}: "
-                + (
-                    "start a fresh finalization session"
-                    if outcome.kind in _CONTAMINATED_OUTCOMES
-                    else "resume the explicit healthy finalization session"
-                )
-            )
-        decision = self._recovery.decide(
-            {
-                "controller_alive": True,
-                "input_digest": state["immutable_config"][
-                    "input_snapshot_digest"
-                ],
-                "session_id": outcome.session_id,
-                "session_health": (
-                    "healthy"
-                    if outcome.kind not in _CONTAMINATED_OUTCOMES
-                    else "invalid"
-                ),
-                "resume_failed": outcome.kind == "resume_failed",
-                "failure_sequence": tuple(active_sequence),
-                "failure_baseline_progress": baseline,
-                "reported_done_evidence": self._reported_done_evidence(state),
-                "observed_tree_digests": tuple(
-                    item.get("tree_digest")
-                    for item in sequence
-                    if isinstance(item.get("tree_digest"), str)
-                )
-                or (baseline.git_tree_digest,),
-            },
-            {
-                "reason_code": reason,
-                "provider_code": outcome.provider_code,
-                "command_identity": None,
-                "candidate_head": candidate_head,
-                "input_digest": state["immutable_config"][
-                    "input_snapshot_digest"
-                ],
-                "interruption": (
-                    "stall" if outcome.kind == "stalled" else outcome.kind
-                ),
-                "strategy_note": strategy,
-                "progress": current,
-                "reported_done_evidence": self._reported_done_evidence(state),
-            },
-        )
-        if decision.action != "recover":
-            unavailable = reason == "provider_unavailable"
-            state["status"] = "blocked" if unavailable else "failed"
-            state["failure"] = {
-                "reason_code": reason if unavailable else decision.reason_code,
-                "mode": "finalization",
-                "plan_index": None,
-                "failure_signature": decision.failure_signature,
-                "failure_sequence": active_sequence,
-                "strategy_digests": [
-                    item["strategy_note_digest"]
-                    for item in active_sequence
-                    if item.get("strategy_note_digest")
-                ],
-            }
-            store.commit(state)
-            self._emit_summary(store.snapshot())
-            return int(ExitCode.BLOCKED if unavailable else ExitCode.FAILED)
-        active_sequence.append(
-            {
-                "failure_signature": decision.failure_signature,
-                "strategy_note_digest": strategy_note_digest(strategy),
-                "tree_digest": current.git_tree_digest,
-            }
-        )
-        strategy_artifact = store.put_artifact(
-            "strategy_note",
-            {
-                "run_id": state["run_id"],
-                "failure_signature": decision.failure_signature,
-                "mode": "finalization",
-                "plan_index": None,
-                "strategy_note": normalize_strategy_note(strategy),
-                "strategy_note_digest": strategy_note_digest(strategy),
-            },
-        )
-        if strategy_artifact.as_dict() not in state["artifact_refs"]:
-            state["artifact_refs"].append(strategy_artifact.as_dict())
-        state["status"] = "recovering"
+        state = store.snapshot()
+        state["status"] = "blocked"
         state["failure"] = {
             "reason_code": reason,
-            "mode": "finalization",
-            "plan_index": None,
-            "failure_signature": decision.failure_signature,
-            "failure_sequence": active_sequence,
-            "baseline_progress": dataclasses.asdict(current),
-            "required_strategy_change": decision.required_strategy_change,
-            "next_session_action": decision.session_action,
-            "strategy_digests": [
-                item["strategy_note_digest"] for item in active_sequence
-            ],
+            "provider_code": outcome.provider_code,
+            "outcome_kind": outcome.kind,
+            "return_code": outcome.return_code,
+            "next_strategy": "block",
+            "next_session_action": "none",
         }
+        self._mark_reconciled(
+            state,
+            reconciled_attempt_id,
+            "recorded_completed_blocker",
+        )
+        store.commit(state)
+        self._emit_summary(store.snapshot())
+        return int(ExitCode.BLOCKED)
+
+    def _progress(
+        self,
+        store: StateStore,
+        workspace: GitWorkspace,
+    ) -> ProgressSnapshot:
+        state = store.snapshot()
+        observed = workspace.observe()
+        return ProgressSnapshot(
+            sha256_json(
+                {
+                    "head": observed.head,
+                    "tree": observed.tree_digest,
+                }
+            ),
+            EvidenceStore(
+                store,
+                workspace,
+                self._environment,
+            ).successful_receipt_digests(),
+            tuple(
+                plan["handoff_digest"]
+                for plan in state["plans"]
+                if plan.get("handoff_digest") is not None
+            ),
+        )
+
+    def _recovery_context(
+        self,
+        state: Mapping[str, object],
+        *,
+        current_head: str,
+    ) -> dict[str, object]:
+        workspace = GitWorkspace.open(
+            Path(state["repository"]["source_repository"]),
+            Path(state["repository"]["worktree"]),
+            state["repository"]["branch"],
+        )
+        store = StateStore.open(
+            self.paths.state_home / state["run_id"]
+        )
+        progress = self._progress(store, workspace)
+        return {
+            "current_head": current_head,
+            "git_tree_digest": progress.git_tree_digest,
+            "successful_receipt_digests": list(
+                progress.successful_receipt_digests
+            ),
+            "plan_handoff_digests": list(
+                progress.plan_handoff_digests
+            ),
+        }
+
+    def _record_session(
+        self,
+        store: StateStore,
+        *,
+        attempt_id: str,
+        plan_index: int,
+        session_id: str,
+        candidate_head: str,
+    ) -> None:
+        state = store.snapshot()
+        if not any(
+            session.get("session_id") == session_id
+            and session.get("plan_index") == plan_index
+            for session in state["sessions"]
+            if isinstance(session, Mapping)
+        ):
+            state["sessions"].append(
+                {
+                    "mode": "implementation",
+                    "plan_index": plan_index,
+                    "session_id": session_id,
+                    "candidate_head": candidate_head,
+                    "health": "healthy",
+                    "root_attempt_id": attempt_id,
+                }
+            )
+        attempt = next(
+            (
+                item
+                for item in reversed(state["attempts"])
+                if isinstance(item, dict)
+                and item.get("attempt_id") == attempt_id
+            ),
+            None,
+        )
+        if not isinstance(attempt, dict):
+            raise ValueError("captured session attempt is unavailable")
+        attempt["session_id"] = session_id
+        attempt["session_health"] = "healthy"
+        store.commit(state)
+
+    def _complete_attempt(
+        self,
+        store: StateStore,
+        attempt_id: str,
+        outcome: ProviderOutcome,
+    ) -> None:
+        state = store.snapshot()
+        attempt = next(
+            item
+            for item in reversed(state["attempts"])
+            if item["attempt_id"] == attempt_id
+        )
+        attempt["completed"] = True
+        attempt["outcome"] = outcome.kind
+        attempt["provider_code"] = outcome.provider_code
+        attempt["return_code"] = outcome.return_code
+        attempt["session_id"] = outcome.session_id
+        attempt["result_artifact"] = None
+        if outcome.result is not None:
+            result_artifact = store.put_artifact(
+                "provider_result",
+                _plain_json(outcome.result),
+            )
+            if result_artifact.as_dict() not in state["artifact_refs"]:
+                state["artifact_refs"].append(result_artifact.as_dict())
+            attempt["result_artifact"] = result_artifact.as_dict()
+        store.commit(state)
+
+    def _record_process(
+        self,
+        store: StateStore,
+        *,
+        attempt_id: str,
+        process: Mapping[str, object],
+    ) -> None:
+        state = store.snapshot()
+        attempt = next(
+            (
+                item
+                for item in reversed(state["attempts"])
+                if isinstance(item, dict)
+                and item.get("attempt_id") == attempt_id
+            ),
+            None,
+        )
+        if not isinstance(attempt, dict):
+            raise ValueError("provider process attempt is unavailable")
+        for name in ("provider_pid", "provider_pgid", "descendant_pids"):
+            attempt[name] = process[name]
+        store.commit(state)
+
+    def _reconcile_controller(
+        self,
+        store: StateStore,
+        workspace: GitWorkspace,
+    ) -> int | None:
+        state = store.snapshot()
+        if state["current_plan_index"] >= len(state["plans"]):
+            return
+        attempts = state.get("attempts")
+        if not isinstance(attempts, list) or not attempts:
+            return
+        index = state["current_plan_index"]
+        attempt = next(
+            (
+                item
+                for item in reversed(attempts)
+                if isinstance(item, dict)
+                and item.get("mode") == "implementation"
+                and item.get("plan_index") == index
+                and item.get("reconciled") is None
+            ),
+            None,
+        )
+        if not isinstance(attempt, dict):
+            return
+        if attempt.get("completed") is not True:
+            session_id = attempt.get("session_id")
+            if not isinstance(session_id, str):
+                return
+            attempt["reconciled"] = "controller_not_live"
+            prior_failure = (
+                state.get("failure")
+                if isinstance(state.get("failure"), Mapping)
+                else {}
+            )
+            sequence = list(prior_failure.get("failure_sequence", []))
+            next_session_action = (
+                "fresh_root"
+                if self._resume_consumed(state, index)
+                else "resume_root"
+            )
+            state["status"] = "resumable"
+            state["failure"] = {
+                **dict(prior_failure),
+                "reason_code": "controller_transport_failed",
+                "failure_sequence": sequence,
+                "next_strategy": next_session_action,
+                "next_session_action": next_session_action,
+                "session_id": (
+                    session_id
+                    if next_session_action == "resume_root"
+                    else None
+                ),
+            }
+            store.commit(state)
+            return
+        outcome_kind = attempt.get("outcome")
+        if not isinstance(outcome_kind, str) or not outcome_kind:
+            raise ValueError("completed provider outcome is invalid")
+        result_reference = attempt.get("result_artifact")
+        result = None
+        if result_reference is not None:
+            if (
+                not isinstance(result_reference, Mapping)
+                or result_reference.get("kind") != "provider_result"
+            ):
+                raise ValueError("completed provider result is not durable")
+            result = _artifact_payload(store, result_reference)
+        if outcome_kind == "implemented" and result is None:
+            raise ValueError("completed provider result is not durable")
+        outcome = ProviderOutcome(
+            outcome_kind,
+            attempt.get("return_code"),
+            attempt.get("session_id"),
+            result,
+            attempt.get("provider_code"),
+            {},
+            (),
+            "",
+        )
+        attempt_id = attempt["attempt_id"]
+        if outcome.kind == "controller_stopped":
+            return self._pause(
+                store,
+                workspace,
+                outcome,
+                reconciled_attempt_id=attempt_id,
+            )
+        if outcome.kind == "blocked":
+            return self._block(
+                store,
+                outcome,
+                reconciled_attempt_id=attempt_id,
+            )
+        if outcome.kind != "implemented":
+            return self._recover(
+                store,
+                workspace,
+                index,
+                outcome,
+                controller_alive=False,
+                reconciled_attempt_id=attempt_id,
+            )
+        self._accept_implemented(store, workspace, index, outcome)
+        state = store.snapshot()
+        reconciled = next(
+            item
+            for item in reversed(state["attempts"])
+            if isinstance(item, dict)
+            and item.get("attempt_id") == attempt["attempt_id"]
+        )
+        reconciled["reconciled"] = "accepted_completed_result"
         store.commit(state)
         return None
 
-    def _validate_final_result(
-        self,
-        store: StateStore,
-        workspace: GitWorkspace,
-        candidate_head: str,
-        result: Mapping[str, object],
-    ) -> list[dict[str, str]]:
-        state = store.snapshot()
-        ledger = self._validated_task_ledger(state["task_ledger"])
-        self._require_all_tasks_reported_done(ledger)
-        if result.get("status") != "reviewed":
-            raise ValueError("review status is invalid")
-        if result.get("review_head") != candidate_head:
-            raise ValueError("review HEAD does not match candidate HEAD")
-        digest = result.get("verification_set_digest")
-        if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
-            raise ValueError("verification set digest is invalid")
-        findings = result.get("open_findings")
-        obligations = result.get("open_obligation_ids")
-        summary = result.get("summary")
-        if (
-            not _json_array(findings)
-            or not _json_array(obligations)
-            or not isinstance(summary, str)
-            or not summary.strip()
-            or len(summary) > 4096
-        ):
-            raise ValueError("review findings or obligations are invalid")
-        if obligations:
-            raise ValueError("final obligations remain open")
-        finding_ids: set[str] = set()
-        for finding in findings:
-            if (
-                not isinstance(finding, Mapping)
-                or set(finding) != {"id", "severity", "summary", "evidence"}
-                or finding.get("severity")
-                not in {"Critical", "Important", "Minor"}
-                or not isinstance(finding.get("id"), str)
-                or re.fullmatch(
-                    r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}",
-                    str(finding["id"]),
-                )
-                is None
-                or finding["id"] in finding_ids
-                or not isinstance(finding.get("summary"), str)
-                or not str(finding["summary"]).strip()
-                or len(str(finding["summary"])) > 2048
-                or not isinstance(finding.get("evidence"), str)
-                or not str(finding["evidence"]).strip()
-                or len(str(finding["evidence"])) > 4096
-            ):
-                raise ValueError("review finding is invalid")
-            finding_ids.add(str(finding["id"]))
-        references = [
-            item
-            for item in state["artifact_refs"]
-            if isinstance(item, Mapping)
-            and item.get("kind") == "final_verification_set"
-            and item.get("digest") == digest
-        ]
-        if len(references) != 1:
-            raise ValueError("final verification declaration is missing")
-        declaration = _artifact_payload(store, references[0])
-        if (
-            not isinstance(declaration, Mapping)
-            or declaration.get("candidate_head") != candidate_head
-        ):
-            raise ValueError("final verification declaration HEAD mismatch")
-        evidence = EvidenceStore(store, workspace, self._environment)
-        receipt_refs: list[dict[str, str]] = []
-        if declaration.get("kind") == "commands":
-            commands = declaration.get("commands")
-            if not isinstance(commands, list) or not commands:
-                raise ValueError("final verification commands are missing")
-            for index in range(len(commands)):
-                command = evidence.load_final_command(digest, index)
-                identity = evidence.identity_digest(
-                    command, candidate_head=candidate_head
-                )
-                receipt = evidence.reusable_success(identity)
-                if receipt is None or receipt.outcome != "success":
-                    raise ValueError("successful final verification receipt is missing")
-                receipt_refs.append(receipt.artifact.as_dict())
-            if result.get("no_applicable_verification_approved") is not False:
-                raise ValueError("verification approval flag is inconsistent")
-        elif declaration.get("kind") == "no_applicable_verification":
-            if (
-                not isinstance(declaration.get("rationale"), str)
-                or not declaration["rationale"].strip()
-                or result.get("no_applicable_verification_approved") is not True
-            ):
-                raise ValueError(
-                    "no-applicable verification lacks review approval"
-                )
-        else:
-            raise ValueError("final verification declaration is invalid")
-        self._require_git_contract(state, workspace)
-        if workspace.observe().head != candidate_head:
-            raise ValueError("candidate HEAD changed during finalization")
-        return receipt_refs
+    @staticmethod
+    def _mark_reconciled(
+        state: dict[str, object],
+        attempt_id: str | None,
+        disposition: str,
+    ) -> None:
+        if attempt_id is None:
+            return
+        attempt = next(
+            (
+                item
+                for item in reversed(state["attempts"])
+                if isinstance(item, dict)
+                and item.get("attempt_id") == attempt_id
+            ),
+            None,
+        )
+        if not isinstance(attempt, dict):
+            raise ValueError("completed provider attempt is unavailable")
+        attempt["reconciled"] = disposition
 
-    def _recover_review_findings(
+    def _adapter(
         self,
-        store: StateStore,
+        run_id: str,
+        helper: HelperDescriptor,
         workspace: GitWorkspace,
-        findings: Sequence[Mapping[str, object]],
-        *,
-        initialize: bool = True,
-    ) -> int | None:
-        if initialize:
-            state = store.snapshot()
-            finalization = dict(state.get("finalization") or {})
-            finalization["review_findings"] = [
-                _plain_json(item) for item in findings
-            ]
-            finalization["pending_mode"] = "final_review_fix"
-            state["finalization"] = finalization
-            state["status"] = "recovering"
-            state["failure"] = {
-                "reason_code": "review_failed",
-                "mode": "final_review_fix",
-                "plan_index": len(state["plans"]) - 1,
-                "required_strategy_change": True,
-                "next_session_action": "fresh_session",
-                "pending_mode": "final_review_fix",
-                "review_findings": [_plain_json(item) for item in findings],
+    ) -> object:
+        values = {
+            "source_env": self._environment,
+            "remotes": tuple(
+                line
+                for line in _git(
+                    workspace.worktree,
+                    "remote",
+                    environment=self._environment,
+                ).splitlines()
+                if line
+            ),
+            "run_id": run_id,
+            "helper": helper,
+            "stop_requested": self._signals.requested,
+        }
+        if self._adapter_factory is not None:
+            return self._adapter_factory(**values)
+        return ClaudeAdapter(**values)
+
+    def _admitted_run(
+        self,
+        lock_home: Path,
+        intent_digest: str,
+    ) -> dict[str, object] | None:
+        path = lock_home / f"{intent_digest}.json"
+        if not path.exists():
+            return None
+        raw = path.read_bytes()
+        document = json.loads(raw)
+        if (
+            not isinstance(document, dict)
+            or raw != canonical_json(document)
+            or set(document)
+            != {
+                "schema_version",
+                "intent_digest",
+                "run_id",
+                "record_digest",
             }
-            store.commit(state)
-        index = len(store.snapshot()["plans"]) - 1
-        while True:
-            state = store.snapshot()
-            candidate_head = workspace.observe().head
-            session_id = self._review_fix_resume_session(state, candidate_head)
-            attempt_id = str(uuid.uuid4())
-            state["attempts"].append(
+            or document["schema_version"] != 1
+            or document["intent_digest"] != intent_digest
+            or document["record_digest"]
+            != sha256_json(
                 {
-                    "attempt_id": attempt_id,
-                    "mode": "final_review_fix",
-                    "plan_index": index,
-                    "controller_pid": os.getpid(),
-                    "completed": False,
-                    "review_recovery": True,
-                    "baseline_progress": dataclasses.asdict(
-                        self._progress(state, workspace)
-                    ),
+                    "schema_version": 1,
+                    "intent_digest": intent_digest,
+                    "run_id": document.get("run_id"),
                 }
             )
-            store.commit(state)
-            outcome = self._launch(
-                store,
-                workspace,
-                mode="final_review_fix",
-                observation_head=candidate_head,
-                current_plan_index=index,
-                session_id=session_id,
-                attempt_id=attempt_id,
-            )
-            self._event("provider_outcome_received")
-            if outcome.kind == "controller_stopped":
-                return self._pause_resumable(
-                    store,
-                    workspace,
-                    outcome,
-                    attempt_id,
-                    index,
-                    "final_review_fix",
-                )
-            if outcome.kind in {"implemented", "blocked", "failed"}:
-                try:
-                    self._validated_plan_result(outcome.result)
-                except ValueError as error:
-                    return self._integrity_failure(store, str(error))
-            self._checkpoint_outcome(
-                store, outcome, attempt_id, index, "final_review_fix"
-            )
-            if outcome.kind == "blocked":
-                return self._block(store, outcome)
-            if outcome.kind != "implemented":
-                code = self._recover(
-                    store,
-                    workspace,
-                    outcome,
-                    index,
-                    mode="final_review_fix",
-                    continue_execution=False,
-                )
-                if code is not None:
-                    return code
-                continue
-            result = outcome.result
-            try:
-                review_ledger = self._validated_task_ledger(
-                    result.get("task_ledger")
-                    if isinstance(result, Mapping)
-                    else None
-                )
-                self._require_all_tasks_reported_done(review_ledger)
-            except ValueError as error:
-                return self._integrity_failure(store, str(error))
-            current_state = store.snapshot()
-            observation = workspace.require_clean_ancestor(
-                current_state["repository"]["source_commit"]
-            )
-            if (
-                not isinstance(result, Mapping)
-                or result.get("head_commit") != observation.head
-                or not _json_array(result.get("open_obligation_ids"))
-                or result.get("open_obligation_ids")
-            ):
-                return self._integrity_failure(
-                    store, "review recovery result is invalid"
-                )
-            state = store.snapshot()
-            state["failure"] = None
-            state["status"] = "resumable"
-            state["finalization"] = None
-            store.commit(state)
-            return None
+        ):
+            raise ValueError("execution-intent admission record is invalid")
+        run_id = document["run_id"]
+        if not isinstance(run_id, str):
+            raise ValueError("execution-intent admission run is invalid")
+        state = StateStore.open(self.paths.state_home / run_id).snapshot()
+        if (
+            state["immutable_config"].get("execution_intent_digest")
+            != intent_digest
+        ):
+            raise ValueError("execution-intent state binding is invalid")
+        return state
 
     @staticmethod
-    def _review_fix_resume_session(
-        state: Mapping[str, object], candidate_head: str
-    ) -> str | None:
-        failure = state.get("failure")
-        if (
-            isinstance(failure, Mapping)
-            and failure.get("next_session_action") == "fresh_session"
-        ):
-            return None
-        for session in reversed(state.get("sessions", [])):
-            if (
-                isinstance(session, Mapping)
-                and session.get("mode") == "final_review_fix"
-                and session.get("health") == "healthy"
-                and session.get("candidate_head") == candidate_head
-                and isinstance(session.get("session_id"), str)
-            ):
-                return session["session_id"]
-        return None
+    def _write_admission(
+        lock_home: Path,
+        intent_digest: str,
+        run_id: str,
+    ) -> None:
+        body = {
+            "schema_version": 1,
+            "intent_digest": intent_digest,
+            "run_id": run_id,
+        }
+        atomic_private_write(
+            lock_home / f"{intent_digest}.json",
+            canonical_json(
+                {
+                    **body,
+                    "record_digest": sha256_json(body),
+                }
+            ),
+        )
 
-    def _integrity_failure(self, store: StateStore, detail: object) -> int:
-        self._fail_closed(store, "state_integrity_failed", detail)
-        return int(ExitCode.INTEGRITY)
+    def _report_existing(self, state: Mapping[str, object]) -> int:
+        status = state["status"]
+        action = (
+            f"./skills/kws-claude-plan-runner/scripts/runner resume "
+            f"--run-id {state['run_id']}"
+            if status in {"resumable", "running", "recovering"}
+            else "inspect existing run; replay is refused"
+        )
+        self._output(
+            json.dumps(
+                {
+                    "status": status,
+                    "run_id": state["run_id"],
+                    "reason": "matching_run_exists",
+                    "recommended_action": action,
+                },
+                sort_keys=True,
+            )
+        )
+        return {
+            "ready_for_integration": int(ExitCode.READY),
+            "blocked": int(ExitCode.BLOCKED),
+            "failed": int(ExitCode.FAILED),
+        }.get(status, int(ExitCode.RESUMABLE))
 
-    def _fail_closed(
-        self, store: StateStore, reason_code: str, detail: object
+    @staticmethod
+    def _mark_failure(
+        store: StateStore,
+        reason_code: str,
+        detail: str,
     ) -> None:
         try:
             state = store.snapshot()
@@ -2738,21 +1844,23 @@ class PlanRunner:
             state["failure"] = {
                 "reason_code": reason_code,
                 "detail": str(detail)[:512],
+                "next_strategy": "block",
+                "next_session_action": "none",
             }
             store.commit(state)
-            self._emit_summary(store.snapshot())
         except (OSError, ValueError):
-            self._emit_error(reason_code, detail)
+            pass
 
     def _emit_summary(self, state: Mapping[str, object]) -> None:
         self._output(
             json.dumps(
                 {
-                    "run_id": state["run_id"],
                     "status": state["status"],
-                    "integration": state["integration"],
+                    "run_id": state["run_id"],
                     "current_plan_index": state["current_plan_index"],
                     "plan_count": len(state["plans"]),
+                    "integration": state["integration"],
+                    "failure": state.get("failure"),
                 },
                 sort_keys=True,
             )
@@ -2764,7 +1872,7 @@ class PlanRunner:
                 {
                     "status": "failed",
                     "reason_code": reason_code,
-                    "detail": str(detail).replace("\n", " ")[:512],
+                    "detail": str(detail)[:512],
                 },
                 sort_keys=True,
             )

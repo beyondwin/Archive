@@ -211,6 +211,25 @@ class EvidenceStore:
                 )
         return None
 
+    def successful_receipt_digests(self) -> tuple[str, ...]:
+        digests: list[str] = []
+        seen: set[str] = set()
+        for value in self.state.snapshot()["artifact_refs"]:
+            if (
+                not isinstance(value, dict)
+                or value.get("kind") != "verification_receipt"
+            ):
+                continue
+            receipt = self._receipt(ArtifactRef(**value))
+            if (
+                receipt is not None
+                and receipt.outcome == "success"
+                and receipt.artifact.digest not in seen
+            ):
+                seen.add(receipt.artifact.digest)
+                digests.append(receipt.artifact.digest)
+        return tuple(digests)
+
     def execute(self, command: ExactCommand, *, candidate_head: str) -> VerificationReceipt:
         observation = self._candidate(candidate_head)
         cwd = self._cwd(command)
@@ -253,73 +272,313 @@ class EvidenceStore:
         return VerificationReceipt(artifact, digest, outcome, result.exit_code, False)
 
     @staticmethod
-    def _command(value: object, *, final: bool) -> ExactCommand:
+    def _command(value: object) -> ExactCommand:
         if not isinstance(value, Mapping) or set(value) != _COMMAND_FIELDS:
-            raise ValueError("final command shape is invalid")
+            raise ValueError("verification command shape is invalid")
         if not isinstance(value["argv"], list):
-            raise ValueError("final command argv is invalid")
-        command = ExactCommand(
+            raise ValueError("verification command argv is invalid")
+        return ExactCommand(
             value["command_id"], value["command_role"], tuple(value["argv"]),
             value["cwd"], value["input_digest"], value["deadline_seconds"],
         )
-        if final and command.command_role != "final":
-            raise ValueError("final command role must be final")
-        return command
 
-    def declare_final_set(self, payload: object, candidate_head: str) -> ArtifactRef:
+    def _artifact_by_digest(
+        self,
+        digest: str,
+        *,
+        kinds: frozenset[str],
+    ) -> tuple[ArtifactRef, dict[str, object]]:
+        require_digest(digest)
+        matches = [
+            ArtifactRef(**reference)
+            for reference in self.state.snapshot()["artifact_refs"]
+            if isinstance(reference, dict)
+            and reference.get("kind") in kinds
+            and reference.get("digest") == digest
+        ]
+        if len(matches) != 1:
+            raise ValueError("verification set is not sealed")
+        return matches[0], self._document(matches[0])
+
+    def _prior_plan_sets(self, plan_index: int) -> list[str]:
+        if (
+            isinstance(plan_index, bool)
+            or not isinstance(plan_index, int)
+            or plan_index < 0
+        ):
+            raise ValueError("plan index is invalid")
+        state = self.state.snapshot()
+        plans = state.get("plans")
+        if not isinstance(plans, list) or plan_index > len(plans):
+            raise ValueError("plan verification lineage is invalid")
+        lineage: list[str] = []
+        for expected_index, plan in enumerate(plans[:plan_index]):
+            if not isinstance(plan, Mapping) or plan.get("status") != "implemented":
+                raise ValueError("prior plan is not implemented")
+            handoff_digest = plan.get("handoff_digest")
+            if not isinstance(handoff_digest, str):
+                raise ValueError("prior plan handoff is not sealed")
+            _, handoff = self._artifact_by_digest(
+                handoff_digest,
+                kinds=frozenset({"plan_handoff"}),
+            )
+            if (
+                handoff.get("plan_index") != expected_index
+                or not isinstance(handoff.get("verification_set_digest"), str)
+            ):
+                raise ValueError("prior plan handoff identity is invalid")
+            verification_digest = handoff["verification_set_digest"]
+            _, verification = self._artifact_by_digest(
+                verification_digest,
+                kinds=frozenset({"plan_verification_set"}),
+            )
+            if verification.get("plan_index") != expected_index:
+                raise ValueError("prior plan verification identity is invalid")
+            lineage.append(verification_digest)
+        return lineage
+
+    def declare_verification(
+        self,
+        payload: object,
+        candidate_head: str,
+        *,
+        plan_index: int,
+        prior_set_digests: list[str],
+        is_final_plan: bool,
+    ) -> ArtifactRef:
         self._candidate(candidate_head)
-        if not isinstance(payload, Mapping) or payload.get("candidate_head") != candidate_head:
-            raise ValueError("final set candidate HEAD is invalid")
+        expected_prior = self._prior_plan_sets(plan_index)
+        if prior_set_digests != expected_prior:
+            raise ValueError("verification prior-set provenance is invalid")
+        if (
+            not isinstance(payload, Mapping)
+            or payload.get("candidate_head") != candidate_head
+        ):
+            raise ValueError("verification candidate HEAD is invalid")
         kind = payload.get("kind")
         if kind == "commands":
-            if set(payload) != {"kind", "candidate_head", "commands"}:
-                raise ValueError("final command set is invalid")
-            rows = payload["commands"]
-            if not isinstance(rows, list) or not rows:
-                raise ValueError("final command set is invalid")
-            commands = [self._command(row, final=True) for row in rows]
-            if len({item.command_id for item in commands}) != len(commands):
-                raise ValueError("final command IDs must be unique")
-            sealed = {
-                "kind": kind,
+            if (
+                set(payload) != {"kind", "candidate_head", "commands"}
+                or not isinstance(payload.get("commands"), list)
+                or not payload["commands"]
+            ):
+                raise ValueError("verification command set is invalid")
+            commands = [self._command(row) for row in payload["commands"]]
+            plan_document: dict[str, object] = {
+                "kind": "commands",
                 "candidate_head": candidate_head,
-                "commands": [item.as_dict() for item in commands],
+                "plan_index": plan_index,
+                "commands": [command.as_dict() for command in commands],
             }
         elif kind == "no_applicable_verification":
             if set(payload) != {"kind", "candidate_head", "rationale"}:
-                raise ValueError("no-applicable verification declaration is invalid")
-            sealed = {
+                raise ValueError("verification rationale shape is invalid")
+            plan_document = {
                 "kind": kind,
                 "candidate_head": candidate_head,
+                "plan_index": plan_index,
                 "rationale": _text(payload.get("rationale"), "rationale"),
             }
         else:
-            raise ValueError("final verification kind is invalid")
-        artifact = self.state.put_artifact("final_verification_set", sealed)
-        self._reference(artifact)
-        return artifact
+            raise ValueError("verification kind is invalid")
 
-    def load_final_command(self, set_digest: str, index: int) -> ExactCommand:
+        plan_artifact = self.state.put_artifact(
+            "plan_verification_set",
+            plan_document,
+        )
+        self._reference(plan_artifact)
+        if not is_final_plan:
+            return plan_artifact
+
+        lineage = [*expected_prior, plan_artifact.digest]
+        ordered = self._ordered_union(lineage)
+        run_document = (
+            {
+                "kind": "run_verification",
+                "candidate_head": candidate_head,
+                "plan_set_digests": lineage,
+                "commands": ordered,
+            }
+            if ordered
+            else {
+                "kind": "no_applicable_verification",
+                "candidate_head": candidate_head,
+                "plan_set_digests": lineage,
+                "rationales": self._rationale_provenance(lineage),
+            }
+        )
+        run_artifact = self.state.put_artifact(
+            "run_verification_set",
+            run_document,
+        )
+        self._reference(run_artifact)
+        return run_artifact
+
+    def _ordered_union(
+        self,
+        plan_set_digests: list[str],
+    ) -> list[dict[str, object]]:
+        ordered: list[dict[str, object]] = []
+        seen: set[str] = set()
+        for digest in plan_set_digests:
+            _, document = self._artifact_by_digest(
+                digest,
+                kinds=frozenset({"plan_verification_set"}),
+            )
+            rows = document.get("commands", [])
+            if not isinstance(rows, list):
+                raise ValueError("plan verification commands are invalid")
+            for row in rows:
+                if not isinstance(row, dict):
+                    raise ValueError("plan verification command is invalid")
+                command = self._command(row)
+                normalized = command.as_dict()
+                identity = sha256_json(
+                    {
+                        name: normalized[name]
+                        for name in (
+                            "argv",
+                            "cwd",
+                            "input_digest",
+                            "deadline_seconds",
+                        )
+                    }
+                )
+                if identity not in seen:
+                    seen.add(identity)
+                    ordered.append(normalized)
+        return ordered
+
+    def _rationale_provenance(
+        self,
+        plan_set_digests: list[str],
+    ) -> list[dict[str, object]]:
+        rationales: list[dict[str, object]] = []
+        for digest in plan_set_digests:
+            _, document = self._artifact_by_digest(
+                digest,
+                kinds=frozenset({"plan_verification_set"}),
+            )
+            rationale = document.get("rationale")
+            plan_index = document.get("plan_index")
+            if (
+                document.get("kind") != "no_applicable_verification"
+                or not isinstance(rationale, str)
+                or not rationale.strip()
+                or isinstance(plan_index, bool)
+                or not isinstance(plan_index, int)
+            ):
+                raise ValueError(
+                    "command-free run requires rationale for every plan"
+                )
+            rationales.append(
+                {
+                    "plan_index": plan_index,
+                    "plan_set_digest": digest,
+                    "rationale": rationale,
+                }
+            )
+        if not rationales:
+            raise ValueError("no-applicable run rationale is empty")
+        return rationales
+
+    def load_verification_command(
+        self,
+        set_digest: str,
+        index: int,
+    ) -> ExactCommand:
         require_digest(set_digest)
         if isinstance(index, bool) or not isinstance(index, int) or index < 0:
-            raise ValueError("final command index is invalid")
-        references = self.state.snapshot()["artifact_refs"]
-        matches = [
-            ArtifactRef(**row)
-            for row in references
-            if isinstance(row, dict)
-            and row.get("kind") == "final_verification_set"
-            and row.get("digest") == set_digest
-        ]
-        if len(matches) != 1:
-            raise ValueError("final verification set is not sealed")
-        payload = self._document(matches[0])
-        if payload.get("kind") != "commands" or not isinstance(payload.get("commands"), list):
-            raise ValueError("final verification set has no commands")
+            raise ValueError("verification command index is invalid")
+        _, payload = self._artifact_by_digest(
+            set_digest,
+            kinds=frozenset(
+                {"plan_verification_set", "run_verification_set"}
+            ),
+        )
+        commands = payload.get("commands")
+        if not isinstance(commands, list):
+            raise ValueError("verification set has no commands")
         try:
-            return self._command(payload["commands"][index], final=True)
+            return self._command(commands[index])
         except IndexError as error:
-            raise ValueError("final command index is unavailable") from error
+            raise ValueError("verification command index is unavailable") from error
+
+    def require_successful_verification_set(
+        self,
+        set_digest: str,
+        *,
+        candidate_head: str,
+        artifact_kind: str,
+        plan_index: int,
+    ) -> list[dict[str, str]]:
+        _, payload = self._artifact_by_digest(
+            set_digest,
+            kinds=frozenset({artifact_kind}),
+        )
+        if payload.get("candidate_head") != require_full_sha(candidate_head):
+            raise ValueError("verification candidate HEAD mismatch")
+        if artifact_kind == "plan_verification_set":
+            if payload.get("plan_index") != plan_index:
+                raise ValueError("verification plan identity mismatch")
+        elif artifact_kind == "run_verification_set":
+            lineage = payload.get("plan_set_digests")
+            if (
+                not isinstance(lineage, list)
+                or not lineage
+                or lineage[:-1] != self._prior_plan_sets(plan_index)
+            ):
+                raise ValueError("run verification lineage is invalid")
+            _, final_plan = self._artifact_by_digest(
+                lineage[-1],
+                kinds=frozenset({"plan_verification_set"}),
+            )
+            if (
+                final_plan.get("plan_index") != plan_index
+                or final_plan.get("candidate_head") != candidate_head
+            ):
+                raise ValueError("final plan verification identity is invalid")
+            ordered = self._ordered_union(lineage)
+            if payload.get("kind") == "no_applicable_verification":
+                if (
+                    ordered
+                    or "commands" in payload
+                    or payload.get("rationales")
+                    != self._rationale_provenance(lineage)
+                ):
+                    raise ValueError(
+                        "no-applicable run provenance is invalid"
+                    )
+                return []
+            if payload.get("commands") != ordered:
+                raise ValueError("run verification union is invalid")
+        else:
+            raise ValueError("verification artifact kind is invalid")
+        commands = payload.get("commands")
+        if payload.get("kind") == "no_applicable_verification":
+            if (
+                not isinstance(payload.get("rationale"), str)
+                or not payload["rationale"].strip()
+            ):
+                raise ValueError("verification rationale is invalid")
+            return []
+        if not isinstance(commands, list) or not commands:
+            raise ValueError("verification commands are invalid")
+        receipts: list[dict[str, str]] = []
+        for command_index in range(len(commands)):
+            command = self.load_verification_command(
+                set_digest,
+                command_index,
+            )
+            identity = self.identity_digest(
+                command,
+                candidate_head=candidate_head,
+            )
+            receipt = self.reusable_success(identity)
+            if receipt is None:
+                raise ValueError("successful verification receipt is missing")
+            receipts.append(receipt.artifact.as_dict())
+        return receipts
 
     def record_liveness(self, sample: Mapping[str, object]) -> None:
         if not isinstance(sample, Mapping):

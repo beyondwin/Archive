@@ -26,7 +26,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 case "$PROVIDER" in codex|claude|all) ;; *) PROVIDER=invalid ;; esac
-case "$MODE" in session|runner|all) ;; *) MODE=invalid ;; esac
+case "$MODE" in session|runner|ownership|interruption|all) ;; *) MODE=invalid ;; esac
 if [ "$#" -ne 0 ] || [ "$PROVIDER" = invalid ] || [ "$MODE" = invalid ]; then
   printf '%s\n' \
     '{"provider":"invalid","mode":"invalid","status":"failed","provider_version":null,"session_action":"not_started","final_head":null,"elapsed_seconds":0.0,"reason_code":"invalid_invocation"}'
