@@ -1200,6 +1200,16 @@ class RuntimeContractTests(unittest.TestCase):
         self.assertEqual(store.manifest.superpowers_skill, "executing-plans")
         self.assertEqual(stat.S_IMODE(store.manifest_path.stat().st_mode), 0o400)
 
+    def test_prompt_disambiguates_nullable_terminal_fields_by_claim(self) -> None:
+        self.run_once()
+
+        self.assertIn(
+            "Use null resume_capsule and blocker for completed; use a "
+            "resume_capsule and null blocker for interrupted; blocked requires "
+            "a blocker.",
+            self.controller.requests[0].prompt,
+        )
+
     def test_callbacks_persist_process_and_session_immediately_under_run_lock(self) -> None:
         result = self.run_once()
 
