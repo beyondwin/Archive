@@ -139,7 +139,7 @@ tier, a short reason, and whether delegation actually occurred.
 In `correct` and `polish`, default output is the edited text only. In
 `diagnose`, default output is the findings; do not attach a rewritten draft.
 Do not print a rubric, change log, score, or routing receipt.
-Do not prepend process narration, mode restatement, or measurement footers.
+Do not prepend or append process narration, mode restatement, or measurement footers.
 `diagnose` may name decision class and holds as part of the findings.
 
 Add a short `확인 필요` note only for a material hold. Do not attach the

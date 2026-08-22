@@ -27,6 +27,11 @@ const packageTest = (name: string) =>
 const rustFormat = command("rust-format", ["cargo", "fmt", "--check"], "native/kernel");
 const rustTest = command("rust-test", ["cargo", "test", "--workspace"], "native/kernel");
 const waygentSkillEval = command("waygent-skill-eval", ["./evals/run.sh"], "skills/waygent");
+const koreanWritingEditorEval = command(
+  "korean-writing-editor-eval",
+  ["python3", "evals/run.py", "--scope", "full"],
+  "skills/kws-korean-writing-editor",
+);
 const codexPlanRunnerEval = command(
   "codex-plan-runner-eval",
   ["./evals/run.sh"],
@@ -76,6 +81,7 @@ test.each([
   ["bun lock", ["bun.lock"], ["waygent-closure"], closureCommands],
   ["native", ["native/kernel/crates/kernel-cli/src/main.rs"], ["native"], [contract, diffCheck, rustFormat, rustTest]],
   ["Waygent skill", ["skills/waygent/SKILL.md"], ["waygent-skill"], [contract, diffCheck, waygentSkillEval, check, platformDemo, scenarios]],
+  ["Korean writing editor", ["skills/kws-korean-writing-editor/SKILL.md"], ["korean-writing-editor"], [contract, diffCheck, koreanWritingEditorEval]],
   ["Codex plan runner", ["skills/kws-codex-plan-runner/SKILL.md"], ["codex-plan-runner"], [contract, diffCheck, codexPlanRunnerEval, planRunnerParity, planRunnerCutoverTest, check]],
   ["Claude plan runner", ["skills/kws-claude-plan-runner/scripts/runner"], ["claude-plan-runner"], [contract, diffCheck, claudePlanRunnerEval, planRunnerParity, planRunnerCutoverTest, check]],
   ["Claude executor", ["skills/kws-claude-multi-agent-executor/scripts/kernel/kernel.py"], ["claude-executor"], [contract, diffCheck, claudeExecutorOffline, claudeExecutorEval, check]],
