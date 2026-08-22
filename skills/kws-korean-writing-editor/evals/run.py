@@ -250,6 +250,16 @@ def _heading_lines(text: str) -> set[str]:
     return {line.rstrip() for line in text.splitlines() if line.startswith("#")}
 
 
+def _contains_term(text: str, term: str) -> bool:
+    return (
+        re.search(
+            rf"(?<![A-Za-z0-9_]){re.escape(term)}(?![A-Za-z0-9_])",
+            text,
+        )
+        is not None
+    )
+
+
 def _check_relative_links(
     skill_root: pathlib.Path, relative_path: str, text: str
 ) -> list[str]:
@@ -336,10 +346,10 @@ def validate_skill_tree(skill_root: pathlib.Path, scope: str) -> list[str]:
         if text is None:
             continue
         for term in MODE_TERMS:
-            if term not in text:
+            if not _contains_term(text, term):
                 errors.append(f"skill tree: {relative} missing mode term {term!r}")
         for term in TIER_TERMS:
-            if term not in text:
+            if not _contains_term(text, term):
                 errors.append(f"skill tree: {relative} missing tier term {term!r}")
 
     heading_targets = ["SKILL.md", "references/editorial-guide.md"]
@@ -372,7 +382,11 @@ def validate_skill_tree(skill_root: pathlib.Path, scope: str) -> list[str]:
 
 
 def _cases_by_id(cases: list[dict[str, object]]) -> dict[str, dict[str, object]]:
-    return {str(case["id"]): case for case in cases}
+    indexed: dict[str, dict[str, object]] = {}
+    for case in cases:
+        if isinstance(case, dict) and isinstance(case.get("id"), str):
+            indexed[str(case["id"])] = case
+    return indexed
 
 
 def run_mutation_checks(cases: list[dict[str, object]]) -> list[str]:
@@ -528,6 +542,14 @@ class EvaluatorTests(unittest.TestCase):
             errors = validate_skill_tree(root, "full")
         self.assertIn("skill tree: missing README.md", errors)
 
+    def test_mutation_checks_ignore_non_object_entries(self):
+        errors = run_mutation_checks(["not-an-object"])
+        self.assertIn("mutation: missing meaning-quantity-03", errors)
+
+    def test_mode_term_does_not_match_correction(self):
+        self.assertFalse(_contains_term("local corrections only", "correct"))
+        self.assertTrue(_contains_term("mode `correct` and polish", "correct"))
+
 
 def run_self_tests() -> unittest.result.TestResult:
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(EvaluatorTests)
@@ -579,6 +601,9 @@ def main(argv: list[str] | None = None) -> int:
     print("mutation checks: PASS")
     if args.scope in {"core", "full"}:
         print(f"skill tree ({args.scope}): PASS")
+    print(
+        "offline contract only: reference candidates do not prove live model quality"
+    )
     return 0
 
 

@@ -24,7 +24,7 @@
 `kws-korean-writing-editor`는 runner/executor 심링크 셋업과 별도입니다.
 Codex, Cursor, Grok Build는 현재 사용자 경로
 `~/.agents/skills/kws-korean-writing-editor`에 검증된 사본을 두고, Claude
-Code는 `~/.claude/skills/kws-korean-writing-editor`에서 그 설치를 복사하거나
+Code는 `~/.claude/skills/kws-korean-writing-editor`에 그 설치를 복사하거나
 링크합니다. 명령과 덮어쓰기 금지 규칙은
 [kws-korean-writing-editor README](./kws-korean-writing-editor/README.md)를
 따릅니다.
