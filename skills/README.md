@@ -1,6 +1,6 @@
 # skills/
 
-이 디렉터리는 Archive 레포에서 관리되는 **개인용 runner/executor 스킬**의
+이 디렉터리는 **Archive에서 관리하는 개인용 스킬**의
 단일 출처(source of truth)입니다. 순차 plan 실행은 provider별 독립 runner를
 사용하고, 전문화된 multi-agent executor는 별도 계약으로 유지합니다.
 
@@ -13,10 +13,21 @@
 | [`kws-claude-plan-runner`](./kws-claude-plan-runner/) | 같은 공통 완료·복구 계약을 Claude Code transport로 독립 구현한 durable sequential runner. |
 | [`kws-claude-multi-agent-executor`](./kws-claude-multi-agent-executor/) | Opus orchestrator와 Sonnet sub-agent 역할 분리를 사용하는 전문화된 multi-agent executor. 순차 Claude runner와 독립적으로 설치·사용합니다. |
 | [`waygent`](./waygent/) | 활성 제품 런타임 스킬. 자연어 실행, 상태, 이벤트, 검사, 설명, 재개, 적용 요청을 Waygent CLI로 변환합니다. KWS executor 스킬은 별도 비제품 executor 계약으로 유지됩니다. |
+| [`kws-korean-writing-editor`](./kws-korean-writing-editor/) | 이미 있는 한국어 글을 뜻과 말투를 유지하며 좁게 교정·윤문합니다. runner/executor가 아닙니다. |
 
 각 스킬 디렉터리의 `SKILL.md`가 정식 진입점입니다. 자세한 사용법은 먼저
 실제로 존재하는 `README.md`를 확인하고, 해당 스킬이 제공하는 추가 파일을
 따르세요.
+
+## 휴대용 스킬 설치
+
+`kws-korean-writing-editor`는 runner/executor 심링크 셋업과 별도입니다.
+Codex, Cursor, Grok Build는 현재 사용자 경로
+`~/.agents/skills/kws-korean-writing-editor`에 검증된 사본을 두고, Claude
+Code는 `~/.claude/skills/kws-korean-writing-editor`에서 그 설치를 복사하거나
+링크합니다. 명령과 덮어쓰기 금지 규칙은
+[kws-korean-writing-editor README](./kws-korean-writing-editor/README.md)를
+따릅니다.
 
 ## 버전과 릴리스 상태
 
@@ -153,5 +164,5 @@ zero-blocker를 확인한 뒤 정식 cutover 절차로만 제거합니다.
 
 ## 참고
 
-- 다른 일반 스킬(reflective-writing-coach, archive-docs-organizer 등)은 별도의 `kws-skills` 플러그인에서 관리되며 이 디렉터리에는 포함되지 않습니다.
+- `kws-korean-writing-editor`는 Archive에서 의도적으로 관리하는 일반 스킬 예외입니다. 다른 일반 스킬(reflective-writing-coach, archive-docs-organizer 등)은 별도의 `kws-skills` 플러그인에서 관리되며 이 디렉터리에는 포함되지 않습니다.
 - executor 스킬을 Archive 레포로 옮긴 배경은 커밋 `d7039d5`, `17ff639`, `da8782c` 참고.
