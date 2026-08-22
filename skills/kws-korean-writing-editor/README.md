@@ -75,7 +75,7 @@ $kws-korean-writing-editor 오탈자만 고쳐줘: 이 기능은 사용할수 �
 
 `correct`와 `polish`의 기본 출력은 고친 글만입니다. `diagnose`는 고치지
 않고 어색한 점과 보류만 말합니다. 점수, 변경 목록, 모델 이름은 붙지
-않습니다.
+않습니다. 앞에 작업 설명을 붙이지 않습니다.
 
 `확인 필요`는 뜻을 바꿀 수 있는 모호함이나 보류가 있을 때만 짧게 붙습니다.
 그 한 줄에 이유 목록을 붙이지 않습니다. 이유를 물어보면 그때 고친 글,
@@ -191,5 +191,7 @@ python3 skills/kws-korean-writing-editor/evals/run.py --scope full
 ```
 
 통과는 30개 픽스처와 문서 계약이 맞다는 뜻이지, 실제 모델 품질 증거가
-아닙니다. 라이브 카나리는 별도 선택이며 따로 보고합니다. 변경 동기화는
-[CHANGE_PROTOCOL.md](CHANGE_PROTOCOL.md)를 따릅니다.
+아닙니다. 라이브 카나리는 별도 선택이며 따로 보고합니다. 라이브 양성
+프롬프트에는 원고와 교정 요청만 넣습니다. 모델에게 CANARY나
+skill_used를 적으라고 시키지 않습니다. 본문을 보고 판정합니다. 변경
+동기화는 [CHANGE_PROTOCOL.md](CHANGE_PROTOCOL.md)를 따릅니다.
