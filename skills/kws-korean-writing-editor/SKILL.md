@@ -3,8 +3,8 @@ name: kws-korean-writing-editor
 description: Use only when the user asks to proofread, correct, or polish Korean text they provide. Do not use for translation, drafting, summarization, general writing advice, code review, casual Korean conversation, AI-authorship detection, or detector evasion.
 compatibility: Requires Korean source text and local Agent Skills file access. Model delegation is optional and host-dependent.
 metadata:
-  version: "1.0.0"
-  updated_at: "2026-08-22"
+  version: "1.0.1"
+  updated_at: "2026-08-23"
 ---
 
 # KWS Korean Writing Editor
@@ -37,6 +37,7 @@ Excluded near misses (always no-op):
 - code, architecture, or product review merely written in Korean
 - AI-authorship detection
 - detector evasion or “make this look human”
+- named-author imitation
 
 ## Modes
 
@@ -55,9 +56,12 @@ invariants.
 
 ## Default Interaction
 
-Return edited text with no configuration form. Do not ask for genre, audience,
-and tone on every call. Ask one short question only when the unresolved choice
-would change meaning, audience relationship, or required register.
+Do not ask for genre, audience, and tone on every call. Ask one short question
+only when the unresolved choice would change meaning, audience relationship, or
+required register.
+
+In `correct` and `polish`, the default reply is the edited text only. In
+`diagnose`, name issues, decision class, and holds; do not rewrite.
 
 Do not persist user text as fixtures, logs, or a meaning ledger. Do not add a
 morphological analyzer, unofficial spelling API, or other required external
@@ -67,11 +71,13 @@ tool.
 
 For a valid request, in this order:
 
-1. Determine the mode and any explicit protected expressions.
+1. Determine the mode and any explicit protected expressions. If the mode is
+   `diagnose`, name issues, decision class, and holds; do not apply steps 3–5;
+   keep the source text unchanged and finish at steps 6–7.
 2. Note material propositions and invariants in working memory only, without
    persisting user text: negation, certainty, obligation, time, causality,
    quantities, names, quotations, and attribution.
-3. Apply normative local corrections.
+3. Apply normative local corrections (`correct` and `polish` only).
 4. Apply local grammar and flow improvements only in `polish`.
 5. Restore intentional voice features (repetition, fragments, endings, slang,
    indirectness, rhythm) when they are voice rather than errors.
@@ -126,11 +132,14 @@ tier, a short reason, and whether delegation actually occurred.
 
 ## Output Contract
 
-Default output is the edited text only. Do not print a rubric, change log,
-score, decision-class label, or routing receipt.
+In `correct` and `polish`, default output is the edited text only. In
+`diagnose`, default output is the findings; do not attach a rewritten draft.
+Do not print a rubric, change log, score, or routing receipt. `diagnose` may
+name decision class and holds as part of the findings.
 
-Add a short `확인 필요` note only for a material hold. Explain decision class
-and source only when asked. Then include:
+Add a short `확인 필요` note only for a material hold. Do not attach the
+explanation list to that note. Explain class and source only when the user
+asks why. A why-request may include:
 
 1. the edited text (or the unchanged original)
 2. material changes
@@ -142,7 +151,7 @@ and source only when asked. Then include:
 | Condition | Behavior |
 | --- | --- |
 | No clear editing request or source text | Do not activate; if already active, no-op handoff |
-| Excluded near miss | No-op; do not edit, translate, draft, or detect |
+| Excluded near miss | No-op; do not edit, translate, draft, detect, or imitate a named author |
 | Original already suitable | Return it unchanged |
 | Ambiguity would change meaning or register | Ask one short question, or keep the original wording |
 | Proposed edit breaks an invariant | Revert; if material, add `확인 필요` |

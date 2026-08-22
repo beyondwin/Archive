@@ -37,8 +37,10 @@ Keep the thirty property cases and mutation checks honest in
 - Trigger work needs both positive and near-miss records.
 - Mode, output, preservation, and tier work needs matching
   `expected_mode`, `expected_tier`, and `expected_noop` records.
+- Voice cases protect small register or stance spans. They must not require
+  the whole candidate string to equal the source.
 - Passing fixtures proves the offline oracle contract. It does not prove
-  live model quality.
+  live model quality. The evaluator prints that disclaimer on success.
 
 ## Versioning
 
