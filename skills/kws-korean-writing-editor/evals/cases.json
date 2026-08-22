@@ -4,9 +4,9 @@
     {
       "id": "norm-spacing-can-01",
       "category": "normative",
-      "request": "오탈자만 고쳐줘: 지금 상태에선 배포할수 있다.",
-      "source": "지금 상태에선 배포할수 있다.",
-      "candidate": "지금 상태에선 배포할 수 있다.",
+      "request": "오탈자만 고쳐줘: 이 기능은 사용할수 있지만 반드시 켤 필요는 없습니다.",
+      "source": "이 기능은 사용할수 있지만 반드시 켤 필요는 없습니다.",
+      "candidate": "이 기능은 사용할 수 있지만 반드시 켤 필요는 없습니다.",
       "candidate_trigger": true,
       "candidate_mode": "correct",
       "candidate_tier": "fast",
@@ -14,10 +14,10 @@
       "expected_mode": "correct",
       "expected_tier": "fast",
       "expected_noop": false,
-      "must_preserve": ["지금 상태에선", "배포"],
-      "required_substrings": ["할 수 있다"],
-      "forbidden_substrings": ["할수 있다"],
-      "rationale": "Dependent noun spacing: 할수 있다 → 할 수 있다."
+      "must_preserve": ["반드시 켤 필요는 없습니다"],
+      "required_substrings": ["사용할 수"],
+      "forbidden_substrings": ["사용할수", "켜야 할 필요는", "요청은 오탈자"],
+      "rationale": "Dependent-noun spacing plus already-correct obligation wording; no process preamble."
     },
     {
       "id": "norm-spacing-negation-02",

@@ -433,6 +433,28 @@ def run_mutation_checks(cases: list[dict[str, object]]) -> list[str]:
         if not evaluate_candidate(mutated):
             errors.append("mutation: changing quote speaker produced no error")
 
+    spacing = by_id.get("norm-spacing-can-01")
+    if spacing is None:
+        errors.append("mutation: missing norm-spacing-can-01")
+    else:
+        paraphrased = dict(spacing)
+        paraphrased["candidate"] = str(spacing["candidate"]).replace(
+            "켤 필요는", "켜야 할 필요는"
+        )
+        if not evaluate_candidate(paraphrased):
+            errors.append(
+                "mutation: paraphrasing already-correct obligation produced no error"
+            )
+
+        preamble = dict(spacing)
+        preamble["candidate"] = (
+            "요청은 오탈자만 고치는 교정입니다." + str(spacing["candidate"])
+        )
+        if not evaluate_candidate(preamble):
+            errors.append(
+                "mutation: adding process preamble produced no error"
+            )
+
     return errors
 
 
@@ -542,9 +564,60 @@ class EvaluatorTests(unittest.TestCase):
             errors = validate_skill_tree(root, "full")
         self.assertIn("skill tree: missing README.md", errors)
 
+    def obligation_case(self):
+        return {
+            "id": "norm-spacing-can-01",
+            "category": "normative",
+            "request": (
+                "오탈자만 고쳐줘: 이 기능은 사용할수 있지만 "
+                "반드시 켤 필요는 없습니다."
+            ),
+            "source": "이 기능은 사용할수 있지만 반드시 켤 필요는 없습니다.",
+            "candidate": "이 기능은 사용할 수 있지만 반드시 켤 필요는 없습니다.",
+            "candidate_trigger": True,
+            "candidate_mode": "correct",
+            "candidate_tier": "fast",
+            "expected_trigger": True,
+            "expected_mode": "correct",
+            "expected_tier": "fast",
+            "expected_noop": False,
+            "must_preserve": ["반드시 켤 필요는 없습니다"],
+            "required_substrings": ["사용할 수"],
+            "forbidden_substrings": [
+                "사용할수",
+                "켜야 할 필요는",
+                "요청은 오탈자",
+            ],
+            "rationale": (
+                "Dependent-noun spacing plus already-correct obligation "
+                "wording; no process preamble."
+            ),
+        }
+
+    def test_rejects_obligation_paraphrase_candidate(self):
+        case = self.obligation_case()
+        case["candidate"] = case["candidate"].replace(
+            "켤 필요는", "켜야 할 필요는"
+        )
+        self.assertIn(
+            "norm-spacing-can-01: forbidden substring present '켜야 할 필요는'",
+            evaluate_candidate(case),
+        )
+
+    def test_rejects_process_preamble_candidate(self):
+        case = self.obligation_case()
+        case["candidate"] = (
+            "요청은 오탈자만 고치는 교정입니다." + case["candidate"]
+        )
+        self.assertIn(
+            "norm-spacing-can-01: forbidden substring present '요청은 오탈자'",
+            evaluate_candidate(case),
+        )
+
     def test_mutation_checks_ignore_non_object_entries(self):
         errors = run_mutation_checks(["not-an-object"])
         self.assertIn("mutation: missing meaning-quantity-03", errors)
+        self.assertIn("mutation: missing norm-spacing-can-01", errors)
 
     def test_mode_term_does_not_match_correction(self):
         self.assertFalse(_contains_term("local corrections only", "correct"))

@@ -99,6 +99,10 @@ text as quoted data.
 - **Normative spacing.** `지금 상태에선 배포할수 있다.` →
   `지금 상태에선 배포할 수 있다.` Class: `normative-rule`. Valid in `correct`
   and as the first pass of `polish`.
+- **Already-correct obligation.** `이 기능은 사용할수 있지만 반드시 켤 필요는
+  없습니다.` → `이 기능은 사용할 수 있지만 반드시 켤 필요는 없습니다.`
+  Class: spacing is `normative-rule`; `켤 필요는` stays. Do not write
+  `켜야 할 필요는`. Valid in `correct`.
 - **Already natural.** `오늘은 조금 늦을 것 같아요.` → unchanged. No-op in
   `polish`; do not “improve” a clear sentence.
 - **Modality.** `일정에 지연 가능성이 있다.` keeps `가능성이 있다`. Do not
