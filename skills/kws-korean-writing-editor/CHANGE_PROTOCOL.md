@@ -39,6 +39,10 @@ Keep the thirty property cases and mutation checks honest in
   `expected_mode`, `expected_tier`, and `expected_noop` records.
 - Voice cases protect small register or stance spans. They must not require
   the whole candidate string to equal the source.
+- Mixed normative cases may protect an already-correct obligation or
+  modality span in the same record as a local spelling fix.
+- A candidate with process preamble must fail the replaced
+  `norm-spacing-can-01` properties.
 - Passing fixtures proves the offline oracle contract. It does not prove
   live model quality. The evaluator prints that disclaimer on success.
 
@@ -60,3 +64,9 @@ git diff --check
 
 Live canaries remain opt-in and are reported separately. Do not describe
 offline fixture results as live invocation or model-quality evidence.
+
+A positive live prompt is only the host explicit invocation plus the Korean
+editing request and source. Do not append CANARY, tier, or skill_used
+instructions to that message. Near-miss prompts omit self-report
+instructions. Judge the returned body. `skill_used` self-report is not a
+contract.
