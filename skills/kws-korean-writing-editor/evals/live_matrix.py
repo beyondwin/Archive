@@ -11,6 +11,7 @@ import json
 import os
 import pathlib
 import re
+import secrets
 import shutil
 import stat
 import subprocess
@@ -288,6 +289,7 @@ class CallReceipt:
             "prompt_sha256": self.prompt_sha256,
             "raw_paths": list(self.raw_paths),
             "reported_model": self.reported_model,
+            "repeat_index": self.repeat_index,
             "requested_model": self.requested_model,
             "response_sha256": self.response_sha256,
             "started_at": self.started_at,
@@ -658,7 +660,7 @@ def _canonical_json_bytes(payload: dict[str, Any]) -> bytes:
 
 
 def _write_exclusive_json(path: pathlib.Path, payload: dict[str, Any]) -> None:
-    """Write a canonical receipt once, without following a terminal symlink."""
+    """Publish a complete canonical receipt once, without replacing an attempt."""
     try:
         parent_stat = path.parent.lstat()
     except OSError as exc:
@@ -668,12 +670,12 @@ def _write_exclusive_json(path: pathlib.Path, payload: dict[str, Any]) -> None:
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
+    temporary = path.parent / f".{path.name}.{secrets.token_hex(16)}.partial"
     try:
-        descriptor = os.open(path, flags, 0o600)
-    except FileExistsError as exc:
-        raise LiveMatrixError("receipt already exists") from exc
+        descriptor = os.open(temporary, flags, 0o600)
     except OSError as exc:
-        raise LiveMatrixError("cannot create receipt") from exc
+        raise LiveMatrixError("cannot create receipt staging file") from exc
+    published = False
     try:
         os.fchmod(descriptor, 0o600)
         encoded = _canonical_json_bytes(payload)
@@ -684,8 +686,27 @@ def _write_exclusive_json(path: pathlib.Path, payload: dict[str, Any]) -> None:
                 raise LiveMatrixError("incomplete receipt write")
             offset += written
         os.fsync(descriptor)
+        try:
+            os.link(temporary, path, follow_symlinks=False)
+        except FileExistsError as exc:
+            raise LiveMatrixError("receipt already exists") from exc
+        except OSError as exc:
+            raise LiveMatrixError("cannot publish receipt") from exc
+        published = True
+        directory_descriptor = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_descriptor)
+        finally:
+            os.close(directory_descriptor)
     finally:
         os.close(descriptor)
+        if not published:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+        else:
+            os.unlink(temporary)
 
 
 def write_receipt(path: pathlib.Path, receipt: CallReceipt) -> None:
@@ -786,7 +807,7 @@ def _discover_models(cursor: CliInfo, repository_root: pathlib.Path) -> tuple[by
     except LiveMatrixError as exc:
         return None, str(exc)
     if capture.returncode != 0:
-        return capture.stdout, redacted_diagnostic("cursor_models_stderr", capture.stderr)
+        return None, redacted_diagnostic("cursor_models_stderr", capture.stderr)
     return capture.stdout, redacted_diagnostic("cursor_models_stdout", capture.stdout)
 
 
@@ -805,15 +826,52 @@ def _run_offline_checks(source_skill_root: pathlib.Path, repository_root: pathli
             raise LiveMatrixError("offline evaluator preflight failed")
 
 
-def _run_root(evidence_root: pathlib.Path, run_id: str, *, resume: bool) -> pathlib.Path:
+def validate_evidence_root(
+    evidence_root: pathlib.Path, repository_root: pathlib.Path
+) -> pathlib.Path:
+    """Accept only the ignored, exact live-evidence root below this checkout."""
+    repo_root = _checked_directory(repository_root, "repository root")
+    expected = repo_root / ".superpowers" / "kws-korean-writing-editor" / "live"
+    candidate = evidence_root if evidence_root.is_absolute() else repo_root / evidence_root
     try:
-        evidence_root.mkdir(mode=0o700, parents=True, exist_ok=True)
-        os.chmod(evidence_root, 0o700)
+        resolved_candidate = candidate.resolve(strict=False)
+        resolved_expected = expected.resolve(strict=False)
     except OSError as exc:
-        raise LiveMatrixError("cannot create evidence root") from exc
-    run_root = evidence_root / run_id
-    if run_root.exists() and not resume:
-        raise LiveMatrixError("run root already exists; use a new run ID")
+        raise LiveMatrixError("cannot resolve evidence root") from exc
+    if resolved_candidate != resolved_expected:
+        raise LiveMatrixError("evidence root must be the ignored exact live root")
+    capture = run_command(
+        ("git", "check-ignore", "-q", "--", str(expected.relative_to(repo_root))),
+        cwd=repo_root,
+        timeout=30,
+    )
+    if capture.returncode != 0:
+        raise LiveMatrixError("evidence root is not ignored")
+    return expected
+
+
+def _run_root(
+    evidence_root: pathlib.Path,
+    run_id: str,
+    *,
+    repository_root: pathlib.Path,
+    require_existing: bool,
+) -> pathlib.Path:
+    safe_evidence_root = validate_evidence_root(evidence_root, repository_root)
+    run_root = safe_evidence_root / run_id
+    if require_existing:
+        if not run_root.exists():
+            raise LiveMatrixError("preflight receipt is required before execution")
+    else:
+        if run_root.exists():
+            raise LiveMatrixError("run root already exists; use a new run ID")
+    if not safe_evidence_root.exists():
+        try:
+            safe_evidence_root.mkdir(mode=0o700, parents=True)
+        except OSError as exc:
+            raise LiveMatrixError("cannot create evidence root") from exc
+    if safe_evidence_root.is_symlink() or not safe_evidence_root.is_dir():
+        raise LiveMatrixError("evidence root is not a real directory")
     if not run_root.exists():
         try:
             run_root.mkdir(mode=0o700)
@@ -836,6 +894,7 @@ def validate_preflight(
     max_calls: int,
     evidence_root: pathlib.Path | None = None,
     resume: bool = False,
+    reuse_preflight: bool = False,
 ) -> PreflightResult:
     """Validate immutable paid-run inputs before any provider prompt dispatch."""
     job_error = validate_jobs(jobs)
@@ -894,7 +953,12 @@ def validate_preflight(
     }
     run_root = None
     if evidence_root is not None:
-        run_root = _run_root(evidence_root, run_id, resume=resume)
+        run_root = _run_root(
+            evidence_root,
+            run_id,
+            repository_root=repo_root,
+            require_existing=reuse_preflight or resume,
+        )
         preflight_payload = {
             "identity": identity_json(identity),
             "repository_branch": branch,
@@ -907,17 +971,17 @@ def validate_preflight(
             "model_discovery_diagnostic": discovery_diagnostic,
         }
         preflight_path = run_root / "preflight.json"
-        if preflight_path.exists() and resume:
+        if preflight_path.exists() and (resume or reuse_preflight):
             try:
                 previous = json.loads(preflight_path.read_text(encoding="utf-8"))
             except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
                 raise LiveMatrixError("malformed preflight receipt") from exc
             if not isinstance(previous, dict) or previous.get("identity") != identity_json(identity):
                 raise LiveMatrixError("preflight identity drift requires a new run ID")
-        elif not preflight_path.exists():
+        elif not preflight_path.exists() and not reuse_preflight:
             _write_exclusive_json(preflight_path, preflight_payload)
         else:
-            raise LiveMatrixError("preflight receipt already exists")
+            raise LiveMatrixError("preflight receipt is required before execution")
     return PreflightResult(
         identity=identity,
         repository_root=repo_root,
@@ -1220,26 +1284,50 @@ def _receipt_from_json(payload: Any) -> CallReceipt:
         raise LiveMatrixError("malformed receipt") from exc
 
 
-def _load_receipts(run_root: pathlib.Path) -> dict[str, CallReceipt]:
+def _load_receipt_attempts(run_root: pathlib.Path) -> tuple[CallReceipt, ...]:
     receipt_root = run_root / RECEIPT_DIRECTORY_NAME
     if not receipt_root.exists():
-        return {}
+        return ()
     if receipt_root.is_symlink() or not receipt_root.is_dir():
         raise LiveMatrixError("receipt directory is not a real directory")
-    receipts: dict[str, CallReceipt] = {}
+    attempts: list[CallReceipt] = []
+    seen_attempts: set[tuple[str, int]] = set()
+    seen_call_numbers: set[int] = set()
     for path in sorted(receipt_root.iterdir(), key=lambda item: item.name):
+        if path.name.endswith(".partial") and path.name.startswith("."):
+            continue
         if path.is_symlink() or not path.is_file() or path.suffix != ".json":
             raise LiveMatrixError("receipt directory contains unsafe entry")
         try:
             receipt = _receipt_from_json(json.loads(path.read_text(encoding="utf-8")))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise LiveMatrixError("malformed receipt") from exc
+        key = (receipt.call_id, receipt.call_number)
+        if key in seen_attempts:
+            raise LiveMatrixError("duplicate receipt attempt")
+        if receipt.call_number > 0 and receipt.call_number in seen_call_numbers:
+            raise LiveMatrixError("duplicate reserved call number")
+        seen_attempts.add(key)
+        if receipt.call_number > 0:
+            seen_call_numbers.add(receipt.call_number)
+        attempts.append(receipt)
+    return tuple(attempts)
+
+
+def _load_receipts(run_root: pathlib.Path) -> dict[str, CallReceipt]:
+    """Expose only the latest durable receipt for each logical planned call."""
+    receipts: dict[str, CallReceipt] = {}
+    for receipt in _load_receipt_attempts(run_root):
         logical_id = receipt.call_id.split(":attempt-", 1)[0]
         existing = receipts.get(logical_id)
-        if existing is not None and existing.call_number >= receipt.call_number:
-            raise LiveMatrixError("duplicate or out-of-order logical receipt attempt")
-        receipts[logical_id] = receipt
+        if existing is None or receipt.call_number > existing.call_number:
+            receipts[logical_id] = receipt
     return receipts
+
+
+def attempted_call_count(attempts: Sequence[CallReceipt]) -> int:
+    """Restore the monotonic call counter without reusing historical numbers."""
+    return max((attempt.call_number for attempt in attempts), default=0)
 
 
 def _write_call_receipt(run_root: pathlib.Path, receipt: CallReceipt) -> None:
@@ -1416,6 +1504,27 @@ def _dispatch_one(
     )
 
 
+def validate_dispatch_identity(preflight: PreflightResult) -> None:
+    """Fail closed if the checked checkout or manifests drift before dispatch."""
+    if not _git_status_is_clean(preflight.repository_root):
+        raise LiveMatrixError("dispatch identity drift: relevant checkout is not clean")
+    if _git_value(preflight.repository_root, "rev-parse", "HEAD") != preflight.identity.repository_head:
+        raise LiveMatrixError("dispatch identity drift: repository HEAD changed")
+    source_hash = recursive_manifest_hash(preflight.source_skill_root)
+    installed_hash = recursive_manifest_hash(preflight.installed_skill_root)
+    live_cases = preflight.source_skill_root / "evals" / "live_cases.json"
+    if source_hash != installed_hash:
+        raise LiveMatrixError("dispatch identity drift: source and installed skill manifests differ")
+    if source_hash != preflight.identity.skill_hash:
+        raise LiveMatrixError("dispatch identity drift: source skill changed")
+    if installed_hash != preflight.identity.installed_skill_hash:
+        raise LiveMatrixError("dispatch identity drift: installed skill changed")
+    if live_cases.is_symlink() or not live_cases.is_file():
+        raise LiveMatrixError("dispatch identity drift: live case manifest is unsafe")
+    if _sha256_file(live_cases) != preflight.identity.live_cases_hash:
+        raise LiveMatrixError("dispatch identity drift: live cases changed")
+
+
 def dispatch_calls(
     preflight: PreflightResult,
     plan: Sequence[PlannedCall],
@@ -1432,6 +1541,7 @@ def dispatch_calls(
         raise LiveMatrixError(job_error)
     if preflight.identity.skill_hash != preflight.identity.installed_skill_hash:
         raise LiveMatrixError("source and installed skill manifests differ")
+    validate_dispatch_identity(preflight)
     current_producers = build_producers()
     if (
         preflight.identity.producer_ids != tuple(producer.id for producer in current_producers)
@@ -1439,11 +1549,12 @@ def dispatch_calls(
         != tuple(producer.requested_model for producer in current_producers if producer.requested_model is not None)
     ):
         raise LiveMatrixError("preflight producer identity drift requires a new run ID")
+    attempts = _load_receipt_attempts(preflight.run_root)
     receipts = _load_receipts(preflight.run_root)
     pending = remaining_calls(plan, receipts, preflight.identity)
     producers = {producer.id: producer for producer in current_producers}
     case_by_identifier = {case.id: case for case in cases}
-    budget = CallBudget(max_calls, attempted=sum(receipt.call_number > 0 for receipt in receipts.values()))
+    budget = CallBudget(max_calls, attempted=attempted_call_count(attempts))
     result: list[CallReceipt] = []
     eligible: list[tuple[PlannedCall, Producer, LiveCase]] = []
     not_measured: list[CallReceipt] = []
@@ -1559,8 +1670,6 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("choose --dry-run, --preflight, --execute, or --compare-skill-roots")
     if args.resume and not args.execute:
         parser.error("--resume requires --execute")
-    if args.scope == "baseline" and not args.execute:
-        parser.error("baseline scope requires --execute")
     if args.run_id is None:
         parser.error("--run-id is required for preflight or execution")
     job_error = validate_jobs(args.jobs)
@@ -1593,6 +1702,7 @@ def main(argv: list[str] | None = None) -> int:
             max_calls=max_calls,
             evidence_root=evidence_root,
             resume=args.resume,
+            reuse_preflight=args.execute,
         )
         if args.execute:
             cases = load_live_cases(source_root / "evals" / "live_cases.json")
