@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-23
 
-**Status:** Direction approved; written specification awaiting review
+**Status:** Approved design
 
 **Repository:** `/Users/kws/source/private/Archive`
 
