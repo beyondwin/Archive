@@ -2494,6 +2494,7 @@ def _finding_severity(finding: Finding, case: LiveCase | None) -> str:
 
 
 def _safe_report_text(value: str | None) -> str:
+    """Render one bounded external fact as inert Markdown inline code."""
     if value is None:
         return "not measured"
     if not isinstance(value, str):
@@ -2512,7 +2513,10 @@ def _safe_report_text(value: str | None) -> str:
     redacted = WINDOWS_DRIVE_PATH_RE.sub("[REDACTED_PATH]", redacted)
     redacted = WINDOWS_UNC_PATH_RE.sub("[REDACTED_PATH]", redacted)
     redacted = RAW_EVIDENCE_PATH_RE.sub("[REDACTED_PATH]", redacted)
-    return _bounded_utf8(redacted.strip())
+    # Backticks delimit the positive inline-code boundary. The translation
+    # above also keeps raw HTML/link text and GFM table pipes visibly inert.
+    inert = redacted.strip()
+    return f"`{_bounded_utf8(inert)}`"
 
 
 def render_operations_report(report_input: ReportInput) -> str:

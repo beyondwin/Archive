@@ -4,6 +4,7 @@ import contextlib
 import io
 import json
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -816,7 +817,7 @@ class ReviewAndReportTests(unittest.TestCase):
         ):
             self.assertIn(heading, report)
         self.assertIn("partially verified", report)
-        self.assertIn("Branch: test-branch", report)
+        self.assertIn("Branch: `test-branch`", report)
         self.assertIn(receipts[0].response_sha256, report)
         self.assertNotIn("PRIVATE FULL RESPONSE BODY", report)
         self.assertNotIn("sk-secret-token", report)
@@ -946,15 +947,15 @@ class ReviewAndReportTests(unittest.TestCase):
                 review_responses=(concern, pass_response),
             )
         )
-        self.assertIn(f"{samples[0].candidate_id}: disagreement", report)
+        self.assertIn(f"`{samples[0].candidate_id}`: disagreement", report)
         self.assertIn("partial reviewer coverage=2/3", report)
-        self.assertIn("meaning/material/omits obligation", report)
+        self.assertIn("`meaning`/material/`omits obligation`", report)
         self.assertIn("bounded packet", report)
         self.assertIn("one candidate only", report)
-        self.assertIn("review_json_invalid: bad JSON at [REDACTED_PATH]", report)
+        self.assertIn("`review_json_invalid`: `bad JSON at [REDACTED_PATH]`", report)
         self.assertIn("status=blocked", report)
-        self.assertIn("requested=cursor-grok-4.6-high", report)
-        self.assertIn("reported=gpt-reviewer", report)
+        self.assertIn("requested=`cursor-grok-4.6-high`", report)
+        self.assertIn("reported=`gpt-reviewer`", report)
         self.assertIn("b" * 64, report)
 
     def test_cross_review_verdict_requires_two_valid_assessments(self) -> None:
@@ -997,13 +998,102 @@ class ReviewAndReportTests(unittest.TestCase):
             )
         )
         self.assertIn("Cross-review coverage=0/3; insufficient cross-review evidence", zero)
-        self.assertIn(f"{candidate}: insufficient cross-review evidence; partial reviewer coverage=1/3", one)
-        self.assertIn(f"{candidate}: agreement; partial reviewer coverage=2/3", two_agree)
-        self.assertIn(f"{candidate}: disagreement; partial reviewer coverage=2/3", two_conflict)
-        self.assertIn(f"{candidate}: agreement; reviewer coverage=3/3", three_agree)
-        self.assertIn(f"{candidate}: insufficient cross-review evidence; partial reviewer coverage=1/3", one_with_blocked)
+        self.assertIn(f"`{candidate}`: insufficient cross-review evidence; partial reviewer coverage=1/3", one)
+        self.assertIn(f"`{candidate}`: agreement; partial reviewer coverage=2/3", two_agree)
+        self.assertIn(f"`{candidate}`: disagreement; partial reviewer coverage=2/3", two_conflict)
+        self.assertIn(f"`{candidate}`: agreement; reviewer coverage=3/3", three_agree)
+        self.assertIn(f"`{candidate}`: insufficient cross-review evidence; partial reviewer coverage=1/3", one_with_blocked)
         self.assertNotIn("score=", one_with_blocked.lower())
         self.assertNotIn("rank=", one_with_blocked.lower())
+
+    def test_all_external_report_fields_are_inert_across_commonmark_and_gfm_inline_syntax(self) -> None:
+        hostile = (
+            "EXTERNAL _u_ *e* **s** ~~d~~ `c` \\ [l](x) ![i](x) "
+            "<x@y.z> <https://x.invalid> www.x.invalid https://x.invalid x@y.invalid "
+            "&amp; <b>x</b>\n# h\n> q\n- l\n1. o\n|a|b|\u0085\u2028\u2029\x00"
+        )
+        identity = live_matrix.RunIdentity.for_test(run_id=hostile, producer_ids=(hostile,))
+        producer = live_matrix.CallReceipt.for_test(
+            hostile + ":case:1",
+            identity=identity,
+            status="failed",
+            requested_model=hostile,
+            reported_model=hostile,
+            case_id=hostile,
+            band="valid-mode",
+            response_sha256=hostile,
+            findings=(live_matrix.Finding(hostile, hostile, hostile),),
+        )
+        review = live_matrix.ReviewResponse(
+            samples=(
+                live_matrix.ReviewAssessment(
+                    hostile,
+                    (live_matrix.ReviewIssue(hostile, "material", hostile),),
+                    "concern",
+                ),
+            ),
+            packet_limitations=(hostile,),
+        )
+        reviewer = live_matrix.CallReceipt.for_test(
+            "reviewer:packet:1",
+            status="blocked",
+            requested_model=hostile,
+            reported_model=hostile,
+            response_sha256=hostile,
+            findings=(live_matrix.Finding(hostile, hostile),),
+        )
+        safe_command = "python3 skills/kws-korean-writing-editor/evals/run.py --scope full"
+        report = live_matrix.render_operations_report(
+            live_matrix.ReportInput.for_test(
+                receipts=(producer,),
+                identity=identity,
+                producer_ids=(hostile,),
+                reviewer_receipts=(reviewer,),
+                review_responses=(review,),
+                report_date=hostile,
+                branch=hostile,
+                head=hostile,
+                source_skill_hash=hostile,
+                installed_skill_hash=hostile,
+                cli_versions={hostile: hostile},
+                skill_version=hostile,
+                case_counts={hostile: 14},
+                changed_files=(hostile,),
+                local_state=hostile,
+                remote_state=hostile,
+                git_state=hostile,
+                installation_state=hostile,
+                verification_results=((safe_command, hostile), (hostile, hostile)),
+            )
+        )
+
+        # Every one of the 37 rendered external/provider values remains visible,
+        # but only as inert inline code. Fixed report Markdown stays structural.
+        self.assertEqual(report.count("EXTERNAL"), 37)
+        outside_code_spans = re.sub(r"`[^`\n]*`", "", report)
+        for active_inline in (
+            "EXTERNAL",
+            "_u_",
+            "*e*",
+            "**s**",
+            "~~d~~",
+            "[l](x)",
+            "![i](x)",
+            "<x@y.z>",
+            "www.x.invalid",
+            "x@y.invalid",
+            "&amp;",
+            "<b>x</b>",
+        ):
+            self.assertNotIn(active_inline, outside_code_spans)
+        for block_injection in ("\n# h", "\n> q", "\n- l", "\n1. o", "\n|a|b|"):
+            self.assertNotIn(block_injection, report)
+        for separator in ("\x00", "\x85", "\u2028", "\u2029"):
+            self.assertNotIn(separator, report)
+        self.assertIn("# KWS Korean Writing Editor Cross-Model Evaluation", report)
+        self.assertIn("## Verification", report)
+        self.assertIn("| Producer | valid mode | preservation | noop hold | near miss |", report)
+        self.assertIn(f"- `{safe_command}`: `", report)
 
     def test_report_boundary_neutralizes_unicode_breaks_html_and_markdown_for_all_external_values(self) -> None:
         hostile = (
