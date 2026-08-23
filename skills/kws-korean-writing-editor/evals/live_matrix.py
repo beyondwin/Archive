@@ -88,6 +88,7 @@ MAX_JOBS = 4
 BASELINE_CALL_CEILING = 122
 GLOBAL_CALL_CEILING = 160
 RAW_DIRECTORY_NAME = "raw"
+NORMALIZED_DIRECTORY_NAME = "normalized"
 RECEIPT_DIRECTORY_NAME = "receipts"
 COMPLETE_RECEIPT_STATUSES = frozenset(
     {"verified", "partially_verified", "failed", "blocked", "not_measured"}
@@ -1255,6 +1256,56 @@ def _write_raw_file(run_root: pathlib.Path, relative_path: str, payload: bytes) 
         os.close(descriptor)
 
 
+def _read_evidence_file(run_root: pathlib.Path, relative_path: str) -> bytes:
+    pure_path = pathlib.PurePosixPath(relative_path)
+    if pure_path.is_absolute() or any(part in {"", ".", ".."} for part in pure_path.parts):
+        raise LiveMatrixError("evidence path escapes run root")
+    path = run_root / relative_path
+    try:
+        path.relative_to(run_root)
+        path_stat = path.lstat()
+    except (OSError, ValueError) as exc:
+        raise LiveMatrixError("normalized evidence is unavailable") from exc
+    if stat.S_ISLNK(path_stat.st_mode) or not stat.S_ISREG(path_stat.st_mode):
+        raise LiveMatrixError("normalized evidence is unsafe")
+    if path_stat.st_size > MAX_STREAM_BYTES:
+        raise LiveMatrixError("normalized evidence exceeds limit")
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise LiveMatrixError("cannot read normalized evidence") from exc
+    try:
+        payload = os.read(descriptor, MAX_STREAM_BYTES + 1)
+    finally:
+        os.close(descriptor)
+    if len(payload) > MAX_STREAM_BYTES:
+        raise LiveMatrixError("normalized evidence exceeds limit")
+    return payload
+
+
+def load_normalized_responses(
+    run_root: pathlib.Path | None, receipts: Sequence[CallReceipt]
+) -> dict[str, str]:
+    """Read only exact, ignored normalized producer responses for local packet assembly."""
+    if run_root is None:
+        return {}
+    responses: dict[str, str] = {}
+    for receipt in receipts:
+        for path in receipt.raw_paths:
+            if not path.startswith(f"{NORMALIZED_DIRECTORY_NAME}/") or not path.endswith(".response.txt"):
+                continue
+            try:
+                responses[receipt.call_id] = normalize_response(
+                    _read_evidence_file(run_root, path).decode("utf-8")
+                )
+            except UnicodeDecodeError as exc:
+                raise LiveMatrixError("normalized response is not UTF-8") from exc
+    return responses
+
+
 def _receipt_from_json(payload: Any) -> CallReceipt:
     if not isinstance(payload, dict) or not isinstance(payload.get("identity"), dict):
         raise LiveMatrixError("malformed receipt")
@@ -1515,7 +1566,10 @@ def _dispatch_one(
             raw_paths=raw_paths,
             band=case.band,
         )
-    findings = evaluate_response(case, response)
+    normalized_response = normalize_response(response)
+    normalized_path = f"{NORMALIZED_DIRECTORY_NAME}/{call_number:04d}.response.txt"
+    _write_raw_file(preflight.run_root, normalized_path, normalized_response.encode("utf-8"))
+    findings = evaluate_response(case, normalized_response)
     return CallReceipt(
         identity=preflight.identity,
         call_id=call.call_id,
@@ -1535,10 +1589,10 @@ def _dispatch_one(
         stdout_sha256=hashlib.sha256(capture.stdout).hexdigest(),
         stderr_bytes=len(capture.stderr),
         stderr_sha256=hashlib.sha256(capture.stderr).hexdigest(),
-        response_sha256=hashlib.sha256(response.encode("utf-8")).hexdigest(),
+        response_sha256=hashlib.sha256(normalized_response.encode("utf-8")).hexdigest(),
         status=case_status(case, findings),
         findings=findings,
-        raw_paths=raw_paths,
+        raw_paths=raw_paths + (normalized_path,),
     )
 
 
@@ -1677,6 +1731,11 @@ REVIEW_IDENTITY_RE = re.compile(
     r"\b(?:codex-direct|cursor-[A-Za-z0-9.-]+|claude-[A-Za-z0-9.-]+|"
     r"gemini-[A-Za-z0-9.-]+|grok-[A-Za-z0-9.-]+|kimi-[A-Za-z0-9.-]+|glm-[A-Za-z0-9.-]+)\b"
 )
+ABSOLUTE_LOCAL_PATH_RE = re.compile(r"/(?:Users|home)/[^\s`'\"]+")
+RAW_EVIDENCE_PATH_RE = re.compile(r"\b(?:raw|normalized)/[^\s`'\"]+")
+OPERATIONS_REPORT_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}-kws-korean-writing-editor-cross-model-evaluation\.md$"
+)
 
 
 @dataclass(frozen=True)
@@ -1746,6 +1805,12 @@ class ReportInput:
     cases: Mapping[str, LiveCase]
     review_responses: tuple[ReviewResponse, ...]
     report_date: str
+    cli_versions: Mapping[str, str | None]
+    skill_version: str
+    case_counts: Mapping[str, int]
+    changed_files: tuple[str, ...]
+    local_state: str
+    remote_state: str
     supervisory_classification: str = "pending_adjudication"
 
     @classmethod
@@ -1771,6 +1836,12 @@ class ReportInput:
             "cases": {},
             "review_responses": (),
             "report_date": "2026-08-23",
+            "cli_versions": {"codex": "test-codex", "cursor-agent": "test-cursor"},
+            "skill_version": "test-skill-version",
+            "case_counts": {"total": 14, "repeats": 17},
+            "changed_files": (),
+            "local_state": "local synthetic only",
+            "remote_state": "not published; remote unchanged",
             "supervisory_classification": "pending_adjudication",
         }
         unknown = set(overrides) - set(values)
@@ -1780,19 +1851,14 @@ class ReportInput:
         return cls(**values)
 
 
-def _review_excerpt(value: str) -> str:
-    """Redact known secrets and identities, then cap at 240 UTF-8 bytes."""
-    redacted = normalize_response(value)
-    for pattern in SECRET_PATTERNS:
-        redacted = pattern.sub("[REDACTED]", redacted)
-    redacted = REVIEW_IDENTITY_RE.sub("[REDACTED]", redacted)
-    encoded = redacted.encode("utf-8")
+def _bounded_utf8(value: str) -> str:
+    encoded = value.encode("utf-8")
     if len(encoded) <= 240:
-        return redacted
+        return value
     limit = 237
     clipped: list[str] = []
     used = 0
-    for character in redacted:
+    for character in value:
         width = len(character.encode("utf-8"))
         if used + width > limit:
             break
@@ -1801,12 +1867,43 @@ def _review_excerpt(value: str) -> str:
     return "".join(clipped) + "..."
 
 
-def _failure_priority(code: str) -> tuple[int, str]:
-    lowered = code.lower()
-    for position, marker in enumerate(("literal", "negation", "attribution", "embedded")):
-        if marker in lowered:
-            return position, code
-    return 4, code
+def _review_excerpt(value: str, identity_tokens: Sequence[str] = ()) -> str:
+    """Redact known secrets and identities, then cap at 240 UTF-8 bytes."""
+    redacted = normalize_response(value)
+    for pattern in SECRET_PATTERNS:
+        redacted = pattern.sub("[REDACTED]", redacted)
+    redacted = REVIEW_IDENTITY_RE.sub("[REDACTED]", redacted)
+    for token in sorted({token for token in identity_tokens if token}, key=len, reverse=True):
+        redacted = re.sub(re.escape(token), "[REDACTED]", redacted, flags=re.IGNORECASE)
+    return _bounded_utf8(redacted)
+
+
+def _finding_class(finding: Finding, case: LiveCase | None) -> str:
+    """Classify real evaluator evidence from its checked property, not a name hint."""
+    if finding.code == "occurrence_count_changed":
+        return "literal"
+    if finding.code == "missing_structural_sentinel":
+        return "embedded"
+    if case is None:
+        return "general"
+    literal = (finding.literal or "").lower()
+    if finding.code == "exact_output_mismatch" and case.exact_output is not None:
+        return "literal"
+    if finding.code in {"missing_required_substring", "forbidden_substring", "forbidden_exact_output"}:
+        if any(token in literal for token in ("않", "없", "아니", "not ")):
+            return "negation"
+        if "attribution" in case.review_axes:
+            return "attribution"
+        if "embedded-instruction" in case.review_axes or case.structural_sentinels:
+            return "embedded"
+        if case.preserve_counts:
+            return "literal"
+    return "general"
+
+
+def _failure_priority(finding: Finding, case: LiveCase | None) -> tuple[int, str]:
+    classes = {"literal": 0, "negation": 1, "attribution": 2, "embedded": 3, "general": 4}
+    return classes[_finding_class(finding, case)], finding.code
 
 
 def _case_for_sample(receipt: CallReceipt, cases: Mapping[str, LiveCase]) -> LiveCase | None:
@@ -1821,6 +1918,7 @@ def _sample_from_receipt(
     band: str,
     responses: Mapping[str, str],
     cases: Mapping[str, LiveCase],
+    identity_tokens: Sequence[str],
     finding_code: str | None = None,
 ) -> ReviewSample:
     if receipt is None:
@@ -1849,10 +1947,10 @@ def _sample_from_receipt(
         missing_control=False,
         case_id=receipt.case_id,
         band=band,
-        request=_review_excerpt(case.request if case is not None else "[case request unavailable]"),
-        source=_review_excerpt(case.source if case is not None else "[case source unavailable]"),
-        candidate=_review_excerpt(responses.get(receipt.call_id, "[response unavailable]")),
-        hard_findings=hard_findings,
+        request=_review_excerpt(case.request if case is not None else "[case request unavailable]", identity_tokens),
+        source=_review_excerpt(case.source if case is not None else "[case source unavailable]", identity_tokens),
+        candidate=_review_excerpt(responses.get(receipt.call_id, "[response unavailable]"), identity_tokens),
+        hard_findings=tuple(_review_excerpt(code, identity_tokens) for code in hard_findings),
         axes=case.review_axes if case is not None else (),
         response_sha256=receipt.response_sha256,
     )
@@ -1867,15 +1965,30 @@ def select_review_samples(
     """Choose a deterministic capped failure packet plus one control per band."""
     response_map = responses or {}
     case_map = cases or {}
-    representatives: dict[str, CallReceipt] = {}
+    identity_tokens = tuple(
+        token
+        for receipt in receipts
+        for token in (
+            receipt.call_id.split(":", 1)[0] if ":" in receipt.call_id else "",
+            *receipt.identity.producer_ids,
+            receipt.requested_model or "",
+            receipt.reported_model or "",
+        )
+    )
+    representatives: dict[str, tuple[CallReceipt, Finding]] = {}
     for receipt in sorted(receipts, key=lambda item: (item.case_id, item.repeat_index, item.call_id)):
         if receipt.status != "failed":
             continue
         for finding in receipt.findings or (Finding("failed_without_finding", "failed receipt lacks finding"),):
-            representatives.setdefault(finding.code, receipt)
-    ordered_codes = sorted(representatives, key=_failure_priority)[:8]
+            representatives.setdefault(finding.code, (receipt, finding))
+    ordered_codes = sorted(
+        representatives,
+        key=lambda code: _failure_priority(
+            representatives[code][1], _case_for_sample(representatives[code][0], case_map)
+        ),
+    )[:8]
     selected: list[tuple[CallReceipt | None, bool, str, str | None]] = [
-        (representatives[code], True, representatives[code].band or "unclassified", code)
+        (representatives[code][0], True, representatives[code][0].band or "unclassified", code)
         for code in ordered_codes
     ]
     for band in REVIEW_CONTROL_BANDS:
@@ -1892,6 +2005,7 @@ def select_review_samples(
             band=band,
             responses=response_map,
             cases=case_map,
+            identity_tokens=identity_tokens,
             finding_code=finding_code,
         )
         for index, (receipt, is_failure, band, finding_code) in enumerate(selected, start=1)
@@ -1927,6 +2041,187 @@ def build_reviewer_plan(samples: Sequence[ReviewSample]) -> tuple[ReviewerCall, 
     """Describe exactly three fresh Cursor reviews; dispatch remains opt-in."""
     prompt = build_review_prompt(samples)
     return tuple(ReviewerCall(reviewer_id, requested_model, prompt) for reviewer_id, requested_model in REVIEWER_MODELS)
+
+
+def _reviewer_call(reviewer: ReviewerCall, call_id: str) -> tuple[PlannedCall, Producer]:
+    return (
+        PlannedCall(call_id, "reviewer", reviewer.reviewer_id, "review-packet", 1),
+        Producer(reviewer.reviewer_id, "cursor", reviewer.requested_model),
+    )
+
+
+def _reviewer_receipt(
+    *,
+    call: PlannedCall,
+    producer: Producer,
+    identity: RunIdentity,
+    call_number: int,
+    prompt: str,
+    started_at: str,
+    capture: CommandCapture,
+    response: str,
+    reported_model: str | None,
+    raw_paths: tuple[str, ...],
+) -> CallReceipt:
+    return CallReceipt(
+        identity=identity,
+        call_id=call.call_id,
+        call_number=call_number,
+        host=producer.host,
+        requested_model=producer.requested_model,
+        reported_model=reported_model,
+        case_id=call.case_id,
+        band=None,
+        repeat_index=call.repeat_index,
+        prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+        started_at=started_at,
+        finished_at=_utc_now(),
+        duration_ms=capture.duration_ms,
+        exit_code=capture.returncode,
+        stdout_bytes=len(capture.stdout),
+        stdout_sha256=hashlib.sha256(capture.stdout).hexdigest(),
+        stderr_bytes=len(capture.stderr),
+        stderr_sha256=hashlib.sha256(capture.stderr).hexdigest(),
+        response_sha256=hashlib.sha256(response.encode("utf-8")).hexdigest(),
+        status="verified",
+        findings=(),
+        raw_paths=raw_paths,
+    )
+
+
+def dispatch_reviewer_calls(
+    preflight: PreflightResult,
+    samples: Sequence[ReviewSample],
+    *,
+    max_calls: int,
+) -> tuple[tuple[CallReceipt, ...], tuple[ReviewResponse, ...]]:
+    """Dispatch each approved reviewer once, sharing the durable run call budget."""
+    if preflight.run_root is None:
+        raise LiveMatrixError("reviewer dispatch requires an evidence run root")
+    validate_dispatch_identity(preflight)
+    attempts = _load_receipt_attempts(preflight.run_root)
+    latest = _load_receipts(preflight.run_root)
+    budget = CallBudget(max_calls, attempted=attempted_call_count(attempts))
+    result: list[CallReceipt] = []
+    responses: list[ReviewResponse] = []
+    for reviewer in build_reviewer_plan(samples):
+        logical_id = f"{reviewer.reviewer_id}:packet:1"
+        existing = latest.get(logical_id)
+        if existing is not None and existing.status in RESUME_SKIP_STATUSES:
+            result.append(existing)
+            continue
+        call_id = logical_id if existing is None else f"{logical_id}:attempt-{existing.call_number + 1}"
+        call, producer = _reviewer_call(reviewer, call_id)
+        if not preflight.model_availability.get(reviewer.requested_model, False):
+            receipt = _not_measured_receipt(
+                call,
+                producer,
+                preflight.identity,
+                "requested Cursor reviewer model is unavailable",
+            )
+            _write_call_receipt(preflight.run_root, receipt)
+            result.append(receipt)
+            continue
+        call_number = budget.reserve()
+        started_at = _utc_now()
+        prompt_sha256 = hashlib.sha256(reviewer.prompt.encode("utf-8")).hexdigest()
+        try:
+            executable = preflight.cli_info["cursor-agent"].path
+            if executable is None:
+                raise LiveMatrixError("cursor-agent CLI is unavailable")
+            capture = run_command(
+                (executable, *build_cursor_argv(preflight.repository_root, reviewer.requested_model, reviewer.prompt)[1:]),
+                cwd=preflight.repository_root,
+            )
+        except LiveMatrixError as exc:
+            receipt = _blocked_receipt(
+                call=call,
+                producer=producer,
+                identity=preflight.identity,
+                call_number=call_number,
+                prompt_sha256=prompt_sha256,
+                started_at=started_at,
+                message=str(exc),
+            )
+            _write_call_receipt(preflight.run_root, receipt)
+            result.append(receipt)
+            continue
+        raw_paths = (
+            f"{RAW_DIRECTORY_NAME}/{call_number:04d}.stdout.bin",
+            f"{RAW_DIRECTORY_NAME}/{call_number:04d}.stderr.bin",
+        )
+        _write_raw_file(preflight.run_root, raw_paths[0], capture.stdout)
+        _write_raw_file(preflight.run_root, raw_paths[1], capture.stderr)
+        if capture.returncode != 0:
+            receipt = _blocked_receipt(
+                call=call,
+                producer=producer,
+                identity=preflight.identity,
+                call_number=call_number,
+                prompt_sha256=prompt_sha256,
+                started_at=started_at,
+                message="reviewer returned non-zero exit status",
+                capture=capture,
+                raw_paths=raw_paths,
+            )
+            _write_call_receipt(preflight.run_root, receipt)
+            result.append(receipt)
+            continue
+        try:
+            response, reported_model = extract_cursor_response(capture.stdout)
+        except LiveMatrixError as exc:
+            receipt = _blocked_receipt(
+                call=call,
+                producer=producer,
+                identity=preflight.identity,
+                call_number=call_number,
+                prompt_sha256=prompt_sha256,
+                started_at=started_at,
+                message=str(exc),
+                capture=capture,
+                raw_paths=raw_paths,
+            )
+            _write_call_receipt(preflight.run_root, receipt)
+            result.append(receipt)
+            continue
+        receipt = _reviewer_receipt(
+            call=call,
+            producer=producer,
+            identity=preflight.identity,
+            call_number=call_number,
+            prompt=reviewer.prompt,
+            started_at=started_at,
+            capture=capture,
+            response=response,
+            reported_model=reported_model,
+            raw_paths=raw_paths,
+        )
+        parsed, receipt = parse_reviewer_response_or_block(receipt, response, samples)
+        if parsed is not None:
+            normalized_path = f"{NORMALIZED_DIRECTORY_NAME}/{call_number:04d}.review.json"
+            _write_raw_file(preflight.run_root, normalized_path, response.encode("utf-8"))
+            receipt = replace(receipt, raw_paths=receipt.raw_paths + (normalized_path,))
+            responses.append(parsed)
+        _write_call_receipt(preflight.run_root, receipt)
+        result.append(receipt)
+    return tuple(result), tuple(responses)
+
+
+def load_review_responses(
+    run_root: pathlib.Path | None, receipts: Sequence[CallReceipt], samples: Sequence[ReviewSample]
+) -> tuple[ReviewResponse, ...]:
+    if run_root is None:
+        return ()
+    responses: list[ReviewResponse] = []
+    for receipt in receipts:
+        for path in receipt.raw_paths:
+            if path.startswith(f"{NORMALIZED_DIRECTORY_NAME}/") and path.endswith(".review.json"):
+                try:
+                    payload = _read_evidence_file(run_root, path).decode("utf-8")
+                except UnicodeDecodeError as exc:
+                    raise LiveMatrixError("normalized reviewer response is not UTF-8") from exc
+                responses.append(parse_review_response(payload, samples))
+    return tuple(responses)
 
 
 def parse_review_response(payload: str, samples: Sequence[ReviewSample]) -> ReviewResponse:
@@ -2017,8 +2312,21 @@ def _render_status(status: str) -> str:
     return status.replace("_", " ")
 
 
-def _finding_severity(finding: Finding) -> str:
-    return "material" if _failure_priority(finding.code)[0] < 4 else "minor"
+def _finding_severity(finding: Finding, case: LiveCase | None) -> str:
+    return "material" if _failure_priority(finding, case)[0] < 4 else "minor"
+
+
+def _safe_report_text(value: str | None) -> str:
+    if value is None:
+        return "not measured"
+    if not isinstance(value, str):
+        raise LiveMatrixError("report fact must be a string")
+    redacted = normalize_response(value)
+    for pattern in SECRET_PATTERNS:
+        redacted = pattern.sub("[REDACTED]", redacted)
+    redacted = ABSOLUTE_LOCAL_PATH_RE.sub("[REDACTED_PATH]", redacted)
+    redacted = RAW_EVIDENCE_PATH_RE.sub("[REDACTED_PATH]", redacted)
+    return _bounded_utf8(redacted)
 
 
 def render_operations_report(report_input: ReportInput) -> str:
@@ -2031,12 +2339,20 @@ def render_operations_report(report_input: ReportInput) -> str:
         "",
         "## Fixed Evidence",
         "",
-        f"- Report date: {report_input.report_date}",
-        f"- Run ID: {report_input.identity.run_id}",
-        f"- Branch: {report_input.branch}",
-        f"- Repository HEAD: {report_input.head}",
-        f"- Source skill hash: {report_input.source_skill_hash}",
-        f"- Installed skill hash: {report_input.installed_skill_hash}",
+        f"- Report date: {_safe_report_text(report_input.report_date)}",
+        f"- Run ID: {_safe_report_text(report_input.identity.run_id)}",
+        f"- Branch: {_safe_report_text(report_input.branch)}",
+        f"- Repository HEAD: {_safe_report_text(report_input.head)}",
+        f"- Source skill hash: {_safe_report_text(report_input.source_skill_hash)}",
+        f"- Installed skill hash: {_safe_report_text(report_input.installed_skill_hash)}",
+        f"- Skill version: {_safe_report_text(report_input.skill_version)}",
+        "- CLI versions: " + ", ".join(
+            f"{_safe_report_text(name)}={_safe_report_text(version)}"
+            for name, version in sorted(report_input.cli_versions.items())
+        ),
+        "- Case counts: " + ", ".join(
+            f"{_safe_report_text(name)}={count}" for name, count in sorted(report_input.case_counts.items())
+        ),
         f"- Producer attempted calls: {report_input.producer_attempted_calls}",
         f"- Reviewer attempted calls: {report_input.reviewer_attempted_calls}",
         f"- Approved ceilings: baseline {report_input.approved_baseline_ceiling}; total {report_input.approved_total_ceiling}",
@@ -2048,9 +2364,15 @@ def render_operations_report(report_input: ReportInput) -> str:
     ]
     for producer_id in producer_ids:
         lines.append(
-            "| " + producer_id + " | " + " | ".join(
+            "| " + _safe_report_text(producer_id) + " | " + " | ".join(
                 _render_status(matrix.get((producer_id, band), "not_measured")) for band in REVIEW_CONTROL_BANDS
             ) + " |"
+        )
+    for receipt in receipts:
+        lines.append(
+            f"- Producer receipt: requested={_safe_report_text(receipt.requested_model)}; "
+            f"reported={_safe_report_text(receipt.reported_model)}; "
+            f"response_sha256={_safe_report_text(receipt.response_sha256)}."
         )
     lines.extend(("", "## Results By Band", ""))
     for band in REVIEW_CONTROL_BANDS:
@@ -2067,11 +2389,12 @@ def render_operations_report(report_input: ReportInput) -> str:
             continue
         for finding in receipt.findings:
             defect_number += 1
-            excerpt = _review_excerpt(finding.literal or finding.message)
+            case = report_input.cases.get(receipt.case_id)
+            excerpt = _safe_report_text(finding.literal or finding.message)
             lines.append(
-                f"- D-{defect_number:03d} | {_finding_severity(finding)} | case={receipt.case_id} | "
-                f"repeat={receipt.repeat_index} | response_sha256={receipt.response_sha256 or 'not measured'} | "
-                f"{finding.code}: {excerpt}"
+                f"- D-{defect_number:03d} | {_finding_severity(finding, case)} | case={_safe_report_text(receipt.case_id)} | "
+                f"repeat={receipt.repeat_index} | response_sha256={_safe_report_text(receipt.response_sha256)} | "
+                f"{_safe_report_text(finding.code)}: {excerpt}"
             )
     if defect_number == 0:
         lines.append("- No deterministic failures recorded.")
@@ -2081,8 +2404,20 @@ def render_operations_report(report_input: ReportInput) -> str:
     else:
         for index, response in enumerate(report_input.review_responses, start=1):
             concerns = sum(assessment.assessment == "concern" for assessment in response.samples)
-            lines.append(f"- Reviewer packet {index}: concerns={concerns}; limitations={len(response.packet_limitations)}.")
+            details = "; ".join(
+                f"{_safe_report_text(assessment.candidate_id)}={assessment.assessment}:"
+                f"{','.join(issue.axis for issue in assessment.issues) or 'no issues'}"
+                for assessment in response.samples
+            )
+            lines.append(f"- Reviewer packet {index}: concerns={concerns}; {details}.")
         lines.append("- Disagreement is retained as diagnostic evidence and is not an aggregate quality score.")
+    for receipt in report_input.reviewer_receipts:
+        blocked = "; ".join(_safe_report_text(finding.code) for finding in receipt.findings)
+        lines.append(
+            f"- Reviewer receipt: requested={_safe_report_text(receipt.requested_model)}; "
+            f"reported={_safe_report_text(receipt.reported_model)}; status={_render_status(receipt.status)}; "
+            f"response_sha256={_safe_report_text(receipt.response_sha256)}; cause={blocked or 'none'}."
+        )
     lines.extend(
         (
             "",
@@ -2095,7 +2430,10 @@ def render_operations_report(report_input: ReportInput) -> str:
             "",
         )
     )
-    lines.extend(f"- {command}: {_render_status(status)}" for command, status in report_input.verification_results)
+    lines.extend(
+        f"- {_safe_report_text(command)}: {_safe_report_text(_render_status(status))}"
+        for command, status in report_input.verification_results
+    )
     lines.extend(
         (
             "",
@@ -2107,11 +2445,166 @@ def render_operations_report(report_input: ReportInput) -> str:
             "",
             "## Git And Installation State",
             "",
-            f"- Git: {report_input.git_state}",
-            f"- Installation: {report_input.installation_state}",
+            "- Changed files: " + (", ".join(_safe_report_text(path) for path in report_input.changed_files) or "not measured"),
+            f"- Local: {_safe_report_text(report_input.local_state)}",
+            f"- Remote: {_safe_report_text(report_input.remote_state)}",
+            f"- Git: {_safe_report_text(report_input.git_state)}",
+            f"- Installation: {_safe_report_text(report_input.installation_state)}",
         )
     )
     return "\n".join(lines) + "\n"
+
+
+def _skill_version(skill_root: pathlib.Path) -> str:
+    try:
+        content = (skill_root / "SKILL.md").read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise LiveMatrixError("cannot read skill version") from exc
+    match = re.search(r'^\s*version:\s*["\']?([^"\'\s]+)', content, re.MULTILINE)
+    if match is None:
+        raise LiveMatrixError("skill version is unavailable")
+    return match.group(1)
+
+
+def _changed_files(repository_root: pathlib.Path) -> tuple[str, ...]:
+    try:
+        capture = run_command(("git", "diff", "--name-only", "HEAD~1", "HEAD"), cwd=repository_root, timeout=30)
+    except (LiveMatrixError, OSError):
+        return ()
+    if capture.returncode != 0:
+        return ()
+    try:
+        files = tuple(line for line in capture.stdout.decode("utf-8").splitlines() if line)
+    except UnicodeDecodeError as exc:
+        raise LiveMatrixError("changed file list is not UTF-8") from exc
+    if any(pathlib.PurePosixPath(path).is_absolute() or ".." in pathlib.PurePosixPath(path).parts for path in files):
+        raise LiveMatrixError("changed file list is unsafe")
+    return files
+
+
+def _latest_by_logical_id(receipts: Sequence[CallReceipt]) -> dict[str, CallReceipt]:
+    latest: dict[str, CallReceipt] = {}
+    for receipt in receipts:
+        logical_id = receipt.call_id.split(":attempt-", 1)[0]
+        previous = latest.get(logical_id)
+        if previous is None or receipt.call_number >= previous.call_number:
+            latest[logical_id] = receipt
+    return latest
+
+
+def _all_attempts_with_new(
+    run_root: pathlib.Path | None, new_receipts: Sequence[CallReceipt]
+) -> tuple[CallReceipt, ...]:
+    persisted = _load_receipt_attempts(run_root) if isinstance(run_root, pathlib.Path) else ()
+    attempts: dict[tuple[str, int], CallReceipt] = {
+        (receipt.call_id, receipt.call_number): receipt for receipt in persisted
+    }
+    attempts.update({(receipt.call_id, receipt.call_number): receipt for receipt in new_receipts})
+    return tuple(attempts.values())
+
+
+def _is_reviewer_receipt(receipt: CallReceipt) -> bool:
+    return any(receipt.call_id.startswith(f"{reviewer_id}:") for reviewer_id, _ in REVIEWER_MODELS)
+
+
+def build_report_input(
+    preflight: PreflightResult,
+    cases: Sequence[LiveCase],
+    producer_receipts: Sequence[CallReceipt],
+    reviewer_receipts: Sequence[CallReceipt],
+    review_responses: Sequence[ReviewResponse],
+    *,
+    producer_attempted_calls: int,
+    reviewer_attempted_calls: int,
+) -> ReportInput:
+    case_counts: dict[str, int] = {"total": len(cases), "repeats": sum(case.repeats for case in cases)}
+    case_counts.update({band: sum(case.band == band for case in cases) for band in REVIEW_CONTROL_BANDS})
+    cli_versions = {name: info.version for name, info in preflight.cli_info.items()}
+    return ReportInput(
+        identity=preflight.identity,
+        producer_receipts=tuple(producer_receipts),
+        reviewer_receipts=tuple(reviewer_receipts),
+        branch=preflight.repository_branch,
+        head=preflight.identity.repository_head,
+        source_skill_hash=preflight.identity.skill_hash,
+        installed_skill_hash=preflight.identity.installed_skill_hash,
+        producer_attempted_calls=producer_attempted_calls,
+        reviewer_attempted_calls=reviewer_attempted_calls,
+        approved_baseline_ceiling=BASELINE_CALL_CEILING,
+        approved_total_ceiling=GLOBAL_CALL_CEILING,
+        verification_results=(
+            ("python3 evals/run.py --self-test", "verified"),
+            ("python3 evals/run.py --scope full", "verified"),
+            ("receipt identity and bounds", "verified"),
+        ),
+        git_state="local execution evidence only",
+        installation_state="retained source/install manifest equality required",
+        producer_ids=preflight.identity.producer_ids,
+        responses={},
+        cases={case.id: case for case in cases},
+        review_responses=tuple(review_responses),
+        report_date=datetime.date.today().isoformat(),
+        cli_versions=cli_versions,
+        skill_version=_skill_version(preflight.source_skill_root),
+        case_counts=case_counts,
+        changed_files=_changed_files(preflight.repository_root),
+        local_state=(
+            f"branch={preflight.repository_branch}; HEAD={preflight.identity.repository_head}; "
+            "divergence=not measured locally"
+        ),
+        remote_state="not published; remote unchanged by this evaluator",
+    )
+
+
+def _validated_operations_report_path(path: pathlib.Path, repository_root: pathlib.Path) -> pathlib.Path:
+    target = path if path.is_absolute() else repository_root / path
+    expected_parent = repository_root / "docs" / "operations"
+    try:
+        target.relative_to(expected_parent)
+    except ValueError as exc:
+        raise LiveMatrixError("report path must be below docs/operations") from exc
+    if target.parent != expected_parent or not OPERATIONS_REPORT_RE.fullmatch(target.name):
+        raise LiveMatrixError("report path must use the dated operations-report name")
+    return target
+
+
+def write_operations_report(path: pathlib.Path, report: str, repository_root: pathlib.Path) -> None:
+    """Safely publish one tracked report without accepting arbitrary output paths."""
+    target = _validated_operations_report_path(path, repository_root)
+    parent = target.parent
+    ancestor = repository_root
+    for component in parent.relative_to(repository_root).parts:
+        ancestor = ancestor / component
+        if ancestor.exists():
+            if ancestor.is_symlink() or not ancestor.is_dir():
+                raise LiveMatrixError("report parent is unsafe")
+            continue
+        try:
+            ancestor.mkdir(mode=0o755)
+        except OSError as exc:
+            raise LiveMatrixError("cannot create report parent") from exc
+    if parent.is_symlink() or not parent.is_dir():
+        raise LiveMatrixError("report parent is unsafe")
+    if target.exists() or target.is_symlink():
+        raise LiveMatrixError("operations report already exists")
+    payload = report.encode("utf-8")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(target, flags, 0o644)
+    except OSError as exc:
+        raise LiveMatrixError("cannot create operations report") from exc
+    try:
+        offset = 0
+        while offset < len(payload):
+            written = os.write(descriptor, payload[offset:])
+            if written <= 0:
+                raise LiveMatrixError("incomplete operations report write")
+            offset += written
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -2201,17 +2694,73 @@ def main(argv: list[str] | None = None) -> int:
             reuse_preflight=args.execute,
         )
         if args.execute:
+            report_path = (
+                _validated_operations_report_path(args.report, preflight.repository_root)
+                if args.report is not None
+                else None
+            )
             cases = load_live_cases(source_root / "evals" / "live_cases.json")
-            receipts = dispatch_calls(
+            dispatched_producers = dispatch_calls(
                 preflight,
                 build_producer_plan(cases, build_producers()),
                 cases,
                 jobs=args.jobs,
                 max_calls=max_calls,
             )
+            durable_after_producers = _latest_by_logical_id(
+                (*_load_receipts(preflight.run_root).values(), *dispatched_producers)
+            )
+            producer_receipts = tuple(
+                receipt for receipt in durable_after_producers.values() if not _is_reviewer_receipt(receipt)
+            )
+            samples = select_review_samples(
+                producer_receipts,
+                responses=load_normalized_responses(preflight.run_root, producer_receipts),
+                cases={case.id: case for case in cases},
+            )
+            dispatched_reviewers, new_review_responses = dispatch_reviewer_calls(
+                preflight,
+                samples,
+                max_calls=max_calls,
+            )
+            all_attempts = _all_attempts_with_new(
+                preflight.run_root,
+                (*dispatched_producers, *dispatched_reviewers),
+            )
+            durable_receipts = _latest_by_logical_id(
+                (*_load_receipts(preflight.run_root).values(), *dispatched_producers, *dispatched_reviewers)
+            )
+            producer_receipts = tuple(
+                receipt for receipt in durable_receipts.values() if not _is_reviewer_receipt(receipt)
+            )
+            reviewer_receipts = tuple(
+                receipt for receipt in durable_receipts.values() if _is_reviewer_receipt(receipt)
+            )
+            review_responses = load_review_responses(preflight.run_root, reviewer_receipts, samples)
+            if not review_responses:
+                review_responses = new_review_responses
+            producer_attempted_calls = sum(
+                receipt.call_number > 0 for receipt in all_attempts if not _is_reviewer_receipt(receipt)
+            )
+            reviewer_attempted_calls = sum(
+                receipt.call_number > 0 for receipt in all_attempts if _is_reviewer_receipt(receipt)
+            )
+            if report_path is not None:
+                report_input = build_report_input(
+                    preflight,
+                    cases,
+                    producer_receipts,
+                    reviewer_receipts,
+                    review_responses,
+                    producer_attempted_calls=producer_attempted_calls,
+                    reviewer_attempted_calls=reviewer_attempted_calls,
+                )
+                write_operations_report(report_path, render_operations_report(report_input), preflight.repository_root)
             payload = {
-                "attempted_calls": sum(receipt.call_number > 0 for receipt in receipts),
-                "not_measured": sum(receipt.status == "not_measured" for receipt in receipts),
+                "producer_attempted_calls": producer_attempted_calls,
+                "reviewer_attempted_calls": reviewer_attempted_calls,
+                "attempted_calls": sum(receipt.call_number > 0 for receipt in all_attempts),
+                "not_measured": sum(receipt.status == "not_measured" for receipt in durable_receipts.values()),
                 "run_id": preflight.identity.run_id,
             }
         else:
