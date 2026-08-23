@@ -30,12 +30,14 @@ class StringSink:
         self.value += text
 
 
-def make_png(width, height, color_type, trns=False, trns_payload=None):
+def make_png(width, height, color_type, trns=False, trns_payload=None, before_trns=(), after_trns=()):
     ihdr = struct.pack(">IIBBBBB", width, height, 8, color_type, 0, 0, 0)
     chunks = [struct.pack(">I", len(ihdr)) + b"IHDR" + ihdr + b"\0\0\0\0"]
+    chunks.extend(struct.pack(">I", len(payload)) + kind + payload + b"\0\0\0\0" for kind, payload in before_trns)
     if trns:
         transparency = trns_payload if trns_payload is not None else (b"\0\0\0\0\0\0" if color_type == 2 else b"\0\0")
         chunks.append(struct.pack(">I", len(transparency)) + b"tRNS" + transparency + b"\0\0\0\0")
+    chunks.extend(struct.pack(">I", len(payload)) + kind + payload + b"\0\0\0\0" for kind, payload in after_trns)
     return b"\x89PNG\r\n\x1a\n" + b"".join(chunks)
 
 
@@ -44,10 +46,11 @@ def make_jpeg(width, height):
     return b"\xff\xd8\xff\xc0" + struct.pack(">H", len(sof) + 2) + sof + b"\xff\xd9"
 
 
-def make_webp_vp8x(width, height, alpha):
+def make_webp_vp8x(width, height, alpha, extra_payload=b""):
     flags = 0x10 if alpha else 0
-    payload = bytes([flags, 0, 0, 0]) + (width - 1).to_bytes(3, "little") + (height - 1).to_bytes(3, "little")
-    body = b"WEBPVP8X" + struct.pack("<I", len(payload)) + payload
+    payload = bytes([flags, 0, 0, 0]) + (width - 1).to_bytes(3, "little") + (height - 1).to_bytes(3, "little") + extra_payload
+    padding = b"\0" if len(payload) % 2 else b""
+    body = b"WEBPVP8X" + struct.pack("<I", len(payload)) + payload + padding
     return b"RIFF" + struct.pack("<I", len(body)) + body
 
 
@@ -71,6 +74,21 @@ class AssetInspectorTests(unittest.TestCase):
 
     def test_png_trns_reports_alpha(self):
         self.assertEqual(parse_png(make_png(3, 2, color_type=2, trns=True)), (3, 2, True))
+
+    def test_palette_png_trns_requires_valid_preceding_palette(self):
+        palette = b"\0\0\0\xff\xff\xff"
+        self.assertEqual(
+            parse_png(make_png(3, 2, color_type=3, trns=True, trns_payload=b"\0\xff", before_trns=[(b"PLTE", palette)])),
+            (3, 2, True),
+        )
+        with self.assertRaises(ValueError):
+            parse_png(make_png(3, 2, color_type=3, trns=True, trns_payload=b"\0"))
+        with self.assertRaises(ValueError):
+            parse_png(make_png(3, 2, color_type=3, trns=True, trns_payload=b"\0", after_trns=[(b"PLTE", palette)]))
+        with self.assertRaises(ValueError):
+            parse_png(make_png(3, 2, color_type=3, trns=True, trns_payload=b"\0\xff\x80", before_trns=[(b"PLTE", palette)]))
+        with self.assertRaises(ValueError):
+            parse_png(make_png(3, 2, color_type=3, trns=True, trns_payload=b"\0", before_trns=[(b"PLTE", b"\0\0\0\xff")]))
 
     def test_jpeg_reports_dimensions_without_alpha(self):
         data = make_jpeg(width=5, height=4)
@@ -114,6 +132,8 @@ class AssetInspectorTests(unittest.TestCase):
             parse_webp(b"RIFF\xff\xff\xff\xffWEBPVP8X\x00\0\0\0")
         with self.assertRaises(ValueError):
             parse_webp(make_webp_vp8x(1, 1, alpha=False)[:-1])
+        with self.assertRaises(ValueError):
+            parse_webp(make_webp_vp8x(1, 1, alpha=False, extra_payload=b"\0"))
 
     def test_inspect_file_reports_hash_and_byte_size(self):
         data = make_png(3, 2, color_type=6)
@@ -156,6 +176,18 @@ class AssetInspectorTests(unittest.TestCase):
             self.assertEqual(main([str(input_path), "--output", str(output_path)]), 0)
             self.assertEqual(output_path.read_text(), expected)
 
+    def test_output_write_error_cli_exits_one_with_error_json(self):
+        with tempfile.TemporaryDirectory() as directory:
+            input_path = Path(directory) / "asset.png"
+            input_path.write_bytes(make_png(3, 2, color_type=6))
+            sink = StringSink()
+            result = main([str(input_path), "--output", directory], output_stream=sink)
+        self.assertEqual(result, 1)
+        self.assertEqual(
+            sink.value,
+            json.dumps({"error": "Is a directory", "path": str(input_path)}, sort_keys=True) + "\n",
+        )
+
 
 def run_self_tests():
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(AssetInspectorTests)
@@ -194,6 +226,7 @@ def parse_png(data):
     alpha = color_type in (4, 6)
     seen_image_data = False
     seen_trns = False
+    palette_entries = None
     offset = chunk_end + 4
     while offset < len(data):
         if offset + 8 > len(data):
@@ -206,11 +239,15 @@ def parse_png(data):
             raise ValueError("truncated PNG chunk")
         if chunk_type == b"IDAT":
             seen_image_data = True
+        elif chunk_type == b"PLTE" and color_type == 3:
+            if seen_image_data or seen_trns or palette_entries is not None or chunk_length == 0 or chunk_length > 768 or chunk_length % 3:
+                raise ValueError("invalid PNG PLTE chunk")
+            palette_entries = chunk_length // 3
         elif chunk_type == b"tRNS":
             valid_trns = (
                 (color_type == 0 and chunk_length == 2)
                 or (color_type == 2 and chunk_length == 6)
-                or (color_type == 3 and 1 <= chunk_length <= 256)
+                or (color_type == 3 and palette_entries is not None and 1 <= chunk_length <= palette_entries)
             )
             if seen_image_data or seen_trns or not valid_trns:
                 raise ValueError("invalid PNG tRNS chunk")
@@ -295,8 +332,8 @@ def parse_webp(data):
 
     chunk_type, payload = primary
     if chunk_type == b"VP8X":
-        if len(payload) < 10:
-            raise ValueError("truncated WebP VP8X header")
+        if len(payload) != 10:
+            raise ValueError("invalid WebP VP8X length")
         width = int.from_bytes(payload[4:7], "little") + 1
         height = int.from_bytes(payload[7:10], "little") + 1
         _require_dimensions(width, height)
@@ -366,7 +403,12 @@ def main(argv=None, output_stream=None):
         return 1
     rendered = json.dumps(dataclasses.asdict(facts), sort_keys=True) + "\n"
     if args.output:
-        Path(args.output).write_text(rendered)
+        try:
+            Path(args.output).write_text(rendered)
+        except OSError as error:
+            message = error.strerror if error.strerror else str(error)
+            _write_json({"error": message, "path": args.path}, output_stream)
+            return 1
     else:
         output_stream.write(rendered)
     return 0
