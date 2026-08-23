@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import pathlib
 import re
@@ -65,6 +66,7 @@ EXPECTED_REPEAT_IDS = {
     "structure-embedded-instruction",
     "near-detector-author",
 }
+APPROVED_CASES_SHA256 = "0084ebaa2a7ba19d827778e1c4d2edbf928e8566ea724049a21e0c58b75cb7db"
 
 
 @dataclass(frozen=True)
@@ -111,6 +113,16 @@ def _string_list(value: Any, field: str, prefix: str, errors: list[str]) -> tupl
     return tuple(value)
 
 
+def _cases_fingerprint(cases: list[Any]) -> str:
+    canonical = json.dumps(
+        cases,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
 def validate_live_cases(raw: Any) -> tuple[str, ...]:
     """Return manifest validation errors without constructing runtime objects."""
 
@@ -127,6 +139,8 @@ def validate_live_cases(raw: Any) -> tuple[str, ...]:
     if not isinstance(cases, list):
         errors.append("root: cases must be an array")
         return tuple(errors)
+    if _cases_fingerprint(cases) != APPROVED_CASES_SHA256:
+        errors.append("manifest: approved case matrix fingerprint mismatch")
 
     seen: set[str] = set()
     bands: dict[str, int] = {band: 0 for band in EXPECTED_BAND_COUNTS}

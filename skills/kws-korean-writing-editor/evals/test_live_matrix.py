@@ -5,6 +5,7 @@ import io
 import json
 import pathlib
 import sys
+import tempfile
 import unittest
 from unittest import mock
 
@@ -35,6 +36,15 @@ class LiveCaseManifestTests(unittest.TestCase):
             self.assertNotIn("/Users/", case.request)
             self.assertNotIn("CANARY", case.request)
             self.assertNotIn("skill_used", case.request)
+
+    def test_approved_values_reject_manifest_drift(self) -> None:
+        manifest = json.loads((HERE / "live_cases.json").read_text(encoding="utf-8"))
+        manifest["cases"][0]["exact_output"] = None
+        with tempfile.TemporaryDirectory() as directory:
+            mutated = pathlib.Path(directory) / "live_cases.json"
+            mutated.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+            with self.assertRaises(ValueError):
+                live_matrix.load_live_cases(mutated)
 
     def test_producer_plan_count(self) -> None:
         producers = live_matrix.build_producers()
