@@ -1612,8 +1612,6 @@ def load_normalized_responses(
             response = payload.decode("utf-8")
         except UnicodeDecodeError as exc:
             raise LiveMatrixError("normalized response is not UTF-8") from exc
-        if normalize_response(response).encode("utf-8") != payload:
-            raise LiveMatrixError("normalized response body is not normalized")
         responses[receipt.call_id] = response
     return responses
 

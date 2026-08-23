@@ -941,6 +941,15 @@ class RemediationSelectionTests(unittest.TestCase):
 
 
 class DeterministicEvaluationTests(unittest.TestCase):
+    def test_normalize_response_removes_exactly_one_trailing_newline(self) -> None:
+        for source, expected in (
+            ("text\n\n", "text\n"),
+            ("text\n", "text"),
+            ("text", "text"),
+        ):
+            with self.subTest(source=repr(source)):
+                self.assertEqual(live_matrix.normalize_response(source), expected)
+
     def test_exact_body_passes(self) -> None:
         case = case_by_id("correct-obligation")
         result = live_matrix.evaluate_response(
@@ -1364,6 +1373,60 @@ class ReceiptAndBudgetTests(unittest.TestCase):
                         with self.assertRaisesRegex(live_matrix.LiveMatrixError, "budget exhausted"):
                             live_matrix.dispatch_calls(preflight, (call,), (case,), jobs=1, max_calls=1)
             self.assertEqual(provider.call_count, 1)
+
+    def test_dispatch_reload_preserves_the_once_normalized_trailing_newline(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_root = pathlib.Path(directory)
+            call, case, preflight, producer, _ = single_codex_dispatch_fixture(
+                run_root
+            )
+            capture = live_matrix.CommandCapture(
+                0,
+                (
+                    json.dumps(
+                        {
+                            "type": "item.completed",
+                            "item": {
+                                "type": "agent_message",
+                                "text": "정확한 응답\n\n",
+                            },
+                        },
+                        ensure_ascii=False,
+                    )
+                    + "\n"
+                ).encode(),
+                b"",
+                1,
+            )
+            with (
+                mock.patch("live_matrix.validate_dispatch_identity"),
+                mock.patch("live_matrix.build_producers", return_value=(producer,)),
+                mock.patch("live_matrix.run_command", return_value=capture),
+            ):
+                completion_claims = live_matrix.dispatch_calls(
+                    preflight, (call,), (case,), jobs=1, max_calls=1
+                )
+            _, durable = live_matrix._reload_durable_evidence(
+                run_root,
+                preflight.identity,
+                ((call, producer, case.band),),
+                allowed_logical_ids=(call.call_id,),
+                preexisting_reservation_numbers=(),
+                dispatch_completion_claims=completion_claims,
+            )
+            receipt = durable[call.call_id]
+            stored = (run_root / "normalized/0001.response.txt").read_bytes()
+            try:
+                responses = live_matrix.load_normalized_responses(
+                    run_root, (receipt,)
+                )
+            except live_matrix.LiveMatrixError as exc:
+                self.fail(f"durable dispatch body was rejected: {exc}")
+        self.assertEqual(stored, "정확한 응답\n".encode())
+        self.assertEqual(
+            receipt.response_sha256, hashlib.sha256(stored).hexdigest()
+        )
+        self.assertEqual(responses, {call.call_id: "정확한 응답\n"})
 
     def test_crash_only_reservations_use_monotonic_attempt_ids_through_three(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -2674,6 +2737,27 @@ class ReviewAndReportTests(unittest.TestCase):
                 live_matrix.LiveMatrixError, "normalized evidence is unavailable"
             ):
                 live_matrix.load_normalized_responses(run_root, (receipt,))
+
+    def test_reload_returns_receipt_hashed_trailing_newline_unchanged(self) -> None:
+        body = "정확한 응답\n".encode()
+        receipt = live_matrix.CallReceipt.for_test(
+            "producer:case:1",
+            call_number=7,
+            response_sha256=hashlib.sha256(body).hexdigest(),
+            raw_paths=("normalized/0007.response.txt",),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            run_root = pathlib.Path(directory)
+            live_matrix._write_raw_file(
+                run_root, "normalized/0007.response.txt", body
+            )
+            try:
+                responses = live_matrix.load_normalized_responses(
+                    run_root, (receipt,)
+                )
+            except live_matrix.LiveMatrixError as exc:
+                self.fail(f"receipt-hashed body was rejected: {exc}")
+        self.assertEqual(responses, {receipt.call_id: "정확한 응답\n"})
 
     def test_normalized_reviewer_body_is_bound_to_body_hash_path_and_current_prompt(self) -> None:
         samples = live_matrix.select_review_samples(
