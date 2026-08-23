@@ -18,9 +18,34 @@ CANONICAL_COMPATIBILITY = (
     "Requires Codex built-in image generation and local image viewing for generate or edit mode. "
     "Brief and audit modes can run read-only."
 )
+TOP_LEVEL_REQUIRED_KEYS = frozenset(("name", "description", "metadata"))
+TOP_LEVEL_ALLOWED_KEYS = TOP_LEVEL_REQUIRED_KEYS | frozenset(("license", "allowed-tools"))
+METADATA_REQUIRED_KEYS = frozenset(("version", "compatibility", "updated_at"))
 
 
 class EvaluatorTests(unittest.TestCase):
+    def frontmatter_errors(self, frontmatter: str) -> list[str]:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            self.copy_core_tree(root)
+            skill = root / "SKILL.md"
+            source = skill.read_text(encoding="utf-8")
+            _, _, body = source.split("---\n", 2)
+            skill.write_text(f"---\n{frontmatter}\n---\n{body}", encoding="utf-8")
+            return validate_skill_tree(root, "core")
+
+    def canonical_frontmatter(self) -> str:
+        return "\n".join(
+            (
+                "name: kws-image-workbench",
+                "description: canonical description",
+                "metadata:",
+                f"  compatibility: {CANONICAL_COMPATIBILITY}",
+                '  version: "1.0.0"',
+                '  updated_at: "2026-08-23"',
+            )
+        )
+
     def compatibility_errors(
         self,
         metadata_lines: tuple[str, ...],
@@ -183,7 +208,16 @@ class EvaluatorTests(unittest.TestCase):
                 content = content.replace(source_line + "\n", "" if replacement is None else replacement + "\n")
                 skill.write_text(content, encoding="utf-8")
                 errors = validate_skill_tree(root, "core")
-            self.assertIn("SKILL.md: metadata.compatibility must be a non-empty string", errors)
+            self.assertTrue(
+                any(
+                    error in errors
+                    for error in (
+                        "SKILL.md: metadata.compatibility must be a non-empty string",
+                        "SKILL.md: frontmatter keys must use the canonical grammar",
+                    )
+                ),
+                errors,
+            )
 
     def test_core_scope_accepts_nonempty_quoted_metadata_compatibility(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -277,7 +311,16 @@ class EvaluatorTests(unittest.TestCase):
                     metadata_header=metadata_header,
                     extra_metadata_blocks=extra_metadata_blocks,
                 )
-            self.assertIn("SKILL.md: metadata.compatibility must be a non-empty string", errors)
+            self.assertTrue(
+                any(
+                    error in errors
+                    for error in (
+                        "SKILL.md: metadata.compatibility must be a non-empty string",
+                        "SKILL.md: frontmatter keys must use the canonical grammar",
+                    )
+                ),
+                errors,
+            )
 
     def test_core_scope_accepts_only_canonical_plain_or_quoted_metadata_compatibility(self):
         canonical = CANONICAL_COMPATIBILITY
@@ -291,6 +334,29 @@ class EvaluatorTests(unittest.TestCase):
             with self.subTest(metadata_lines=metadata_lines):
                 errors = self.compatibility_errors(metadata_lines)
             self.assertNotIn("SKILL.md: metadata.compatibility must be a non-empty string", errors)
+
+    def test_core_scope_rejects_yaml_equivalent_and_noncanonical_frontmatter_keys(self):
+        canonical = self.canonical_frontmatter()
+        compatibility_line = f"  compatibility: {CANONICAL_COMPATIBILITY}\n"
+        mutations = (
+            canonical.replace(compatibility_line, compatibility_line + '  "compatibility": ""\n', 1),
+            canonical.replace(compatibility_line, compatibility_line + "  !!str compatibility: \"\"\n", 1),
+            canonical.replace(compatibility_line, compatibility_line + '  "compatibilit\\u0079": ""\n', 1),
+            canonical + '\n"metadata":\n  compatibility: ""\n  version: "1.0.0"\n  updated_at: "2026-08-23"',
+            canonical + '\n!!str metadata:\n  compatibility: ""\n  version: "1.0.0"\n  updated_at: "2026-08-23"',
+            canonical + '\n"metadat\\u0061":\n  compatibility: ""\n  version: "1.0.0"\n  updated_at: "2026-08-23"',
+            canonical + "\n<<: *metadata",
+            canonical.replace("metadata:\n", "metadata:\n  <<: *metadata\n", 1),
+            canonical + "\n? metadata\n: ignored",
+            canonical.replace("metadata:\n", "metadata:\n  ? compatibility\n  : ignored\n", 1),
+            canonical + "\nunknown: value",
+            canonical.replace("metadata:\n", "metadata:\n  unknown: value\n", 1),
+        )
+        self.assertEqual([], self.frontmatter_errors(canonical))
+        for frontmatter in mutations:
+            with self.subTest(frontmatter=frontmatter):
+                errors = self.frontmatter_errors(frontmatter)
+            self.assertIn("SKILL.md: frontmatter keys must use the canonical grammar", errors)
 
     def test_full_scope_rejects_source_row_empty_cell_wrong_section_and_pin(self):
         source_mutations = (
@@ -1114,14 +1180,52 @@ def _validate_source_register(text: str) -> list[str]:
     return errors
 
 
+def _canonical_frontmatter_key_errors(frontmatter: str) -> list[str]:
+    lines = frontmatter.splitlines()
+    top_level_counts: Counter[str] = Counter()
+    metadata_counts: Counter[str] = Counter()
+    in_metadata = False
+    invalid = False
+    for line in lines:
+        if not line:
+            continue
+        if line.startswith((" ", "\t")):
+            match = (
+                re.fullmatch(r"  (version|compatibility|updated_at):(.*)", line)
+                if in_metadata
+                else None
+            )
+            if match is None:
+                invalid = True
+                continue
+            metadata_counts[match.group(1)] += 1
+            continue
+
+        match = re.fullmatch(r"(name|description|license|allowed-tools|metadata):(.*)", line)
+        if match is None:
+            invalid = True
+            in_metadata = False
+            continue
+        key, value = match.groups()
+        top_level_counts[key] += 1
+        in_metadata = key == "metadata"
+        if key == "metadata" and value:
+            invalid = True
+
+    if any(top_level_counts[key] != 1 for key in TOP_LEVEL_REQUIRED_KEYS):
+        invalid = True
+    if any(top_level_counts[key] > 1 for key in TOP_LEVEL_ALLOWED_KEYS - TOP_LEVEL_REQUIRED_KEYS):
+        invalid = True
+    if any(metadata_counts[key] != 1 for key in METADATA_REQUIRED_KEYS):
+        invalid = True
+    return ["SKILL.md: frontmatter keys must use the canonical grammar"] if invalid else []
+
+
 def _has_supported_metadata_string(frontmatter: str, key: str) -> bool:
     lines = frontmatter.splitlines()
-    metadata_positions = [
-        index for index, line in enumerate(lines) if re.match(r"^metadata\s*:", line)
-    ]
-    if len(metadata_positions) != 1 or lines[metadata_positions[0]] != "metadata:":
+    metadata_start = lines.index("metadata:") + 1 if lines.count("metadata:") == 1 else -1
+    if metadata_start == 0:
         return False
-    metadata_start = metadata_positions[0] + 1
     metadata_lines: list[str] = []
     for line in lines[metadata_start:]:
         if line and not line.startswith(" "):
@@ -1212,6 +1316,7 @@ def validate_skill_tree(skill_root: pathlib.Path, scope: str) -> list[str]:
                 r'''(?m)^  version:\s*["'][^"']+["']\s*$''', metadata
             ):
                 errors.append("SKILL.md: metadata.version must be a string")
+            errors.extend(_canonical_frontmatter_key_errors(metadata))
             if not _has_supported_metadata_string(metadata, "compatibility"):
                 errors.append("SKILL.md: metadata.compatibility must be a non-empty string")
 
