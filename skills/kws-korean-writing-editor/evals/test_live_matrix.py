@@ -266,3 +266,122 @@ class ProviderAdapterTests(unittest.TestCase):
         self.assertNotIn("bearer-secret", message)
         self.assertNotIn("sk-secret", message)
         self.assertIn("sha256=", message)
+
+
+class ReceiptAndBudgetTests(unittest.TestCase):
+    def test_manifest_hash_changes_with_content(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / "a.txt").write_text("one", encoding="utf-8")
+            before = live_matrix.recursive_manifest_hash(root)
+            (root / "a.txt").write_text("two", encoding="utf-8")
+            self.assertNotEqual(before, live_matrix.recursive_manifest_hash(root))
+
+    def test_manifest_hash_rejects_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / "target.txt").write_text("one", encoding="utf-8")
+            (root / "link.txt").symlink_to(root / "target.txt")
+            with self.assertRaisesRegex(live_matrix.LiveMatrixError, "symlink"):
+                live_matrix.recursive_manifest_hash(root)
+
+    def test_receipt_is_exclusive_and_0600(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "receipt.json"
+            receipt = live_matrix.CallReceipt.for_test("call-1")
+            live_matrix.write_receipt(path, receipt)
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            with self.assertRaises(live_matrix.LiveMatrixError):
+                live_matrix.write_receipt(path, receipt)
+
+    def test_matching_complete_receipt_is_skipped_but_drift_fails(self) -> None:
+        identity = live_matrix.RunIdentity.for_test(skill_hash="same")
+        plan = (live_matrix.PlannedCall("c", "producer", "p", "x", 1),)
+        receipt = live_matrix.CallReceipt.for_test("c", identity=identity, status="verified")
+        self.assertEqual(live_matrix.remaining_calls(plan, {"c": receipt}, identity), ())
+        with self.assertRaises(live_matrix.LiveMatrixError):
+            live_matrix.remaining_calls(
+                plan,
+                {"c": receipt},
+                live_matrix.RunIdentity.for_test(skill_hash="different"),
+            )
+
+    def test_budget_counts_blocked_attempts(self) -> None:
+        budget = live_matrix.CallBudget(ceiling=2, attempted=1)
+        self.assertEqual(budget.reserve(), 2)
+        with self.assertRaises(live_matrix.LiveMatrixError):
+            budget.reserve()
+        self.assertEqual(budget.attempted, 2)
+
+    def test_jobs_above_four_fail(self) -> None:
+        self.assertIn("jobs must be between 1 and 4", live_matrix.validate_jobs(5))
+
+
+class LiveMatrixCliTests(unittest.TestCase):
+    def test_baseline_requires_execute(self) -> None:
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                live_matrix.main(["--scope", "baseline", "--run-id", "baseline-1"])
+
+    def test_baseline_max_cannot_exceed_122(self) -> None:
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                live_matrix.main(
+                    [
+                        "--execute",
+                        "--scope",
+                        "baseline",
+                        "--run-id",
+                        "baseline-1",
+                        "--max-calls",
+                        "123",
+                    ]
+                )
+
+    def test_global_max_cannot_exceed_160(self) -> None:
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                live_matrix.main(
+                    [
+                        "--execute",
+                        "--scope",
+                        "remediation",
+                        "--run-id",
+                        "remediation-1",
+                        "--max-calls",
+                        "161",
+                    ]
+                )
+
+    def test_source_install_mismatch_prevents_mocked_dispatch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            source = root / "source"
+            installed = root / "installed"
+            source.mkdir()
+            installed.mkdir()
+            (source / "SKILL.md").write_text(
+                "---\nname: kws-korean-writing-editor\n---\nsource\n", encoding="utf-8"
+            )
+            (installed / "SKILL.md").write_text(
+                "---\nname: kws-korean-writing-editor\n---\ninstalled\n", encoding="utf-8"
+            )
+            with mock.patch("live_matrix.dispatch_calls") as dispatch:
+                with contextlib.redirect_stderr(io.StringIO()):
+                    status = live_matrix.main(
+                        [
+                            "--execute",
+                            "--scope",
+                            "baseline",
+                            "--run-id",
+                            "baseline-1",
+                            "--source-skill-root",
+                            str(source),
+                            "--installed-skill-root",
+                            str(installed),
+                            "--repository-root",
+                            str(root),
+                        ]
+                    )
+                self.assertEqual(status, 1)
+                dispatch.assert_not_called()
