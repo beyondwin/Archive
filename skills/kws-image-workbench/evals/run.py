@@ -246,6 +246,35 @@ class EvaluatorTests(unittest.TestCase):
             errors = validate_skill_tree(root, "core")
         self.assertEqual([], errors)
 
+    def test_core_scope_rejects_non_governing_negation(self):
+        cases = (
+            (
+                "This skill does not avoid a direct API client.",
+                "direct API client",
+            ),
+            (
+                "This skill does not add a provider client elsewhere, but "
+                "implements a direct API client.",
+                "direct API client",
+            ),
+            (
+                "This skill does not support legacy markup but includes a CLI "
+                "implementation.",
+                "CLI implementation",
+            ),
+        )
+        for sentence, expansion in cases:
+            with self.subTest(sentence=sentence), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                self.copy_core_tree(root)
+                skill = root / "SKILL.md"
+                skill.write_text(
+                    skill.read_text(encoding="utf-8") + f"\n{sentence}\n",
+                    encoding="utf-8",
+                )
+                errors = validate_skill_tree(root, "core")
+            self.assertIn(f"skill tree: forbidden scope expansion: {expansion}", errors)
+
 
 REQUIRED_CASE_FIELDS = (
     "id",
@@ -719,17 +748,30 @@ def validate_skill_tree(skill_root: pathlib.Path, scope: str) -> list[str]:
         )
         for sentence in re.split(r"(?<=[.!?])\s+", "\n".join(documents.values())):
             normalized_sentence = sentence.lower()
-            rejects_expansion = bool(
-                re.search(
-                    r"\b(?:do not|does not|not supported|forbidden|never|"
-                    r"without|exclude(?:d)?|no)\b",
-                    normalized_sentence,
-                )
-            )
-            if rejects_expansion:
-                continue
             for label, pattern in forbidden_expansions:
-                if re.search(pattern, normalized_sentence):
+                match = re.search(pattern, normalized_sentence)
+                if match is None:
+                    continue
+                before_match = re.split(
+                    r"\b(?:but|however|although|yet)\b|[.;]",
+                    normalized_sentence[: match.start()],
+                )[-1]
+                after_match = re.split(
+                    r"\b(?:but|however|although|yet)\b|[.;]",
+                    normalized_sentence[match.end() :],
+                )[0]
+                directly_prohibited = bool(
+                    re.search(
+                        r"\b(?:do not|does not|never)\s+"
+                        r"(?:add|implement|support|include|use|depend on|claim)\b",
+                        before_match,
+                    )
+                    or re.search(
+                        r"\b(?:is|are)\s+(?:not supported|forbidden|excluded)\b",
+                        after_match,
+                    )
+                )
+                if not directly_prohibited:
                     errors.append(f"skill tree: forbidden scope expansion: {label}")
     if scope == "full":
         index_path = skill_root.parent / "README.md"
