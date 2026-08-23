@@ -38,6 +38,7 @@ def make_png(width, height, color_type, trns=False, trns_payload=None, before_tr
         transparency = trns_payload if trns_payload is not None else (b"\0\0\0\0\0\0" if color_type == 2 else b"\0\0")
         chunks.append(struct.pack(">I", len(transparency)) + b"tRNS" + transparency + b"\0\0\0\0")
     chunks.extend(struct.pack(">I", len(payload)) + kind + payload + b"\0\0\0\0" for kind, payload in after_trns)
+    chunks.append(b"\0\0\0\0IEND\0\0\0\0")
     return b"\x89PNG\r\n\x1a\n" + b"".join(chunks)
 
 
@@ -118,6 +119,12 @@ class AssetInspectorTests(unittest.TestCase):
             parse_png(make_png(0, 2, color_type=6))
         with self.assertRaises(ValueError):
             parse_png(make_png(3, 2, color_type=2, trns=True, trns_payload=b"\0"))
+
+    def test_png_without_iend_is_rejected(self):
+        valid = make_png(3, 2, color_type=6)
+        self.assertEqual(parse_png(valid), (3, 2, True))
+        with self.assertRaisesRegex(ValueError, "missing PNG IEND"):
+            parse_png(valid[:-12])
 
     def test_truncated_or_malformed_jpeg_is_rejected(self):
         with self.assertRaises(ValueError):
@@ -226,6 +233,7 @@ def parse_png(data):
     alpha = color_type in (4, 6)
     seen_image_data = False
     seen_trns = False
+    seen_iend = False
     palette_entries = None
     offset = chunk_end + 4
     while offset < len(data):
@@ -256,8 +264,11 @@ def parse_png(data):
         elif chunk_type == b"IEND":
             if chunk_length != 0 or payload_end + 4 != len(data):
                 raise ValueError("invalid PNG IEND chunk")
+            seen_iend = True
             break
         offset = payload_end + 4
+    if not seen_iend:
+        raise ValueError("missing PNG IEND")
     return width, height, alpha
 
 
