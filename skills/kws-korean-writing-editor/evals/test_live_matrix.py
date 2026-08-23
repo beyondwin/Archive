@@ -91,6 +91,33 @@ def assert_balanced_nonempty_inline_code_spans(
     return "".join(outside)
 
 
+class LiveDocumentationTests(unittest.TestCase):
+    def test_user_readme_links_optional_guide(self) -> None:
+        text = (HERE.parent / "README.md").read_text(encoding="utf-8")
+        self.assertIn("[교차 모델 평가 가이드](evals/README.md)", text)
+        self.assertIn("--dry-run", text)
+
+    def test_change_protocol_has_live_sync_rules(self) -> None:
+        text = (HERE.parent / "CHANGE_PROTOCOL.md").read_text(encoding="utf-8")
+        for phrase in (
+            "live_cases.json",
+            "live_matrix.py",
+            "synthetic",
+            "dated operations report",
+            "does not bump the skill version",
+        ):
+            self.assertIn(phrase, text)
+
+    def test_eval_guide_advertises_safe_commands(self) -> None:
+        text = (HERE / "README.md").read_text(encoding="utf-8")
+        self.assertIn("live_matrix.py --dry-run", text)
+        self.assertIn("--execute", text)
+        self.assertIn("--max-calls 122", text)
+        self.assertIn("160", text)
+        self.assertNotIn("--force", text)
+        self.assertNotIn("--yolo", text)
+
+
 class LiveCaseManifestTests(unittest.TestCase):
     def setUp(self) -> None:
         self.cases = live_matrix.load_live_cases(HERE / "live_cases.json")
