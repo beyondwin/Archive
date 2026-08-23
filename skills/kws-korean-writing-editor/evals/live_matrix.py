@@ -9,6 +9,8 @@ import json
 import pathlib
 import re
 import subprocess
+import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -68,6 +70,25 @@ EXPECTED_REPEAT_IDS = {
 }
 APPROVED_CASES_SHA256 = "0084ebaa2a7ba19d827778e1c4d2edbf928e8566ea724049a21e0c58b75cb7db"
 ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+MAX_STREAM_BYTES = 131_072
+COMMAND_TIMEOUT_SECONDS = 300
+DIAGNOSTIC_TAIL_BYTES = 256
+SECRET_PATTERNS = (
+    re.compile(r"\bsk-[A-Za-z0-9_-]{8,}\b"),
+    re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+"),
+    re.compile(
+        r"\b(?:(?:[A-Za-z][A-Za-z0-9]*_)+"
+        r"(?:api_key|access_token|token|secret|password|key)"
+        r"|api[_-]?key|access[_-]?token|token|secret|password)\b"
+        r"[\"']?\s*[:=]\s*"
+        r"(?:\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s\"',;]+)",
+        re.IGNORECASE,
+    ),
+)
+
+
+class LiveMatrixError(RuntimeError):
+    """A bounded provider-adapter contract failure."""
 
 
 @dataclass(frozen=True)
@@ -112,6 +133,173 @@ class Finding:
     code: str
     message: str
     literal: str | None = None
+
+
+@dataclass(frozen=True)
+class CommandCapture:
+    returncode: int
+    stdout: bytes
+    stderr: bytes
+    duration_ms: int
+
+
+def build_prompt(case: LiveCase, host: str) -> str:
+    """Return the case request with a host invocation only when explicit."""
+    if case.invocation != "explicit":
+        return case.request
+    prefixes = {
+        "codex": "$kws-korean-writing-editor",
+        "cursor": "/kws-korean-writing-editor",
+    }
+    try:
+        return f"{prefixes[host]} {case.request}"
+    except KeyError as exc:
+        raise LiveMatrixError("unsupported provider host") from exc
+
+
+def build_codex_argv(cwd: pathlib.Path, prompt: str) -> tuple[str, ...]:
+    """Build Codex's direct, ephemeral, read-only JSON command."""
+    return (
+        "codex",
+        "exec",
+        "--ephemeral",
+        "--sandbox",
+        "read-only",
+        "--json",
+        "--cd",
+        str(cwd),
+        prompt,
+    )
+
+
+def build_cursor_argv(
+    cwd: pathlib.Path, requested_model: str, prompt: str
+) -> tuple[str, ...]:
+    """Build Cursor's sandboxed ask-mode JSON command."""
+    return (
+        "cursor-agent",
+        "--print",
+        "--output-format",
+        "json",
+        "--mode",
+        "ask",
+        "--sandbox",
+        "enabled",
+        "--workspace",
+        str(cwd),
+        "--model",
+        requested_model,
+        prompt,
+    )
+
+
+def run_command(
+    argv: Sequence[str],
+    *,
+    cwd: pathlib.Path,
+    timeout: int = COMMAND_TIMEOUT_SECONDS,
+) -> CommandCapture:
+    """Run one direct command while retaining bounded binary streams."""
+    if not argv or any(not isinstance(value, str) or not value for value in argv):
+        raise LiveMatrixError("invalid argv")
+    started_at = time.monotonic()
+    try:
+        result = subprocess.run(
+            list(argv),
+            cwd=cwd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise LiveMatrixError("bounded command timed out") from exc
+    duration_ms = int(round((time.monotonic() - started_at) * 1000))
+    if not isinstance(result.stdout, bytes) or not isinstance(result.stderr, bytes):
+        raise LiveMatrixError("command streams must be bytes")
+    if len(result.stdout) > MAX_STREAM_BYTES or len(result.stderr) > MAX_STREAM_BYTES:
+        raise LiveMatrixError("bounded command output exceeded limit")
+    return CommandCapture(result.returncode, result.stdout, result.stderr, duration_ms)
+
+
+def _bounded_json(payload: bytes, label: str) -> Any:
+    if len(payload) > MAX_STREAM_BYTES:
+        raise LiveMatrixError(f"{label} output exceeded limit")
+    try:
+        return json.loads(payload.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError, RecursionError) as exc:
+        raise LiveMatrixError(f"{label} output is not JSON") from exc
+
+
+def extract_codex_response(payload: bytes) -> tuple[str, str | None]:
+    """Extract the final direct Codex message from its JSONL transport."""
+    if len(payload) > MAX_STREAM_BYTES:
+        raise LiveMatrixError("codex output exceeded limit")
+    response: str | None = None
+    model: str | None = None
+    for line in payload.splitlines():
+        try:
+            event = json.loads(line.decode("utf-8"))
+        except (UnicodeError, json.JSONDecodeError, RecursionError):
+            continue
+        if not isinstance(event, dict):
+            continue
+        top_level_model = event.get("model")
+        turn_context = event.get("turn_context")
+        if isinstance(top_level_model, str):
+            model = top_level_model
+        elif isinstance(turn_context, dict) and isinstance(turn_context.get("model"), str):
+            model = turn_context["model"]
+        item = event.get("item")
+        if (
+            event.get("type") == "item.completed"
+            and isinstance(item, dict)
+            and item.get("type") == "agent_message"
+            and isinstance(item.get("text"), str)
+        ):
+            response = item["text"]
+    if response is None:
+        raise LiveMatrixError("codex response was not found")
+    return response, model
+
+
+def extract_cursor_response(payload: bytes) -> tuple[str, str | None]:
+    """Extract Cursor's documented top-level JSON response fields only."""
+    document = _bounded_json(payload, "cursor")
+    if not isinstance(document, dict):
+        raise LiveMatrixError("cursor response is not an object")
+    response: str | None = None
+    for field in ("result", "text"):
+        value = document.get(field)
+        if isinstance(value, str):
+            response = value
+            break
+    if response is None:
+        message = document.get("message")
+        if isinstance(message, dict) and isinstance(message.get("content"), str):
+            response = message["content"]
+    if response is None:
+        raise LiveMatrixError("cursor response was not found")
+    model = document.get("model")
+    if not isinstance(model, str):
+        model = document.get("model_id")
+    return response, model if isinstance(model, str) else None
+
+
+def redacted_diagnostic(label: str, output: bytes) -> str:
+    """Describe a stream after redaction and without retaining its transcript."""
+    redacted = output.decode("utf-8", errors="replace")
+    for pattern in SECRET_PATTERNS:
+        redacted = pattern.sub("[REDACTED]", redacted)
+    tail = redacted.encode("utf-8")[-DIAGNOSTIC_TAIL_BYTES:].decode(
+        "utf-8", errors="replace"
+    )
+    return (
+        f"{label}_bytes={len(output)} "
+        f"{label}_sha256={hashlib.sha256(output).hexdigest()} "
+        f"{label}_tail={json.dumps(tail, ensure_ascii=True)}"
+    )
 
 
 def normalize_response(text: str) -> str:
