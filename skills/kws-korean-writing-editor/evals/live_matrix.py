@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import contextlib
 import datetime as datetime
 import hashlib
 import json
@@ -82,7 +83,7 @@ ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 MAX_STREAM_BYTES = 131_072
 COMMAND_TIMEOUT_SECONDS = 300
 DIAGNOSTIC_TAIL_BYTES = 256
-RUNNER_VERSION = "1"
+RUNNER_VERSION = "2"
 RUN_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 MIN_JOBS = 1
 MAX_JOBS = 4
@@ -92,6 +93,7 @@ GLOBAL_CALL_CEILING = 160
 RAW_DIRECTORY_NAME = "raw"
 NORMALIZED_DIRECTORY_NAME = "normalized"
 RECEIPT_DIRECTORY_NAME = "receipts"
+ATTEMPT_RESERVATION_DIRECTORY_NAME = "attempt-reservations"
 REPORT_STATE_FILENAME = "report-state.json"
 PENDING_OPERATIONS_REPORT = (
     b"# Korean Writing Editor Live Evaluation\n\n"
@@ -317,6 +319,34 @@ class CallReceipt:
             "stderr_sha256": self.stderr_sha256,
             "stdout_bytes": self.stdout_bytes,
             "stdout_sha256": self.stdout_sha256,
+        }
+
+
+@dataclass(frozen=True)
+class AttemptReservation:
+    """An immutable, durable provider-attempt charge written before dispatch."""
+
+    identity: RunIdentity
+    logical_call_id: str
+    call_id: str
+    call_number: int
+    kind: str
+    host: str
+    requested_model: str | None
+    case_id: str
+    repeat_index: int
+
+    def as_json(self) -> dict[str, Any]:
+        return {
+            "identity": identity_json(self.identity),
+            "logical_call_id": self.logical_call_id,
+            "call_id": self.call_id,
+            "call_number": self.call_number,
+            "kind": self.kind,
+            "host": self.host,
+            "requested_model": self.requested_model,
+            "case_id": self.case_id,
+            "repeat_index": self.repeat_index,
         }
 
 
@@ -1319,6 +1349,14 @@ def _receipt_filename(call_id: str, attempt: int) -> str:
     return f"{token}.json"
 
 
+def _logical_call_id(call_id: str) -> str:
+    return call_id.split(":attempt-", 1)[0]
+
+
+def _reservation_filename(call_number: int) -> str:
+    return f"{call_number:04d}.json"
+
+
 def _write_raw_file(run_root: pathlib.Path, relative_path: str, payload: bytes) -> None:
     pure_path = pathlib.PurePosixPath(relative_path)
     if pure_path.is_absolute() or any(part in {"", ".", ".."} for part in pure_path.parts):
@@ -1455,13 +1493,7 @@ def _report_state_for_target(
         raise LiveMatrixError("report target escapes repository") from exc
     if state.identity != identity or state.relative_target != relative:
         raise LiveMatrixError("report state identity or target drift")
-    try:
-        target_stat = target.lstat()
-    except OSError as exc:
-        raise LiveMatrixError("owned operations report is unavailable") from exc
-    if stat.S_ISLNK(target_stat.st_mode) or not stat.S_ISREG(target_stat.st_mode):
-        raise LiveMatrixError("owned operations report is unsafe")
-    if _sha256_file(target) != state.sha256:
+    if hashlib.sha256(_read_operations_report(repository_root, target)).hexdigest() != state.sha256:
         raise LiveMatrixError("owned operations report hash drift")
     return state
 
@@ -1504,7 +1536,7 @@ def _receipt_from_json(payload: Any) -> CallReceipt:
             Finding(item["code"], item["message"], item.get("literal"))
             for item in payload["findings"]
         )
-        return CallReceipt(
+        receipt = CallReceipt(
             identity=identity,
             call_id=payload["call_id"],
             call_number=payload["call_number"],
@@ -1527,7 +1559,20 @@ def _receipt_from_json(payload: Any) -> CallReceipt:
             status=payload["status"],
             findings=findings,
             raw_paths=tuple(raw_path_values),
-    )
+        )
+        if (
+            not isinstance(receipt.call_id, str)
+            or not isinstance(receipt.call_number, int)
+            or isinstance(receipt.call_number, bool)
+            or receipt.call_number < 0
+            or not isinstance(receipt.host, str)
+            or not isinstance(receipt.requested_model, (str, type(None)))
+            or not isinstance(receipt.case_id, str)
+            or not isinstance(receipt.repeat_index, int)
+            or isinstance(receipt.repeat_index, bool)
+        ):
+            raise ValueError("invalid receipt fields")
+        return receipt
     except (KeyError, TypeError, ValueError) as exc:
         raise LiveMatrixError("malformed receipt") from exc
 
@@ -1560,6 +1605,135 @@ def _load_receipt_attempts(run_root: pathlib.Path) -> tuple[CallReceipt, ...]:
             seen_call_numbers.add(receipt.call_number)
         attempts.append(receipt)
     return tuple(attempts)
+
+
+def _reservation_from_json(payload: Any) -> AttemptReservation:
+    if not isinstance(payload, dict):
+        raise LiveMatrixError("malformed attempt reservation")
+    try:
+        reservation = AttemptReservation(
+            identity=_identity_from_json(payload["identity"], label="attempt reservation"),
+            logical_call_id=payload["logical_call_id"],
+            call_id=payload["call_id"],
+            call_number=payload["call_number"],
+            kind=payload["kind"],
+            host=payload["host"],
+            requested_model=payload["requested_model"],
+            case_id=payload["case_id"],
+            repeat_index=payload["repeat_index"],
+        )
+    except (KeyError, TypeError) as exc:
+        raise LiveMatrixError("malformed attempt reservation") from exc
+    if (
+        not isinstance(reservation.logical_call_id, str)
+        or not isinstance(reservation.call_id, str)
+        or not isinstance(reservation.call_number, int)
+        or isinstance(reservation.call_number, bool)
+        or reservation.call_number < 1
+        or reservation.logical_call_id != _logical_call_id(reservation.call_id)
+        or reservation.kind not in {"producer", "reviewer"}
+        or not isinstance(reservation.host, str)
+        or not isinstance(reservation.requested_model, (str, type(None)))
+        or not isinstance(reservation.case_id, str)
+        or not isinstance(reservation.repeat_index, int)
+        or isinstance(reservation.repeat_index, bool)
+    ):
+        raise LiveMatrixError("malformed attempt reservation")
+    return reservation
+
+
+def _load_attempt_reservations(
+    run_root: pathlib.Path, identity: RunIdentity | None = None
+) -> tuple[AttemptReservation, ...]:
+    root = run_root / ATTEMPT_RESERVATION_DIRECTORY_NAME
+    if not root.exists():
+        return ()
+    if root.is_symlink() or not root.is_dir():
+        raise LiveMatrixError("attempt reservation directory is not a real directory")
+    reservations: list[AttemptReservation] = []
+    numbers: set[int] = set()
+    call_ids: set[str] = set()
+    for path in sorted(root.iterdir(), key=lambda item: item.name):
+        if path.name.endswith(".partial") and path.name.startswith("."):
+            continue
+        if path.is_symlink() or not path.is_file() or path.suffix != ".json":
+            raise LiveMatrixError("attempt reservation directory contains unsafe entry")
+        try:
+            reservation = _reservation_from_json(json.loads(path.read_text(encoding="utf-8")))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise LiveMatrixError("malformed attempt reservation") from exc
+        if path.name != _reservation_filename(reservation.call_number):
+            raise LiveMatrixError("attempt reservation filename mismatch")
+        if reservation.call_number in numbers or reservation.call_id in call_ids:
+            raise LiveMatrixError("duplicate attempt reservation")
+        if identity is not None and reservation.identity != identity:
+            raise LiveMatrixError("attempt reservation identity drift requires a new run ID")
+        numbers.add(reservation.call_number)
+        call_ids.add(reservation.call_id)
+        reservations.append(reservation)
+    return tuple(sorted(reservations, key=lambda item: item.call_number))
+
+
+def reserve_attempt(
+    run_root: pathlib.Path,
+    identity: RunIdentity,
+    call: PlannedCall,
+    producer: Producer,
+    *,
+    kind: str,
+    call_number: int,
+    ceiling: int | None = None,
+) -> AttemptReservation:
+    """Durably charge one provider attempt before its process can start."""
+    existing = _load_attempt_reservations(run_root, identity)
+    expected = attempted_call_count(existing) + 1
+    if call_number != expected:
+        raise LiveMatrixError("attempt reservation call number is not sequential")
+    if ceiling is not None and call_number > ceiling:
+        raise LiveMatrixError("call budget exhausted")
+    reservation = AttemptReservation(
+        identity=identity,
+        logical_call_id=_logical_call_id(call.call_id),
+        call_id=call.call_id,
+        call_number=call_number,
+        kind=kind,
+        host=producer.host,
+        requested_model=producer.requested_model,
+        case_id=call.case_id,
+        repeat_index=call.repeat_index,
+    )
+    if kind not in {"producer", "reviewer"}:
+        raise LiveMatrixError("unsupported attempt reservation kind")
+    root = run_root / ATTEMPT_RESERVATION_DIRECTORY_NAME
+    root.mkdir(mode=0o700, exist_ok=True)
+    if root.is_symlink() or not root.is_dir():
+        raise LiveMatrixError("attempt reservation directory is not a real directory")
+    os.chmod(root, 0o700)
+    _write_exclusive_json(root / _reservation_filename(call_number), reservation.as_json())
+    return reservation
+
+
+def _validate_receipt_reservations(
+    receipts: Sequence[CallReceipt], reservations: Sequence[AttemptReservation], identity: RunIdentity
+) -> None:
+    expected = {reservation.call_number: reservation for reservation in reservations}
+    for receipt in receipts:
+        if receipt.call_number <= 0:
+            continue
+        reservation = expected.get(receipt.call_number)
+        if reservation is None:
+            raise LiveMatrixError("receipt has no matching attempt reservation")
+        if (
+            receipt.identity != identity
+            or reservation.identity != identity
+            or receipt.call_id != reservation.call_id
+            or _logical_call_id(receipt.call_id) != reservation.logical_call_id
+            or receipt.host != reservation.host
+            or receipt.requested_model != reservation.requested_model
+            or receipt.case_id != reservation.case_id
+            or receipt.repeat_index != reservation.repeat_index
+        ):
+            raise LiveMatrixError("receipt does not match attempt reservation")
 
 
 def _load_receipts(run_root: pathlib.Path) -> dict[str, CallReceipt]:
@@ -1664,9 +1838,11 @@ def _dispatch_one(
     producer: Producer,
     case: LiveCase,
     preflight: PreflightResult,
-    budget: CallBudget,
+    reservation: AttemptReservation,
 ) -> CallReceipt:
-    call_number = budget.reserve()
+    if reservation.call_id != call.call_id or reservation.identity != preflight.identity:
+        raise LiveMatrixError("dispatch attempt reservation drift")
+    call_number = reservation.call_number
     started_at = _utc_now()
     prompt_sha256 = hashlib.sha256(b"").hexdigest()
     try:
@@ -1827,11 +2003,13 @@ def dispatch_calls(
     ):
         raise LiveMatrixError("preflight producer identity drift requires a new run ID")
     attempts = _load_receipt_attempts(preflight.run_root)
+    reservations = _load_attempt_reservations(preflight.run_root, preflight.identity)
+    _validate_receipt_reservations(attempts, reservations, preflight.identity)
     receipts = _load_receipts(preflight.run_root)
     pending = remaining_calls(plan, receipts, preflight.identity)
     producers = {producer.id: producer for producer in current_producers}
     case_by_identifier = {case.id: case for case in cases}
-    budget = CallBudget(max_calls, attempted=attempted_call_count(attempts))
+    reserved_count = attempted_call_count(reservations)
     result: list[CallReceipt] = []
     eligible: list[tuple[PlannedCall, Producer, LiveCase]] = []
     not_measured: list[CallReceipt] = []
@@ -1852,7 +2030,7 @@ def dispatch_calls(
                 not_measured.append(receipt)
                 continue
         eligible.append((call, producer, case))
-    if budget.attempted + len(eligible) > max_calls:
+    if reserved_count + len(eligible) > max_calls:
         raise LiveMatrixError("call budget exhausted before dispatch")
     for receipt in not_measured:
         _write_call_receipt(preflight.run_root, receipt)
@@ -1873,15 +2051,32 @@ def dispatch_calls(
         )
         for call, producer, case in eligible
     ]
+    reserved_eligible = tuple(
+        (
+            call,
+            producer,
+            case,
+            reserve_attempt(
+                preflight.run_root,
+                preflight.identity,
+                call,
+                producer,
+                kind="producer",
+                call_number=reserved_count + index,
+                ceiling=max_calls,
+            ),
+        )
+        for index, (call, producer, case) in enumerate(eligible, start=1)
+    )
     with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as executor:
-        iterator = iter(eligible)
+        iterator = iter(reserved_eligible)
         in_flight: set[concurrent.futures.Future[CallReceipt]] = set()
         for _ in range(jobs):
             try:
-                call, producer, case = next(iterator)
+                call, producer, case, reservation = next(iterator)
             except StopIteration:
                 break
-            in_flight.add(executor.submit(_dispatch_one, call, producer, case, preflight, budget))
+            in_flight.add(executor.submit(_dispatch_one, call, producer, case, preflight, reservation))
         while in_flight:
             completed, _ = concurrent.futures.wait(
                 in_flight, return_when=concurrent.futures.FIRST_COMPLETED
@@ -1892,10 +2087,10 @@ def dispatch_calls(
                 _write_call_receipt(preflight.run_root, receipt)
                 result.append(receipt)
                 try:
-                    call, producer, case = next(iterator)
+                    call, producer, case, reservation = next(iterator)
                 except StopIteration:
                     continue
-                in_flight.add(executor.submit(_dispatch_one, call, producer, case, preflight, budget))
+                in_flight.add(executor.submit(_dispatch_one, call, producer, case, preflight, reservation))
     return tuple(result)
 
 
@@ -2304,8 +2499,10 @@ def dispatch_reviewer_calls(
         raise LiveMatrixError("reviewer dispatch requires an evidence run root")
     validate_dispatch_identity(preflight)
     attempts = _load_receipt_attempts(preflight.run_root)
+    reservations = _load_attempt_reservations(preflight.run_root, preflight.identity)
+    _validate_receipt_reservations(attempts, reservations, preflight.identity)
     latest = _load_receipts(preflight.run_root)
-    budget = CallBudget(max_calls, attempted=attempted_call_count(attempts))
+    reserved_count = attempted_call_count(reservations)
     result: list[CallReceipt] = []
     responses: list[ReviewResponse] = []
     for reviewer in build_reviewer_plan(samples):
@@ -2326,7 +2523,17 @@ def dispatch_reviewer_calls(
             _write_call_receipt(preflight.run_root, receipt)
             result.append(receipt)
             continue
-        call_number = budget.reserve()
+        call_number = reserved_count + 1
+        reserve_attempt(
+            preflight.run_root,
+            preflight.identity,
+            call,
+            producer,
+            kind="reviewer",
+            call_number=call_number,
+            ceiling=max_calls,
+        )
+        reserved_count = call_number
         started_at = _utc_now()
         prompt_sha256 = hashlib.sha256(reviewer.prompt.encode("utf-8")).hexdigest()
         try:
@@ -2952,6 +3159,139 @@ def _atomic_replace_file(path: pathlib.Path, payload: bytes, *, mode: int) -> No
                 pass
 
 
+def _write_bytes(descriptor: int, payload: bytes) -> None:
+    offset = 0
+    while offset < len(payload):
+        written = os.write(descriptor, payload[offset:])
+        if written <= 0:
+            raise LiveMatrixError("incomplete operations report write")
+        offset += written
+
+
+@contextlib.contextmanager
+def _operations_directory(repository_root: pathlib.Path, *, create: bool) -> Any:
+    """Hold the real docs/operations inode while reading or mutating a report."""
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        root_fd = os.open(repository_root, flags)
+    except OSError as exc:
+        raise LiveMatrixError("cannot open repository root for operations report") from exc
+    current_fd = root_fd
+    try:
+        for component in ("docs", "operations"):
+            try:
+                next_fd = os.open(component, flags, dir_fd=current_fd)
+            except FileNotFoundError:
+                if not create:
+                    raise LiveMatrixError("operations report parent is unavailable") from None
+                try:
+                    os.mkdir(component, 0o755, dir_fd=current_fd)
+                    os.fsync(current_fd)
+                    next_fd = os.open(component, flags, dir_fd=current_fd)
+                except OSError as exc:
+                    raise LiveMatrixError("cannot create operations report parent") from exc
+            except OSError as exc:
+                raise LiveMatrixError("report parent is unsafe") from exc
+            if current_fd != root_fd:
+                os.close(current_fd)
+            current_fd = next_fd
+        yield current_fd
+    finally:
+        if current_fd != root_fd:
+            os.close(current_fd)
+        os.close(root_fd)
+
+
+def _report_filename(target: pathlib.Path, repository_root: pathlib.Path) -> str:
+    checked = _validated_operations_report_path(target, repository_root)
+    return checked.name
+
+
+def _read_operations_report(repository_root: pathlib.Path, target: pathlib.Path) -> bytes:
+    name = _report_filename(target, repository_root)
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    with _operations_directory(repository_root, create=False) as directory_fd:
+        try:
+            descriptor = os.open(name, flags, dir_fd=directory_fd)
+        except OSError as exc:
+            raise LiveMatrixError("owned operations report is unavailable") from exc
+        try:
+            opened = os.fstat(descriptor)
+            if not stat.S_ISREG(opened.st_mode):
+                raise LiveMatrixError("owned operations report is unsafe")
+            chunks: list[bytes] = []
+            while True:
+                chunk = os.read(descriptor, 65_536)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            return b"".join(chunks)
+        finally:
+            os.close(descriptor)
+
+
+def _create_operations_report(repository_root: pathlib.Path, target: pathlib.Path, payload: bytes) -> None:
+    name = _report_filename(target, repository_root)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    with _operations_directory(repository_root, create=True) as directory_fd:
+        try:
+            descriptor = os.open(name, flags, 0o644, dir_fd=directory_fd)
+        except FileExistsError as exc:
+            raise LiveMatrixError("operations report already exists without matching run state") from exc
+        except OSError as exc:
+            raise LiveMatrixError("cannot create operations report") from exc
+        try:
+            opened = os.fstat(descriptor)
+            if not stat.S_ISREG(opened.st_mode):
+                raise LiveMatrixError("operations report target is unsafe")
+            os.fchmod(descriptor, 0o644)
+            _write_bytes(descriptor, payload)
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        os.fsync(directory_fd)
+
+
+def _replace_operations_report(repository_root: pathlib.Path, target: pathlib.Path, payload: bytes) -> None:
+    name = _report_filename(target, repository_root)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    temporary = f".{name}.{secrets.token_hex(16)}.partial"
+    with _operations_directory(repository_root, create=False) as directory_fd:
+        try:
+            descriptor = os.open(temporary, flags, 0o644, dir_fd=directory_fd)
+        except OSError as exc:
+            raise LiveMatrixError("cannot create report staging file") from exc
+        published = False
+        try:
+            os.fchmod(descriptor, 0o644)
+            _write_bytes(descriptor, payload)
+            os.fsync(descriptor)
+            try:
+                existing = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+            except OSError as exc:
+                raise LiveMatrixError("owned operations report is unavailable") from exc
+            if not stat.S_ISREG(existing.st_mode):
+                raise LiveMatrixError("owned operations report is unsafe")
+            os.replace(temporary, name, src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
+            published = True
+            os.fsync(directory_fd)
+        finally:
+            os.close(descriptor)
+            if not published:
+                try:
+                    os.unlink(temporary, dir_fd=directory_fd)
+                except FileNotFoundError:
+                    pass
+
+
 def _write_report_state(run_root: pathlib.Path, state: ReportState, *, replace_existing: bool) -> None:
     path = _report_state_path(run_root)
     if not replace_existing:
@@ -2976,46 +3316,9 @@ def reserve_operations_report(
     existing_state = _load_report_state(run_root)
     if existing_state is not None:
         return _report_state_for_target(run_root, repository_root, target, identity)
-    parent = target.parent
-    ancestor = repository_root
-    for component in parent.relative_to(repository_root).parts:
-        ancestor = ancestor / component
-        if ancestor.exists():
-            if ancestor.is_symlink() or not ancestor.is_dir():
-                raise LiveMatrixError("report parent is unsafe")
-            continue
-        try:
-            ancestor.mkdir(mode=0o755)
-        except OSError as exc:
-            raise LiveMatrixError("cannot create report parent") from exc
-    if parent.is_symlink() or not parent.is_dir():
-        raise LiveMatrixError("report parent is unsafe")
     if len(PENDING_OPERATIONS_REPORT) > 1024:
         raise LiveMatrixError("pending operations report exceeds bound")
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-    try:
-        descriptor = os.open(target, flags, 0o644)
-    except FileExistsError as exc:
-        raise LiveMatrixError("operations report already exists without matching run state") from exc
-    except OSError as exc:
-        raise LiveMatrixError("cannot create operations report") from exc
-    try:
-        offset = 0
-        while offset < len(PENDING_OPERATIONS_REPORT):
-            written = os.write(descriptor, PENDING_OPERATIONS_REPORT[offset:])
-            if written <= 0:
-                raise LiveMatrixError("incomplete operations report write")
-            offset += written
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-    directory_descriptor = os.open(parent, os.O_RDONLY)
-    try:
-        os.fsync(directory_descriptor)
-    finally:
-        os.close(directory_descriptor)
+    _create_operations_report(repository_root, target, PENDING_OPERATIONS_REPORT)
     try:
         relative = target.relative_to(repository_root).as_posix()
     except ValueError as exc:
@@ -3040,46 +3343,14 @@ def write_operations_report(
     except OSError as exc:
         raise LiveMatrixError("cannot resolve repository root for report") from exc
     target = _validated_operations_report_path(path, repository_root)
-    parent = target.parent
-    ancestor = repository_root
-    for component in parent.relative_to(repository_root).parts:
-        ancestor = ancestor / component
-        if ancestor.exists():
-            if ancestor.is_symlink() or not ancestor.is_dir():
-                raise LiveMatrixError("report parent is unsafe")
-            continue
-        try:
-            ancestor.mkdir(mode=0o755)
-        except OSError as exc:
-            raise LiveMatrixError("cannot create report parent") from exc
-    if parent.is_symlink() or not parent.is_dir():
-        raise LiveMatrixError("report parent is unsafe")
     payload = report.encode("utf-8")
     if report_state is not None:
         if run_root is None or identity is None:
             raise LiveMatrixError("report state update requires run identity")
         _report_state_for_target(run_root, repository_root, target, identity)
-        _atomic_replace_file(target, payload, mode=0o644)
+        _replace_operations_report(repository_root, target, payload)
     else:
-        if target.exists() or target.is_symlink():
-            raise LiveMatrixError("operations report already exists")
-        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-        if hasattr(os, "O_NOFOLLOW"):
-            flags |= os.O_NOFOLLOW
-        try:
-            descriptor = os.open(target, flags, 0o644)
-        except OSError as exc:
-            raise LiveMatrixError("cannot create operations report") from exc
-        try:
-            offset = 0
-            while offset < len(payload):
-                written = os.write(descriptor, payload[offset:])
-                if written <= 0:
-                    raise LiveMatrixError("incomplete operations report write")
-                offset += written
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
+        _create_operations_report(repository_root, target, payload)
     if run_root is not None or identity is not None:
         if run_root is None or identity is None:
             raise LiveMatrixError("report state requires run identity")
@@ -3247,10 +3518,7 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 samples = ()
                 dispatched_reviewers, new_review_responses = (), ()
-            all_attempts = _all_attempts_with_new(
-                preflight.run_root,
-                (*dispatched_producers, *dispatched_reviewers),
-            )
+            reservations = _load_attempt_reservations(preflight.run_root, preflight.identity)
             durable_receipts = _latest_by_logical_id(
                 (*_load_receipts(preflight.run_root).values(), *dispatched_producers, *dispatched_reviewers)
             )
@@ -3263,12 +3531,8 @@ def main(argv: list[str] | None = None) -> int:
             review_responses = load_review_responses(preflight.run_root, reviewer_receipts, samples)
             if not review_responses:
                 review_responses = new_review_responses
-            producer_attempted_calls = sum(
-                receipt.call_number > 0 for receipt in all_attempts if not _is_reviewer_receipt(receipt)
-            )
-            reviewer_attempted_calls = sum(
-                receipt.call_number > 0 for receipt in all_attempts if _is_reviewer_receipt(receipt)
-            )
+            producer_attempted_calls = sum(reservation.kind == "producer" for reservation in reservations)
+            reviewer_attempted_calls = sum(reservation.kind == "reviewer" for reservation in reservations)
             if report_path is not None:
                 report_input = build_report_input(
                     preflight,
@@ -3290,7 +3554,7 @@ def main(argv: list[str] | None = None) -> int:
             payload = {
                 "producer_attempted_calls": producer_attempted_calls,
                 "reviewer_attempted_calls": reviewer_attempted_calls,
-                "attempted_calls": sum(receipt.call_number > 0 for receipt in all_attempts),
+                "attempted_calls": len(reservations),
                 "not_measured": sum(receipt.status == "not_measured" for receipt in durable_receipts.values()),
                 "run_id": preflight.identity.run_id,
             }

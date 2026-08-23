@@ -16,6 +16,13 @@ evaluation cycle boundary. The runner cannot prevent an operator from starting
 multiple separately authorized cycles; do not represent those cycles as one
 approved 160-call result.
 
+Before every Codex or Cursor provider invocation, the runner writes an ignored
+immutable attempt reservation before invoking a provider. It binds the complete
+run identity, logical and actual call IDs, global call number, kind, host,
+model, and case. A reservation remains charged after a crash before receipt
+publication, so resume never reuses that provider budget; a retry with spare
+budget receives a new call number and actual call ID.
+
 ## Safety And Privacy
 
 Use synthetic prompts only. Do not place private manuscripts, credentials, or
@@ -107,6 +114,11 @@ unsafe target or symlink, identity or hash drift, or any extra checkout dirt
 fails before dispatch. Exact matching report and state use the atomic update
 path.
 
+Report reservation, ownership hashing, and final publication operate through a
+held `docs/operations` directory inode. If that current pathname becomes
+unsafe after inspection, dispatch validation fails; the runner never follows a
+replacement directory while writing the owned report.
+
 ```bash
 RUN_ID="2026-08-23-korean-editor-baseline"
 python3 skills/kws-korean-writing-editor/evals/live_matrix.py \
@@ -173,9 +185,10 @@ python3 skills/kws-korean-writing-editor/evals/live_matrix.py \
 ## Evidence Layout
 
 For a run ID, the ignored evidence root contains the preflight receipt,
-`receipts/`, `raw/`, and `normalized/` evidence. Receipt metadata binds the
-identity and response hashes. Raw and normalized bodies are local operational
-evidence, not report attachments. The optional dated report is written only to
+`attempt-reservations/`, `receipts/`, `raw/`, and `normalized/` evidence.
+Reservations, rather than completed receipts, are the durable attempt-budget
+ledger. Receipt metadata binds the identity and response hashes. Raw and
+normalized bodies are local operational evidence, not report attachments. The optional dated report is written only to
 `docs/operations/YYYY-MM-DD-kws-korean-writing-editor-cross-model-evaluation.md`.
 
 ## Limitations
