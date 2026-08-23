@@ -10,6 +10,7 @@ import json
 import os
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -20,6 +21,8 @@ from unittest import mock
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import live_matrix  # noqa: E402
+
+INSTALL_STATE_FIXTURE = HERE / "fixtures" / "task-7-install-state.json"
 
 
 REPORT_SEPARATOR_CASES = (
@@ -67,6 +70,82 @@ def case_by_id(case_id: str) -> live_matrix.LiveCase:
         case for case in live_matrix.load_live_cases(HERE / "live_cases.json")
         if case.id == case_id
     )
+
+
+def temporary_git_install_fixture(
+    directory: str,
+) -> tuple[pathlib.Path, pathlib.Path, pathlib.Path, pathlib.Path]:
+    root = pathlib.Path(directory) / "repo"
+    source = root / "skills" / "kws-korean-writing-editor"
+    installed = pathlib.Path(directory) / "installed" / "kws-korean-writing-editor"
+    root.mkdir()
+    shutil.copytree(HERE.parent, source, ignore=shutil.ignore_patterns("__pycache__"))
+    shutil.copytree(source, installed)
+    (root / ".gitignore").write_text(".superpowers/\n", encoding="utf-8")
+    for argv in (
+        ("init", "-b", "main"),
+        ("add", "."),
+        (
+            "-c",
+            "user.name=fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "-m",
+            "fixture",
+        ),
+    ):
+        subprocess.run(("git", *argv), cwd=root, check=True, capture_output=True)
+    evidence_root = root / ".superpowers" / "kws-korean-writing-editor" / "live"
+    return root, source, installed, evidence_root
+
+
+def write_complete_install_bootstrap(
+    evidence_root: pathlib.Path,
+    run_id: str,
+    source: pathlib.Path,
+    installed: pathlib.Path,
+) -> pathlib.Path:
+    run_root = evidence_root / run_id
+    previous = run_root / "install-previous"
+    run_root.mkdir(parents=True, mode=0o700)
+    shutil.copytree(source, previous)
+    stage = installed.parent / f".kws-korean-writing-editor-{run_id}-stage"
+    payload = json.loads(INSTALL_STATE_FIXTURE.read_text(encoding="utf-8"))
+    source_hash = live_matrix.recursive_manifest_hash(source)
+    payload.update(
+        {
+            "run_id": run_id,
+            "source_path": str(source.resolve(strict=True)),
+            "target_path": str(installed.resolve(strict=True)),
+            "previous_path": str(previous.resolve(strict=True)),
+            "stage_path": str(stage.resolve(strict=False)),
+            "source_manifest_sha256": source_hash,
+            "stage_manifest_sha256": source_hash,
+            "installed_manifest_sha256": live_matrix.recursive_manifest_hash(installed),
+            "previous_manifest_sha256": live_matrix.recursive_manifest_hash(previous),
+        }
+    )
+    state_path = run_root / "task-7-install-state.json"
+    state_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    state_path.chmod(0o600)
+    return run_root
+
+
+def rewrite_install_bootstrap_state(
+    run_root: pathlib.Path,
+    *,
+    updates: dict[str, object] | None = None,
+    remove: str | None = None,
+) -> None:
+    state_path = run_root / "task-7-install-state.json"
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    if remove is not None:
+        payload.pop(remove)
+    if updates is not None:
+        payload.update(updates)
+    state_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    state_path.chmod(0o600)
 
 
 def single_codex_dispatch_fixture(
@@ -315,6 +394,15 @@ GUIDE_ARTIFACT_PARAGRAPH = (
     "is intentionally `2026-08-23`. Keep both values unchanged across the "
     "2026-08-24 wall-date rollover; do not substitute the current date."
 )
+GUIDE_BOOTSTRAP_PARAGRAPH = (
+    "After Task 7's exact-target swap, the first non-resume preflight may reuse "
+    "an existing mode-`0700` real run directory only when its complete contents "
+    "are a real `install-previous` directory and a real mode-`0600` "
+    "`task-7-install-state.json` file, `preflight.json` is absent, and the "
+    "record's run ID, exact source/target/previous/stage paths, final swap state, "
+    "equal source/install hashes, and current source/install/previous manifest "
+    "hashes all match the validated filesystem state."
+)
 GUIDE_IDENTITY_PARAGRAPH = (
     "Resume validates the complete run identity: run ID, runner version, "
     "repository HEAD, source skill hash, installed skill hash, `live_cases.json` "
@@ -394,7 +482,8 @@ GUIDE_EXPECTED_SECTIONS = (
     (
         "Baseline Preflight",
         (
-            "Before execution, ensure that source and installed skill manifests match, the relevant checkout is clean, and the approved run ID is unused. Preflight writes the immutable identity to the ignored evidence root and makes no provider call.",
+            "Before execution, ensure that source and installed skill manifests match, the relevant checkout is clean, and the approved run ID has no preflight or live evidence. Preflight writes the immutable identity to the ignored evidence root and makes no provider call.",
+            GUIDE_BOOTSTRAP_PARAGRAPH,
             GUIDE_ARTIFACT_PARAGRAPH,
             "`--jobs` accepts 1 through 4. The report path must be the exact dated filename under `docs/operations` shown above.",
         ),
@@ -1803,6 +1892,301 @@ class LiveMatrixCliTests(unittest.TestCase):
 
 
 class LiveMatrixLifecycleTests(unittest.TestCase):
+    def test_first_preflight_reuses_only_the_complete_task_7_install_bootstrap(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root, source, installed, evidence_root = temporary_git_install_fixture(directory)
+            run_id = "baseline-bootstrap-1"
+            run_root = write_complete_install_bootstrap(
+                evidence_root, run_id, source, installed
+            )
+            cli = mock.Mock(
+                side_effect=lambda command, _: live_matrix.CliInfo(
+                    None, None, f"{command} unavailable in fixture"
+                )
+            )
+            discovery = mock.Mock(return_value=(None, None))
+            offline = mock.Mock()
+            with mock.patch("live_matrix._cli_info", cli):
+                with mock.patch("live_matrix._discover_models", discovery):
+                    with mock.patch("live_matrix._run_offline_checks", offline):
+                        first = live_matrix.validate_preflight(
+                            source_skill_root=source,
+                            installed_skill_root=installed,
+                            repository_root=root,
+                            run_id=run_id,
+                            scope="baseline",
+                            jobs=1,
+                            max_calls=122,
+                            evidence_root=evidence_root,
+                        )
+
+            self.assertEqual(first.run_root, run_root.resolve(strict=True))
+            self.assertEqual(
+                {path.name for path in run_root.iterdir()},
+                {
+                    "install-previous",
+                    "preflight.json",
+                    "task-7-install-state.json",
+                },
+            )
+            self.assertFalse((run_root / live_matrix.ATTEMPT_RESERVATION_DIRECTORY_NAME).exists())
+            self.assertFalse((run_root / live_matrix.RECEIPT_DIRECTORY_NAME).exists())
+            resolved_root = root.resolve(strict=True)
+            cli.assert_has_calls(
+                [
+                    mock.call("codex", resolved_root),
+                    mock.call("cursor-agent", resolved_root),
+                ]
+            )
+            discovery.assert_called_once()
+            offline.assert_called_once_with(source.resolve(strict=True), resolved_root)
+            with mock.patch(
+                "live_matrix._cli_info",
+                side_effect=lambda command, _: live_matrix.CliInfo(
+                    None, None, f"{command} unavailable in fixture"
+                ),
+            ):
+                with mock.patch("live_matrix._discover_models", return_value=(None, None)):
+                    with mock.patch("live_matrix._run_offline_checks"):
+                        with self.assertRaisesRegex(
+                            live_matrix.LiveMatrixError,
+                            "installation bootstrap is invalid",
+                        ):
+                            live_matrix.validate_preflight(
+                                source_skill_root=source,
+                                installed_skill_root=installed,
+                                repository_root=root,
+                                run_id=run_id,
+                                scope="baseline",
+                                jobs=1,
+                                max_calls=122,
+                                evidence_root=evidence_root,
+                            )
+                        reused = live_matrix.validate_preflight(
+                            source_skill_root=source,
+                            installed_skill_root=installed,
+                            repository_root=root,
+                            run_id=run_id,
+                            scope="baseline",
+                            jobs=1,
+                            max_calls=122,
+                            evidence_root=evidence_root,
+                            reuse_preflight=True,
+                        )
+            self.assertEqual(reused.identity, first.identity)
+            self.assertEqual(reused.run_root, first.run_root)
+
+    def test_first_preflight_rejects_every_incomplete_or_unsafe_install_bootstrap(self) -> None:
+        def remove_previous(run_root: pathlib.Path) -> None:
+            shutil.rmtree(run_root / "install-previous")
+
+        def empty_root(run_root: pathlib.Path) -> None:
+            remove_previous(run_root)
+            remove_state(run_root)
+
+        def replace_root_with_file(run_root: pathlib.Path) -> None:
+            shutil.rmtree(run_root)
+            run_root.write_text("not a directory\n", encoding="utf-8")
+
+        def replace_root_with_symlink(run_root: pathlib.Path) -> None:
+            target = run_root.with_name(f".{run_root.name}-target")
+            run_root.rename(target)
+            run_root.symlink_to(target, target_is_directory=True)
+
+        def replace_previous_with_file(run_root: pathlib.Path) -> None:
+            remove_previous(run_root)
+            (run_root / "install-previous").write_text("not a directory\n", encoding="utf-8")
+
+        def replace_previous_with_symlink(run_root: pathlib.Path) -> None:
+            remove_previous(run_root)
+            (run_root / "install-previous").symlink_to(
+                run_root.parent, target_is_directory=True
+            )
+
+        def remove_state(run_root: pathlib.Path) -> None:
+            (run_root / "task-7-install-state.json").unlink()
+
+        def replace_state_with_symlink(run_root: pathlib.Path) -> None:
+            remove_state(run_root)
+            (run_root / "task-7-install-state.json").symlink_to(INSTALL_STATE_FIXTURE)
+
+        def replace_state_with_fifo(run_root: pathlib.Path) -> None:
+            remove_state(run_root)
+            os.mkfifo(run_root / "task-7-install-state.json", 0o600)
+
+        def add_previous_symlink(run_root: pathlib.Path) -> None:
+            (run_root / "install-previous" / "unsafe-link").symlink_to(
+                INSTALL_STATE_FIXTURE
+            )
+
+        entry_variants: tuple[tuple[str, str, bool], ...] = (
+            ("task-7 report", "task-7-report.md", False),
+            ("report state", live_matrix.REPORT_STATE_FILENAME, False),
+            ("attempt reservations", live_matrix.ATTEMPT_RESERVATION_DIRECTORY_NAME, True),
+            ("receipts", live_matrix.RECEIPT_DIRECTORY_NAME, True),
+            ("raw", live_matrix.RAW_DIRECTORY_NAME, True),
+            ("normalized", live_matrix.NORMALIZED_DIRECTORY_NAME, True),
+            ("temporary", ".preflight.json.fixture.partial", False),
+            ("unknown", "unknown.txt", False),
+            ("extra backup", "install-previous-extra", True),
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root, source, installed, evidence_root = temporary_git_install_fixture(directory)
+            stage_paths: list[pathlib.Path] = []
+            mutations: list[tuple[str, object]] = [
+                ("empty root", empty_root),
+                ("root regular file", replace_root_with_file),
+                ("root symlink", replace_root_with_symlink),
+                ("missing previous", remove_previous),
+                ("previous regular file", replace_previous_with_file),
+                ("previous symlink", replace_previous_with_symlink),
+                ("previous manifest symlink", add_previous_symlink),
+                ("missing state", remove_state),
+                ("state symlink", replace_state_with_symlink),
+                ("state special file", replace_state_with_fifo),
+                (
+                    "unsafe root mode",
+                    lambda run_root: run_root.chmod(0o755),
+                ),
+                (
+                    "unsafe state mode",
+                    lambda run_root: (run_root / "task-7-install-state.json").chmod(0o644),
+                ),
+                (
+                    "unknown state field",
+                    lambda run_root: rewrite_install_bootstrap_state(
+                        run_root, updates={"unknown": "value"}
+                    ),
+                ),
+                (
+                    "missing state field",
+                    lambda run_root: rewrite_install_bootstrap_state(
+                        run_root, remove="run_id"
+                    ),
+                ),
+                (
+                    "run ID drift",
+                    lambda run_root: rewrite_install_bootstrap_state(
+                        run_root, updates={"run_id": "different-run"}
+                    ),
+                ),
+                (
+                    "source path drift",
+                    lambda run_root: rewrite_install_bootstrap_state(
+                        run_root, updates={"source_path": "/sensitive/source-path"}
+                    ),
+                ),
+                (
+                    "target path drift",
+                    lambda run_root: rewrite_install_bootstrap_state(
+                        run_root, updates={"target_path": "/sensitive/target-path"}
+                    ),
+                ),
+                (
+                    "previous path drift",
+                    lambda run_root: rewrite_install_bootstrap_state(
+                        run_root, updates={"previous_path": "/sensitive/previous-path"}
+                    ),
+                ),
+                (
+                    "stage path drift",
+                    lambda run_root: rewrite_install_bootstrap_state(
+                        run_root, updates={"stage_path": "/sensitive/stage-path"}
+                    ),
+                ),
+                *(
+                    (
+                        f"{field} drift",
+                        lambda run_root, field=field: rewrite_install_bootstrap_state(
+                            run_root, updates={field: "0" * 64}
+                        ),
+                    )
+                    for field in (
+                        "source_manifest_sha256",
+                        "stage_manifest_sha256",
+                        "installed_manifest_sha256",
+                        "previous_manifest_sha256",
+                    )
+                ),
+                (
+                    "non-final install state",
+                    lambda run_root: rewrite_install_bootstrap_state(
+                        run_root, updates={"install_state": "swap_pending"}
+                    ),
+                ),
+                (
+                    "incomplete target swap",
+                    lambda run_root: rewrite_install_bootstrap_state(
+                        run_root, updates={"target_swap_completed": False}
+                    ),
+                ),
+                (
+                    "recorded stage remains",
+                    lambda run_root: rewrite_install_bootstrap_state(
+                        run_root, updates={"stage_path_exists_after_swap": True}
+                    ),
+                ),
+            ]
+            for label, name, is_directory in entry_variants:
+                def add_entry(
+                    run_root: pathlib.Path,
+                    *,
+                    entry_name: str = name,
+                    directory_entry: bool = is_directory,
+                ) -> None:
+                    entry = run_root / entry_name
+                    if directory_entry:
+                        entry.mkdir()
+                    else:
+                        entry.write_text("unexpected\n", encoding="utf-8")
+
+                mutations.append((f"extra {label}", add_entry))
+
+            def create_stage(run_root: pathlib.Path) -> None:
+                run_id = run_root.name
+                stage = installed.parent / f".kws-korean-writing-editor-{run_id}-stage"
+                stage.mkdir()
+                stage_paths.append(stage)
+
+            mutations.append(("stage path exists", create_stage))
+
+            for index, (label, mutate) in enumerate(mutations, start=1):
+                with self.subTest(label=label):
+                    run_id = f"invalid-bootstrap-{index}"
+                    run_root = write_complete_install_bootstrap(
+                        evidence_root, run_id, source, installed
+                    )
+                    mutate(run_root)
+                    try:
+                        with mock.patch(
+                            "live_matrix._cli_info",
+                            return_value=live_matrix.CliInfo(None, None, "fixture"),
+                        ):
+                            with mock.patch(
+                                "live_matrix._discover_models", return_value=(None, None)
+                            ):
+                                with mock.patch("live_matrix._run_offline_checks"):
+                                    with self.assertRaises(live_matrix.LiveMatrixError) as raised:
+                                        live_matrix.validate_preflight(
+                                            source_skill_root=source,
+                                            installed_skill_root=installed,
+                                            repository_root=root,
+                                            run_id=run_id,
+                                            scope="baseline",
+                                            jobs=1,
+                                            max_calls=122,
+                                            evidence_root=evidence_root,
+                                        )
+                        self.assertEqual(
+                            str(raised.exception), "installation bootstrap is invalid"
+                        )
+                    finally:
+                        for stage in stage_paths:
+                            if stage.exists():
+                                stage.rmdir()
+                        stage_paths.clear()
+
     def test_baseline_preflight_is_accepted_without_execute(self) -> None:
         with mock.patch("live_matrix.validate_preflight") as preflight:
             preflight.return_value = mock.Mock(

@@ -81,7 +81,7 @@ ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 MAX_STREAM_BYTES = 131_072
 COMMAND_TIMEOUT_SECONDS = 300
 DIAGNOSTIC_TAIL_BYTES = 256
-RUNNER_VERSION = "5"
+RUNNER_VERSION = "6"
 RUN_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 MIN_JOBS = 1
 MAX_JOBS = 4
@@ -93,6 +93,28 @@ NORMALIZED_DIRECTORY_NAME = "normalized"
 RECEIPT_DIRECTORY_NAME = "receipts"
 ATTEMPT_RESERVATION_DIRECTORY_NAME = "attempt-reservations"
 REPORT_STATE_FILENAME = "report-state.json"
+INSTALL_PREVIOUS_DIRECTORY_NAME = "install-previous"
+INSTALL_STATE_FILENAME = "task-7-install-state.json"
+INSTALL_BOOTSTRAP_ENTRIES = frozenset(
+    {INSTALL_PREVIOUS_DIRECTORY_NAME, INSTALL_STATE_FILENAME}
+)
+INSTALL_STATE_FIELDS = frozenset(
+    {
+        "install_state",
+        "installed_manifest_sha256",
+        "previous_manifest_sha256",
+        "previous_path",
+        "run_id",
+        "source_manifest_sha256",
+        "source_path",
+        "stage_manifest_sha256",
+        "stage_path",
+        "stage_path_exists_after_swap",
+        "target_path",
+        "target_swap_completed",
+    }
+)
+FINAL_INSTALL_STATE = "reviewed_candidate_installed_previous_backup_retained"
 PENDING_OPERATIONS_REPORT = (
     b"# Korean Writing Editor Live Evaluation\n\n"
     b"Pending operator report reservation; no execution result has been published.\n"
@@ -217,6 +239,14 @@ class RunIdentity:
             raise TypeError(f"unknown RunIdentity test override: {sorted(unknown)[0]}")
         values.update(overrides)
         return cls(**values)
+
+
+@dataclass(frozen=True)
+class _InstallBootstrapExpectation:
+    source_root: pathlib.Path
+    installed_root: pathlib.Path
+    source_manifest_sha256: str
+    installed_manifest_sha256: str
 
 
 @dataclass(frozen=True)
@@ -984,21 +1014,128 @@ def validate_evidence_root(
     return expected
 
 
+def _validate_install_bootstrap(
+    run_root: pathlib.Path,
+    run_id: str,
+    expectation: _InstallBootstrapExpectation,
+) -> None:
+    """Accept only the complete recoverable install state created by Task 7 step 2."""
+    state_descriptor: int | None = None
+    try:
+        run_stat = run_root.lstat()
+        if (
+            stat.S_ISLNK(run_stat.st_mode)
+            or not stat.S_ISDIR(run_stat.st_mode)
+            or stat.S_IMODE(run_stat.st_mode) != 0o700
+        ):
+            raise ValueError("unsafe run root")
+        entries = tuple(run_root.iterdir())
+        if (
+            len(entries) != len(INSTALL_BOOTSTRAP_ENTRIES)
+            or {entry.name for entry in entries} != INSTALL_BOOTSTRAP_ENTRIES
+        ):
+            raise ValueError("unexpected bootstrap entries")
+
+        previous = run_root / INSTALL_PREVIOUS_DIRECTORY_NAME
+        previous_stat = previous.lstat()
+        if stat.S_ISLNK(previous_stat.st_mode) or not stat.S_ISDIR(previous_stat.st_mode):
+            raise ValueError("unsafe previous install")
+
+        state_path = run_root / INSTALL_STATE_FILENAME
+        state_stat = state_path.lstat()
+        if (
+            stat.S_ISLNK(state_stat.st_mode)
+            or not stat.S_ISREG(state_stat.st_mode)
+            or stat.S_IMODE(state_stat.st_mode) != 0o600
+            or state_stat.st_size > MAX_STREAM_BYTES
+        ):
+            raise ValueError("unsafe install state")
+        flags = os.O_RDONLY
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        state_descriptor = os.open(state_path, flags)
+        opened_state = os.fstat(state_descriptor)
+        if (
+            not stat.S_ISREG(opened_state.st_mode)
+            or (opened_state.st_dev, opened_state.st_ino)
+            != (state_stat.st_dev, state_stat.st_ino)
+            or stat.S_IMODE(opened_state.st_mode) != 0o600
+        ):
+            raise ValueError("install state changed while opening")
+        state_bytes = os.read(state_descriptor, MAX_STREAM_BYTES + 1)
+        if len(state_bytes) > MAX_STREAM_BYTES:
+            raise ValueError("install state exceeds bound")
+        state = json.loads(state_bytes.decode("utf-8"))
+        if not isinstance(state, dict) or frozenset(state) != INSTALL_STATE_FIELDS:
+            raise ValueError("install state schema mismatch")
+
+        stage = (
+            expectation.installed_root.parent
+            / f".kws-korean-writing-editor-{run_id}-stage"
+        )
+        try:
+            stage.lstat()
+        except FileNotFoundError:
+            pass
+        else:
+            raise ValueError("install stage still exists")
+        previous_hash = recursive_manifest_hash(previous)
+        expected_state: dict[str, Any] = {
+            "install_state": FINAL_INSTALL_STATE,
+            "installed_manifest_sha256": expectation.installed_manifest_sha256,
+            "previous_manifest_sha256": previous_hash,
+            "previous_path": str(previous),
+            "run_id": run_id,
+            "source_manifest_sha256": expectation.source_manifest_sha256,
+            "source_path": str(expectation.source_root),
+            "stage_manifest_sha256": expectation.source_manifest_sha256,
+            "stage_path": str(stage.resolve(strict=False)),
+            "stage_path_exists_after_swap": False,
+            "target_path": str(expectation.installed_root),
+            "target_swap_completed": True,
+        }
+        if state != expected_state:
+            raise ValueError("install state values mismatch")
+    except (
+        LiveMatrixError,
+        OSError,
+        UnicodeError,
+        json.JSONDecodeError,
+        RecursionError,
+        ValueError,
+    ) as exc:
+        raise LiveMatrixError("installation bootstrap is invalid") from exc
+    finally:
+        if state_descriptor is not None:
+            os.close(state_descriptor)
+
+
 def _run_root(
     evidence_root: pathlib.Path,
     run_id: str,
     *,
     repository_root: pathlib.Path,
     require_existing: bool,
+    install_bootstrap: _InstallBootstrapExpectation | None = None,
 ) -> pathlib.Path:
     safe_evidence_root = validate_evidence_root(evidence_root, repository_root)
     run_root = safe_evidence_root / run_id
+    try:
+        run_root.lstat()
+    except FileNotFoundError:
+        run_root_exists = False
+    except OSError as exc:
+        raise LiveMatrixError("cannot inspect run root") from exc
+    else:
+        run_root_exists = True
     if require_existing:
-        if not run_root.exists():
+        if not run_root_exists:
             raise LiveMatrixError("preflight receipt is required before execution")
     else:
-        if run_root.exists():
-            raise LiveMatrixError("run root already exists; use a new run ID")
+        if run_root_exists:
+            if install_bootstrap is None:
+                raise LiveMatrixError("run root already exists; use a new run ID")
+            _validate_install_bootstrap(run_root, run_id, install_bootstrap)
     if not safe_evidence_root.exists():
         try:
             safe_evidence_root.mkdir(mode=0o700, parents=True)
@@ -1006,7 +1143,7 @@ def _run_root(
             raise LiveMatrixError("cannot create evidence root") from exc
     if safe_evidence_root.is_symlink() or not safe_evidence_root.is_dir():
         raise LiveMatrixError("evidence root is not a real directory")
-    if not run_root.exists():
+    if not run_root_exists:
         try:
             run_root.mkdir(mode=0o700)
         except OSError as exc:
@@ -1110,6 +1247,14 @@ def validate_preflight(
             run_id,
             repository_root=repo_root,
             require_existing=reuse_preflight or resume,
+            install_bootstrap=_InstallBootstrapExpectation(
+                source_root=source_root,
+                installed_root=installed_root,
+                source_manifest_sha256=source_hash,
+                installed_manifest_sha256=installed_hash,
+            )
+            if not (reuse_preflight or resume)
+            else None,
         )
         preflight_payload = {
             "identity": identity_json(identity),
