@@ -14,8 +14,20 @@ import unittest
 from collections import Counter
 
 
+CANONICAL_COMPATIBILITY = (
+    "Requires Codex built-in image generation and local image viewing for generate or edit mode. "
+    "Brief and audit modes can run read-only."
+)
+
+
 class EvaluatorTests(unittest.TestCase):
-    def compatibility_errors(self, metadata_lines: tuple[str, ...]) -> list[str]:
+    def compatibility_errors(
+        self,
+        metadata_lines: tuple[str, ...],
+        *,
+        metadata_header: str = "metadata:",
+        extra_metadata_blocks: tuple[tuple[str, tuple[str, ...]], ...] = (),
+    ) -> list[str]:
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             self.copy_core_tree(root)
@@ -23,10 +35,12 @@ class EvaluatorTests(unittest.TestCase):
             source = skill.read_text(encoding="utf-8")
             original = (
                 "metadata:\n"
-                "  compatibility: Requires Codex built-in image generation and local image viewing for generate or edit mode. Brief and audit modes can run read-only.\n"
+                f"  compatibility: {CANONICAL_COMPATIBILITY}\n"
                 '  version: "1.0.0"\n'
             )
-            replacement = "metadata:\n" + "\n".join(metadata_lines) + '\n  version: "1.0.0"\n'
+            replacement = metadata_header + "\n" + "\n".join(metadata_lines) + '\n  version: "1.0.0"\n'
+            for header, lines in extra_metadata_blocks:
+                replacement += header + "\n" + "\n".join(lines) + '\n  version: "1.0.0"\n'
             skill.write_text(source.replace(original, replacement), encoding="utf-8")
             return validate_skill_tree(root, "core")
 
@@ -214,11 +228,65 @@ class EvaluatorTests(unittest.TestCase):
                 errors = self.compatibility_errors(metadata_lines)
             self.assertIn("SKILL.md: metadata.compatibility must be a non-empty string", errors)
 
-    def test_core_scope_accepts_exactly_one_direct_plain_or_quoted_metadata_compatibility(self):
+    def test_core_scope_rejects_yaml_implicit_scalars_and_metadata_key_variants(self):
+        canonical = CANONICAL_COMPATIBILITY
+        implicit_scalars = (
+            "true",
+            "false",
+            "yes",
+            "no",
+            "on",
+            "off",
+            "0",
+            "-1",
+            "1.0",
+            ".5",
+            "0x10",
+            ".inf",
+            "-.Inf",
+            ".NaN",
+            "2026-08-24",
+        )
+        for value in implicit_scalars:
+            with self.subTest(value=value):
+                errors = self.compatibility_errors((f"  compatibility: {value}",))
+            self.assertIn("SKILL.md: metadata.compatibility must be a non-empty string", errors)
+
+        variants = (
+            ((f"  compatibility: {canonical}",), "metadata :", ()),
+            (
+                (f"  compatibility: {canonical}",),
+                "metadata:",
+                (("metadata: # second", (f"  compatibility: {canonical}",)),),
+            ),
+            (
+                (f"  compatibility: {canonical}",),
+                "metadata :",
+                (("metadata:", (f"  compatibility: {canonical}",)),),
+            ),
+            ((f"  compatibility: {canonical}", f"  compatibility : {canonical}"), "metadata:", ()),
+            ((f"  compatibility: {canonical}", f"  compatibility  : {canonical}"), "metadata:", ()),
+        )
+        for metadata_lines, metadata_header, extra_metadata_blocks in variants:
+            with self.subTest(
+                metadata_header=metadata_header,
+                extra_metadata_blocks=extra_metadata_blocks,
+            ):
+                errors = self.compatibility_errors(
+                    metadata_lines,
+                    metadata_header=metadata_header,
+                    extra_metadata_blocks=extra_metadata_blocks,
+                )
+            self.assertIn("SKILL.md: metadata.compatibility must be a non-empty string", errors)
+
+    def test_core_scope_accepts_only_canonical_plain_or_quoted_metadata_compatibility(self):
+        canonical = CANONICAL_COMPATIBILITY
         for metadata_lines in (
-            ("  compatibility: Plain value",),
+            (f"  compatibility: {canonical}",),
             ('  compatibility: "Double quoted value"',),
             ("  compatibility: 'Single quoted value'",),
+            ('  compatibility: "true"',),
+            ("  compatibility: '2026-08-24'",),
         ):
             with self.subTest(metadata_lines=metadata_lines):
                 errors = self.compatibility_errors(metadata_lines)
@@ -1048,8 +1116,10 @@ def _validate_source_register(text: str) -> list[str]:
 
 def _has_supported_metadata_string(frontmatter: str, key: str) -> bool:
     lines = frontmatter.splitlines()
-    metadata_positions = [index for index, line in enumerate(lines) if line == "metadata:"]
-    if len(metadata_positions) != 1:
+    metadata_positions = [
+        index for index, line in enumerate(lines) if re.match(r"^metadata\s*:", line)
+    ]
+    if len(metadata_positions) != 1 or lines[metadata_positions[0]] != "metadata:":
         return False
     metadata_start = metadata_positions[0] + 1
     metadata_lines: list[str] = []
@@ -1059,13 +1129,17 @@ def _has_supported_metadata_string(frontmatter: str, key: str) -> bool:
         metadata_lines.append(line)
 
     direct = [
-        (index, match.group(1))
+        (index, line)
         for index, line in enumerate(metadata_lines)
-        if (match := re.fullmatch(rf"  {re.escape(key)}:(.*)", line)) is not None
+        if re.match(rf"^  {re.escape(key)}\s*:", line)
     ]
     if len(direct) != 1:
         return False
-    index, raw_value = direct[0]
+    index, direct_line = direct[0]
+    match = re.fullmatch(rf"  {re.escape(key)}:(.*)", direct_line)
+    if match is None:
+        return False
+    raw_value = match.group(1)
     for following in metadata_lines[index + 1:]:
         if not following:
             continue
@@ -1076,15 +1150,17 @@ def _has_supported_metadata_string(frontmatter: str, key: str) -> bool:
         break
 
     value = raw_value.strip()
-    if not value or value.casefold() == "null" or value == "~":
+    if not value:
         return False
     if value[0] in {"'", '"'}:
         if len(value) < 2 or value[-1] != value[0]:
             return False
-        return bool(value[1:-1].strip()) and value[0] not in value[1:-1]
-    if value[0] in "[{!&*|>" or "#" in value or "'" in value or '"' in value:
-        return False
-    return True
+        return (
+            bool(value[1:-1].strip())
+            and value[0] not in value[1:-1]
+            and "\\" not in value[1:-1]
+        )
+    return raw_value == f" {CANONICAL_COMPATIBILITY}"
 
 
 def validate_skill_tree(skill_root: pathlib.Path, scope: str) -> list[str]:
