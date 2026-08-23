@@ -195,3 +195,7 @@ python3 skills/kws-korean-writing-editor/evals/run.py --scope full
 프롬프트에는 원고와 교정 요청만 넣습니다. 모델에게 CANARY나
 skill_used를 적으라고 시키지 않습니다. 본문을 보고 판정합니다. 변경
 동기화는 [CHANGE_PROTOCOL.md](CHANGE_PROTOCOL.md)를 따릅니다.
+
+개발용 교차 모델 평가는 [교차 모델 평가 가이드](evals/README.md)를 따릅니다.
+기본 `--dry-run`은 공급자를 호출하지 않으며, 실제 실행은 명시적인
+`--execute`와 별도 라이브 증거 보고가 필요합니다.
