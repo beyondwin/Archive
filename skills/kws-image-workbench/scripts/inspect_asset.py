@@ -38,6 +38,21 @@ def make_png(width, height, color_type, trns=False, trns_payload=None, before_tr
         transparency = trns_payload if trns_payload is not None else (b"\0\0\0\0\0\0" if color_type == 2 else b"\0\0")
         chunks.append(struct.pack(">I", len(transparency)) + b"tRNS" + transparency + b"\0\0\0\0")
     chunks.extend(struct.pack(">I", len(payload)) + kind + payload + b"\0\0\0\0" for kind, payload in after_trns)
+    channels = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}.get(color_type, 1)
+    raw_scanlines = b"".join(b"\0" + b"\0" * (width * channels) for _ in range(height))
+    adler_s1 = 1
+    adler_s2 = 0
+    for value in raw_scanlines:
+        adler_s1 = (adler_s1 + value) % 65521
+        adler_s2 = (adler_s2 + adler_s1) % 65521
+    compressed = (
+        b"\x78\x01\x01"
+        + struct.pack("<H", len(raw_scanlines))
+        + struct.pack("<H", 0xFFFF - len(raw_scanlines))
+        + raw_scanlines
+        + struct.pack(">I", (adler_s2 << 16) | adler_s1)
+    )
+    chunks.append(struct.pack(">I", len(compressed)) + b"IDAT" + compressed + b"\0\0\0\0")
     chunks.append(b"\0\0\0\0IEND\0\0\0\0")
     return b"\x89PNG\r\n\x1a\n" + b"".join(chunks)
 
@@ -71,6 +86,7 @@ def make_webp_vp8l(width, height):
 class AssetInspectorTests(unittest.TestCase):
     def test_png_reports_dimensions_and_alpha(self):
         data = make_png(width=3, height=2, color_type=6)
+        self.assertIn(b"IDAT", data)
         self.assertEqual(parse_png(data), (3, 2, True))
 
     def test_png_trns_reports_alpha(self):
@@ -125,6 +141,18 @@ class AssetInspectorTests(unittest.TestCase):
         self.assertEqual(parse_png(valid), (3, 2, True))
         with self.assertRaisesRegex(ValueError, "missing PNG IEND"):
             parse_png(valid[:-12])
+
+    def test_png_without_idat_is_rejected(self):
+        ihdr = struct.pack(">IIBBBBB", 3, 2, 8, 6, 0, 0, 0)
+        missing_idat = (
+            b"\x89PNG\r\n\x1a\n"
+            + struct.pack(">I", len(ihdr))
+            + b"IHDR"
+            + ihdr
+            + b"\0\0\0\0\0\0\0\0IEND\0\0\0\0"
+        )
+        with self.assertRaisesRegex(ValueError, "missing PNG IDAT"):
+            parse_png(missing_idat)
 
     def test_truncated_or_malformed_jpeg_is_rejected(self):
         with self.assertRaises(ValueError):
@@ -264,6 +292,8 @@ def parse_png(data):
         elif chunk_type == b"IEND":
             if chunk_length != 0 or payload_end + 4 != len(data):
                 raise ValueError("invalid PNG IEND chunk")
+            if not seen_image_data:
+                raise ValueError("missing PNG IDAT")
             seen_iend = True
             break
         offset = payload_end + 4
