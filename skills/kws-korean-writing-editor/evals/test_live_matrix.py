@@ -385,3 +385,153 @@ class LiveMatrixCliTests(unittest.TestCase):
                     )
                 self.assertEqual(status, 1)
                 dispatch.assert_not_called()
+
+
+class LiveMatrixLifecycleTests(unittest.TestCase):
+    def test_baseline_preflight_is_accepted_without_execute(self) -> None:
+        with mock.patch("live_matrix.validate_preflight") as preflight:
+            preflight.return_value = mock.Mock(
+                identity=live_matrix.RunIdentity.for_test(run_id="baseline-1"),
+                model_availability={},
+            )
+            with contextlib.redirect_stdout(io.StringIO()):
+                status = live_matrix.main(
+                    ["--preflight", "--scope", "baseline", "--run-id", "baseline-1"]
+                )
+        self.assertEqual(status, 0)
+        self.assertFalse(preflight.call_args.kwargs["resume"])
+
+    def test_preflight_state_is_reused_by_non_resume_execute(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            evidence_root = root / "evidence"
+            with mock.patch("live_matrix.validate_evidence_root", return_value=evidence_root):
+                first = live_matrix._run_root(
+                    evidence_root, "baseline-1", repository_root=root, require_existing=False
+                )
+                (first / "preflight.json").write_text("{}", encoding="utf-8")
+                reused = live_matrix._run_root(
+                    evidence_root, "baseline-1", repository_root=root, require_existing=True
+                )
+        self.assertEqual(reused, first)
+
+    def test_execute_reuses_preflight_without_resume(self) -> None:
+        preflight_result = mock.Mock(
+            identity=live_matrix.RunIdentity.for_test(run_id="baseline-1"),
+            model_availability={},
+        )
+        with mock.patch("live_matrix.validate_preflight", return_value=preflight_result) as preflight:
+            with mock.patch("live_matrix.dispatch_calls", return_value=()) as dispatch:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    status = live_matrix.main(
+                        ["--execute", "--scope", "baseline", "--run-id", "baseline-1"]
+                    )
+        self.assertEqual(status, 0)
+        self.assertTrue(preflight.call_args.kwargs["reuse_preflight"])
+        dispatch.assert_called_once()
+
+    def test_receipt_round_trips_every_required_field(self) -> None:
+        receipt = live_matrix.CallReceipt.for_test("call-1", repeat_index=2)
+        self.assertEqual(live_matrix._receipt_from_json(receipt.as_json()), receipt)
+
+    def test_unordered_attempt_files_keep_latest_receipt_and_max_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_root = pathlib.Path(directory)
+            receipt_root = run_root / live_matrix.RECEIPT_DIRECTORY_NAME
+            receipt_root.mkdir()
+            first = live_matrix.CallReceipt.for_test("c", status="blocked", call_number=1)
+            retry = live_matrix.CallReceipt.for_test(
+                "c:attempt-2", status="verified", call_number=7
+            )
+            live_matrix.write_receipt(receipt_root / "z-first.json", first)
+            live_matrix.write_receipt(receipt_root / "a-retry.json", retry)
+            latest = live_matrix._load_receipts(run_root)
+            attempts = live_matrix._load_receipt_attempts(run_root)
+        self.assertEqual(latest, {"c": retry})
+        self.assertEqual(live_matrix.attempted_call_count(attempts), 7)
+
+    def test_duplicate_reserved_call_number_is_corrupt(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_root = pathlib.Path(directory)
+            receipt_root = run_root / live_matrix.RECEIPT_DIRECTORY_NAME
+            receipt_root.mkdir()
+            live_matrix.write_receipt(
+                receipt_root / "first.json", live_matrix.CallReceipt.for_test("c", call_number=1)
+            )
+            live_matrix.write_receipt(
+                receipt_root / "retry.json",
+                live_matrix.CallReceipt.for_test("c:attempt-2", call_number=1),
+            )
+            with self.assertRaisesRegex(live_matrix.LiveMatrixError, "call number"):
+                live_matrix._load_receipt_attempts(run_root)
+
+    def test_evidence_root_rejects_outside_and_does_not_chmod_it(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            outside = root.parent
+            with mock.patch("live_matrix.os.chmod") as chmod:
+                with self.assertRaisesRegex(live_matrix.LiveMatrixError, "evidence root"):
+                    live_matrix.validate_evidence_root(outside, root)
+            chmod.assert_not_called()
+
+    def test_dispatch_identity_rejects_head_and_case_drift(self) -> None:
+        identity = live_matrix.RunIdentity.for_test(repository_head="old", live_cases_hash="old-cases")
+        preflight = live_matrix.PreflightResult(
+            identity=identity,
+            repository_root=pathlib.Path("/repo"),
+            repository_branch="main",
+            source_skill_root=pathlib.Path("/source"),
+            installed_skill_root=pathlib.Path("/installed"),
+            run_root=pathlib.Path("/run"),
+            cli_info={},
+            model_availability={},
+            discovery_sha256=None,
+            discovery_diagnostic=None,
+        )
+        with mock.patch("live_matrix._git_status_is_clean", return_value=True):
+            with mock.patch("live_matrix._git_value", return_value="new"):
+                with self.assertRaisesRegex(live_matrix.LiveMatrixError, "identity drift"):
+                    live_matrix.validate_dispatch_identity(preflight)
+
+    def test_dispatch_identity_rejects_case_drift(self) -> None:
+        identity = live_matrix.RunIdentity.for_test(
+            repository_head="same", skill_hash="same", installed_skill_hash="same", live_cases_hash="old-cases"
+        )
+        preflight = live_matrix.PreflightResult(
+            identity=identity,
+            repository_root=pathlib.Path("/repo"),
+            repository_branch="main",
+            source_skill_root=pathlib.Path("/source"),
+            installed_skill_root=pathlib.Path("/installed"),
+            run_root=pathlib.Path("/run"),
+            cli_info={},
+            model_availability={},
+            discovery_sha256=None,
+            discovery_diagnostic=None,
+        )
+        with mock.patch("live_matrix._git_status_is_clean", return_value=True):
+            with mock.patch("live_matrix._git_value", return_value="same"):
+                with mock.patch("live_matrix.recursive_manifest_hash", return_value="same"):
+                    with mock.patch("live_matrix._sha256_file", return_value="new-cases"):
+                        with mock.patch.object(pathlib.Path, "is_symlink", return_value=False):
+                            with mock.patch.object(pathlib.Path, "is_file", return_value=True):
+                                with self.assertRaisesRegex(live_matrix.LiveMatrixError, "live cases changed"):
+                                    live_matrix.validate_dispatch_identity(preflight)
+
+    def test_failed_model_discovery_never_marks_stdout_model_available(self) -> None:
+        cursor = live_matrix.CliInfo("cursor-agent", "v", None)
+        capture = live_matrix.CommandCapture(
+            1, b"gemini-3.7-flash-high", b"unavailable", 1
+        )
+        with mock.patch("live_matrix.run_command", return_value=capture):
+            discovery, _ = live_matrix._discover_models(cursor, pathlib.Path("/repo"))
+        self.assertIsNone(discovery)
+
+    def test_crashed_receipt_write_never_publishes_partial_final_path(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "receipt.json"
+            receipt = live_matrix.CallReceipt.for_test("call-1")
+            with mock.patch("live_matrix.os.write", return_value=0):
+                with self.assertRaisesRegex(live_matrix.LiveMatrixError, "incomplete"):
+                    live_matrix.write_receipt(path, receipt)
+            self.assertFalse(path.exists())
