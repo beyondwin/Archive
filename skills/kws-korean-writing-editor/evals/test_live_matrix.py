@@ -4,6 +4,7 @@ import contextlib
 import io
 import json
 import pathlib
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -122,3 +123,146 @@ class DeterministicEvaluationTests(unittest.TestCase):
             live_matrix.case_status(case_by_id("near-casual"), ()),
             "partially_verified",
         )
+
+
+class ProviderAdapterTests(unittest.TestCase):
+    def test_codex_argv_is_direct_ephemeral_read_only(self) -> None:
+        argv = live_matrix.build_codex_argv(pathlib.Path("/repo"), "prompt")
+        self.assertEqual(
+            argv,
+            (
+                "codex",
+                "exec",
+                "--ephemeral",
+                "--sandbox",
+                "read-only",
+                "--json",
+                "--cd",
+                "/repo",
+                "prompt",
+            ),
+        )
+        self.assertNotIn("--model", argv)
+
+    def test_cursor_argv_is_sandboxed_ask_and_not_forced(self) -> None:
+        argv = live_matrix.build_cursor_argv(
+            pathlib.Path("/repo"), "gemini-3.7-flash-high", "prompt"
+        )
+        self.assertEqual(
+            argv,
+            (
+                "cursor-agent",
+                "--print",
+                "--output-format",
+                "json",
+                "--mode",
+                "ask",
+                "--sandbox",
+                "enabled",
+                "--workspace",
+                "/repo",
+                "--model",
+                "gemini-3.7-flash-high",
+                "prompt",
+            ),
+        )
+        self.assertNotIn("--force", argv)
+        self.assertNotIn("--yolo", argv)
+
+    def test_host_prefixes_only_explicit_cases(self) -> None:
+        case = case_by_id("correct-obligation")
+        self.assertTrue(
+            live_matrix.build_prompt(case, "codex").startswith(
+                "$kws-korean-writing-editor "
+            )
+        )
+        self.assertTrue(
+            live_matrix.build_prompt(case, "cursor").startswith(
+                "/kws-korean-writing-editor "
+            )
+        )
+        self.assertEqual(
+            live_matrix.build_prompt(case_by_id("near-casual"), "codex"),
+            "안녕! 오늘 날씨 좋지 않아?",
+        )
+
+    def test_codex_jsonl_extracts_final_message_and_model(self) -> None:
+        payload = (
+            b'{"type":"turn.started","model":"gpt-example"}\n'
+            b'{"type":"item.completed","item":{"type":"agent_message","text":"first"}}\n'
+            b'{"type":"item.completed","item":{"type":"agent_message","text":"done"}}\n'
+        )
+        self.assertEqual(
+            live_matrix.extract_codex_response(payload), ("done", "gpt-example")
+        )
+
+    def test_codex_jsonl_ignores_nested_model_and_non_messages(self) -> None:
+        payload = (
+            b'{"type":"turn.started","nested":{"model":"untrusted"},"turn_context":{"model":"context-model"}}\n'
+            b'{"type":"item.completed","item":{"type":"tool","text":"ignore"}}\n'
+            b'{"type":"item.completed","item":{"type":"agent_message","text":"final"}}\n'
+        )
+        self.assertEqual(
+            live_matrix.extract_codex_response(payload), ("final", "context-model")
+        )
+
+    def test_cursor_json_keeps_preamble(self) -> None:
+        payload = json.dumps(
+            {"type": "result", "result": "수정본입니다.\n완료", "model": "m"},
+            ensure_ascii=False,
+        ).encode()
+        self.assertEqual(
+            live_matrix.extract_cursor_response(payload), ("수정본입니다.\n완료", "m")
+        )
+
+    def test_cursor_rejects_nested_response_strings(self) -> None:
+        payload = json.dumps({"nested": {"result": "not accepted"}}).encode()
+        with self.assertRaisesRegex(live_matrix.LiveMatrixError, "response"):
+            live_matrix.extract_cursor_response(payload)
+
+    def test_run_command_uses_bounded_direct_subprocess_and_preserves_nonzero(self) -> None:
+        completed = subprocess.CompletedProcess(
+            ("provider", "prompt"), 7, stdout=b"out", stderr=b"err"
+        )
+        with mock.patch("live_matrix.time.monotonic", side_effect=(10.0, 10.012)):
+            with mock.patch("live_matrix.subprocess.run", return_value=completed) as run:
+                capture = live_matrix.run_command(
+                    ("provider", "prompt"), cwd=pathlib.Path("/repo"), timeout=12
+                )
+        self.assertEqual(capture, live_matrix.CommandCapture(7, b"out", b"err", 12))
+        args, kwargs = run.call_args
+        self.assertEqual(args, (["provider", "prompt"],))
+        self.assertEqual(kwargs["cwd"], pathlib.Path("/repo"))
+        self.assertIs(kwargs["stdin"], subprocess.DEVNULL)
+        self.assertIs(kwargs["stdout"], subprocess.PIPE)
+        self.assertIs(kwargs["stderr"], subprocess.PIPE)
+        self.assertEqual(kwargs["timeout"], 12)
+        self.assertFalse(kwargs["check"])
+        self.assertNotIn("shell", kwargs)
+
+    def test_run_command_converts_timeout(self) -> None:
+        with mock.patch(
+            "live_matrix.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(["provider"], 12),
+        ):
+            with self.assertRaisesRegex(live_matrix.LiveMatrixError, "timed out"):
+                live_matrix.run_command(("provider",), cwd=pathlib.Path("/repo"))
+
+    def test_run_command_rejects_each_oversized_stream(self) -> None:
+        for stdout, stderr in (
+            (b"x" * 131_073, b""),
+            (b"", b"x" * 131_073),
+        ):
+            completed = subprocess.CompletedProcess(("provider",), 0, stdout, stderr)
+            with self.subTest(stdout=bool(stdout)):
+                with mock.patch("live_matrix.subprocess.run", return_value=completed):
+                    with self.assertRaisesRegex(live_matrix.LiveMatrixError, "exceeded"):
+                        live_matrix.run_command(("provider",), cwd=pathlib.Path("/repo"))
+
+    def test_diagnostic_redacts_before_tail(self) -> None:
+        data = b"OPENAI_API_KEY=plain-secret Bearer bearer-secret sk-secret-1234567890"
+        message = live_matrix.redacted_diagnostic("stderr", data)
+        self.assertNotIn("plain-secret", message)
+        self.assertNotIn("bearer-secret", message)
+        self.assertNotIn("sk-secret", message)
+        self.assertIn("sha256=", message)
