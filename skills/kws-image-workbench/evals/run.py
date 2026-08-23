@@ -275,6 +275,29 @@ class EvaluatorTests(unittest.TestCase):
                 errors = validate_skill_tree(root, "core")
             self.assertIn(f"skill tree: forbidden scope expansion: {expansion}", errors)
 
+    def test_core_scope_rejects_later_same_capability_occurrence(self):
+        cases = (
+            (
+                "This skill does not add a direct API client but includes a direct API client.",
+                "direct API client",
+            ),
+            (
+                "A provider client is forbidden, but the skill uses a provider client.",
+                "provider client",
+            ),
+        )
+        for sentence, expansion in cases:
+            with self.subTest(sentence=sentence), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                self.copy_core_tree(root)
+                skill = root / "SKILL.md"
+                skill.write_text(
+                    skill.read_text(encoding="utf-8") + f"\n{sentence}\n",
+                    encoding="utf-8",
+                )
+                errors = validate_skill_tree(root, "core")
+            self.assertIn(f"skill tree: forbidden scope expansion: {expansion}", errors)
+
 
 REQUIRED_CASE_FIELDS = (
     "id",
@@ -749,30 +772,28 @@ def validate_skill_tree(skill_root: pathlib.Path, scope: str) -> list[str]:
         for sentence in re.split(r"(?<=[.!?])\s+", "\n".join(documents.values())):
             normalized_sentence = sentence.lower()
             for label, pattern in forbidden_expansions:
-                match = re.search(pattern, normalized_sentence)
-                if match is None:
-                    continue
-                before_match = re.split(
-                    r"\b(?:but|however|although|yet)\b|[.;]",
-                    normalized_sentence[: match.start()],
-                )[-1]
-                after_match = re.split(
-                    r"\b(?:but|however|although|yet)\b|[.;]",
-                    normalized_sentence[match.end() :],
-                )[0]
-                directly_prohibited = bool(
-                    re.search(
-                        r"\b(?:do not|does not|never)\s+"
-                        r"(?:add|implement|support|include|use|depend on|claim)\b",
-                        before_match,
+                for match in re.finditer(pattern, normalized_sentence):
+                    before_match = re.split(
+                        r"\b(?:but|however|although|yet)\b|[.;]",
+                        normalized_sentence[: match.start()],
+                    )[-1]
+                    after_match = re.split(
+                        r"\b(?:but|however|although|yet)\b|[.;]",
+                        normalized_sentence[match.end() :],
+                    )[0]
+                    directly_prohibited = bool(
+                        re.search(
+                            r"\b(?:do not|does not|never)\s+"
+                            r"(?:add|implement|support|include|use|depend on|claim)\b",
+                            before_match,
+                        )
+                        or re.search(
+                            r"\b(?:is|are)\s+(?:not supported|forbidden|excluded)\b",
+                            after_match,
+                        )
                     )
-                    or re.search(
-                        r"\b(?:is|are)\s+(?:not supported|forbidden|excluded)\b",
-                        after_match,
-                    )
-                )
-                if not directly_prohibited:
-                    errors.append(f"skill tree: forbidden scope expansion: {label}")
+                    if not directly_prohibited:
+                        errors.append(f"skill tree: forbidden scope expansion: {label}")
     if scope == "full":
         index_path = skill_root.parent / "README.md"
         if not index_path.is_file():
