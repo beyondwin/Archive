@@ -29,6 +29,27 @@ class EvaluatorTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
+    def copy_full_tree(self, root: pathlib.Path) -> None:
+        source_root = pathlib.Path(__file__).resolve().parents[1]
+        for relative in (
+            "SKILL.md",
+            "README.md",
+            "CHANGE_PROTOCOL.md",
+            "references/image-spec.md",
+            "references/quality-rubric.md",
+            "references/sources.md",
+            "scripts/inspect_asset.py",
+        ):
+            destination = root / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_text(
+                (source_root / relative).read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+        (root.parent / "README.md").write_text(
+            "kws-image-workbench\n", encoding="utf-8"
+        )
+
     def valid_case(self, **overrides: object) -> dict[str, object]:
         case: dict[str, object] = {
             "id": "auth-brief-no-tool",
@@ -175,6 +196,60 @@ class EvaluatorTests(unittest.TestCase):
             )
             errors = validate_skill_tree(root, "full")
         self.assertIn("README.md: unsupported claim: hashes prove rights", errors)
+
+    def test_full_scope_rejects_altered_approved_quick_start_request(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory) / "skills" / "kws-image-workbench"
+            self.copy_full_tree(root)
+            readme = root / "README.md"
+            readme.write_text(
+                readme.read_text(encoding="utf-8").replace(
+                    "$kws-image-workbench 이 상품 사진은 그대로 두고 배경만 바꿔줘.",
+                    "$kws-image-workbench 이 상품 사진에서 배경만 바꿔줘.",
+                ),
+                encoding="utf-8",
+            )
+            errors = validate_skill_tree(root, "full")
+        self.assertIn(
+            "README.md: missing approved request "
+            "'$kws-image-workbench 이 상품 사진은 그대로 두고 배경만 바꿔줘.'",
+            errors,
+        )
+
+    def test_full_scope_requires_verification_map_change_protocol(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory) / "skills" / "kws-image-workbench"
+            self.copy_full_tree(root)
+            protocol = root / "CHANGE_PROTOCOL.md"
+            protocol.write_text(
+                protocol.read_text(encoding="utf-8")
+                .replace("scripts/agent/verification-map.ts", "")
+                .replace("scripts/agent/verification-map.test.ts", ""),
+                encoding="utf-8",
+            )
+            errors = validate_skill_tree(root, "full")
+        self.assertIn(
+            "CHANGE_PROTOCOL.md: missing verification-map synchronization", errors
+        )
+
+    def test_full_scope_requires_quick_validate_command(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory) / "skills" / "kws-image-workbench"
+            self.copy_full_tree(root)
+            protocol = root / "CHANGE_PROTOCOL.md"
+            protocol.write_text(
+                protocol.read_text(encoding="utf-8").replace(
+                    'python3 "${CODEX_HOME:-$HOME/.codex}/skills/.system/skill-creator/scripts/quick_validate.py" skills/kws-image-workbench\n',
+                    "",
+                ),
+                encoding="utf-8",
+            )
+            errors = validate_skill_tree(root, "full")
+        self.assertIn(
+            "skill tree: missing advertised command "
+            "'python3 \"${CODEX_HOME:-$HOME/.codex}/skills/.system/skill-creator/scripts/quick_validate.py\" skills/kws-image-workbench'",
+            errors,
+        )
 
     def test_core_scope_rejects_mismatched_frontmatter_name(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -812,6 +887,24 @@ def validate_skill_tree(skill_root: pathlib.Path, scope: str) -> list[str]:
                     if heading not in documents[relative]:
                         errors.append(f"{relative}: missing heading {heading!r}")
 
+            for request in (
+                "$kws-image-workbench 이 프로젝트 랜딩 페이지 hero 이미지를 만들어줘.",
+                "$kws-image-workbench 이 상품 사진은 그대로 두고 배경만 바꿔줘.",
+                "$kws-image-workbench 생성하지 말고 이미지 브리프만 정리해줘.",
+                "$kws-image-workbench 이 자산이 모바일 크롭과 다크 모드에 맞는지 검토해줘.",
+            ):
+                if request not in documents["README.md"]:
+                    errors.append(f"README.md: missing approved request {request!r}")
+
+            protocol_text = documents["CHANGE_PROTOCOL.md"]
+            if (
+                "scripts/agent/verification-map.ts" not in protocol_text
+                or "scripts/agent/verification-map.test.ts" not in protocol_text
+            ):
+                errors.append(
+                    "CHANGE_PROTOCOL.md: missing verification-map synchronization"
+                )
+
             sources_text = documents["references/sources.md"]
             required_source_fields = (
                 "Source",
@@ -851,6 +944,7 @@ def validate_skill_tree(skill_root: pathlib.Path, scope: str) -> list[str]:
                     errors.append(f"references/sources.md: missing source {source!r}")
 
             required_commands = (
+                'python3 "${CODEX_HOME:-$HOME/.codex}/skills/.system/skill-creator/scripts/quick_validate.py" skills/kws-image-workbench',
                 "python3 skills/kws-image-workbench/evals/run.py --self-test",
                 "python3 skills/kws-image-workbench/evals/run.py --scope fixtures",
                 "python3 skills/kws-image-workbench/evals/run.py --scope core",
