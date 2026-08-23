@@ -32,6 +32,16 @@ const koreanWritingEditorEval = command(
   ["python3", "evals/run.py", "--scope", "full"],
   "skills/kws-korean-writing-editor",
 );
+const imageWorkbenchEval = command(
+  "image-workbench-eval",
+  ["python3", "evals/run.py", "--scope", "full"],
+  "skills/kws-image-workbench",
+);
+const imageWorkbenchInspector = command(
+  "image-workbench-inspector",
+  ["python3", "scripts/inspect_asset.py", "--self-test"],
+  "skills/kws-image-workbench",
+);
 const codexPlanRunnerEval = command(
   "codex-plan-runner-eval",
   ["./evals/run.sh"],
@@ -68,7 +78,7 @@ const closureCommands = [contract, diffCheck, check, platformDemo, scenarios, fi
 const offlineCommands = [
   contract, diffCheck, typecheck, check, platformDemo, scenarios, fixtureLab, dogfood,
   consoleTest, consoleBuild, rustFormat, rustTest, waygentSkillEval,
-  codexPlanRunnerEval, claudePlanRunnerEval, planRunnerParity, planRunnerCutoverTest,
+  imageWorkbenchEval, imageWorkbenchInspector, codexPlanRunnerEval, claudePlanRunnerEval, planRunnerParity, planRunnerCutoverTest,
   claudeExecutorOffline, claudeExecutorEval, liveProvider,
 ];
 
@@ -82,6 +92,7 @@ test.each([
   ["native", ["native/kernel/crates/kernel-cli/src/main.rs"], ["native"], [contract, diffCheck, rustFormat, rustTest]],
   ["Waygent skill", ["skills/waygent/SKILL.md"], ["waygent-skill"], [contract, diffCheck, waygentSkillEval, check, platformDemo, scenarios]],
   ["Korean writing editor", ["skills/kws-korean-writing-editor/SKILL.md"], ["korean-writing-editor"], [contract, diffCheck, koreanWritingEditorEval]],
+  ["Image workbench", ["skills/kws-image-workbench/SKILL.md"], ["image-workbench"], [contract, diffCheck, imageWorkbenchEval, imageWorkbenchInspector]],
   ["Codex plan runner", ["skills/kws-codex-plan-runner/SKILL.md"], ["codex-plan-runner"], [contract, diffCheck, codexPlanRunnerEval, planRunnerParity, planRunnerCutoverTest, check]],
   ["Claude plan runner", ["skills/kws-claude-plan-runner/scripts/runner"], ["claude-plan-runner"], [contract, diffCheck, claudePlanRunnerEval, planRunnerParity, planRunnerCutoverTest, check]],
   ["Claude executor", ["skills/kws-claude-multi-agent-executor/scripts/kernel/kernel.py"], ["claude-executor"], [contract, diffCheck, claudeExecutorOffline, claudeExecutorEval, check]],
@@ -93,6 +104,17 @@ test.each([
     expect(commands(paths)).toEqual(expectedCommands);
   },
 );
+
+test("selects the complete image workbench gate for inspector changes", () => {
+  const selection = selectVerification([
+    "skills/kws-image-workbench/scripts/inspect_asset.py",
+  ]);
+
+  expect(selection.scopeIds).toEqual(["image-workbench"]);
+  expect(selection.commands.map(toCommand)).toEqual([
+    contract, diffCheck, imageWorkbenchEval, imageWorkbenchInspector,
+  ]);
+});
 
 test.each([
   ["Codex project guidance", ".codex/README.md"],
