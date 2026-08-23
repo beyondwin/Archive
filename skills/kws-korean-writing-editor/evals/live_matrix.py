@@ -16,7 +16,6 @@ import shutil
 import stat
 import subprocess
 import sys
-import threading
 import time
 import unicodedata
 from collections.abc import Mapping, Sequence
@@ -82,7 +81,7 @@ ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 MAX_STREAM_BYTES = 131_072
 COMMAND_TIMEOUT_SECONDS = 300
 DIAGNOSTIC_TAIL_BYTES = 256
-RUNNER_VERSION = "3"
+RUNNER_VERSION = "4"
 RUN_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 MIN_JOBS = 1
 MAX_JOBS = 4
@@ -380,31 +379,6 @@ def identity_json(identity: RunIdentity) -> dict[str, Any]:
     }
 
 
-@dataclass
-class CallBudget:
-    """A lock-protected monotonically consumed provider-call budget."""
-
-    ceiling: int
-    attempted: int = 0
-
-    def __post_init__(self) -> None:
-        if isinstance(self.ceiling, bool) or not isinstance(self.ceiling, int) or self.ceiling < 0:
-            raise LiveMatrixError("call ceiling must be a non-negative integer")
-        if isinstance(self.attempted, bool) or not isinstance(self.attempted, int) or self.attempted < 0:
-            raise LiveMatrixError("attempted calls must be a non-negative integer")
-        if self.attempted > self.ceiling:
-            raise LiveMatrixError("attempted calls already exceed ceiling")
-        self._lock = threading.Lock()
-
-    def reserve(self) -> int:
-        """Consume and return a call number before any provider dispatch."""
-        with self._lock:
-            if self.attempted >= self.ceiling:
-                raise LiveMatrixError("call budget exhausted")
-            self.attempted += 1
-            return self.attempted
-
-
 @dataclass(frozen=True)
 class CliInfo:
     path: str | None
@@ -419,12 +393,16 @@ class ReportState:
     identity: RunIdentity
     relative_target: str
     sha256: str
+    target_dev: int
+    target_inode: int
 
     def as_json(self) -> dict[str, Any]:
         return {
             "identity": identity_json(self.identity),
             "relative_target": self.relative_target,
             "sha256": self.sha256,
+            "target_dev": self.target_dev,
+            "target_inode": self.target_inode,
         }
 
 
@@ -441,6 +419,7 @@ class ReportLease:
     directory_inode: int
     target_name: str
     relative_target: str
+    target_fd: int | None = None
     report_state: ReportState | None = None
     target_dev: int | None = None
     target_inode: int | None = None
@@ -453,7 +432,12 @@ class ReportLease:
         if self.closed:
             return
         self.closed = True
-        os.close(self.directory_fd)
+        try:
+            if self.target_fd is not None:
+                os.close(self.target_fd)
+                self.target_fd = None
+        finally:
+            os.close(self.directory_fd)
 
 
 @dataclass(frozen=True)
@@ -1560,6 +1544,17 @@ def _load_report_state(run_root: pathlib.Path) -> ReportState | None:
         sha256 = payload.get("sha256")
         if not isinstance(sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", sha256):
             raise ValueError
+        target_dev = payload.get("target_dev")
+        target_inode = payload.get("target_inode")
+        if (
+            isinstance(target_dev, bool)
+            or not isinstance(target_dev, int)
+            or target_dev < 0
+            or isinstance(target_inode, bool)
+            or not isinstance(target_inode, int)
+            or target_inode < 1
+        ):
+            raise ValueError
         target = pathlib.PurePosixPath(payload["relative_target"])
         if target.is_absolute() or any(part in {"", ".", ".."} for part in target.parts):
             raise ValueError
@@ -1567,6 +1562,8 @@ def _load_report_state(run_root: pathlib.Path) -> ReportState | None:
             _identity_from_json(payload.get("identity"), label="report state"),
             target.as_posix(),
             sha256,
+            target_dev,
+            target_inode,
         )
     except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
         raise LiveMatrixError("malformed report state") from exc
@@ -1975,19 +1972,7 @@ def _validate_receipt_reservations(
 
 def _load_receipts(run_root: pathlib.Path) -> dict[str, CallReceipt]:
     """Expose only the latest durable receipt for each logical planned call."""
-    receipts: dict[str, CallReceipt] = {}
-    for receipt in _load_receipt_attempts(run_root):
-        logical_id = receipt.logical_call_id
-        existing = receipts.get(logical_id)
-        if existing is None or (
-            _actual_attempt_index(receipt.call_id, logical_id),
-            receipt.call_number,
-        ) > (
-            _actual_attempt_index(existing.call_id, logical_id),
-            existing.call_number,
-        ):
-            receipts[logical_id] = receipt
-    return receipts
+    return _latest_by_logical_id(_load_receipt_attempts(run_root))
 
 
 def _write_call_receipt(run_root: pathlib.Path, receipt: CallReceipt) -> None:
@@ -2760,6 +2745,7 @@ def dispatch_reviewer_calls(
     samples: Sequence[ReviewSample],
     *,
     max_calls: int,
+    reviewers: Sequence[ReviewerCall] | None = None,
 ) -> tuple[tuple[CallReceipt, ...], tuple[ReviewResponse, ...]]:
     """Dispatch each approved reviewer once, sharing the durable run call budget."""
     if preflight.run_root is None:
@@ -2772,7 +2758,8 @@ def dispatch_reviewer_calls(
     reserved_count = len(reservations)
     result: list[CallReceipt] = []
     responses: list[ReviewResponse] = []
-    for reviewer in build_reviewer_plan(samples):
+    reviewer_plan = tuple(reviewers) if reviewers is not None else build_reviewer_plan(samples)
+    for reviewer in reviewer_plan:
         logical_id = f"{reviewer.reviewer_id}:packet:1"
         existing = latest.get(logical_id)
         if existing is not None and existing.status in RESUME_SKIP_STATUSES:
@@ -3296,8 +3283,83 @@ def _latest_by_logical_id(receipts: Sequence[CallReceipt]) -> dict[str, CallRece
     return latest
 
 
-def _is_reviewer_receipt(receipt: CallReceipt) -> bool:
-    return receipt.kind == "reviewer"
+def _reload_durable_evidence(
+    run_root: pathlib.Path,
+    identity: RunIdentity,
+    required_calls: Sequence[tuple[PlannedCall, Producer, str | None]],
+    *,
+    allowed_logical_ids: Sequence[str],
+    preexisting_reservation_numbers: Sequence[int] | None = None,
+) -> tuple[tuple[AttemptReservation, ...], dict[str, CallReceipt]]:
+    """Reload, validate, and scope the only evidence allowed into packets/reports."""
+    reservations = _load_attempt_reservations(run_root, identity)
+    attempts = _load_receipt_attempts(run_root)
+    _validate_receipt_reservations(attempts, reservations, identity)
+    if preexisting_reservation_numbers is not None:
+        preexisting = tuple(preexisting_reservation_numbers)
+        preexisting_set = set(preexisting)
+        if (
+            any(not isinstance(number, int) or number < 1 for number in preexisting)
+            or len(preexisting_set) != len(preexisting)
+        ):
+            raise LiveMatrixError("durable evidence snapshot is invalid")
+        durable_receipt_numbers = {
+            receipt.call_number for receipt in attempts if receipt.call_number > 0
+        }
+        missing = next(
+            (
+                reservation
+                for reservation in reservations
+                if reservation.call_number not in preexisting_set
+                and reservation.call_number not in durable_receipt_numbers
+            ),
+            None,
+        )
+        if missing is not None:
+            raise LiveMatrixError(
+                "missing durable receipt for completed dispatch reservation: "
+                f"{missing.call_number}"
+            )
+    latest = _latest_by_logical_id(attempts)
+    required_producer_ids = tuple(
+        call.call_id for call, _, _ in required_calls if call.kind == "producer"
+    )
+    if required_producer_ids != identity.selected_call_ids:
+        raise LiveMatrixError("durable evidence does not match selected producer plan")
+    allowed = set(allowed_logical_ids)
+    if len(allowed) != len(tuple(allowed_logical_ids)):
+        raise LiveMatrixError("durable evidence plan contains duplicate logical call IDs")
+    observed = set(latest) | {
+        reservation.logical_call_id for reservation in reservations
+    }
+    unexpected = sorted(observed - allowed)
+    if unexpected:
+        raise LiveMatrixError(
+            f"durable evidence is outside the run plan: {unexpected[0]}"
+        )
+    required_ids: set[str] = set()
+    for call, producer, expected_band in required_calls:
+        logical_id = call.call_id
+        if _logical_call_id(logical_id) != logical_id or logical_id in required_ids:
+            raise LiveMatrixError("durable evidence requirement has invalid logical call ID")
+        required_ids.add(logical_id)
+        receipt = latest.get(logical_id)
+        if receipt is None:
+            raise LiveMatrixError(
+                f"missing durable terminal receipt for planned {call.kind} call: {logical_id}"
+            )
+        if (
+            receipt.kind != call.kind
+            or receipt.host != producer.host
+            or receipt.requested_model != producer.requested_model
+            or receipt.case_id != call.case_id
+            or receipt.band != expected_band
+            or receipt.repeat_index != call.repeat_index
+        ):
+            raise LiveMatrixError(
+                f"durable terminal receipt does not match planned {call.kind} call: {logical_id}"
+            )
+    return reservations, latest
 
 
 def build_report_input(
@@ -3382,25 +3444,18 @@ def _validated_operations_report_path(path: pathlib.Path, repository_root: pathl
         if stat.S_ISLNK(ancestor_stat.st_mode) or not stat.S_ISDIR(ancestor_stat.st_mode):
             raise LiveMatrixError("report parent is unsafe")
     try:
-        target = raw_target.resolve(strict=False)
         expected_parent = canonical_repository / "docs" / "operations"
-    except OSError as exc:
-        raise LiveMatrixError("cannot resolve operations report path") from exc
-    try:
-        target.relative_to(expected_parent)
-    except ValueError as exc:
-        raise LiveMatrixError("report path must be below docs/operations") from exc
-    if target.parent != expected_parent or not OPERATIONS_REPORT_RE.fullmatch(target.name):
-        raise LiveMatrixError("report path must use the dated operations-report name")
-    try:
-        target_stat = target.lstat()
+        raw_target_stat = raw_target.lstat()
     except FileNotFoundError:
-        return target
+        raw_target_stat = None
     except OSError as exc:
         raise LiveMatrixError("cannot inspect operations report") from exc
-    if stat.S_ISLNK(target_stat.st_mode) or not stat.S_ISREG(target_stat.st_mode):
+    if raw_target_stat is not None and (
+        stat.S_ISLNK(raw_target_stat.st_mode)
+        or not stat.S_ISREG(raw_target_stat.st_mode)
+    ):
         raise LiveMatrixError("operations report target is unsafe")
-    return target
+    return expected_parent / raw_target.name
 
 
 def _atomic_replace_file(path: pathlib.Path, payload: bytes, *, mode: int) -> None:
@@ -3541,34 +3596,43 @@ def _require_open_report_lease(lease: ReportLease) -> None:
         raise LiveMatrixError("report lease directory inode drift")
 
 
-def _read_report_from_lease(
-    lease: ReportLease, *, require_expected_inode: bool
-) -> tuple[bytes, os.stat_result]:
+def _require_open_report_target(lease: ReportLease) -> os.stat_result:
+    """Return the held target stat only when the lease still owns that exact FD."""
     _require_open_report_lease(lease)
-    flags = os.O_RDONLY
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
+    if lease.target_fd is None:
+        raise LiveMatrixError("report lease has no open target FD")
     try:
-        descriptor = os.open(lease.target_name, flags, dir_fd=lease.directory_fd)
+        opened = os.fstat(lease.target_fd)
     except OSError as exc:
         raise LiveMatrixError("owned operations report is unavailable") from exc
+    if not stat.S_ISREG(opened.st_mode):
+        raise LiveMatrixError("owned operations report is unsafe")
+    expected = (lease.target_dev, lease.target_inode)
+    if None in expected or (opened.st_dev, opened.st_ino) != expected:
+        raise LiveMatrixError("owned operations report inode drift")
+    if lease.report_state is not None and (
+        opened.st_dev,
+        opened.st_ino,
+    ) != (lease.report_state.target_dev, lease.report_state.target_inode):
+        raise LiveMatrixError("owned operations report state inode drift")
+    return opened
+
+
+def _read_report_from_lease(lease: ReportLease) -> tuple[bytes, os.stat_result]:
+    """Read bounded report bytes only through the held target FD."""
+    opened = _require_open_report_target(lease)
+    if opened.st_size > MAX_OPERATIONS_REPORT_BYTES:
+        raise LiveMatrixError("owned operations report exceeds bound")
+    assert lease.target_fd is not None
     try:
-        opened = os.fstat(descriptor)
-        if not stat.S_ISREG(opened.st_mode):
-            raise LiveMatrixError("owned operations report is unsafe")
-        if require_expected_inode and (
-            lease.target_dev is None
-            or lease.target_inode is None
-            or (opened.st_dev, opened.st_ino)
-            != (lease.target_dev, lease.target_inode)
-        ):
-            raise LiveMatrixError("owned operations report inode drift")
-        if opened.st_size > MAX_OPERATIONS_REPORT_BYTES:
-            raise LiveMatrixError("owned operations report exceeds bound")
+        os.lseek(lease.target_fd, 0, os.SEEK_SET)
         chunks: list[bytes] = []
         total = 0
         while True:
-            chunk = os.read(descriptor, min(65_536, MAX_OPERATIONS_REPORT_BYTES + 1 - total))
+            chunk = os.read(
+                lease.target_fd,
+                min(65_536, MAX_OPERATIONS_REPORT_BYTES + 1 - total),
+            )
             if not chunk:
                 break
             total += len(chunk)
@@ -3576,8 +3640,8 @@ def _read_report_from_lease(
                 raise LiveMatrixError("owned operations report exceeds bound")
             chunks.append(chunk)
         return b"".join(chunks), opened
-    finally:
-        os.close(descriptor)
+    except OSError as exc:
+        raise LiveMatrixError("cannot read held operations report") from exc
 
 
 def _validate_report_lease_current_path(lease: ReportLease) -> None:
@@ -3597,6 +3661,22 @@ def _validate_report_lease_current_path(lease: ReportLease) -> None:
             raise LiveMatrixError("report lease current path inode drift")
     finally:
         os.close(current_fd)
+    try:
+        current_target = os.stat(
+            lease.target_name,
+            dir_fd=lease.directory_fd,
+            follow_symlinks=False,
+        )
+    except OSError as exc:
+        raise LiveMatrixError("report lease current target inode drift") from exc
+    if (
+        not stat.S_ISREG(current_target.st_mode)
+        or lease.target_dev is None
+        or lease.target_inode is None
+        or (current_target.st_dev, current_target.st_ino)
+        != (lease.target_dev, lease.target_inode)
+    ):
+        raise LiveMatrixError("report lease current target inode drift")
 
 
 def _validate_report_lease(
@@ -3613,7 +3693,12 @@ def _validate_report_lease(
     _validate_report_state_target(
         durable_state, lease.repository_root, lease.target, lease.identity
     )
-    payload, _ = _read_report_from_lease(lease, require_expected_inode=True)
+    if (durable_state.target_dev, durable_state.target_inode) != (
+        lease.target_dev,
+        lease.target_inode,
+    ):
+        raise LiveMatrixError("report lease durable target inode drift")
+    payload, _ = _read_report_from_lease(lease)
     if hashlib.sha256(payload).hexdigest() != durable_state.sha256:
         raise LiveMatrixError("owned operations report hash drift")
 
@@ -3629,24 +3714,36 @@ def _write_report_state(run_root: pathlib.Path, state: ReportState, *, replace_e
 def reserve_operations_report(lease: ReportLease) -> ReportState:
     """Reserve a report before dispatch, or validate the exact owned reservation."""
     _require_open_report_lease(lease)
+    if lease.target_fd is not None:
+        raise LiveMatrixError("report lease target is already open")
     existing_state = _load_report_state(lease.run_root)
     if existing_state is not None:
         _validate_report_state_target(
             existing_state, lease.repository_root, lease.target, lease.identity
         )
-        payload, opened = _read_report_from_lease(
-            lease, require_expected_inode=False
-        )
-        if hashlib.sha256(payload).hexdigest() != existing_state.sha256:
-            raise LiveMatrixError("owned operations report hash drift")
-        lease.report_state = existing_state
+        flags = os.O_RDWR
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        try:
+            descriptor = os.open(
+                lease.target_name, flags, dir_fd=lease.directory_fd
+            )
+        except OSError as exc:
+            raise LiveMatrixError("owned operations report is unavailable") from exc
+        lease.target_fd = descriptor
+        opened = os.fstat(descriptor)
         lease.target_dev = opened.st_dev
         lease.target_inode = opened.st_ino
+        lease.report_state = existing_state
+        _require_open_report_target(lease)
+        payload, _ = _read_report_from_lease(lease)
+        if hashlib.sha256(payload).hexdigest() != existing_state.sha256:
+            raise LiveMatrixError("owned operations report hash drift")
         lease.validate_for_dispatch()
         return existing_state
     if len(PENDING_OPERATIONS_REPORT) > 1024:
         raise LiveMatrixError("pending operations report exceeds bound")
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    flags = os.O_RDWR | os.O_CREAT | os.O_EXCL
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
     try:
@@ -3659,23 +3756,24 @@ def reserve_operations_report(lease: ReportLease) -> ReportState:
         ) from exc
     except OSError as exc:
         raise LiveMatrixError("cannot create operations report") from exc
-    try:
-        opened = os.fstat(descriptor)
-        if not stat.S_ISREG(opened.st_mode):
-            raise LiveMatrixError("operations report target is unsafe")
-        os.fchmod(descriptor, 0o644)
-        _write_bytes(descriptor, PENDING_OPERATIONS_REPORT)
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+    lease.target_fd = descriptor
+    opened = os.fstat(descriptor)
+    if not stat.S_ISREG(opened.st_mode):
+        raise LiveMatrixError("operations report target is unsafe")
+    lease.target_dev = opened.st_dev
+    lease.target_inode = opened.st_ino
+    os.fchmod(descriptor, 0o644)
+    _write_bytes(descriptor, PENDING_OPERATIONS_REPORT)
+    os.ftruncate(descriptor, len(PENDING_OPERATIONS_REPORT))
+    os.fsync(descriptor)
     os.fsync(lease.directory_fd)
     state = ReportState(
         lease.identity,
         lease.relative_target,
         hashlib.sha256(PENDING_OPERATIONS_REPORT).hexdigest(),
+        opened.st_dev,
+        opened.st_ino,
     )
-    lease.target_dev = opened.st_dev
-    lease.target_inode = opened.st_ino
     _write_report_state(lease.run_root, state, replace_existing=False)
     lease.report_state = state
     lease.validate_for_dispatch()
@@ -3683,50 +3781,34 @@ def reserve_operations_report(lease: ReportLease) -> ReportState:
 
 
 def write_operations_report(lease: ReportLease, report: str) -> None:
-    """Safely publish or atomically update only the report owned by this run."""
+    """Publish only through the held target inode; never replace its pathname."""
     _validate_report_lease(lease, require_current_path=True)
     payload = report.encode("utf-8")
     if len(payload) > MAX_OPERATIONS_REPORT_BYTES:
         raise LiveMatrixError("operations report exceeds bound")
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-    temporary = f".{lease.target_name}.{secrets.token_hex(16)}.partial"
+    if lease.target_fd is None:
+        raise LiveMatrixError("report lease has no open target FD")
     try:
-        descriptor = os.open(temporary, flags, 0o644, dir_fd=lease.directory_fd)
+        os.lseek(lease.target_fd, 0, os.SEEK_SET)
+        _write_bytes(lease.target_fd, payload)
+        os.ftruncate(lease.target_fd, len(payload))
+        os.fsync(lease.target_fd)
     except OSError as exc:
-        raise LiveMatrixError("cannot create report staging file") from exc
-    try:
-        os.fchmod(descriptor, 0o644)
-        _write_bytes(descriptor, payload)
-        os.fsync(descriptor)
-        _validate_report_lease_current_path(lease)
-        _validate_report_lease(lease, require_current_path=False)
-        os.replace(
-            temporary,
-            lease.target_name,
-            src_dir_fd=lease.directory_fd,
-            dst_dir_fd=lease.directory_fd,
-        )
-        os.fsync(lease.directory_fd)
-        written, opened = _read_report_from_lease(
-            lease, require_expected_inode=False
-        )
-        if written != payload:
-            raise LiveMatrixError("published operations report content mismatch")
-        state = ReportState(
-            lease.identity, lease.relative_target, hashlib.sha256(payload).hexdigest()
-        )
-        _write_report_state(lease.run_root, state, replace_existing=True)
-        lease.target_dev = opened.st_dev
-        lease.target_inode = opened.st_ino
-        lease.report_state = state
-    finally:
-        os.close(descriptor)
-        try:
-            os.unlink(temporary, dir_fd=lease.directory_fd)
-        except FileNotFoundError:
-            pass
+        raise LiveMatrixError("cannot write held operations report") from exc
+    written, opened = _read_report_from_lease(lease)
+    if written != payload:
+        raise LiveMatrixError("published operations report content mismatch")
+    _validate_report_lease_current_path(lease)
+    state = ReportState(
+        lease.identity,
+        lease.relative_target,
+        hashlib.sha256(payload).hexdigest(),
+        opened.st_dev,
+        opened.st_ino,
+    )
+    _write_report_state(lease.run_root, state, replace_existing=True)
+    lease.report_state = state
+    _validate_report_lease_current_path(lease)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -3851,57 +3933,98 @@ def main(argv: list[str] | None = None) -> int:
                     report_lease=report_lease,
                 )
             cases = load_live_cases(source_root / "evals" / "live_cases.json")
-            full_plan = build_producer_plan(cases, build_producers())
+            producer_definitions = build_producers()
+            producers_by_id = {
+                producer.id: producer for producer in producer_definitions
+            }
+            cases_by_id = {case.id: case for case in cases}
+            full_plan = build_producer_plan(cases, producer_definitions)
             if args.scope == "baseline":
                 execution_plan = full_plan
             else:
                 execution_plan = select_remediation_producer_plan(full_plan, args.remediation_call)
                 if tuple(call.call_id for call in execution_plan) != preflight.identity.selected_call_ids:
                     raise LiveMatrixError("dispatch identity drift: selected remediation calls changed")
-            dispatched_producers = dispatch_calls(
+            if preflight.run_root is None:
+                raise LiveMatrixError("execution requires an evidence run root")
+            expected_producers = tuple(
+                (
+                    call,
+                    producers_by_id[call.producer_id],
+                    cases_by_id[call.case_id].band,
+                )
+                for call in execution_plan
+            )
+            baseline_reviewer_ids = tuple(
+                f"{reviewer_id}:packet:1" for reviewer_id, _ in REVIEWER_MODELS
+            )
+            allowed_logical_ids = (
+                *preflight.identity.selected_call_ids,
+                *(baseline_reviewer_ids if args.scope == "baseline" else ()),
+            )
+            producer_reservation_numbers = tuple(
+                reservation.call_number
+                for reservation in _load_attempt_reservations(
+                    preflight.run_root, preflight.identity
+                )
+            )
+            dispatch_calls(
                 preflight,
                 execution_plan,
                 cases,
                 jobs=args.jobs,
                 max_calls=max_calls,
             )
-            durable_after_producers = _latest_by_logical_id(
-                (*_load_receipts(preflight.run_root).values(), *dispatched_producers)
+            reservations, durable_receipts = _reload_durable_evidence(
+                preflight.run_root,
+                preflight.identity,
+                expected_producers,
+                allowed_logical_ids=allowed_logical_ids,
+                preexisting_reservation_numbers=producer_reservation_numbers,
             )
             producer_receipts = tuple(
-                receipt for receipt in durable_after_producers.values() if not _is_reviewer_receipt(receipt)
+                durable_receipts[call.call_id] for call in execution_plan
             )
             if args.scope == "baseline":
                 samples = select_review_samples(
                     producer_receipts,
                     responses=load_normalized_responses(preflight.run_root, producer_receipts),
-                    cases={case.id: case for case in cases},
+                    cases=cases_by_id,
                 )
-                dispatched_reviewers, new_review_responses = dispatch_reviewer_calls(
+                reviewer_plan = build_reviewer_plan(samples)
+                dispatch_reviewer_calls(
                     preflight,
                     samples,
                     max_calls=max_calls,
+                    reviewers=reviewer_plan,
+                )
+                expected_reviewers = tuple(
+                    (*_reviewer_call(reviewer, f"{reviewer.reviewer_id}:packet:1"), None)
+                    for reviewer in reviewer_plan
+                )
+                reservations, durable_receipts = _reload_durable_evidence(
+                    preflight.run_root,
+                    preflight.identity,
+                    (*expected_producers, *expected_reviewers),
+                    allowed_logical_ids=allowed_logical_ids,
+                    preexisting_reservation_numbers=tuple(
+                        reservation.call_number for reservation in reservations
+                    ),
+                )
+                producer_receipts = tuple(
+                    durable_receipts[call.call_id] for call in execution_plan
+                )
+                reviewer_receipts = tuple(
+                    durable_receipts[f"{reviewer.reviewer_id}:packet:1"]
+                    for reviewer in reviewer_plan
+                )
+                review_responses = load_review_responses(
+                    preflight.run_root, reviewer_receipts, samples
                 )
             else:
                 samples = ()
-                dispatched_reviewers, new_review_responses = (), ()
-            reservations = _load_attempt_reservations(preflight.run_root, preflight.identity)
-            persisted_attempts = _load_receipt_attempts(preflight.run_root)
-            _validate_receipt_reservations(
-                persisted_attempts, reservations, preflight.identity
-            )
-            durable_receipts = _latest_by_logical_id(
-                (*persisted_attempts, *dispatched_producers, *dispatched_reviewers)
-            )
-            producer_receipts = tuple(
-                receipt for receipt in durable_receipts.values() if not _is_reviewer_receipt(receipt)
-            )
-            reviewer_receipts = tuple(
-                receipt for receipt in durable_receipts.values() if _is_reviewer_receipt(receipt)
-            )
-            review_responses = load_review_responses(preflight.run_root, reviewer_receipts, samples)
-            if not review_responses:
-                review_responses = new_review_responses
+                reviewer_receipts = ()
+                review_responses = ()
             producer_attempted_calls = sum(reservation.kind == "producer" for reservation in reservations)
             reviewer_attempted_calls = sum(reservation.kind == "reviewer" for reservation in reservations)
             if report_path is not None:
@@ -3921,7 +4044,10 @@ def main(argv: list[str] | None = None) -> int:
                 "producer_attempted_calls": producer_attempted_calls,
                 "reviewer_attempted_calls": reviewer_attempted_calls,
                 "attempted_calls": len(reservations),
-                "not_measured": sum(receipt.status == "not_measured" for receipt in durable_receipts.values()),
+                "not_measured": sum(
+                    receipt.status == "not_measured"
+                    for receipt in durable_receipts.values()
+                ),
                 "run_id": preflight.identity.run_id,
             }
         else:
