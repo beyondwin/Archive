@@ -117,6 +117,81 @@ class LiveDocumentationTests(unittest.TestCase):
         self.assertNotIn("--force", text)
         self.assertNotIn("--yolo", text)
 
+    def test_eval_guide_has_the_approved_heading_order_and_dry_budget_shape(self) -> None:
+        text = (HERE / "README.md").read_text(encoding="utf-8")
+        normalized = re.sub(r"\s+", " ", text)
+        headings = re.findall(r"^(#{1,2}) (.+)$", text, flags=re.MULTILINE)
+        self.assertEqual(
+            headings,
+            [
+                ("#", "Korean Writing Editor Live Evaluation"),
+                ("##", "Purpose And Evidence Boundary"),
+                ("##", "Safety And Privacy"),
+                ("##", "Offline Validation"),
+                ("##", "Dry Run"),
+                ("##", "Baseline Preflight"),
+                ("##", "Paid Baseline"),
+                ("##", "Resume"),
+                ("##", "Review Packet"),
+                ("##", "Status Meanings"),
+                ("##", "Remediation Budget"),
+                ("##", "Evidence Layout"),
+                ("##", "Limitations"),
+            ],
+        )
+        commands = re.findall(r"```bash\n(.*?)\n```", text, flags=re.DOTALL)
+        dry_run = next(command for command in commands if "--dry-run" in command)
+        self.assertEqual(
+            dry_run.strip().split(),
+            ["python3", "skills/kws-korean-writing-editor/evals/live_matrix.py", "--dry-run"],
+        )
+        self.assertIn(
+            "119 producer calls, 3 reviewer calls, and "
+            f"{live_matrix.BASELINE_CALL_CEILING} baseline calls",
+            normalized,
+        )
+        self.assertIn(f"{live_matrix.REMEDIATION_CALL_CEILING}-call reserve", text)
+        self.assertIn(f"{live_matrix.GLOBAL_CALL_CEILING}-call ceiling", text)
+
+    def test_eval_guide_commands_and_evidence_boundaries_match_the_live_contract(self) -> None:
+        text = (HERE / "README.md").read_text(encoding="utf-8")
+        commands = re.findall(r"```bash\n(.*?)\n```", text, flags=re.DOTALL)
+        baseline = [command for command in commands if "--scope baseline" in command]
+        self.assertEqual(len(baseline), 3)
+        for command in baseline:
+            self.assertIn('--run-id "$RUN_ID"', command)
+            self.assertIn("--jobs 3", command)
+            self.assertIn(f"--max-calls {live_matrix.BASELINE_CALL_CEILING}", command)
+            self.assertIn("--evidence-root .superpowers/kws-korean-writing-editor/live", command)
+            self.assertIn(
+                "--report docs/operations/2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md",
+                command,
+            )
+        remediation = [command for command in commands if "--scope remediation" in command]
+        self.assertEqual(len(remediation), 2)
+        self.assertIn("--preflight", remediation[0])
+        self.assertIn("--execute", remediation[1])
+        for command in remediation:
+            self.assertIn('--run-id "$RUN_ID"', command)
+            self.assertIn("--jobs 3", command)
+            self.assertIn(f"--max-calls {live_matrix.REMEDIATION_CALL_CEILING}", command)
+            self.assertIn("--evidence-root .superpowers/kws-korean-writing-editor/live", command)
+        self.assertIn("private manuscripts", text)
+        self.assertIn("full provider transcripts", text)
+        self.assertIn("runner version", text)
+        self.assertIn("report target is absent", text)
+        self.assertIn("approved artifact date", text)
+        self.assertIn("wall-date rollover", text)
+
+    def test_eval_guide_documents_all_statuses_and_activation_limit(self) -> None:
+        text = (HERE / "README.md").read_text(encoding="utf-8")
+        for status in ("verified", "partially_verified", "blocked", "failed", "not_measured"):
+            self.assertRegex(text, rf"`{status}`:")
+        self.assertIn(
+            "do not prove that the host activated the skill internally",
+            re.sub(r"\s+", " ", text),
+        )
+
 
 class LiveCaseManifestTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -166,8 +241,14 @@ class LiveCaseManifestTests(unittest.TestCase):
         run.assert_not_called()
         payload = json.loads(output.getvalue())
         self.assertEqual(
-            (payload["producer_calls"], payload["reviewer_calls"], payload["baseline_calls"], payload["approved_total_ceiling"]),
-            (119, 3, 122, 160),
+            (
+                payload["producer_calls"],
+                payload["reviewer_calls"],
+                payload["baseline_calls"],
+                payload["remediation_calls"],
+                payload["approved_total_ceiling"],
+            ),
+            (119, 3, 122, 38, 160),
         )
 
 
@@ -448,6 +529,48 @@ class LiveMatrixCliTests(unittest.TestCase):
                         "161",
                     ]
                 )
+
+    def test_remediation_default_is_the_reserve(self) -> None:
+        preflight_result = mock.Mock(
+            identity=live_matrix.RunIdentity.for_test(run_id="remediation-1", scope="remediation"),
+            model_availability={},
+        )
+        with mock.patch("live_matrix.validate_preflight", return_value=preflight_result) as preflight:
+            with contextlib.redirect_stdout(io.StringIO()):
+                status = live_matrix.main(
+                    ["--preflight", "--scope", "remediation", "--run-id", "remediation-1"]
+                )
+        self.assertEqual(status, 0)
+        self.assertEqual(
+            preflight.call_args.kwargs["max_calls"], live_matrix.REMEDIATION_CALL_CEILING
+        )
+
+    def test_remediation_max_cannot_exceed_the_reserve(self) -> None:
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                live_matrix.main(
+                    [
+                        "--execute",
+                        "--scope",
+                        "remediation",
+                        "--run-id",
+                        "remediation-1",
+                        "--max-calls",
+                        "39",
+                    ]
+                )
+
+    def test_preflight_rejects_remediation_above_the_reserve(self) -> None:
+        with self.assertRaisesRegex(live_matrix.LiveMatrixError, "remediation max calls cannot exceed 38"):
+            live_matrix.validate_preflight(
+                source_skill_root=HERE.parent,
+                installed_skill_root=HERE.parent,
+                repository_root=HERE.parent,
+                run_id="remediation-1",
+                scope="remediation",
+                jobs=1,
+                max_calls=39,
+            )
 
     def test_source_install_mismatch_prevents_mocked_dispatch(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -771,6 +894,143 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
                                 reuse_preflight=True,
                                 report_path=target,
                             )
+
+    def test_actual_resume_before_first_report_dispatches_and_publishes_once(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory) / "repo"
+            root.mkdir()
+            (root / ".gitignore").write_text(".superpowers/\n", encoding="utf-8")
+            (root / "README.md").write_text("fixture\n", encoding="utf-8")
+            for argv in (
+                ("init", "-b", "main"),
+                ("add", "."),
+                ("-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "fixture"),
+            ):
+                subprocess.run(("git", *argv), cwd=root, check=True, capture_output=True)
+            evidence_root = root / ".superpowers" / "kws-korean-writing-editor" / "live"
+            target = root / "docs" / "operations" / "2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md"
+            cli = lambda command, _: live_matrix.CliInfo(command, "fixture", None)
+            with mock.patch("live_matrix._cli_info", side_effect=cli):
+                with mock.patch("live_matrix._discover_models", return_value=(b"", None)):
+                    with mock.patch("live_matrix._run_offline_checks"):
+                        live_matrix.validate_preflight(
+                            source_skill_root=HERE.parent,
+                            installed_skill_root=HERE.parent,
+                            repository_root=root,
+                            run_id="baseline-1",
+                            scope="baseline",
+                            jobs=1,
+                            max_calls=122,
+                            evidence_root=evidence_root,
+                            report_path=target,
+                        )
+                        with mock.patch("live_matrix.dispatch_calls", return_value=()) as dispatch:
+                            with mock.patch("live_matrix.dispatch_reviewer_calls", return_value=((), ())):
+                                with contextlib.redirect_stdout(io.StringIO()):
+                                    status = live_matrix.main(
+                                        [
+                                            "--execute",
+                                            "--resume",
+                                            "--scope",
+                                            "baseline",
+                                            "--run-id",
+                                            "baseline-1",
+                                            "--jobs",
+                                            "1",
+                                            "--max-calls",
+                                            "122",
+                                            "--source-skill-root",
+                                            str(HERE.parent),
+                                            "--installed-skill-root",
+                                            str(HERE.parent),
+                                            "--repository-root",
+                                            str(root),
+                                            "--evidence-root",
+                                            str(evidence_root),
+                                            "--report",
+                                            str(target),
+                                        ]
+                                    )
+            self.assertEqual(status, 0)
+            self.assertIsNone(dispatch.call_args.args[0].report_state)
+            self.assertTrue(target.is_file())
+            self.assertIsNotNone(
+                live_matrix._report_state_for_target(
+                    evidence_root / "baseline-1", root, target, dispatch.call_args.args[0].identity
+                )
+            )
+
+    def test_crash_after_first_report_before_state_blocks_resumed_dispatch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory) / "repo"
+            root.mkdir()
+            (root / ".gitignore").write_text(".superpowers/\n", encoding="utf-8")
+            (root / "README.md").write_text("fixture\n", encoding="utf-8")
+            for argv in (
+                ("init", "-b", "main"),
+                ("add", "."),
+                ("-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "fixture"),
+            ):
+                subprocess.run(("git", *argv), cwd=root, check=True, capture_output=True)
+            evidence_root = root / ".superpowers" / "kws-korean-writing-editor" / "live"
+            target = root / "docs" / "operations" / "2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md"
+            cli = lambda command, _: live_matrix.CliInfo(command, "fixture", None)
+            with mock.patch("live_matrix._cli_info", side_effect=cli):
+                with mock.patch("live_matrix._discover_models", return_value=(b"", None)):
+                    with mock.patch("live_matrix._run_offline_checks"):
+                        preflight = live_matrix.validate_preflight(
+                            source_skill_root=HERE.parent,
+                            installed_skill_root=HERE.parent,
+                            repository_root=root,
+                            run_id="baseline-1",
+                            scope="baseline",
+                            jobs=1,
+                            max_calls=122,
+                            evidence_root=evidence_root,
+                            report_path=target,
+                        )
+                        with mock.patch(
+                            "live_matrix._write_report_state",
+                            side_effect=live_matrix.LiveMatrixError("simulated crash"),
+                        ):
+                            with self.assertRaisesRegex(live_matrix.LiveMatrixError, "simulated crash"):
+                                live_matrix.write_operations_report(
+                                    target,
+                                    "first report\n",
+                                    root,
+                                    run_root=preflight.run_root,
+                                    identity=preflight.identity,
+                                )
+                        self.assertTrue(target.is_file())
+                        self.assertIsNone(live_matrix._load_report_state(preflight.run_root))
+                        with mock.patch("live_matrix.dispatch_calls") as dispatch:
+                            with contextlib.redirect_stderr(io.StringIO()):
+                                status = live_matrix.main(
+                                    [
+                                        "--execute",
+                                        "--resume",
+                                        "--scope",
+                                        "baseline",
+                                        "--run-id",
+                                        "baseline-1",
+                                        "--jobs",
+                                        "1",
+                                        "--max-calls",
+                                        "122",
+                                        "--source-skill-root",
+                                        str(HERE.parent),
+                                        "--installed-skill-root",
+                                        str(HERE.parent),
+                                        "--repository-root",
+                                        str(root),
+                                        "--evidence-root",
+                                        str(evidence_root),
+                                        "--report",
+                                        str(target),
+                                    ]
+                                )
+            self.assertEqual(status, 1)
+            dispatch.assert_not_called()
 
 
 def synthetic_receipts_for_test(failure_classes: int, passing_bands: int):

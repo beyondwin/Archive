@@ -87,6 +87,7 @@ RUN_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 MIN_JOBS = 1
 MAX_JOBS = 4
 BASELINE_CALL_CEILING = 122
+REMEDIATION_CALL_CEILING = 38
 GLOBAL_CALL_CEILING = 160
 RAW_DIRECTORY_NAME = "raw"
 NORMALIZED_DIRECTORY_NAME = "normalized"
@@ -974,6 +975,8 @@ def validate_preflight(
         raise LiveMatrixError("max calls cannot exceed 160")
     if scope == "baseline" and max_calls > BASELINE_CALL_CEILING:
         raise LiveMatrixError("baseline max calls cannot exceed 122")
+    if scope == "remediation" and max_calls > REMEDIATION_CALL_CEILING:
+        raise LiveMatrixError("remediation max calls cannot exceed 38")
 
     source_root = _checked_directory(source_skill_root, "source skill root")
     installed_root = _checked_directory(installed_skill_root, "installed skill root")
@@ -1052,7 +1055,12 @@ def validate_preflight(
         else:
             raise LiveMatrixError("preflight receipt is required before execution")
         if report_target is not None and resume:
-            report_state = _report_state_for_target(run_root, repo_root, report_target, identity)
+            existing_state = _load_report_state(run_root)
+            if existing_state is None:
+                if report_target.exists() or report_target.is_symlink():
+                    raise LiveMatrixError("operations report exists without matching run state")
+            else:
+                report_state = _report_state_for_target(run_root, repo_root, report_target, identity)
         elif report_target is not None and report_target.exists():
             raise LiveMatrixError("operations report already exists without matching run state")
     if not _git_status_is_clean(
@@ -3028,6 +3036,7 @@ def main(argv: list[str] | None = None) -> int:
             "producer_calls": producer_calls,
             "reviewer_calls": reviewer_calls,
             "baseline_calls": baseline_calls,
+            "remediation_calls": REMEDIATION_CALL_CEILING,
             "approved_total_ceiling": GLOBAL_CALL_CEILING,
         }
         print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
@@ -3044,11 +3053,17 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(job_error)
     max_calls = args.max_calls
     if max_calls is None:
-        max_calls = BASELINE_CALL_CEILING if args.scope == "baseline" else GLOBAL_CALL_CEILING
+        max_calls = (
+            BASELINE_CALL_CEILING
+            if args.scope == "baseline"
+            else REMEDIATION_CALL_CEILING
+        )
     if max_calls > GLOBAL_CALL_CEILING or max_calls < 0:
         parser.error("max calls cannot exceed 160")
     if args.scope == "baseline" and max_calls > BASELINE_CALL_CEILING:
         parser.error("baseline max calls cannot exceed 122")
+    if args.scope == "remediation" and max_calls > REMEDIATION_CALL_CEILING:
+        parser.error("remediation max calls cannot exceed 38")
 
     source_root = args.source_skill_root or pathlib.Path(__file__).resolve().parent.parent
     installed_root = args.installed_skill_root or (

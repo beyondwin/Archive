@@ -49,6 +49,11 @@ Keep the thirty property cases and mutation checks honest in
   `evals/test_live_matrix.py`, and [evals/README.md](evals/README.md) in
   sync. Live cases remain synthetic; none of these artifacts may contain
   private manuscripts or full transcripts.
+- Live budget changes keep the 119-producer, 3-reviewer, 122-baseline,
+  38-remediation, and 160-total dry-run and parser assertions synchronized.
+  Report-bearing resume changes need a real temporary-Git test for both the
+  absent-report first publication and a crash after report publication before
+  report-state persistence.
 
 ## Versioning
 
