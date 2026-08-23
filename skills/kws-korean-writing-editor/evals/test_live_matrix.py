@@ -957,6 +957,101 @@ class ReviewAndReportTests(unittest.TestCase):
         self.assertIn("reported=gpt-reviewer", report)
         self.assertIn("b" * 64, report)
 
+    def test_cross_review_verdict_requires_two_valid_assessments(self) -> None:
+        candidate = "candidate-001"
+
+        def response(assessment: str) -> live_matrix.ReviewResponse:
+            return live_matrix.ReviewResponse(
+                samples=(live_matrix.ReviewAssessment(candidate, (), assessment),),
+                packet_limitations=(),
+            )
+
+        zero = live_matrix.render_operations_report(
+            live_matrix.ReportInput.for_test(receipts=(), review_responses=())
+        )
+        one = live_matrix.render_operations_report(
+            live_matrix.ReportInput.for_test(receipts=(), review_responses=(response("pass"),))
+        )
+        two_agree = live_matrix.render_operations_report(
+            live_matrix.ReportInput.for_test(
+                receipts=(), review_responses=(response("pass"), response("pass"))
+            )
+        )
+        two_conflict = live_matrix.render_operations_report(
+            live_matrix.ReportInput.for_test(
+                receipts=(), review_responses=(response("pass"), response("concern"))
+            )
+        )
+        three_agree = live_matrix.render_operations_report(
+            live_matrix.ReportInput.for_test(
+                receipts=(), review_responses=(response("concern"), response("concern"), response("concern"))
+            )
+        )
+        blocked = live_matrix.CallReceipt.for_test("reviewer-grok:packet:1", status="blocked")
+        missing = live_matrix.CallReceipt.for_test("reviewer-gemini:packet:1", status="not_measured")
+        one_with_blocked = live_matrix.render_operations_report(
+            live_matrix.ReportInput.for_test(
+                receipts=(),
+                reviewer_receipts=(blocked, missing),
+                review_responses=(response("pass"),),
+            )
+        )
+        self.assertIn("Cross-review coverage=0/3; insufficient cross-review evidence", zero)
+        self.assertIn(f"{candidate}: insufficient cross-review evidence; partial reviewer coverage=1/3", one)
+        self.assertIn(f"{candidate}: agreement; partial reviewer coverage=2/3", two_agree)
+        self.assertIn(f"{candidate}: disagreement; partial reviewer coverage=2/3", two_conflict)
+        self.assertIn(f"{candidate}: agreement; reviewer coverage=3/3", three_agree)
+        self.assertIn(f"{candidate}: insufficient cross-review evidence; partial reviewer coverage=1/3", one_with_blocked)
+        self.assertNotIn("score=", one_with_blocked.lower())
+        self.assertNotIn("rank=", one_with_blocked.lower())
+
+    def test_report_boundary_neutralizes_unicode_breaks_html_and_markdown_for_all_external_values(self) -> None:
+        hostile = (
+            "axis\u0085## injected\u2028<script>alert(1)</script>\u2029"
+            "[link](https://example.invalid) | <table><tr><td>x</td></tr></table>"
+        )
+        review = live_matrix.ReviewResponse(
+            samples=(
+                live_matrix.ReviewAssessment(
+                    "candidate-001",
+                    (live_matrix.ReviewIssue(hostile, "material", hostile),),
+                    "concern",
+                ),
+            ),
+            packet_limitations=(hostile,),
+        )
+        reviewer = live_matrix.CallReceipt.for_test(
+            "reviewer-claude:packet:1",
+            status="blocked",
+            requested_model=hostile,
+            reported_model=hostile,
+            response_sha256=hostile,
+            findings=(live_matrix.Finding(hostile, hostile),),
+        )
+        report = live_matrix.render_operations_report(
+            live_matrix.ReportInput.for_test(
+                receipts=(),
+                reviewer_receipts=(reviewer,),
+                review_responses=(review,),
+                cli_versions={hostile: hostile},
+                changed_files=(hostile,),
+                local_state=hostile,
+                remote_state=hostile,
+                git_state=hostile,
+                installation_state=hostile,
+                verification_results=(("python3 evals/run.py --scope full", hostile),),
+            )
+        )
+        for token in ("\u0085", "\u2028", "\u2029", "<script>", "<table>", "[link](", "\n## injected"):
+            self.assertNotIn(token, report)
+        self.assertIn("python3 evals/run.py --scope full", report)
+        self.assertIn("status=blocked", report)
+        malformed = live_matrix.CallReceipt.for_test("reviewer-claude:packet:1", status="blocked\u2028## injected")
+        with self.assertRaisesRegex(live_matrix.LiveMatrixError, "report status"):
+            live_matrix.render_operations_report(
+                live_matrix.ReportInput.for_test(receipts=(), reviewer_receipts=(malformed,))
+            )
+
     def test_report_fact_sanitizer_blocks_paths_controls_and_markdown_injection(self) -> None:
         hostile = (
             "/tmp/alice/evidence\n## injected | /var/db /private/secret /Users/name /home/name "
