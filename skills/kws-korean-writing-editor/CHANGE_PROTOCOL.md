@@ -54,6 +54,11 @@ Keep the thirty property cases and mutation checks honest in
   Report-bearing resume changes need a real temporary-Git test for both the
   absent-report first publication and a crash after report publication before
   report-state persistence.
+- Remediation needs one or more immutable planned producer call IDs, in
+  canonical full-plan order, bound into the run identity. It never dispatches
+  reviewer calls unless a separately approved reviewer mechanism is designed.
+  Reserve a report target and its matching state before any paid dispatch; do
+  not treat a final report write as the first ownership claim.
 
 ## Versioning
 

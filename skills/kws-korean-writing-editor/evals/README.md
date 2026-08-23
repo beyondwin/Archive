@@ -100,11 +100,12 @@ producer identities, requested-model identities, and scope. Any mismatch needs
 a new run ID.
 
 When the matching preflight exists but the report target is absent and no
-report-state exists, resume may dispatch and make the first publication with
-exclusive creation at completion. A report target without state, state without
-its exact report, an unsafe target or symlink, identity or hash drift, or any
-extra checkout dirt fails before dispatch. Exact matching report and state use
-the atomic update path.
+report-state exists, execute first makes an exclusive creation with bounded
+pending content and persists its exact state before producer or reviewer
+dispatch. A report target without state, state without its exact report, an
+unsafe target or symlink, identity or hash drift, or any extra checkout dirt
+fails before dispatch. Exact matching report and state use the atomic update
+path.
 
 ```bash
 RUN_ID="2026-08-23-korean-editor-baseline"
@@ -149,11 +150,15 @@ to repeat a successful baseline merely for a larger sample.
 The remediation CLI defaults to 38 and rejects a higher value. It is a
 separate explicitly authorized run, not an automatic extension of a baseline.
 Preflight the remediation identity before its separately authorized execution.
+Task 8 supplies the exact remediation call IDs from evidence; do not invent a
+call ID or finding here. Repeat `--remediation-call` only for exact immutable
+producer call IDs, and omit it entirely for baseline runs.
 
 ```bash
 RUN_ID="2026-08-23-korean-editor-remediation"
 python3 skills/kws-korean-writing-editor/evals/live_matrix.py \
   --preflight --scope remediation --run-id "$RUN_ID" --jobs 3 --max-calls 38 \
+  --remediation-call "<Task-8 exact planned producer call ID>" \
   --evidence-root .superpowers/kws-korean-writing-editor/live
 ```
 
@@ -161,6 +166,7 @@ python3 skills/kws-korean-writing-editor/evals/live_matrix.py \
 RUN_ID="2026-08-23-korean-editor-remediation"
 python3 skills/kws-korean-writing-editor/evals/live_matrix.py \
   --execute --scope remediation --run-id "$RUN_ID" --jobs 3 --max-calls 38 \
+  --remediation-call "<Task-8 exact planned producer call ID>" \
   --evidence-root .superpowers/kws-korean-writing-editor/live
 ```
 

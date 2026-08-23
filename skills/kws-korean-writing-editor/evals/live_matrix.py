@@ -93,6 +93,10 @@ RAW_DIRECTORY_NAME = "raw"
 NORMALIZED_DIRECTORY_NAME = "normalized"
 RECEIPT_DIRECTORY_NAME = "receipts"
 REPORT_STATE_FILENAME = "report-state.json"
+PENDING_OPERATIONS_REPORT = (
+    b"# Korean Writing Editor Live Evaluation\n\n"
+    b"Pending operator report reservation; no execution result has been published.\n"
+)
 COMPLETE_RECEIPT_STATUSES = frozenset(
     {"verified", "partially_verified", "failed", "blocked", "not_measured"}
 )
@@ -182,6 +186,7 @@ class RunIdentity:
     producer_ids: tuple[str, ...]
     requested_models: tuple[str, ...]
     scope: str
+    selected_call_ids: tuple[str, ...]
 
     @classmethod
     def for_test(cls, **overrides: Any) -> "RunIdentity":
@@ -195,6 +200,7 @@ class RunIdentity:
             "producer_ids": ("test-producer",),
             "requested_models": ("test-model",),
             "scope": "baseline",
+            "selected_call_ids": (),
         }
         unknown = set(overrides) - set(values)
         if unknown:
@@ -296,6 +302,7 @@ class CallReceipt:
                 "run_id": self.identity.run_id,
                 "runner_version": self.identity.runner_version,
                 "scope": self.identity.scope,
+                "selected_call_ids": list(self.identity.selected_call_ids),
                 "skill_hash": self.identity.skill_hash,
             },
             "prompt_sha256": self.prompt_sha256,
@@ -323,6 +330,7 @@ def identity_json(identity: RunIdentity) -> dict[str, Any]:
         "run_id": identity.run_id,
         "runner_version": identity.runner_version,
         "scope": identity.scope,
+        "selected_call_ids": list(identity.selected_call_ids),
         "skill_hash": identity.skill_hash,
     }
 
@@ -962,6 +970,7 @@ def validate_preflight(
     resume: bool = False,
     reuse_preflight: bool = False,
     report_path: pathlib.Path | None = None,
+    remediation_call_ids: Sequence[str] = (),
 ) -> PreflightResult:
     """Validate immutable paid-run inputs before any provider prompt dispatch."""
     job_error = validate_jobs(jobs)
@@ -977,6 +986,8 @@ def validate_preflight(
         raise LiveMatrixError("baseline max calls cannot exceed 122")
     if scope == "remediation" and max_calls > REMEDIATION_CALL_CEILING:
         raise LiveMatrixError("remediation max calls cannot exceed 38")
+    if scope == "baseline" and remediation_call_ids:
+        raise LiveMatrixError("remediation call IDs are forbidden for baseline")
 
     source_root = _checked_directory(source_skill_root, "source skill root")
     installed_root = _checked_directory(installed_skill_root, "installed skill root")
@@ -1002,6 +1013,14 @@ def validate_preflight(
         raise LiveMatrixError("live case manifest is not a regular file")
     _run_offline_checks(source_root, repo_root)
 
+    full_plan = build_producer_plan(load_live_cases(live_cases), build_producers())
+    if scope == "baseline":
+        selected_plan = full_plan
+    else:
+        selected_plan = select_remediation_producer_plan(full_plan, remediation_call_ids)
+        if len(selected_plan) > max_calls:
+            raise LiveMatrixError("selected remediation calls exceed max calls")
+
     producers = build_producers()
     requested_models = tuple(
         producer.requested_model for producer in producers if producer.requested_model is not None
@@ -1016,6 +1035,7 @@ def validate_preflight(
         producer_ids=tuple(producer.id for producer in producers),
         requested_models=requested_models,
         scope=scope,
+        selected_call_ids=tuple(call.call_id for call in selected_plan),
     )
     cli_info = {command: _cli_info(command, repo_root) for command in ("codex", "cursor-agent")}
     discovery, discovery_diagnostic = _discover_models(cli_info["cursor-agent"], repo_root)
@@ -1272,6 +1292,24 @@ def build_producer_plan(
     return tuple(plan)
 
 
+def select_remediation_producer_plan(
+    full_plan: Sequence[PlannedCall], selected_call_ids: Sequence[str]
+) -> tuple[PlannedCall, ...]:
+    """Return one approved remediation subset in immutable full-plan order."""
+    selected = tuple(selected_call_ids)
+    if not 1 <= len(selected) <= REMEDIATION_CALL_CEILING:
+        raise LiveMatrixError("remediation calls must contain between 1 and 38 planned producer call IDs")
+    if any(not isinstance(call_id, str) for call_id in selected):
+        raise LiveMatrixError("remediation call IDs must be strings")
+    if len(set(selected)) != len(selected):
+        raise LiveMatrixError("remediation call IDs contain a duplicate")
+    known = {call.call_id for call in full_plan}
+    unknown = set(selected) - known
+    if unknown:
+        raise LiveMatrixError("remediation call IDs contain an unknown planned producer call")
+    return tuple(call for call in full_plan if call.call_id in set(selected))
+
+
 def _utc_now() -> str:
     return datetime.datetime.now(datetime.UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
@@ -1353,8 +1391,13 @@ def _identity_from_json(payload: Any, *, label: str) -> RunIdentity:
     try:
         producer_ids = payload["producer_ids"]
         requested_models = payload["requested_models"]
+        selected_call_ids = payload["selected_call_ids"]
         if not all(isinstance(item, str) for item in producer_ids) or not all(
             isinstance(item, str) for item in requested_models
+        ):
+            raise TypeError
+        if not isinstance(selected_call_ids, list) or not all(
+            isinstance(item, str) for item in selected_call_ids
         ):
             raise TypeError
         return RunIdentity(
@@ -1367,6 +1410,7 @@ def _identity_from_json(payload: Any, *, label: str) -> RunIdentity:
             producer_ids=tuple(producer_ids),
             requested_models=tuple(requested_models),
             scope=payload["scope"],
+            selected_call_ids=tuple(selected_call_ids),
         )
     except (KeyError, TypeError) as exc:
         raise LiveMatrixError(f"malformed {label} identity") from exc
@@ -1455,17 +1499,7 @@ def _receipt_from_json(payload: Any) -> CallReceipt:
             for value in raw_path_values
         ):
             raise ValueError("unsafe raw path")
-        identity = RunIdentity(
-            run_id=identity_data["run_id"],
-            runner_version=identity_data["runner_version"],
-            repository_head=identity_data["repository_head"],
-            skill_hash=identity_data["skill_hash"],
-            installed_skill_hash=identity_data["installed_skill_hash"],
-            live_cases_hash=identity_data["live_cases_hash"],
-            producer_ids=tuple(identity_data["producer_ids"]),
-            requested_models=tuple(identity_data["requested_models"]),
-            scope=identity_data["scope"],
-        )
+        identity = _identity_from_json(identity_data, label="receipt")
         findings = tuple(
             Finding(item["code"], item["message"], item.get("literal"))
             for item in payload["findings"]
@@ -1782,6 +1816,8 @@ def dispatch_calls(
         raise LiveMatrixError(job_error)
     if preflight.identity.skill_hash != preflight.identity.installed_skill_hash:
         raise LiveMatrixError("source and installed skill manifests differ")
+    if tuple(call.call_id for call in plan) != preflight.identity.selected_call_ids:
+        raise LiveMatrixError("dispatch identity drift: selected producer calls changed")
     validate_dispatch_identity(preflight)
     current_producers = build_producers()
     if (
@@ -2924,6 +2960,71 @@ def _write_report_state(run_root: pathlib.Path, state: ReportState, *, replace_e
     _atomic_replace_file(path, _canonical_json_bytes(state.as_json()), mode=0o600)
 
 
+def reserve_operations_report(
+    path: pathlib.Path,
+    repository_root: pathlib.Path,
+    *,
+    run_root: pathlib.Path,
+    identity: RunIdentity,
+) -> ReportState:
+    """Reserve a report before dispatch, or validate the exact owned reservation."""
+    try:
+        repository_root = repository_root.resolve(strict=True)
+    except OSError as exc:
+        raise LiveMatrixError("cannot resolve repository root for report") from exc
+    target = _validated_operations_report_path(path, repository_root)
+    existing_state = _load_report_state(run_root)
+    if existing_state is not None:
+        return _report_state_for_target(run_root, repository_root, target, identity)
+    parent = target.parent
+    ancestor = repository_root
+    for component in parent.relative_to(repository_root).parts:
+        ancestor = ancestor / component
+        if ancestor.exists():
+            if ancestor.is_symlink() or not ancestor.is_dir():
+                raise LiveMatrixError("report parent is unsafe")
+            continue
+        try:
+            ancestor.mkdir(mode=0o755)
+        except OSError as exc:
+            raise LiveMatrixError("cannot create report parent") from exc
+    if parent.is_symlink() or not parent.is_dir():
+        raise LiveMatrixError("report parent is unsafe")
+    if len(PENDING_OPERATIONS_REPORT) > 1024:
+        raise LiveMatrixError("pending operations report exceeds bound")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(target, flags, 0o644)
+    except FileExistsError as exc:
+        raise LiveMatrixError("operations report already exists without matching run state") from exc
+    except OSError as exc:
+        raise LiveMatrixError("cannot create operations report") from exc
+    try:
+        offset = 0
+        while offset < len(PENDING_OPERATIONS_REPORT):
+            written = os.write(descriptor, PENDING_OPERATIONS_REPORT[offset:])
+            if written <= 0:
+                raise LiveMatrixError("incomplete operations report write")
+            offset += written
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    directory_descriptor = os.open(parent, os.O_RDONLY)
+    try:
+        os.fsync(directory_descriptor)
+    finally:
+        os.close(directory_descriptor)
+    try:
+        relative = target.relative_to(repository_root).as_posix()
+    except ValueError as exc:
+        raise LiveMatrixError("report target escapes repository") from exc
+    state = ReportState(identity, relative, hashlib.sha256(PENDING_OPERATIONS_REPORT).hexdigest())
+    _write_report_state(run_root, state, replace_existing=False)
+    return _report_state_for_target(run_root, repository_root, target, identity)
+
+
 def write_operations_report(
     path: pathlib.Path,
     report: str,
@@ -3000,6 +3101,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--execute", action="store_true", help="allow provider dispatch after preflight")
     parser.add_argument("--resume", action="store_true", help="resume matching interrupted run evidence")
     parser.add_argument("--scope", choices=("baseline", "remediation"), default="baseline")
+    parser.add_argument("--remediation-call", action="append", default=[])
     parser.add_argument("--run-id")
     parser.add_argument("--jobs", type=int, default=3)
     parser.add_argument("--max-calls", type=int)
@@ -3024,7 +3126,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if payload["left"] == payload["right"] else 1
 
     if args.dry_run:
-        if any((args.preflight, args.execute, args.resume)):
+        if any((args.preflight, args.execute, args.resume, args.remediation_call)):
             parser.error("--dry-run cannot combine with live run modes")
         manifest = pathlib.Path(__file__).with_name("live_cases.json")
         cases = load_live_cases(manifest)
@@ -3048,6 +3150,10 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--resume requires --execute")
     if args.run_id is None:
         parser.error("--run-id is required for preflight or execution")
+    if args.scope == "baseline" and args.remediation_call:
+        parser.error("--remediation-call is forbidden for baseline")
+    if args.scope == "remediation" and not args.remediation_call:
+        parser.error("--scope remediation requires at least one --remediation-call")
     job_error = validate_jobs(args.jobs)
     if job_error:
         parser.error(job_error)
@@ -3086,6 +3192,7 @@ def main(argv: list[str] | None = None) -> int:
             resume=args.resume,
             reuse_preflight=args.execute,
             report_path=args.report,
+            remediation_call_ids=tuple(args.remediation_call),
         )
         if args.execute:
             report_path = (
@@ -3093,10 +3200,29 @@ def main(argv: list[str] | None = None) -> int:
                 if args.report is not None
                 else None
             )
+            if report_path is not None:
+                if preflight.run_root is None:
+                    raise LiveMatrixError("report reservation requires an evidence run root")
+                preflight = replace(
+                    preflight,
+                    report_state=reserve_operations_report(
+                        report_path,
+                        preflight.repository_root,
+                        run_root=preflight.run_root,
+                        identity=preflight.identity,
+                    ),
+                )
             cases = load_live_cases(source_root / "evals" / "live_cases.json")
+            full_plan = build_producer_plan(cases, build_producers())
+            if args.scope == "baseline":
+                execution_plan = full_plan
+            else:
+                execution_plan = select_remediation_producer_plan(full_plan, args.remediation_call)
+                if tuple(call.call_id for call in execution_plan) != preflight.identity.selected_call_ids:
+                    raise LiveMatrixError("dispatch identity drift: selected remediation calls changed")
             dispatched_producers = dispatch_calls(
                 preflight,
-                build_producer_plan(cases, build_producers()),
+                execution_plan,
                 cases,
                 jobs=args.jobs,
                 max_calls=max_calls,
@@ -3107,16 +3233,20 @@ def main(argv: list[str] | None = None) -> int:
             producer_receipts = tuple(
                 receipt for receipt in durable_after_producers.values() if not _is_reviewer_receipt(receipt)
             )
-            samples = select_review_samples(
-                producer_receipts,
-                responses=load_normalized_responses(preflight.run_root, producer_receipts),
-                cases={case.id: case for case in cases},
-            )
-            dispatched_reviewers, new_review_responses = dispatch_reviewer_calls(
-                preflight,
-                samples,
-                max_calls=max_calls,
-            )
+            if args.scope == "baseline":
+                samples = select_review_samples(
+                    producer_receipts,
+                    responses=load_normalized_responses(preflight.run_root, producer_receipts),
+                    cases={case.id: case for case in cases},
+                )
+                dispatched_reviewers, new_review_responses = dispatch_reviewer_calls(
+                    preflight,
+                    samples,
+                    max_calls=max_calls,
+                )
+            else:
+                samples = ()
+                dispatched_reviewers, new_review_responses = (), ()
             all_attempts = _all_attempts_with_new(
                 preflight.run_root,
                 (*dispatched_producers, *dispatched_reviewers),
