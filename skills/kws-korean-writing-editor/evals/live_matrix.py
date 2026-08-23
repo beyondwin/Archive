@@ -1867,6 +1867,9 @@ STATUS_PRIORITY = {
     "blocked": 3,
     "failed": 4,
 }
+REVIEW_ASSESSMENTS = frozenset({"pass", "concern"})
+REVIEW_ISSUE_SEVERITIES = frozenset({"material", "minor"})
+SUPERVISORY_CLASSIFICATIONS = frozenset({"pending_adjudication"})
 REVIEW_IDENTITY_RE = re.compile(
     r"\b(?:codex-direct|cursor-[A-Za-z0-9.-]+|claude-[A-Za-z0-9.-]+|"
     r"gemini-[A-Za-z0-9.-]+|grok-[A-Za-z0-9.-]+|kimi-[A-Za-z0-9.-]+|glm-[A-Za-z0-9.-]+)\b"
@@ -2463,7 +2466,27 @@ def aggregate_statuses(
 
 
 def _render_status(status: str) -> str:
+    if not isinstance(status, str) or status not in STATUS_PRIORITY:
+        raise LiveMatrixError("report status is invalid")
     return status.replace("_", " ")
+
+
+def _render_review_assessment(value: str) -> str:
+    if not isinstance(value, str) or value not in REVIEW_ASSESSMENTS:
+        raise LiveMatrixError("review assessment is invalid")
+    return value
+
+
+def _render_review_severity(value: str) -> str:
+    if not isinstance(value, str) or value not in REVIEW_ISSUE_SEVERITIES:
+        raise LiveMatrixError("review issue severity is invalid")
+    return value
+
+
+def _render_supervisory_classification(value: str) -> str:
+    if not isinstance(value, str) or value not in SUPERVISORY_CLASSIFICATIONS:
+        raise LiveMatrixError("supervisory classification is invalid")
+    return value.replace("_", " ")
 
 
 def _finding_severity(finding: Finding, case: LiveCase | None) -> str:
@@ -2476,15 +2499,20 @@ def _safe_report_text(value: str | None) -> str:
     if not isinstance(value, str):
         raise LiveMatrixError("report fact must be a string")
     redacted = normalize_response(value)
+    redacted = re.sub(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]+", " ", redacted)
+    redacted = redacted.translate(
+        str.maketrans({
+            "&": "＆", "<": "‹", ">": "›", "[": "［", "]": "］",
+            "(": "（", ")": "）", "|": "¦", "#": "＃", "*": "＊", "`": "｀",
+        })
+    )
     for pattern in SECRET_PATTERNS:
         redacted = pattern.sub("[REDACTED]", redacted)
     redacted = POSIX_ABSOLUTE_PATH_RE.sub("[REDACTED_PATH]", redacted)
     redacted = WINDOWS_DRIVE_PATH_RE.sub("[REDACTED_PATH]", redacted)
     redacted = WINDOWS_UNC_PATH_RE.sub("[REDACTED_PATH]", redacted)
     redacted = RAW_EVIDENCE_PATH_RE.sub("[REDACTED_PATH]", redacted)
-    redacted = re.sub(r"[\x00-\x1f\x7f]+", " ", redacted)
-    redacted = redacted.replace("|", "[PIPE]").replace("#", "[HASH]").strip()
-    return _bounded_utf8(redacted)
+    return _bounded_utf8(redacted.strip())
 
 
 def render_operations_report(report_input: ReportInput) -> str:
@@ -2559,12 +2587,16 @@ def render_operations_report(report_input: ReportInput) -> str:
     lines.extend(("", "## Review Findings", ""))
     if not report_input.review_responses:
         lines.append("- No reviewer opinion recorded; reviewer evidence is not model truth.")
+        lines.append("- Cross-review coverage=0/3; insufficient cross-review evidence.")
     else:
         candidate_assessments: dict[str, list[ReviewAssessment]] = {}
         for index, response in enumerate(report_input.review_responses, start=1):
-            concerns = sum(assessment.assessment == "concern" for assessment in response.samples)
+            concerns = sum(
+                _render_review_assessment(assessment.assessment) == "concern"
+                for assessment in response.samples
+            )
             details = "; ".join(
-                f"{_safe_report_text(assessment.candidate_id)}={assessment.assessment}:"
+                f"{_safe_report_text(assessment.candidate_id)}={_render_review_assessment(assessment.assessment)}:"
                 f"{','.join(_safe_report_text(issue.axis) for issue in assessment.issues) or 'no issues'}"
                 for assessment in response.samples
             )
@@ -2578,11 +2610,16 @@ def render_operations_report(report_input: ReportInput) -> str:
                     ) + "."
                 )
         for candidate_id, assessments in sorted(candidate_assessments.items()):
-            labels = {assessment.assessment for assessment in assessments}
-            verdict = "agreement" if len(labels) == 1 and len(assessments) > 1 else "disagreement"
+            labels = {_render_review_assessment(assessment.assessment) for assessment in assessments}
+            if len(assessments) < 2:
+                verdict = "insufficient cross-review evidence"
+            elif len(labels) == 1:
+                verdict = "agreement"
+            else:
+                verdict = "disagreement"
             issue_details = "; ".join(
                 ", ".join(
-                    f"{_safe_report_text(issue.axis)}/{_safe_report_text(issue.severity)}/{_safe_report_text(issue.reason)}"
+                    f"{_safe_report_text(issue.axis)}/{_render_review_severity(issue.severity)}/{_safe_report_text(issue.reason)}"
                     for issue in assessment.issues
                 ) or "no issues"
                 for assessment in assessments
@@ -2591,7 +2628,7 @@ def render_operations_report(report_input: ReportInput) -> str:
             coverage_label = "partial reviewer coverage" if len(assessments) < len(REVIEWER_MODELS) else "reviewer coverage"
             lines.append(
                 f"- {_safe_report_text(candidate_id)}: {verdict}; {coverage_label}={coverage}; "
-                f"assessments={','.join(assessment.assessment for assessment in assessments)}; details={issue_details}."
+                f"assessments={','.join(_render_review_assessment(assessment.assessment) for assessment in assessments)}; details={issue_details}."
             )
         lines.append("- Agreement and disagreement are retained as diagnostic evidence and are not aggregate quality scores.")
     for receipt in report_input.reviewer_receipts:
@@ -2609,7 +2646,7 @@ def render_operations_report(report_input: ReportInput) -> str:
             "",
             "## Adopted And Rejected Improvements",
             "",
-            f"- Supervisory classification: {_render_status(report_input.supervisory_classification)}.",
+            f"- Supervisory classification: {_render_supervisory_classification(report_input.supervisory_classification)}.",
             "- No reviewer suggestion is adopted or rejected before evidence-based adjudication.",
             "",
             "## Verification",
@@ -2617,7 +2654,7 @@ def render_operations_report(report_input: ReportInput) -> str:
         )
     )
     lines.extend(
-        f"- {_safe_report_text(command)}: {_safe_report_text(_render_status(status))}"
+        f"- {_safe_report_text(command)}: {_safe_report_text(status)}"
         for command, status in report_input.verification_results
     )
     lines.extend(
