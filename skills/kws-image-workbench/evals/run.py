@@ -79,6 +79,42 @@ class EvaluatorTests(unittest.TestCase):
             errors = validate_skill_tree(pathlib.Path(directory), "full")
         self.assertIn("skill tree: missing README.md", errors)
 
+    def test_core_scope_rejects_mismatched_frontmatter_name(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / "references").mkdir()
+            (root / "SKILL.md").write_text(
+                "---\nname: wrong-name\nmetadata:\n  version: \"1.0.0\"\n---\n",
+                encoding="utf-8",
+            )
+            (root / "references" / "image-spec.md").write_text(
+                "# ImageSpec Reference\n", encoding="utf-8"
+            )
+            (root / "references" / "quality-rubric.md").write_text(
+                "# Image Quality Rubric\n", encoding="utf-8"
+            )
+            errors = validate_skill_tree(root, "core")
+        self.assertIn(
+            "SKILL.md: frontmatter name must be 'kws-image-workbench'", errors
+        )
+
+    def test_core_scope_rejects_prompt_gallery_scope_expansion(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / "references").mkdir()
+            (root / "SKILL.md").write_text(
+                "---\nname: kws-image-workbench\nmetadata:\n  version: \"1.0.0\"\n---\n\nPrompt gallery\n",
+                encoding="utf-8",
+            )
+            (root / "references" / "image-spec.md").write_text(
+                "# ImageSpec Reference\n", encoding="utf-8"
+            )
+            (root / "references" / "quality-rubric.md").write_text(
+                "# Image Quality Rubric\n", encoding="utf-8"
+            )
+            errors = validate_skill_tree(root, "core")
+        self.assertIn("skill tree: forbidden scope expansion: prompt gallery", errors)
+
 
 REQUIRED_CASE_FIELDS = (
     "id",
@@ -404,6 +440,127 @@ def validate_skill_tree(skill_root: pathlib.Path, scope: str) -> list[str]:
         for relative in required_files
         if not (skill_root / relative).is_file()
     ]
+    if scope in {"core", "full"} and not errors:
+        documents = {
+            relative: (skill_root / relative).read_text(encoding="utf-8")
+            for relative in required_files[:3]
+        }
+        skill_text = documents["SKILL.md"]
+        image_spec_text = documents["references/image-spec.md"]
+        rubric_text = documents["references/quality-rubric.md"]
+
+        frontmatter = re.match(r"\A---\n(.*?)\n---(?:\n|\Z)", skill_text, re.DOTALL)
+        if frontmatter is None:
+            errors.append("SKILL.md: missing frontmatter")
+        else:
+            metadata = frontmatter.group(1)
+            if not re.search(
+                r"(?m)^name:\s*kws-image-workbench\s*$", metadata
+            ):
+                errors.append(
+                    "SKILL.md: frontmatter name must be 'kws-image-workbench'"
+                )
+            if not re.search(
+                r'''(?m)^  version:\s*["'][^"']+["']\s*$''', metadata
+            ):
+                errors.append("SKILL.md: metadata.version must be a string")
+
+        required_headings = {
+            "SKILL.md": (
+                "# KWS Image Workbench",
+                "## Activation Gate",
+                "## Mode And Authorization",
+                "## Route The Deliverable",
+                "## Inspect Project Context",
+                "## Compile ImageSpec",
+                "## Execute The Authorized Route",
+                "## Inspect And Evaluate",
+                "## Iterate And Stop",
+                "## Save And Integrate",
+                "## Failure And Holds",
+                "## References",
+            ),
+            "references/image-spec.md": (
+                "# ImageSpec Reference",
+                "## Field Contract",
+                "## Safe Inference",
+                "## Input Image Roles",
+                "## Project Inspection",
+                "## Deterministic And Hybrid Routing",
+                "## Sanitized Receipt",
+            ),
+            "references/quality-rubric.md": (
+                "# Image Quality Rubric",
+                "## Status Semantics",
+                "## Visual Criteria",
+                "## Mechanical Criteria",
+                "## Critical Versus Advisory",
+                "## Exact Copy And Invariants",
+                "## Targeted Iteration",
+                "## Final Handoff",
+            ),
+        }
+        for relative, headings in required_headings.items():
+            text = documents[relative]
+            for heading in headings:
+                if heading not in text:
+                    errors.append(f"{relative}: missing heading {heading!r}")
+
+        for mode in ("brief", "generate", "edit", "audit"):
+            if f"`{mode}`" not in skill_text:
+                errors.append(f"SKILL.md: missing mode {mode!r}")
+        for field in (
+            "mode",
+            "asset_type",
+            "purpose",
+            "destination",
+            "canvas",
+            "subject",
+            "composition",
+            "visual_language",
+            "exact_copy",
+            "inputs",
+            "invariants",
+            "allowed_changes",
+            "avoid",
+            "acceptance",
+            "rights_state",
+        ):
+            if f"`{field}`" not in image_spec_text:
+                errors.append(f"references/image-spec.md: missing ImageSpec field {field!r}")
+        for role in (
+            "edit_target",
+            "subject_reference",
+            "style_reference",
+            "compositing_input",
+        ):
+            if f"`{role}`" not in image_spec_text:
+                errors.append(f"references/image-spec.md: missing input role {role!r}")
+        for status in ("verified", "partially verified", "not measured", "blocked"):
+            if f"`{status}`" not in rubric_text:
+                errors.append(
+                    f"references/quality-rubric.md: missing evidence status {status!r}"
+                )
+        for phrase, error in (
+            ("built-in image generation only", "SKILL.md: missing built-in-only execution wording"),
+            ("never a silent provider/CLI switch", "SKILL.md: missing no-silent-fallback wording"),
+            ("deterministic", "references/image-spec.md: missing deterministic routing wording"),
+            ("hybrid", "references/image-spec.md: missing hybrid routing wording"),
+        ):
+            text = image_spec_text if "routing" in error else skill_text
+            if phrase not in re.sub(r"\s+", " ", text):
+                errors.append(error)
+
+        all_core_text = "\n".join(documents.values()).lower()
+        for phrase in (
+            "provider client",
+            "external engine dependenc",
+            "prompt gallery",
+            "ocr dependenc",
+            "cross-runtime support",
+        ):
+            if phrase in all_core_text:
+                errors.append(f"skill tree: forbidden scope expansion: {phrase}")
     if scope == "full":
         index_path = skill_root.parent / "README.md"
         if not index_path.is_file():
