@@ -15,6 +15,21 @@ from collections import Counter
 
 
 class EvaluatorTests(unittest.TestCase):
+    def compatibility_errors(self, metadata_lines: tuple[str, ...]) -> list[str]:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            self.copy_core_tree(root)
+            skill = root / "SKILL.md"
+            source = skill.read_text(encoding="utf-8")
+            original = (
+                "metadata:\n"
+                "  compatibility: Requires Codex built-in image generation and local image viewing for generate or edit mode. Brief and audit modes can run read-only.\n"
+                '  version: "1.0.0"\n'
+            )
+            replacement = "metadata:\n" + "\n".join(metadata_lines) + '\n  version: "1.0.0"\n'
+            skill.write_text(source.replace(original, replacement), encoding="utf-8")
+            return validate_skill_tree(root, "core")
+
     def copy_core_tree(self, root: pathlib.Path) -> None:
         source_root = pathlib.Path(__file__).resolve().parents[1]
         for relative in (
@@ -170,6 +185,44 @@ class EvaluatorTests(unittest.TestCase):
             )
             errors = validate_skill_tree(root, "core")
         self.assertNotIn("SKILL.md: metadata.compatibility must be a non-empty string", errors)
+
+    def test_core_scope_rejects_non_string_or_ambiguous_metadata_compatibility(self):
+        invalid_metadata = (
+            ("  compatibility: null",),
+            ("  compatibility: NULL",),
+            ("  compatibility: ~",),
+            ('  compatibility: "" # empty',),
+            ("  compatibility: '' # empty",),
+            ("  compatibility: |",),
+            ("  compatibility: >-",),
+            ("  compatibility: [not, a, string]",),
+            ("  compatibility: {not: a-string}",),
+            ("  compatibility: !!str tagged",),
+            ("  compatibility: &alias value",),
+            ("  compatibility: *alias",),
+            ('  compatibility: "unterminated',),
+            ("  compatibility: 'unterminated",),
+            ("  compatibility: plain # comment",),
+            ("  compatibility: first line", "    second line"),
+            ("  compatibility: first line", " continuation"),
+            ("  compatibility: one", "  compatibility: two"),
+            ("  compatibility:", "  compatibility: two"),
+            ("  nested:", "    compatibility: nested-only"),
+        )
+        for metadata_lines in invalid_metadata:
+            with self.subTest(metadata_lines=metadata_lines):
+                errors = self.compatibility_errors(metadata_lines)
+            self.assertIn("SKILL.md: metadata.compatibility must be a non-empty string", errors)
+
+    def test_core_scope_accepts_exactly_one_direct_plain_or_quoted_metadata_compatibility(self):
+        for metadata_lines in (
+            ("  compatibility: Plain value",),
+            ('  compatibility: "Double quoted value"',),
+            ("  compatibility: 'Single quoted value'",),
+        ):
+            with self.subTest(metadata_lines=metadata_lines):
+                errors = self.compatibility_errors(metadata_lines)
+            self.assertNotIn("SKILL.md: metadata.compatibility must be a non-empty string", errors)
 
     def test_full_scope_rejects_source_row_empty_cell_wrong_section_and_pin(self):
         source_mutations = (
@@ -993,24 +1046,45 @@ def _validate_source_register(text: str) -> list[str]:
     return errors
 
 
-def _has_nonempty_metadata_string(frontmatter: str, key: str) -> bool:
-    in_metadata = False
-    for line in frontmatter.splitlines():
-        if line == "metadata:":
-            in_metadata = True
-            continue
-        if in_metadata and line and not line.startswith(" "):
+def _has_supported_metadata_string(frontmatter: str, key: str) -> bool:
+    lines = frontmatter.splitlines()
+    metadata_positions = [index for index, line in enumerate(lines) if line == "metadata:"]
+    if len(metadata_positions) != 1:
+        return False
+    metadata_start = metadata_positions[0] + 1
+    metadata_lines: list[str] = []
+    for line in lines[metadata_start:]:
+        if line and not line.startswith(" "):
             break
-        if not in_metadata:
+        metadata_lines.append(line)
+
+    direct = [
+        (index, match.group(1))
+        for index, line in enumerate(metadata_lines)
+        if (match := re.fullmatch(rf"  {re.escape(key)}:(.*)", line)) is not None
+    ]
+    if len(direct) != 1:
+        return False
+    index, raw_value = direct[0]
+    for following in metadata_lines[index + 1:]:
+        if not following:
             continue
-        match = re.fullmatch(rf"  {re.escape(key)}:(.*)", line)
-        if match is None:
-            continue
-        value = match.group(1).strip()
-        if len(value) >= 2 and value[0] in {"'", '"'} and value[-1] == value[0]:
-            value = value[1:-1].strip()
-        return bool(value)
-    return False
+        if not following.startswith("  "):
+            return False
+        if following.startswith(("   ", "\t")):
+            return False
+        break
+
+    value = raw_value.strip()
+    if not value or value.casefold() == "null" or value == "~":
+        return False
+    if value[0] in {"'", '"'}:
+        if len(value) < 2 or value[-1] != value[0]:
+            return False
+        return bool(value[1:-1].strip()) and value[0] not in value[1:-1]
+    if value[0] in "[{!&*|>" or "#" in value or "'" in value or '"' in value:
+        return False
+    return True
 
 
 def validate_skill_tree(skill_root: pathlib.Path, scope: str) -> list[str]:
@@ -1062,7 +1136,7 @@ def validate_skill_tree(skill_root: pathlib.Path, scope: str) -> list[str]:
                 r'''(?m)^  version:\s*["'][^"']+["']\s*$''', metadata
             ):
                 errors.append("SKILL.md: metadata.version must be a string")
-            if not _has_nonempty_metadata_string(metadata, "compatibility"):
+            if not _has_supported_metadata_string(metadata, "compatibility"):
                 errors.append("SKILL.md: metadata.compatibility must be a non-empty string")
 
         required_headings = {
