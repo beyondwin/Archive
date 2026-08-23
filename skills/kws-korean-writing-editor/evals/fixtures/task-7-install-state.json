@@ -1,0 +1,14 @@
+{
+  "install_state": "reviewed_candidate_installed_previous_backup_retained",
+  "installed_manifest_sha256": "",
+  "previous_manifest_sha256": "",
+  "previous_path": "",
+  "run_id": "",
+  "source_manifest_sha256": "",
+  "source_path": "",
+  "stage_manifest_sha256": "",
+  "stage_path": "",
+  "stage_path_exists_after_swap": false,
+  "target_path": "",
+  "target_swap_completed": true
+}
