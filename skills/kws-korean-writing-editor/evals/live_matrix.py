@@ -834,12 +834,30 @@ def validate_evidence_root(
     expected = repo_root / ".superpowers" / "kws-korean-writing-editor" / "live"
     candidate = evidence_root if evidence_root.is_absolute() else repo_root / evidence_root
     try:
+        resolved_repo_root = repo_root.resolve(strict=True)
         resolved_candidate = candidate.resolve(strict=False)
         resolved_expected = expected.resolve(strict=False)
     except OSError as exc:
         raise LiveMatrixError("cannot resolve evidence root") from exc
     if resolved_candidate != resolved_expected:
         raise LiveMatrixError("evidence root must be the ignored exact live root")
+    try:
+        relative_resolved_root = resolved_candidate.relative_to(resolved_repo_root)
+    except ValueError as exc:
+        raise LiveMatrixError("evidence root must resolve beneath repository root") from exc
+    if not relative_resolved_root.parts:
+        raise LiveMatrixError("evidence root must resolve strictly beneath repository root")
+    ancestor = repo_root
+    for component in expected.relative_to(repo_root).parts:
+        ancestor = ancestor / component
+        try:
+            ancestor_stat = ancestor.lstat()
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise LiveMatrixError("cannot inspect evidence root ancestor") from exc
+        if stat.S_ISLNK(ancestor_stat.st_mode):
+            raise LiveMatrixError("evidence root has a symlinked ancestor")
     capture = run_command(
         ("git", "check-ignore", "-q", "--", str(expected.relative_to(repo_root))),
         cwd=repo_root,

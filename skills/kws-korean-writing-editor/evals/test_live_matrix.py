@@ -474,6 +474,24 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
                     live_matrix.validate_evidence_root(outside, root)
             chmod.assert_not_called()
 
+    def test_evidence_root_rejects_symlinked_ancestor_escape_before_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            sandbox = pathlib.Path(directory)
+            repository = sandbox / "repository"
+            outside = sandbox / "outside"
+            repository.mkdir()
+            outside.mkdir()
+            (repository / ".superpowers").symlink_to(outside, target_is_directory=True)
+            evidence_root = repository / ".superpowers" / "kws-korean-writing-editor" / "live"
+            before = tuple(outside.iterdir())
+            with mock.patch(
+                "live_matrix.run_command",
+                return_value=live_matrix.CommandCapture(0, b"", b"", 0),
+            ):
+                with self.assertRaisesRegex(live_matrix.LiveMatrixError, "beneath repository"):
+                    live_matrix.validate_evidence_root(evidence_root, repository)
+            self.assertEqual(tuple(outside.iterdir()), before)
+
     def test_dispatch_identity_rejects_head_and_case_drift(self) -> None:
         identity = live_matrix.RunIdentity.for_test(repository_head="old", live_cases_hash="old-cases")
         preflight = live_matrix.PreflightResult(
