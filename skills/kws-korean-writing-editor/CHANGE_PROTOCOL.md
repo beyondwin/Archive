@@ -74,19 +74,30 @@ receipt must match one positive reservation exactly, and a reviewer receipt
 cannot match a producer reservation. Crash-only reservations remain charged,
 drive unique `:attempt-N` retry IDs, and count in budgets and reports.
 
-One `ReportLease` holds one open `docs/operations` directory FD from pending
-report reservation through every producer and reviewer call and final report
-replacement. Pending creation, owned-state hash validation, temporary-file
-creation, owned inode and hash recheck, replacement, and directory fsync all
-use that same FD. Immediately before every provider process invocation, the
-current repository `docs/operations` path must resolve to the leased device and
-inode, and the leased report must match the expected target, state, device,
-inode, and hash; drift consumes zero next call. A path swap after the last
-validation may consume at most the already-reserved current call, but it does
-not redirect report mutation because every mutation remains relative to the
-held FD; the next validation, if any, fails and the old leased inode may retain
-a safe pending or owned residual. This is the achievable invariant, not an
-atomic guarantee against a malicious rename after process spawn.
+After producer dispatch, and again after reviewer dispatch for a baseline,
+the controller reloads attempt reservations and receipts from disk, validates
+their exact linkage, and requires one durable terminal receipt for every
+planned logical call. Review packets, reports, statuses, and counts use only
+those reloaded durable artifacts, never in-memory dispatch return values. A
+crash-only reservation remains charged and resumable, but it cannot support a
+successful packet or report until that logical call has a durable terminal
+receipt. Remediation dispatches producers only and has no reviewer plan.
+
+One `ReportLease` holds one `O_RDWR` and `O_NOFOLLOW` target file FD plus one
+open `docs/operations` directory FD from pending report reservation through
+every producer and reviewer call and final publication. Report state persists
+the target device, inode, and expected hash. Pending creation or owned-target
+open happens relative to the held directory FD; validation reads the held
+target FD and requires the current pathname to name the same device and inode.
+Final publication verifies the old state hash from the held target FD, writes,
+truncates, and fsyncs only that FD, verifies the pathname identity again, and
+then atomically updates the ignored report-state hash. It never replaces the
+report pathname. A path swap cannot redirect bytes into a replacement or user
+inode. A crash during the in-place write leaves the old state hash against
+partial report bytes, so the next resume fails closed. A swap after the last
+provider pre-call validation may consume at most that already-reserved call;
+persistent directory or target drift fails before another call or successful
+publication.
 
 ## Versioning
 
