@@ -11,6 +11,10 @@ The approved baseline is 119 producer calls plus 3 independent review calls:
 Only an operator with explicit authorization may start a paid baseline. An
 `--execute` run may be billable. Do not treat a dry run, preflight, or fixture
 pass as evidence that a provider was invoked or that model quality was proven.
+The 122-call baseline and 38-call remediation reserve define one approved
+evaluation cycle boundary. The runner cannot prevent an operator from starting
+multiple separately authorized cycles; do not represent those cycles as one
+approved 160-call result.
 
 ## Safety And Privacy
 
@@ -45,7 +49,8 @@ python3 skills/kws-korean-writing-editor/evals/live_matrix.py --dry-run
 ```
 
 Expected baseline accounting is 119 producer calls, 3 reviewer calls, and 122
-baseline calls. The global ceiling shown as `approved_total_ceiling` is 160.
+baseline calls. The dry-run payload also reports 38 remediation calls and the
+global ceiling shown as `approved_total_ceiling` is 160.
 
 ## Baseline Preflight
 
@@ -64,6 +69,10 @@ python3 skills/kws-korean-writing-editor/evals/live_matrix.py \
 
 `--jobs` accepts 1 through 4; the approved example uses 3. The report path
 must be the dated filename under `docs/operations` shown above.
+
+The `2026-08-23` run ID and report filename are the approved artifact date,
+intentionally retained across the wall-date rollover. Do not replace them with
+the wall-clock date when following this approved plan.
 
 ## Paid Baseline
 
@@ -89,6 +98,13 @@ run ID and scope. Resume validates the complete run identity: runner version,
 repository HEAD, source and installed skill hashes, `live_cases.json` hash,
 producer identities, requested-model identities, and scope. Any mismatch needs
 a new run ID.
+
+When the matching preflight exists but the report target is absent and no
+report-state exists, resume may dispatch and make the first publication with
+exclusive creation at completion. A report target without state, state without
+its exact report, an unsafe target or symlink, identity or hash drift, or any
+extra checkout dirt fails before dispatch. Exact matching report and state use
+the atomic update path.
 
 ```bash
 RUN_ID="2026-08-23-korean-editor-baseline"
@@ -129,6 +145,24 @@ Baseline authorization is 122 calls maximum. Keep 38 calls in reserve for a
 separately authorized `--scope remediation` run; all attempts across the
 baseline and remediation must stay at or below 160. Do not spend the reserve
 to repeat a successful baseline merely for a larger sample.
+
+The remediation CLI defaults to 38 and rejects a higher value. It is a
+separate explicitly authorized run, not an automatic extension of a baseline.
+Preflight the remediation identity before its separately authorized execution.
+
+```bash
+RUN_ID="2026-08-23-korean-editor-remediation"
+python3 skills/kws-korean-writing-editor/evals/live_matrix.py \
+  --preflight --scope remediation --run-id "$RUN_ID" --jobs 3 --max-calls 38 \
+  --evidence-root .superpowers/kws-korean-writing-editor/live
+```
+
+```bash
+RUN_ID="2026-08-23-korean-editor-remediation"
+python3 skills/kws-korean-writing-editor/evals/live_matrix.py \
+  --execute --scope remediation --run-id "$RUN_ID" --jobs 3 --max-calls 38 \
+  --evidence-root .superpowers/kws-korean-writing-editor/live
+```
 
 ## Evidence Layout
 
