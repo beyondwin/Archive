@@ -80,17 +80,19 @@ calls, plus 38 remediation calls and `approved_total_ceiling` equal to 160.
 ## Baseline Preflight
 
 Before execution, ensure that source and installed skill manifests match, the
-relevant checkout is clean, and the approved run ID has no preflight or live
-evidence. Preflight writes the immutable identity to the ignored evidence root
-and makes no provider call.
+relevant checkout is clean, and the approved run ID has only the complete Task
+7 install bootstrap described below and no preflight or provider evidence.
+Preflight writes the immutable identity to the ignored evidence root and makes
+no provider call.
 
-After Task 7's exact-target swap, the first non-resume preflight may reuse an
-existing mode-`0700` real run directory only when its complete contents are a
-real `install-previous` directory and a real mode-`0600`
-`task-7-install-state.json` file, `preflight.json` is absent, and the record's
-run ID, exact source/target/previous/stage paths, final swap state, equal
-source/install hashes, and current source/install/previous manifest hashes all
-match the validated filesystem state.
+After Task 7's exact-target swap, the first non-resume preflight requires an
+already-existing mode-`0700` real run directory whose complete contents are
+exactly a real `install-previous` directory and a real mode-`0600`
+`task-7-install-state.json` file; it never creates or accepts an absent, empty,
+or partial run directory. `preflight.json` must be absent, and the record's run
+ID, exact source/target/previous/stage paths, final swap state, equal
+source/install hashes, and current source/install/previous manifest hashes must
+all match the validated filesystem state.
 
 The approved Task 7 baseline run ID is
 `kws-editor-20260823-baseline-01`, and the approved operations artifact date is

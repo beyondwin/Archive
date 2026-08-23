@@ -81,7 +81,7 @@ ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 MAX_STREAM_BYTES = 131_072
 COMMAND_TIMEOUT_SECONDS = 300
 DIAGNOSTIC_TAIL_BYTES = 256
-RUNNER_VERSION = "6"
+RUNNER_VERSION = "7"
 RUN_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 MIN_JOBS = 1
 MAX_JOBS = 4
@@ -112,6 +112,18 @@ INSTALL_STATE_FIELDS = frozenset(
         "stage_path_exists_after_swap",
         "target_path",
         "target_swap_completed",
+    }
+)
+INSTALL_STATE_BOOLEAN_FIELDS = frozenset(
+    {"stage_path_exists_after_swap", "target_swap_completed"}
+)
+INSTALL_STATE_STRING_FIELDS = INSTALL_STATE_FIELDS - INSTALL_STATE_BOOLEAN_FIELDS
+INSTALL_STATE_HASH_FIELDS = frozenset(
+    {
+        "installed_manifest_sha256",
+        "previous_manifest_sha256",
+        "source_manifest_sha256",
+        "stage_manifest_sha256",
     }
 )
 FINAL_INSTALL_STATE = "reviewed_candidate_installed_previous_backup_retained"
@@ -247,6 +259,16 @@ class _InstallBootstrapExpectation:
     installed_root: pathlib.Path
     source_manifest_sha256: str
     installed_manifest_sha256: str
+
+
+@dataclass(frozen=True)
+class _InstallBootstrapBinding:
+    run_device: int
+    run_inode: int
+    state_device: int
+    state_inode: int
+    previous_device: int
+    previous_inode: int
 
 
 @dataclass(frozen=True)
@@ -1018,7 +1040,7 @@ def _validate_install_bootstrap(
     run_root: pathlib.Path,
     run_id: str,
     expectation: _InstallBootstrapExpectation,
-) -> None:
+) -> _InstallBootstrapBinding:
     """Accept only the complete recoverable install state created by Task 7 step 2."""
     state_descriptor: int | None = None
     try:
@@ -1068,6 +1090,15 @@ def _validate_install_bootstrap(
         state = json.loads(state_bytes.decode("utf-8"))
         if not isinstance(state, dict) or frozenset(state) != INSTALL_STATE_FIELDS:
             raise ValueError("install state schema mismatch")
+        if any(type(state[field]) is not str for field in INSTALL_STATE_STRING_FIELDS):
+            raise ValueError("install state string type mismatch")
+        if any(type(state[field]) is not bool for field in INSTALL_STATE_BOOLEAN_FIELDS):
+            raise ValueError("install state boolean type mismatch")
+        if any(
+            re.fullmatch(r"[0-9a-f]{64}", state[field]) is None
+            for field in INSTALL_STATE_HASH_FIELDS
+        ):
+            raise ValueError("install state hash format mismatch")
 
         stage = (
             expectation.installed_root.parent
@@ -1096,6 +1127,34 @@ def _validate_install_bootstrap(
         }
         if state != expected_state:
             raise ValueError("install state values mismatch")
+        current_run = run_root.lstat()
+        current_state = state_path.lstat()
+        current_previous = previous.lstat()
+        if (
+            (current_run.st_dev, current_run.st_ino) != (run_stat.st_dev, run_stat.st_ino)
+            or (current_state.st_dev, current_state.st_ino)
+            != (opened_state.st_dev, opened_state.st_ino)
+            or (current_previous.st_dev, current_previous.st_ino)
+            != (previous_stat.st_dev, previous_stat.st_ino)
+            or stat.S_ISLNK(current_run.st_mode)
+            or not stat.S_ISDIR(current_run.st_mode)
+            or stat.S_IMODE(current_run.st_mode) != 0o700
+            or stat.S_ISLNK(current_state.st_mode)
+            or not stat.S_ISREG(current_state.st_mode)
+            or stat.S_IMODE(current_state.st_mode) != 0o600
+            or stat.S_ISLNK(current_previous.st_mode)
+            or not stat.S_ISDIR(current_previous.st_mode)
+            or {entry.name for entry in run_root.iterdir()} != INSTALL_BOOTSTRAP_ENTRIES
+        ):
+            raise ValueError("install bootstrap changed during validation")
+        return _InstallBootstrapBinding(
+            run_device=run_stat.st_dev,
+            run_inode=run_stat.st_ino,
+            state_device=opened_state.st_dev,
+            state_inode=opened_state.st_ino,
+            previous_device=previous_stat.st_dev,
+            previous_inode=previous_stat.st_ino,
+        )
     except (
         LiveMatrixError,
         OSError,
@@ -1110,6 +1169,144 @@ def _validate_install_bootstrap(
             os.close(state_descriptor)
 
 
+def _validate_install_bootstrap_directory_fd(
+    directory_descriptor: int,
+    binding: _InstallBootstrapBinding,
+    *,
+    preflight_published: bool,
+) -> None:
+    run_stat = os.fstat(directory_descriptor)
+    expected_entries = set(INSTALL_BOOTSTRAP_ENTRIES)
+    if preflight_published:
+        expected_entries.add("preflight.json")
+    entries = set(os.listdir(directory_descriptor))
+    state_stat = os.stat(
+        INSTALL_STATE_FILENAME,
+        dir_fd=directory_descriptor,
+        follow_symlinks=False,
+    )
+    previous_stat = os.stat(
+        INSTALL_PREVIOUS_DIRECTORY_NAME,
+        dir_fd=directory_descriptor,
+        follow_symlinks=False,
+    )
+    if (
+        not stat.S_ISDIR(run_stat.st_mode)
+        or stat.S_IMODE(run_stat.st_mode) != 0o700
+        or (run_stat.st_dev, run_stat.st_ino)
+        != (binding.run_device, binding.run_inode)
+        or entries != expected_entries
+        or not stat.S_ISREG(state_stat.st_mode)
+        or stat.S_IMODE(state_stat.st_mode) != 0o600
+        or (state_stat.st_dev, state_stat.st_ino)
+        != (binding.state_device, binding.state_inode)
+        or not stat.S_ISDIR(previous_stat.st_mode)
+        or (previous_stat.st_dev, previous_stat.st_ino)
+        != (binding.previous_device, binding.previous_inode)
+    ):
+        raise ValueError("install bootstrap binding changed")
+
+
+def _open_install_bootstrap_directory(
+    run_root: pathlib.Path,
+    binding: _InstallBootstrapBinding,
+) -> int:
+    descriptor: int | None = None
+    try:
+        path_stat = run_root.lstat()
+        if (
+            stat.S_ISLNK(path_stat.st_mode)
+            or not stat.S_ISDIR(path_stat.st_mode)
+            or (path_stat.st_dev, path_stat.st_ino)
+            != (binding.run_device, binding.run_inode)
+        ):
+            raise ValueError("install bootstrap root path changed")
+        flags = os.O_RDONLY
+        if hasattr(os, "O_DIRECTORY"):
+            flags |= os.O_DIRECTORY
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        descriptor = os.open(run_root, flags)
+        _validate_install_bootstrap_directory_fd(
+            descriptor, binding, preflight_published=False
+        )
+        return descriptor
+    except (OSError, ValueError) as exc:
+        if descriptor is not None:
+            os.close(descriptor)
+        raise LiveMatrixError("installation bootstrap is invalid") from exc
+
+
+def _write_exclusive_json_at(
+    directory_descriptor: int,
+    filename: str,
+    payload: dict[str, Any],
+) -> None:
+    if pathlib.PurePath(filename).name != filename:
+        raise LiveMatrixError("invalid receipt filename")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    temporary = f".{filename}.{secrets.token_hex(16)}.partial"
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(temporary, flags, 0o600, dir_fd=directory_descriptor)
+        os.fchmod(descriptor, 0o600)
+        encoded = _canonical_json_bytes(payload)
+        offset = 0
+        while offset < len(encoded):
+            written = os.write(descriptor, encoded[offset:])
+            if written <= 0:
+                raise LiveMatrixError("incomplete receipt write")
+            offset += written
+        os.fsync(descriptor)
+        try:
+            os.link(
+                temporary,
+                filename,
+                src_dir_fd=directory_descriptor,
+                dst_dir_fd=directory_descriptor,
+                follow_symlinks=False,
+            )
+        except FileExistsError as exc:
+            raise LiveMatrixError("receipt already exists") from exc
+        os.fsync(directory_descriptor)
+    except OSError as exc:
+        raise LiveMatrixError("cannot publish receipt") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        try:
+            os.unlink(temporary, dir_fd=directory_descriptor)
+        except FileNotFoundError:
+            pass
+
+
+def _publish_install_bootstrap_preflight(
+    run_root: pathlib.Path,
+    binding: _InstallBootstrapBinding,
+    payload: dict[str, Any],
+) -> None:
+    directory_descriptor = _open_install_bootstrap_directory(run_root, binding)
+    try:
+        _write_exclusive_json_at(directory_descriptor, "preflight.json", payload)
+        _validate_install_bootstrap_directory_fd(
+            directory_descriptor, binding, preflight_published=True
+        )
+        current_root = run_root.lstat()
+        if (
+            stat.S_ISLNK(current_root.st_mode)
+            or not stat.S_ISDIR(current_root.st_mode)
+            or (current_root.st_dev, current_root.st_ino)
+            != (binding.run_device, binding.run_inode)
+        ):
+            raise ValueError("install bootstrap root path changed")
+    except (LiveMatrixError, OSError, ValueError) as exc:
+        raise LiveMatrixError("installation bootstrap is invalid") from exc
+    finally:
+        os.close(directory_descriptor)
+
+
 def _run_root(
     evidence_root: pathlib.Path,
     run_id: str,
@@ -1117,7 +1314,7 @@ def _run_root(
     repository_root: pathlib.Path,
     require_existing: bool,
     install_bootstrap: _InstallBootstrapExpectation | None = None,
-) -> pathlib.Path:
+) -> tuple[pathlib.Path, _InstallBootstrapBinding | None]:
     safe_evidence_root = validate_evidence_root(evidence_root, repository_root)
     run_root = safe_evidence_root / run_id
     try:
@@ -1128,30 +1325,25 @@ def _run_root(
         raise LiveMatrixError("cannot inspect run root") from exc
     else:
         run_root_exists = True
+    bootstrap_binding = None
     if require_existing:
         if not run_root_exists:
             raise LiveMatrixError("preflight receipt is required before execution")
     else:
-        if run_root_exists:
-            if install_bootstrap is None:
-                raise LiveMatrixError("run root already exists; use a new run ID")
-            _validate_install_bootstrap(run_root, run_id, install_bootstrap)
-    if not safe_evidence_root.exists():
-        try:
-            safe_evidence_root.mkdir(mode=0o700, parents=True)
-        except OSError as exc:
-            raise LiveMatrixError("cannot create evidence root") from exc
+        if not run_root_exists:
+            raise LiveMatrixError("installation bootstrap is required before preflight")
+        if install_bootstrap is None:
+            raise LiveMatrixError("run root already exists; use a new run ID")
+        bootstrap_binding = _validate_install_bootstrap(
+            run_root, run_id, install_bootstrap
+        )
     if safe_evidence_root.is_symlink() or not safe_evidence_root.is_dir():
         raise LiveMatrixError("evidence root is not a real directory")
-    if not run_root_exists:
-        try:
-            run_root.mkdir(mode=0o700)
-        except OSError as exc:
-            raise LiveMatrixError("cannot create run root") from exc
     if run_root.is_symlink() or not run_root.is_dir():
         raise LiveMatrixError("run root is not a real directory")
-    os.chmod(run_root, 0o700)
-    return run_root
+    if bootstrap_binding is None:
+        os.chmod(run_root, 0o700)
+    return run_root, bootstrap_binding
 
 
 def validate_preflight(
@@ -1242,19 +1434,23 @@ def validate_preflight(
     run_root = None
     report_state = None
     if evidence_root is not None:
-        run_root = _run_root(
-            evidence_root,
-            run_id,
-            repository_root=repo_root,
-            require_existing=reuse_preflight or resume,
-            install_bootstrap=_InstallBootstrapExpectation(
+        first_preflight = not (reuse_preflight or resume)
+        install_bootstrap = (
+            _InstallBootstrapExpectation(
                 source_root=source_root,
                 installed_root=installed_root,
                 source_manifest_sha256=source_hash,
                 installed_manifest_sha256=installed_hash,
             )
-            if not (reuse_preflight or resume)
-            else None,
+            if first_preflight
+            else None
+        )
+        run_root, bootstrap_binding = _run_root(
+            evidence_root,
+            run_id,
+            repository_root=repo_root,
+            require_existing=reuse_preflight or resume,
+            install_bootstrap=install_bootstrap,
         )
         preflight_payload = {
             "identity": identity_json(identity),
@@ -1268,17 +1464,21 @@ def validate_preflight(
             "model_discovery_diagnostic": discovery_diagnostic,
         }
         preflight_path = run_root / "preflight.json"
-        if preflight_path.exists() and (resume or reuse_preflight):
+        if resume or reuse_preflight:
+            if not preflight_path.exists():
+                raise LiveMatrixError("preflight receipt is required before execution")
             try:
                 previous = json.loads(preflight_path.read_text(encoding="utf-8"))
             except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
                 raise LiveMatrixError("malformed preflight receipt") from exc
             if not isinstance(previous, dict) or previous.get("identity") != identity_json(identity):
                 raise LiveMatrixError("preflight identity drift requires a new run ID")
-        elif not preflight_path.exists() and not reuse_preflight:
-            _write_exclusive_json(preflight_path, preflight_payload)
         else:
-            raise LiveMatrixError("preflight receipt is required before execution")
+            if bootstrap_binding is None:
+                raise LiveMatrixError("installation bootstrap is invalid")
+            _publish_install_bootstrap_preflight(
+                run_root, bootstrap_binding, preflight_payload
+            )
         if report_target is not None and resume:
             existing_state = _load_report_state(run_root)
             if existing_state is None:

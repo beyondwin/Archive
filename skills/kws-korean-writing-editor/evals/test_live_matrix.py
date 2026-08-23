@@ -395,13 +395,14 @@ GUIDE_ARTIFACT_PARAGRAPH = (
     "2026-08-24 wall-date rollover; do not substitute the current date."
 )
 GUIDE_BOOTSTRAP_PARAGRAPH = (
-    "After Task 7's exact-target swap, the first non-resume preflight may reuse "
-    "an existing mode-`0700` real run directory only when its complete contents "
-    "are a real `install-previous` directory and a real mode-`0600` "
-    "`task-7-install-state.json` file, `preflight.json` is absent, and the "
+    "After Task 7's exact-target swap, the first non-resume preflight requires "
+    "an already-existing mode-`0700` real run directory whose complete contents "
+    "are exactly a real `install-previous` directory and a real mode-`0600` "
+    "`task-7-install-state.json` file; it never creates or accepts an absent, "
+    "empty, or partial run directory. `preflight.json` must be absent, and the "
     "record's run ID, exact source/target/previous/stage paths, final swap state, "
     "equal source/install hashes, and current source/install/previous manifest "
-    "hashes all match the validated filesystem state."
+    "hashes must all match the validated filesystem state."
 )
 GUIDE_IDENTITY_PARAGRAPH = (
     "Resume validates the complete run identity: run ID, runner version, "
@@ -482,7 +483,7 @@ GUIDE_EXPECTED_SECTIONS = (
     (
         "Baseline Preflight",
         (
-            "Before execution, ensure that source and installed skill manifests match, the relevant checkout is clean, and the approved run ID has no preflight or live evidence. Preflight writes the immutable identity to the ignored evidence root and makes no provider call.",
+            "Before execution, ensure that source and installed skill manifests match, the relevant checkout is clean, and the approved run ID has only the complete Task 7 install bootstrap described below and no preflight or provider evidence. Preflight writes the immutable identity to the ignored evidence root and makes no provider call.",
             GUIDE_BOOTSTRAP_PARAGRAPH,
             GUIDE_ARTIFACT_PARAGRAPH,
             "`--jobs` accepts 1 through 4. The report path must be the exact dated filename under `docs/operations` shown above.",
@@ -1892,6 +1893,33 @@ class LiveMatrixCliTests(unittest.TestCase):
 
 
 class LiveMatrixLifecycleTests(unittest.TestCase):
+    def test_first_preflight_requires_an_existing_install_bootstrap_without_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root, source, installed, evidence_root = temporary_git_install_fixture(directory)
+            run_id = "missing-bootstrap-1"
+            self.assertFalse(evidence_root.exists())
+            with mock.patch(
+                "live_matrix._cli_info",
+                return_value=live_matrix.CliInfo(None, None, "fixture"),
+            ):
+                with mock.patch("live_matrix._discover_models", return_value=(None, None)):
+                    with mock.patch("live_matrix._run_offline_checks"):
+                        with self.assertRaisesRegex(
+                            live_matrix.LiveMatrixError,
+                            "installation bootstrap is required before preflight",
+                        ):
+                            live_matrix.validate_preflight(
+                                source_skill_root=source,
+                                installed_skill_root=installed,
+                                repository_root=root,
+                                run_id=run_id,
+                                scope="baseline",
+                                jobs=1,
+                                max_calls=122,
+                                evidence_root=evidence_root,
+                            )
+            self.assertFalse(evidence_root.exists())
+
     def test_first_preflight_reuses_only_the_complete_task_7_install_bootstrap(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root, source, installed, evidence_root = temporary_git_install_fixture(directory)
@@ -1975,6 +2003,90 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
                         )
             self.assertEqual(reused.identity, first.identity)
             self.assertEqual(reused.run_root, first.run_root)
+
+    def test_first_preflight_rejects_bootstrap_inode_swaps_before_publication(self) -> None:
+        def replace_root(run_root: pathlib.Path) -> tuple[pathlib.Path, ...]:
+            validated = run_root.with_name(f".{run_root.name}-validated")
+            run_root.rename(validated)
+            shutil.copytree(validated, run_root, symlinks=True)
+            run_root.chmod(0o700)
+            return (run_root, validated)
+
+        def replace_state_with_symlink(run_root: pathlib.Path) -> tuple[pathlib.Path, ...]:
+            state = run_root / "task-7-install-state.json"
+            moved = run_root.parent / f".{run_root.name}-moved-state.json"
+            state.rename(moved)
+            state.symlink_to(moved)
+            return (run_root,)
+
+        def replace_previous_with_symlink(
+            run_root: pathlib.Path,
+        ) -> tuple[pathlib.Path, ...]:
+            previous = run_root / "install-previous"
+            moved = run_root.parent / f".{run_root.name}-moved-previous"
+            previous.rename(moved)
+            previous.symlink_to(moved, target_is_directory=True)
+            return (run_root,)
+
+        mutations = (
+            ("run root rename and replacement", replace_root),
+            ("install state rename and symlink", replace_state_with_symlink),
+            ("previous install rename and symlink", replace_previous_with_symlink),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root, source, installed, evidence_root = temporary_git_install_fixture(directory)
+            original_run_root = live_matrix._run_root
+            for index, (label, mutate) in enumerate(mutations, start=1):
+                with self.subTest(label=label):
+                    run_id = f"swapped-bootstrap-{index}"
+                    run_root = write_complete_install_bootstrap(
+                        evidence_root, run_id, source, installed
+                    )
+                    publication_roots: tuple[pathlib.Path, ...] = ()
+
+                    def mutate_after_validation(
+                        *args: object, **kwargs: object
+                    ) -> tuple[
+                        pathlib.Path, live_matrix._InstallBootstrapBinding | None
+                    ]:
+                        nonlocal publication_roots
+                        validated, binding = original_run_root(*args, **kwargs)
+                        publication_roots = mutate(validated)
+                        return validated, binding
+
+                    with mock.patch(
+                        "live_matrix._cli_info",
+                        return_value=live_matrix.CliInfo(None, None, "fixture"),
+                    ):
+                        with mock.patch(
+                            "live_matrix._discover_models", return_value=(None, None)
+                        ):
+                            with mock.patch("live_matrix._run_offline_checks"):
+                                with mock.patch(
+                                    "live_matrix._run_root",
+                                    side_effect=mutate_after_validation,
+                                ):
+                                    with self.assertRaisesRegex(
+                                        live_matrix.LiveMatrixError,
+                                        "installation bootstrap is invalid",
+                                    ):
+                                        live_matrix.validate_preflight(
+                                            source_skill_root=source,
+                                            installed_skill_root=installed,
+                                            repository_root=root,
+                                            run_id=run_id,
+                                            scope="baseline",
+                                            jobs=1,
+                                            max_calls=122,
+                                            evidence_root=evidence_root,
+                                        )
+                    self.assertTrue(publication_roots)
+                    self.assertTrue(
+                        all(
+                            not (candidate / "preflight.json").exists()
+                            for candidate in publication_roots
+                        )
+                    )
 
     def test_first_preflight_rejects_every_incomplete_or_unsafe_install_bootstrap(self) -> None:
         def remove_previous(run_root: pathlib.Path) -> None:
@@ -2065,6 +2177,38 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
                         run_root, remove="run_id"
                     ),
                 ),
+                *(
+                    (
+                        f"{field} non-string JSON type",
+                        lambda run_root, field=field: rewrite_install_bootstrap_state(
+                            run_root, updates={field: 1}
+                        ),
+                    )
+                    for field in (
+                        "install_state",
+                        "installed_manifest_sha256",
+                        "previous_manifest_sha256",
+                        "previous_path",
+                        "run_id",
+                        "source_manifest_sha256",
+                        "source_path",
+                        "stage_manifest_sha256",
+                        "stage_path",
+                        "target_path",
+                    )
+                ),
+                (
+                    "target swap integer JSON type",
+                    lambda run_root: rewrite_install_bootstrap_state(
+                        run_root, updates={"target_swap_completed": 1}
+                    ),
+                ),
+                (
+                    "stage existence integer JSON type",
+                    lambda run_root: rewrite_install_bootstrap_state(
+                        run_root, updates={"stage_path_exists_after_swap": 0}
+                    ),
+                ),
                 (
                     "run ID drift",
                     lambda run_root: rewrite_install_bootstrap_state(
@@ -2100,6 +2244,20 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
                         f"{field} drift",
                         lambda run_root, field=field: rewrite_install_bootstrap_state(
                             run_root, updates={field: "0" * 64}
+                        ),
+                    )
+                    for field in (
+                        "source_manifest_sha256",
+                        "stage_manifest_sha256",
+                        "installed_manifest_sha256",
+                        "previous_manifest_sha256",
+                    )
+                ),
+                *(
+                    (
+                        f"{field} invalid hash format",
+                        lambda run_root, field=field: rewrite_install_bootstrap_state(
+                            run_root, updates={field: "g" * 64}
                         ),
                     )
                     for field in (
@@ -2204,15 +2362,15 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             evidence_root = root / "evidence"
+            first = evidence_root / "baseline-1"
+            first.mkdir(parents=True, mode=0o700)
+            (first / "preflight.json").write_text("{}", encoding="utf-8")
             with mock.patch("live_matrix.validate_evidence_root", return_value=evidence_root):
-                first = live_matrix._run_root(
-                    evidence_root, "baseline-1", repository_root=root, require_existing=False
-                )
-                (first / "preflight.json").write_text("{}", encoding="utf-8")
-                reused = live_matrix._run_root(
+                reused, binding = live_matrix._run_root(
                     evidence_root, "baseline-1", repository_root=root, require_existing=True
                 )
         self.assertEqual(reused, first)
+        self.assertIsNone(binding)
 
     def test_execute_reuses_preflight_without_resume(self) -> None:
         preflight_result = mock.Mock(
@@ -2574,6 +2732,9 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
             for argv in (("init", "-b", "main"), ("add", "."), ("-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "fixture")):
                 subprocess.run(("git", *argv), cwd=root, check=True, capture_output=True)
             evidence_root = root / ".superpowers" / "kws-korean-writing-editor" / "live"
+            write_complete_install_bootstrap(
+                evidence_root, "baseline-1", HERE.parent, HERE.parent
+            )
             target = root / "docs" / "operations" / "2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md"
             cli = lambda command, _: live_matrix.CliInfo(command, "fixture", None)
             with mock.patch("live_matrix._cli_info", side_effect=cli):
@@ -2661,6 +2822,9 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
             ):
                 subprocess.run(("git", *argv), cwd=root, check=True, capture_output=True)
             evidence_root = root / ".superpowers" / "kws-korean-writing-editor" / "live"
+            write_complete_install_bootstrap(
+                evidence_root, "baseline-1", HERE.parent, HERE.parent
+            )
             target = root / "docs" / "operations" / "2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md"
             cli = lambda command, _: live_matrix.CliInfo(command, "fixture", None)
             with mock.patch("live_matrix._cli_info", side_effect=cli):
@@ -2771,6 +2935,9 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
             selected = (plan[10].call_id, plan[2].call_id)
             expected = (plan[2].call_id, plan[10].call_id)
             evidence_root = root / ".superpowers" / "kws-korean-writing-editor" / "live"
+            write_complete_install_bootstrap(
+                evidence_root, "remediation-1", HERE.parent, HERE.parent
+            )
             cli = lambda command, _: live_matrix.CliInfo(command, "fixture", None)
             with mock.patch("live_matrix._cli_info", side_effect=cli):
                 with mock.patch("live_matrix._discover_models", return_value=(b"", None)):
@@ -2829,6 +2996,9 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
             ):
                 subprocess.run(("git", *argv), cwd=root, check=True, capture_output=True)
             evidence_root = root / ".superpowers" / "kws-korean-writing-editor" / "live"
+            write_complete_install_bootstrap(
+                evidence_root, "baseline-1", HERE.parent, HERE.parent
+            )
             target = root / "docs" / "operations" / "2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md"
             cli = lambda command, _: live_matrix.CliInfo(command, "fixture", None)
             with mock.patch("live_matrix._cli_info", side_effect=cli):
@@ -2896,6 +3066,9 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
             ):
                 subprocess.run(("git", *argv), cwd=root, check=True, capture_output=True)
             evidence_root = root / ".superpowers" / "kws-korean-writing-editor" / "live"
+            write_complete_install_bootstrap(
+                evidence_root, "baseline-1", HERE.parent, HERE.parent
+            )
             target = root / "docs" / "operations" / "2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md"
             cli = lambda command, _: live_matrix.CliInfo(command, "fixture", None)
             with mock.patch("live_matrix._cli_info", side_effect=cli):
