@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
-import contextlib
 import datetime as datetime
 import hashlib
 import json
@@ -83,7 +82,7 @@ ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 MAX_STREAM_BYTES = 131_072
 COMMAND_TIMEOUT_SECONDS = 300
 DIAGNOSTIC_TAIL_BYTES = 256
-RUNNER_VERSION = "2"
+RUNNER_VERSION = "3"
 RUN_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 MIN_JOBS = 1
 MAX_JOBS = 4
@@ -99,6 +98,7 @@ PENDING_OPERATIONS_REPORT = (
     b"# Korean Writing Editor Live Evaluation\n\n"
     b"Pending operator report reservation; no execution result has been published.\n"
 )
+MAX_OPERATIONS_REPORT_BYTES = 1_048_576
 COMPLETE_RECEIPT_STATUSES = frozenset(
     {"verified", "partially_verified", "failed", "blocked", "not_measured"}
 )
@@ -176,6 +176,15 @@ class CommandCapture:
 
 
 @dataclass(frozen=True)
+class PreparedProviderCall:
+    call: PlannedCall
+    producer: Producer
+    case: LiveCase
+    prompt: str
+    argv: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class RunIdentity:
     """The immutable inputs which make a receipt safe to resume."""
 
@@ -216,8 +225,10 @@ class CallReceipt:
     """Durable metadata for one complete or blocked attempt, never a transcript."""
 
     identity: RunIdentity
+    logical_call_id: str
     call_id: str
     call_number: int
+    kind: str
     host: str
     requested_model: str | None
     reported_model: str | None
@@ -253,8 +264,10 @@ class CallReceipt:
             overrides["findings"] = (Finding(finding_code, "synthetic deterministic finding"),)
         values: dict[str, Any] = {
             "identity": identity if identity is not None else RunIdentity.for_test(),
+            "logical_call_id": _logical_call_id(call_id),
             "call_id": call_id,
             "call_number": 1,
+            "kind": "reviewer" if call_id.startswith("reviewer-") else "producer",
             "host": "test-host",
             "requested_model": "test-model",
             "reported_model": "test-model",
@@ -307,6 +320,8 @@ class CallReceipt:
                 "selected_call_ids": list(self.identity.selected_call_ids),
                 "skill_hash": self.identity.skill_hash,
             },
+            "kind": self.kind,
+            "logical_call_id": self.logical_call_id,
             "prompt_sha256": self.prompt_sha256,
             "raw_paths": list(self.raw_paths),
             "reported_model": self.reported_model,
@@ -413,6 +428,34 @@ class ReportState:
         }
 
 
+@dataclass
+class ReportLease:
+    """One bounded open-directory ownership lease for a report execution."""
+
+    repository_root: pathlib.Path
+    target: pathlib.Path
+    run_root: pathlib.Path
+    identity: RunIdentity
+    directory_fd: int
+    directory_dev: int
+    directory_inode: int
+    target_name: str
+    relative_target: str
+    report_state: ReportState | None = None
+    target_dev: int | None = None
+    target_inode: int | None = None
+    closed: bool = False
+
+    def validate_for_dispatch(self) -> None:
+        _validate_report_lease(self, require_current_path=True)
+
+    def close(self) -> None:
+        if self.closed:
+            return
+        self.closed = True
+        os.close(self.directory_fd)
+
+
 @dataclass(frozen=True)
 class PreflightResult:
     identity: RunIdentity
@@ -427,6 +470,7 @@ class PreflightResult:
     discovery_diagnostic: str | None
     report_path: pathlib.Path | None = None
     report_state: ReportState | None = None
+    report_lease: ReportLease | None = None
     git_facts: GitReportFacts | None = None
 
 
@@ -487,7 +531,9 @@ def run_command(
     timeout: int = COMMAND_TIMEOUT_SECONDS,
 ) -> CommandCapture:
     """Run one direct command while retaining bounded binary streams."""
-    if not argv or any(not isinstance(value, str) or not value for value in argv):
+    if isinstance(argv, (str, bytes)) or not argv or any(
+        not isinstance(value, str) or not value for value in argv
+    ):
         raise LiveMatrixError("invalid argv")
     started_at = time.monotonic()
     try:
@@ -1110,7 +1156,10 @@ def validate_preflight(
                 if report_target.exists() or report_target.is_symlink():
                     raise LiveMatrixError("operations report exists without matching run state")
             else:
-                report_state = _report_state_for_target(run_root, repo_root, report_target, identity)
+                _validate_report_state_target(
+                    existing_state, repo_root, report_target, identity
+                )
+                report_state = existing_state
         elif report_target is not None and report_target.exists():
             raise LiveMatrixError("operations report already exists without matching run state")
     if not _git_status_is_clean(
@@ -1350,7 +1399,49 @@ def _receipt_filename(call_id: str, attempt: int) -> str:
 
 
 def _logical_call_id(call_id: str) -> str:
-    return call_id.split(":attempt-", 1)[0]
+    if not isinstance(call_id, str) or not call_id:
+        raise LiveMatrixError("malformed actual call ID")
+    if ":attempt-" not in call_id:
+        return call_id
+    logical_id, suffix = call_id.split(":attempt-", 1)
+    if (
+        not logical_id
+        or ":attempt-" in logical_id
+        or not suffix.isascii()
+        or not suffix.isdigit()
+        or suffix.startswith("0")
+        or int(suffix) < 2
+    ):
+        raise LiveMatrixError("malformed actual call ID")
+    return logical_id
+
+
+def _actual_attempt_index(call_id: str, logical_call_id: str | None = None) -> int:
+    logical = _logical_call_id(call_id)
+    if logical_call_id is not None and logical != logical_call_id:
+        raise LiveMatrixError("actual and logical call IDs do not match")
+    if call_id == logical:
+        return 1
+    return int(call_id.removeprefix(f"{logical}:attempt-"))
+
+
+def _next_actual_call_id(
+    logical_call_id: str,
+    reservations: Sequence[AttemptReservation],
+    receipts: Sequence[CallReceipt],
+) -> str:
+    """Choose a retry ID from every durable claim, including crash-only reservations."""
+    if _logical_call_id(logical_call_id) != logical_call_id:
+        raise LiveMatrixError("planned call ID must be logical")
+    used = [
+        _actual_attempt_index(item.call_id, logical_call_id)
+        for item in (*reservations, *receipts)
+        if item.logical_call_id == logical_call_id
+    ]
+    if not used:
+        return logical_call_id
+    next_attempt = max(used) + 1
+    return f"{logical_call_id}:attempt-{next_attempt}"
 
 
 def _reservation_filename(call_number: int) -> str:
@@ -1481,21 +1572,18 @@ def _load_report_state(run_root: pathlib.Path) -> ReportState | None:
         raise LiveMatrixError("malformed report state") from exc
 
 
-def _report_state_for_target(
-    run_root: pathlib.Path, repository_root: pathlib.Path, target: pathlib.Path, identity: RunIdentity
-) -> ReportState:
-    state = _load_report_state(run_root)
-    if state is None:
-        raise LiveMatrixError("report state is required for report-bearing resume")
+def _validate_report_state_target(
+    state: ReportState,
+    repository_root: pathlib.Path,
+    target: pathlib.Path,
+    identity: RunIdentity,
+) -> None:
     try:
         relative = target.relative_to(repository_root).as_posix()
     except ValueError as exc:
         raise LiveMatrixError("report target escapes repository") from exc
     if state.identity != identity or state.relative_target != relative:
         raise LiveMatrixError("report state identity or target drift")
-    if hashlib.sha256(_read_operations_report(repository_root, target)).hexdigest() != state.sha256:
-        raise LiveMatrixError("owned operations report hash drift")
-    return state
 
 
 def load_normalized_responses(
@@ -1518,6 +1606,41 @@ def load_normalized_responses(
     return responses
 
 
+def _validate_receipt_provider_shape(receipt: CallReceipt) -> None:
+    """Permit an unreserved zero only when no provider-side effect is represented."""
+    if receipt.status not in COMPLETE_RECEIPT_STATUSES:
+        raise LiveMatrixError("receipt has unsupported evidence status")
+    if receipt.kind not in {"producer", "reviewer"}:
+        raise LiveMatrixError("receipt has unsupported call kind")
+    if (
+        not isinstance(receipt.call_number, int)
+        or isinstance(receipt.call_number, bool)
+        or receipt.call_number < 0
+    ):
+        raise LiveMatrixError("receipt has invalid call number")
+    if receipt.call_number > 0:
+        return
+    empty_prompt_hash = hashlib.sha256(b"").hexdigest()
+    if (
+        receipt.call_number != 0
+        or receipt.status != "not_measured"
+        or receipt.reported_model is not None
+        or receipt.prompt_sha256 != empty_prompt_hash
+        or receipt.started_at != receipt.finished_at
+        or receipt.duration_ms != 0
+        or receipt.exit_code is not None
+        or receipt.stdout_bytes != 0
+        or receipt.stdout_sha256 is not None
+        or receipt.stderr_bytes != 0
+        or receipt.stderr_sha256 is not None
+        or receipt.response_sha256 is not None
+        or receipt.raw_paths
+    ):
+        raise LiveMatrixError(
+            "only a true zero-provider not_measured receipt may omit a reservation"
+        )
+
+
 def _receipt_from_json(payload: Any) -> CallReceipt:
     if not isinstance(payload, dict) or not isinstance(payload.get("identity"), dict):
         raise LiveMatrixError("malformed receipt")
@@ -1538,8 +1661,10 @@ def _receipt_from_json(payload: Any) -> CallReceipt:
         )
         receipt = CallReceipt(
             identity=identity,
+            logical_call_id=payload["logical_call_id"],
             call_id=payload["call_id"],
             call_number=payload["call_number"],
+            kind=payload["kind"],
             host=payload["host"],
             requested_model=payload["requested_model"],
             reported_model=payload["reported_model"],
@@ -1562,16 +1687,22 @@ def _receipt_from_json(payload: Any) -> CallReceipt:
         )
         if (
             not isinstance(receipt.call_id, str)
+            or not isinstance(receipt.logical_call_id, str)
+            or receipt.logical_call_id != _logical_call_id(receipt.call_id)
+            or _actual_attempt_index(receipt.call_id, receipt.logical_call_id) < 1
             or not isinstance(receipt.call_number, int)
             or isinstance(receipt.call_number, bool)
             or receipt.call_number < 0
+            or receipt.kind not in {"producer", "reviewer"}
             or not isinstance(receipt.host, str)
             or not isinstance(receipt.requested_model, (str, type(None)))
             or not isinstance(receipt.case_id, str)
             or not isinstance(receipt.repeat_index, int)
             or isinstance(receipt.repeat_index, bool)
+            or receipt.status not in COMPLETE_RECEIPT_STATUSES
         ):
             raise ValueError("invalid receipt fields")
+        _validate_receipt_provider_shape(receipt)
         return receipt
     except (KeyError, TypeError, ValueError) as exc:
         raise LiveMatrixError("malformed receipt") from exc
@@ -1631,6 +1762,7 @@ def _reservation_from_json(payload: Any) -> AttemptReservation:
         or isinstance(reservation.call_number, bool)
         or reservation.call_number < 1
         or reservation.logical_call_id != _logical_call_id(reservation.call_id)
+        or _actual_attempt_index(reservation.call_id, reservation.logical_call_id) < 1
         or reservation.kind not in {"producer", "reviewer"}
         or not isinstance(reservation.host, str)
         or not isinstance(reservation.requested_model, (str, type(None)))
@@ -1642,6 +1774,79 @@ def _reservation_from_json(payload: Any) -> AttemptReservation:
     return reservation
 
 
+def _validate_reservation_ledger(
+    reservations: Sequence[AttemptReservation], identity: RunIdentity | None = None
+) -> None:
+    numbers: set[int] = set()
+    call_ids: set[str] = set()
+    attempts_by_logical: dict[str, set[int]] = {}
+    for reservation in reservations:
+        if identity is not None and reservation.identity != identity:
+            raise LiveMatrixError("attempt reservation identity drift requires a new run ID")
+        if reservation.call_number in numbers or reservation.call_id in call_ids:
+            raise LiveMatrixError("duplicate attempt reservation")
+        if reservation.logical_call_id != _logical_call_id(reservation.call_id):
+            raise LiveMatrixError("attempt reservation actual/logical call ID mismatch")
+        if reservation.kind not in {"producer", "reviewer"}:
+            raise LiveMatrixError("malformed attempt reservation")
+        attempt_index = _actual_attempt_index(
+            reservation.call_id, reservation.logical_call_id
+        )
+        logical_attempts = attempts_by_logical.setdefault(
+            reservation.logical_call_id, set()
+        )
+        if attempt_index in logical_attempts:
+            raise LiveMatrixError("duplicate attempt reservation")
+        logical_attempts.add(attempt_index)
+        numbers.add(reservation.call_number)
+        call_ids.add(reservation.call_id)
+    if numbers != set(range(1, len(reservations) + 1)):
+        raise LiveMatrixError("attempt reservation numbers must be exactly gap-free 1..N")
+    for attempt_indexes in attempts_by_logical.values():
+        if attempt_indexes != set(range(1, len(attempt_indexes) + 1)):
+            raise LiveMatrixError("attempt reservation retry IDs must be gap-free")
+
+
+def _ensure_attempt_reservation_directory(run_root: pathlib.Path) -> pathlib.Path:
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        run_stat = run_root.lstat()
+        if stat.S_ISLNK(run_stat.st_mode) or not stat.S_ISDIR(run_stat.st_mode):
+            raise LiveMatrixError("run root is not a real directory")
+        run_fd = os.open(run_root, flags)
+    except OSError as exc:
+        raise LiveMatrixError("cannot open run root for attempt reservation") from exc
+    try:
+        try:
+            reservation_fd = os.open(
+                ATTEMPT_RESERVATION_DIRECTORY_NAME, flags, dir_fd=run_fd
+            )
+        except FileNotFoundError:
+            try:
+                os.mkdir(ATTEMPT_RESERVATION_DIRECTORY_NAME, 0o700, dir_fd=run_fd)
+                os.fsync(run_fd)
+                reservation_fd = os.open(
+                    ATTEMPT_RESERVATION_DIRECTORY_NAME, flags, dir_fd=run_fd
+                )
+            except OSError as exc:
+                raise LiveMatrixError("cannot create attempt reservation directory") from exc
+        except OSError as exc:
+            raise LiveMatrixError("attempt reservation directory is not a real directory") from exc
+        try:
+            opened = os.fstat(reservation_fd)
+            if not stat.S_ISDIR(opened.st_mode):
+                raise LiveMatrixError("attempt reservation directory is not a real directory")
+            os.fchmod(reservation_fd, 0o700)
+            os.fsync(reservation_fd)
+        finally:
+            os.close(reservation_fd)
+    finally:
+        os.close(run_fd)
+    return run_root / ATTEMPT_RESERVATION_DIRECTORY_NAME
+
+
 def _load_attempt_reservations(
     run_root: pathlib.Path, identity: RunIdentity | None = None
 ) -> tuple[AttemptReservation, ...]:
@@ -1651,27 +1856,33 @@ def _load_attempt_reservations(
     if root.is_symlink() or not root.is_dir():
         raise LiveMatrixError("attempt reservation directory is not a real directory")
     reservations: list[AttemptReservation] = []
-    numbers: set[int] = set()
-    call_ids: set[str] = set()
+    seen_inodes: set[tuple[int, int]] = set()
+    seen_contents: set[bytes] = set()
     for path in sorted(root.iterdir(), key=lambda item: item.name):
         if path.name.endswith(".partial") and path.name.startswith("."):
             continue
         if path.is_symlink() or not path.is_file() or path.suffix != ".json":
             raise LiveMatrixError("attempt reservation directory contains unsafe entry")
         try:
-            reservation = _reservation_from_json(json.loads(path.read_text(encoding="utf-8")))
+            opened = path.stat(follow_symlinks=False)
+            inode = (opened.st_dev, opened.st_ino)
+            payload = path.read_bytes()
+            reservation = _reservation_from_json(json.loads(payload.decode("utf-8")))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise LiveMatrixError("malformed attempt reservation") from exc
         if path.name != _reservation_filename(reservation.call_number):
             raise LiveMatrixError("attempt reservation filename mismatch")
-        if reservation.call_number in numbers or reservation.call_id in call_ids:
+        canonical = _canonical_json_bytes(reservation.as_json())
+        if payload != canonical:
+            raise LiveMatrixError("attempt reservation content is not canonical")
+        if inode in seen_inodes or canonical in seen_contents:
             raise LiveMatrixError("duplicate attempt reservation")
-        if identity is not None and reservation.identity != identity:
-            raise LiveMatrixError("attempt reservation identity drift requires a new run ID")
-        numbers.add(reservation.call_number)
-        call_ids.add(reservation.call_id)
+        seen_inodes.add(inode)
+        seen_contents.add(canonical)
         reservations.append(reservation)
-    return tuple(sorted(reservations, key=lambda item: item.call_number))
+    ordered = tuple(sorted(reservations, key=lambda item: item.call_number))
+    _validate_reservation_ledger(ordered, identity)
+    return ordered
 
 
 def reserve_attempt(
@@ -1686,14 +1897,23 @@ def reserve_attempt(
 ) -> AttemptReservation:
     """Durably charge one provider attempt before its process can start."""
     existing = _load_attempt_reservations(run_root, identity)
-    expected = attempted_call_count(existing) + 1
+    receipts = _load_receipt_attempts(run_root)
+    _validate_receipt_reservations(receipts, existing, identity)
+    expected = len(existing) + 1
     if call_number != expected:
         raise LiveMatrixError("attempt reservation call number is not sequential")
     if ceiling is not None and call_number > ceiling:
         raise LiveMatrixError("call budget exhausted")
+    if kind != call.kind or kind not in {"producer", "reviewer"}:
+        raise LiveMatrixError("attempt reservation kind does not match planned call")
+    logical_call_id = _logical_call_id(call.call_id)
+    if call.call_id != _next_actual_call_id(
+        logical_call_id, existing, receipts
+    ):
+        raise LiveMatrixError("attempt reservation actual call ID is not the next retry")
     reservation = AttemptReservation(
         identity=identity,
-        logical_call_id=_logical_call_id(call.call_id),
+        logical_call_id=logical_call_id,
         call_id=call.call_id,
         call_number=call_number,
         kind=kind,
@@ -1702,13 +1922,7 @@ def reserve_attempt(
         case_id=call.case_id,
         repeat_index=call.repeat_index,
     )
-    if kind not in {"producer", "reviewer"}:
-        raise LiveMatrixError("unsupported attempt reservation kind")
-    root = run_root / ATTEMPT_RESERVATION_DIRECTORY_NAME
-    root.mkdir(mode=0o700, exist_ok=True)
-    if root.is_symlink() or not root.is_dir():
-        raise LiveMatrixError("attempt reservation directory is not a real directory")
-    os.chmod(root, 0o700)
+    root = _ensure_attempt_reservation_directory(run_root)
     _write_exclusive_json(root / _reservation_filename(call_number), reservation.as_json())
     return reservation
 
@@ -1716,40 +1930,64 @@ def reserve_attempt(
 def _validate_receipt_reservations(
     receipts: Sequence[CallReceipt], reservations: Sequence[AttemptReservation], identity: RunIdentity
 ) -> None:
+    _validate_reservation_ledger(reservations, identity)
     expected = {reservation.call_number: reservation for reservation in reservations}
+    attempt_indexes: dict[str, set[int]] = {}
+    for reservation in reservations:
+        attempt_indexes.setdefault(reservation.logical_call_id, set()).add(
+            _actual_attempt_index(
+                reservation.call_id, reservation.logical_call_id
+            )
+        )
     for receipt in receipts:
-        if receipt.call_number <= 0:
+        if receipt.identity != identity:
+            raise LiveMatrixError("receipt identity drift requires a new run ID")
+        if receipt.logical_call_id != _logical_call_id(receipt.call_id):
+            raise LiveMatrixError("receipt does not match attempt reservation")
+        _validate_receipt_provider_shape(receipt)
+        if receipt.call_number == 0:
+            if any(reservation.call_id == receipt.call_id for reservation in reservations):
+                raise LiveMatrixError(
+                    "zero-provider receipt must not claim an attempt reservation"
+                )
+            attempt_indexes.setdefault(receipt.logical_call_id, set()).add(
+                _actual_attempt_index(receipt.call_id, receipt.logical_call_id)
+            )
             continue
         reservation = expected.get(receipt.call_number)
         if reservation is None:
             raise LiveMatrixError("receipt has no matching attempt reservation")
         if (
-            receipt.identity != identity
-            or reservation.identity != identity
+            reservation.identity != identity
+            or receipt.logical_call_id != reservation.logical_call_id
             or receipt.call_id != reservation.call_id
-            or _logical_call_id(receipt.call_id) != reservation.logical_call_id
+            or receipt.kind != reservation.kind
             or receipt.host != reservation.host
             or receipt.requested_model != reservation.requested_model
             or receipt.case_id != reservation.case_id
             or receipt.repeat_index != reservation.repeat_index
         ):
             raise LiveMatrixError("receipt does not match attempt reservation")
+    for indexes in attempt_indexes.values():
+        if indexes != set(range(1, max(indexes) + 1)):
+            raise LiveMatrixError("actual call retry IDs must be gap-free")
 
 
 def _load_receipts(run_root: pathlib.Path) -> dict[str, CallReceipt]:
     """Expose only the latest durable receipt for each logical planned call."""
     receipts: dict[str, CallReceipt] = {}
     for receipt in _load_receipt_attempts(run_root):
-        logical_id = receipt.call_id.split(":attempt-", 1)[0]
+        logical_id = receipt.logical_call_id
         existing = receipts.get(logical_id)
-        if existing is None or receipt.call_number > existing.call_number:
+        if existing is None or (
+            _actual_attempt_index(receipt.call_id, logical_id),
+            receipt.call_number,
+        ) > (
+            _actual_attempt_index(existing.call_id, logical_id),
+            existing.call_number,
+        ):
             receipts[logical_id] = receipt
     return receipts
-
-
-def attempted_call_count(attempts: Sequence[CallReceipt]) -> int:
-    """Restore the monotonic call counter without reusing historical numbers."""
-    return max((attempt.call_number for attempt in attempts), default=0)
 
 
 def _write_call_receipt(run_root: pathlib.Path, receipt: CallReceipt) -> None:
@@ -1770,8 +2008,10 @@ def _not_measured_receipt(
     timestamp = _utc_now()
     return CallReceipt(
         identity=identity,
+        logical_call_id=_logical_call_id(call.call_id),
         call_id=call.call_id,
         call_number=0,
+        kind=call.kind,
         host=producer.host,
         requested_model=producer.requested_model,
         reported_model=None,
@@ -1809,8 +2049,10 @@ def _blocked_receipt(
 ) -> CallReceipt:
     return CallReceipt(
         identity=identity,
+        logical_call_id=_logical_call_id(call.call_id),
         call_id=call.call_id,
         call_number=call_number,
+        kind=call.kind,
         host=producer.host,
         requested_model=producer.requested_model,
         reported_model=None,
@@ -1833,34 +2075,62 @@ def _blocked_receipt(
     )
 
 
-def _dispatch_one(
+def _prepare_provider_call(
     call: PlannedCall,
     producer: Producer,
     case: LiveCase,
     preflight: PreflightResult,
+) -> PreparedProviderCall:
+    """Resolve CLI availability, prompt, and direct argv before charging a call."""
+    prompt = build_prompt(case, producer.host)
+    if producer.host == "codex":
+        executable = preflight.cli_info["codex"].path
+        if executable is None:
+            raise LiveMatrixError("codex CLI is unavailable")
+        argv = (executable, *build_codex_argv(preflight.repository_root, prompt)[1:])
+    elif producer.host == "cursor":
+        executable = preflight.cli_info["cursor-agent"].path
+        if executable is None:
+            raise LiveMatrixError("cursor-agent CLI is unavailable")
+        if producer.requested_model is None:
+            raise LiveMatrixError("cursor requested model is unavailable")
+        argv = (
+            executable,
+            *build_cursor_argv(
+                preflight.repository_root, producer.requested_model, prompt
+            )[1:],
+        )
+    else:
+        raise LiveMatrixError("unsupported provider host")
+    if not argv or any(not isinstance(value, str) or not value for value in argv):
+        raise LiveMatrixError("invalid argv")
+    return PreparedProviderCall(call, producer, case, prompt, tuple(argv))
+
+
+def _dispatch_one(
+    prepared: PreparedProviderCall,
+    preflight: PreflightResult,
     reservation: AttemptReservation,
 ) -> CallReceipt:
-    if reservation.call_id != call.call_id or reservation.identity != preflight.identity:
+    call = prepared.call
+    producer = prepared.producer
+    case = prepared.case
+    if (
+        reservation.call_id != call.call_id
+        or reservation.logical_call_id != _logical_call_id(call.call_id)
+        or reservation.kind != call.kind
+        or reservation.host != producer.host
+        or reservation.requested_model != producer.requested_model
+        or reservation.case_id != call.case_id
+        or reservation.repeat_index != call.repeat_index
+        or reservation.identity != preflight.identity
+    ):
         raise LiveMatrixError("dispatch attempt reservation drift")
     call_number = reservation.call_number
     started_at = _utc_now()
-    prompt_sha256 = hashlib.sha256(b"").hexdigest()
+    prompt_sha256 = hashlib.sha256(prepared.prompt.encode("utf-8")).hexdigest()
     try:
-        prompt = build_prompt(case, producer.host)
-        prompt_sha256 = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
-        if producer.host == "codex":
-            executable = preflight.cli_info["codex"].path
-            if executable is None:
-                raise LiveMatrixError("codex CLI is unavailable")
-            argv = (executable, *build_codex_argv(preflight.repository_root, prompt)[1:])
-        elif producer.host == "cursor":
-            executable = preflight.cli_info["cursor-agent"].path
-            if executable is None or producer.requested_model is None:
-                raise LiveMatrixError("cursor-agent CLI is unavailable")
-            argv = (executable, *build_cursor_argv(preflight.repository_root, producer.requested_model, prompt)[1:])
-        else:
-            raise LiveMatrixError("unsupported provider host")
-        capture = run_command(argv, cwd=preflight.repository_root)
+        capture = run_command(prepared.argv, cwd=preflight.repository_root)
     except LiveMatrixError as exc:
         return _blocked_receipt(
             call=call,
@@ -1918,8 +2188,10 @@ def _dispatch_one(
     findings = evaluate_response(case, normalized_response)
     return CallReceipt(
         identity=preflight.identity,
+        logical_call_id=_logical_call_id(call.call_id),
         call_id=call.call_id,
         call_number=call_number,
+        kind=call.kind,
         host=producer.host,
         requested_model=producer.requested_model,
         reported_model=reported_model,
@@ -1946,13 +2218,18 @@ def validate_dispatch_identity(preflight: PreflightResult) -> None:
     """Fail closed if the checked checkout or manifests drift before dispatch."""
     report_state = preflight.report_state
     if preflight.report_path is not None:
-        report_target = _validated_operations_report_path(preflight.report_path, preflight.repository_root)
-        if report_state is not None:
-            if preflight.run_root is None:
-                raise LiveMatrixError("report state requires an evidence run root")
-            _report_state_for_target(
-                preflight.run_root, preflight.repository_root, report_target, preflight.identity
-            )
+        report_lease = preflight.report_lease
+        if report_state is None or report_lease is None:
+            raise LiveMatrixError("report dispatch requires one active report lease")
+        report_path_suffix = preflight.report_path.parts[-3:]
+        if (
+            report_lease.identity != preflight.identity
+            or report_lease.report_state != report_state
+            or report_path_suffix
+            != ("docs", "operations", report_lease.target_name)
+        ):
+            raise LiveMatrixError("report lease identity, target, or state drift")
+        report_lease.validate_for_dispatch()
     if not _git_status_is_clean(
         preflight.repository_root,
         allowed_report=preflight.report_path if report_state is not None else None,
@@ -2009,19 +2286,23 @@ def dispatch_calls(
     pending = remaining_calls(plan, receipts, preflight.identity)
     producers = {producer.id: producer for producer in current_producers}
     case_by_identifier = {case.id: case for case in cases}
-    reserved_count = attempted_call_count(reservations)
+    reserved_count = len(reservations)
     result: list[CallReceipt] = []
-    eligible: list[tuple[PlannedCall, Producer, LiveCase]] = []
+    eligible: list[PreparedProviderCall] = []
     not_measured: list[CallReceipt] = []
     for call in pending:
         producer = producers.get(call.producer_id)
         case = case_by_identifier.get(call.case_id)
         if producer is None or case is None:
             raise LiveMatrixError("plan references unknown producer or case")
+        actual_call = replace(
+            call,
+            call_id=_next_actual_call_id(call.call_id, reservations, attempts),
+        )
         if producer.host == "cursor" and producer.requested_model is not None:
             if not preflight.model_availability.get(producer.requested_model, False):
                 receipt = _not_measured_receipt(
-                    call,
+                    actual_call,
                     producer,
                     preflight.identity,
                     "requested Cursor model is unavailable",
@@ -2029,54 +2310,38 @@ def dispatch_calls(
                 )
                 not_measured.append(receipt)
                 continue
-        eligible.append((call, producer, case))
+        eligible.append(_prepare_provider_call(actual_call, producer, case, preflight))
     if reserved_count + len(eligible) > max_calls:
         raise LiveMatrixError("call budget exhausted before dispatch")
     for receipt in not_measured:
         _write_call_receipt(preflight.run_root, receipt)
         result.append(receipt)
-    eligible = [
-        (
-            PlannedCall(
-                f"{call.call_id}:attempt-{receipts[call.call_id].call_number + 1}",
-                call.kind,
-                call.producer_id,
-                call.case_id,
-                call.repeat_index,
-            )
-            if call.call_id in receipts
-            else call,
-            producer,
-            case,
-        )
-        for call, producer, case in eligible
-    ]
-    reserved_eligible = tuple(
-        (
-            call,
-            producer,
-            case,
-            reserve_attempt(
+    with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as executor:
+        iterator = iter(eligible)
+        in_flight: set[concurrent.futures.Future[CallReceipt]] = set()
+
+        def reserve_and_submit(prepared: PreparedProviderCall) -> None:
+            nonlocal reserved_count
+            validate_dispatch_identity(preflight)
+            call_number = reserved_count + 1
+            reservation = reserve_attempt(
                 preflight.run_root,
                 preflight.identity,
-                call,
-                producer,
+                prepared.call,
+                prepared.producer,
                 kind="producer",
-                call_number=reserved_count + index,
+                call_number=call_number,
                 ceiling=max_calls,
-            ),
-        )
-        for index, (call, producer, case) in enumerate(eligible, start=1)
-    )
-    with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as executor:
-        iterator = iter(reserved_eligible)
-        in_flight: set[concurrent.futures.Future[CallReceipt]] = set()
+            )
+            reserved_count = call_number
+            in_flight.add(executor.submit(_dispatch_one, prepared, preflight, reservation))
+
         for _ in range(jobs):
             try:
-                call, producer, case, reservation = next(iterator)
+                prepared = next(iterator)
             except StopIteration:
                 break
-            in_flight.add(executor.submit(_dispatch_one, call, producer, case, preflight, reservation))
+            reserve_and_submit(prepared)
         while in_flight:
             completed, _ = concurrent.futures.wait(
                 in_flight, return_when=concurrent.futures.FIRST_COMPLETED
@@ -2087,10 +2352,10 @@ def dispatch_calls(
                 _write_call_receipt(preflight.run_root, receipt)
                 result.append(receipt)
                 try:
-                    call, producer, case, reservation = next(iterator)
+                    prepared = next(iterator)
                 except StopIteration:
                     continue
-                in_flight.add(executor.submit(_dispatch_one, call, producer, case, preflight, reservation))
+                reserve_and_submit(prepared)
     return tuple(result)
 
 
@@ -2464,8 +2729,10 @@ def _reviewer_receipt(
 ) -> CallReceipt:
     return CallReceipt(
         identity=identity,
+        logical_call_id=_logical_call_id(call.call_id),
         call_id=call.call_id,
         call_number=call_number,
+        kind=call.kind,
         host=producer.host,
         requested_model=producer.requested_model,
         reported_model=reported_model,
@@ -2502,7 +2769,7 @@ def dispatch_reviewer_calls(
     reservations = _load_attempt_reservations(preflight.run_root, preflight.identity)
     _validate_receipt_reservations(attempts, reservations, preflight.identity)
     latest = _load_receipts(preflight.run_root)
-    reserved_count = attempted_call_count(reservations)
+    reserved_count = len(reservations)
     result: list[CallReceipt] = []
     responses: list[ReviewResponse] = []
     for reviewer in build_reviewer_plan(samples):
@@ -2511,7 +2778,7 @@ def dispatch_reviewer_calls(
         if existing is not None and existing.status in RESUME_SKIP_STATUSES:
             result.append(existing)
             continue
-        call_id = logical_id if existing is None else f"{logical_id}:attempt-{existing.call_number + 1}"
+        call_id = _next_actual_call_id(logical_id, reservations, attempts)
         call, producer = _reviewer_call(reviewer, call_id)
         if not preflight.model_availability.get(reviewer.requested_model, False):
             receipt = _not_measured_receipt(
@@ -2521,10 +2788,23 @@ def dispatch_reviewer_calls(
                 "requested Cursor reviewer model is unavailable",
             )
             _write_call_receipt(preflight.run_root, receipt)
+            attempts = (*attempts, receipt)
             result.append(receipt)
             continue
+        executable = preflight.cli_info["cursor-agent"].path
+        if executable is None:
+            raise LiveMatrixError("cursor-agent CLI is unavailable")
+        argv = (
+            executable,
+            *build_cursor_argv(
+                preflight.repository_root, reviewer.requested_model, reviewer.prompt
+            )[1:],
+        )
+        if not argv or any(not isinstance(value, str) or not value for value in argv):
+            raise LiveMatrixError("invalid argv")
+        validate_dispatch_identity(preflight)
         call_number = reserved_count + 1
-        reserve_attempt(
+        reservation = reserve_attempt(
             preflight.run_root,
             preflight.identity,
             call,
@@ -2533,17 +2813,12 @@ def dispatch_reviewer_calls(
             call_number=call_number,
             ceiling=max_calls,
         )
+        reservations = (*reservations, reservation)
         reserved_count = call_number
         started_at = _utc_now()
         prompt_sha256 = hashlib.sha256(reviewer.prompt.encode("utf-8")).hexdigest()
         try:
-            executable = preflight.cli_info["cursor-agent"].path
-            if executable is None:
-                raise LiveMatrixError("cursor-agent CLI is unavailable")
-            capture = run_command(
-                (executable, *build_cursor_argv(preflight.repository_root, reviewer.requested_model, reviewer.prompt)[1:]),
-                cwd=preflight.repository_root,
-            )
+            capture = run_command(argv, cwd=preflight.repository_root)
         except LiveMatrixError as exc:
             receipt = _blocked_receipt(
                 call=call,
@@ -2555,6 +2830,7 @@ def dispatch_reviewer_calls(
                 message=str(exc),
             )
             _write_call_receipt(preflight.run_root, receipt)
+            attempts = (*attempts, receipt)
             result.append(receipt)
             continue
         raw_paths = (
@@ -2576,6 +2852,7 @@ def dispatch_reviewer_calls(
                 raw_paths=raw_paths,
             )
             _write_call_receipt(preflight.run_root, receipt)
+            attempts = (*attempts, receipt)
             result.append(receipt)
             continue
         try:
@@ -2593,6 +2870,7 @@ def dispatch_reviewer_calls(
                 raw_paths=raw_paths,
             )
             _write_call_receipt(preflight.run_root, receipt)
+            attempts = (*attempts, receipt)
             result.append(receipt)
             continue
         receipt = _reviewer_receipt(
@@ -2614,6 +2892,7 @@ def dispatch_reviewer_calls(
             receipt = replace(receipt, raw_paths=receipt.raw_paths + (normalized_path,))
             responses.append(parsed)
         _write_call_receipt(preflight.run_root, receipt)
+        attempts = (*attempts, receipt)
         result.append(receipt)
     return tuple(result), tuple(responses)
 
@@ -3004,26 +3283,21 @@ def _git_report_facts(repository_root: pathlib.Path, branch: str, head: str) -> 
 def _latest_by_logical_id(receipts: Sequence[CallReceipt]) -> dict[str, CallReceipt]:
     latest: dict[str, CallReceipt] = {}
     for receipt in receipts:
-        logical_id = receipt.call_id.split(":attempt-", 1)[0]
+        logical_id = receipt.logical_call_id
         previous = latest.get(logical_id)
-        if previous is None or receipt.call_number >= previous.call_number:
+        if previous is None or (
+            _actual_attempt_index(receipt.call_id, logical_id),
+            receipt.call_number,
+        ) >= (
+            _actual_attempt_index(previous.call_id, logical_id),
+            previous.call_number,
+        ):
             latest[logical_id] = receipt
     return latest
 
 
-def _all_attempts_with_new(
-    run_root: pathlib.Path | None, new_receipts: Sequence[CallReceipt]
-) -> tuple[CallReceipt, ...]:
-    persisted = _load_receipt_attempts(run_root) if isinstance(run_root, pathlib.Path) else ()
-    attempts: dict[tuple[str, int], CallReceipt] = {
-        (receipt.call_id, receipt.call_number): receipt for receipt in persisted
-    }
-    attempts.update({(receipt.call_id, receipt.call_number): receipt for receipt in new_receipts})
-    return tuple(attempts.values())
-
-
 def _is_reviewer_receipt(receipt: CallReceipt) -> bool:
-    return any(receipt.call_id.startswith(f"{reviewer_id}:") for reviewer_id, _ in REVIEWER_MODELS)
+    return receipt.kind == "reviewer"
 
 
 def build_report_input(
@@ -3042,6 +3316,11 @@ def build_report_input(
     git_facts = preflight.git_facts or _git_report_facts(
         preflight.repository_root, preflight.repository_branch, preflight.identity.repository_head
     )
+    report_date = datetime.date.today().isoformat()
+    if preflight.report_path is not None:
+        if not OPERATIONS_REPORT_RE.fullmatch(preflight.report_path.name):
+            raise LiveMatrixError("report input target is not a dated operations report")
+        report_date = preflight.report_path.name[:10]
     return ReportInput(
         identity=preflight.identity,
         producer_receipts=tuple(producer_receipts),
@@ -3065,7 +3344,7 @@ def build_report_input(
         responses={},
         cases={case.id: case for case in cases},
         review_responses=tuple(review_responses),
-        report_date=datetime.date.today().isoformat(),
+        report_date=report_date,
         cli_versions=cli_versions,
         skill_version=_skill_version(preflight.source_skill_root),
         case_counts=case_counts,
@@ -3168,12 +3447,18 @@ def _write_bytes(descriptor: int, payload: bytes) -> None:
         offset += written
 
 
-@contextlib.contextmanager
-def _operations_directory(repository_root: pathlib.Path, *, create: bool) -> Any:
-    """Hold the real docs/operations inode while reading or mutating a report."""
+def _directory_open_flags() -> int:
     flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
+    return flags
+
+
+def _open_operations_directory_fd(
+    repository_root: pathlib.Path, *, create: bool
+) -> int:
+    """Return one caller-owned docs/operations FD using Darwin-safe stdlib calls."""
+    flags = _directory_open_flags()
     try:
         root_fd = os.open(repository_root, flags)
     except OSError as exc:
@@ -3197,99 +3482,140 @@ def _operations_directory(repository_root: pathlib.Path, *, create: bool) -> Any
             if current_fd != root_fd:
                 os.close(current_fd)
             current_fd = next_fd
-        yield current_fd
-    finally:
-        if current_fd != root_fd:
-            os.close(current_fd)
         os.close(root_fd)
+        root_fd = -1
+        result = current_fd
+        current_fd = -1
+        return result
+    finally:
+        if current_fd >= 0 and current_fd != root_fd:
+            os.close(current_fd)
+        if root_fd >= 0:
+            os.close(root_fd)
 
 
-def _report_filename(target: pathlib.Path, repository_root: pathlib.Path) -> str:
-    checked = _validated_operations_report_path(target, repository_root)
-    return checked.name
+def open_report_lease(
+    path: pathlib.Path,
+    repository_root: pathlib.Path,
+    *,
+    run_root: pathlib.Path,
+    identity: RunIdentity,
+) -> ReportLease:
+    """Open the one directory lease which owns every report operation in a run."""
+    try:
+        canonical_root = repository_root.resolve(strict=True)
+    except OSError as exc:
+        raise LiveMatrixError("cannot resolve repository root for report") from exc
+    target = _validated_operations_report_path(path, canonical_root)
+    directory_fd = _open_operations_directory_fd(canonical_root, create=True)
+    try:
+        opened = os.fstat(directory_fd)
+        if not stat.S_ISDIR(opened.st_mode):
+            raise LiveMatrixError("report lease directory is unsafe")
+        relative_target = target.relative_to(canonical_root).as_posix()
+        return ReportLease(
+            repository_root=canonical_root,
+            target=target,
+            run_root=run_root,
+            identity=identity,
+            directory_fd=directory_fd,
+            directory_dev=opened.st_dev,
+            directory_inode=opened.st_ino,
+            target_name=target.name,
+            relative_target=relative_target,
+        )
+    except BaseException:
+        os.close(directory_fd)
+        raise
 
 
-def _read_operations_report(repository_root: pathlib.Path, target: pathlib.Path) -> bytes:
-    name = _report_filename(target, repository_root)
+def _require_open_report_lease(lease: ReportLease) -> None:
+    if not isinstance(lease, ReportLease) or lease.closed:
+        raise LiveMatrixError("report lease is closed")
+    opened = os.fstat(lease.directory_fd)
+    if (
+        not stat.S_ISDIR(opened.st_mode)
+        or (opened.st_dev, opened.st_ino)
+        != (lease.directory_dev, lease.directory_inode)
+    ):
+        raise LiveMatrixError("report lease directory inode drift")
+
+
+def _read_report_from_lease(
+    lease: ReportLease, *, require_expected_inode: bool
+) -> tuple[bytes, os.stat_result]:
+    _require_open_report_lease(lease)
     flags = os.O_RDONLY
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
-    with _operations_directory(repository_root, create=False) as directory_fd:
-        try:
-            descriptor = os.open(name, flags, dir_fd=directory_fd)
-        except OSError as exc:
-            raise LiveMatrixError("owned operations report is unavailable") from exc
-        try:
-            opened = os.fstat(descriptor)
-            if not stat.S_ISREG(opened.st_mode):
-                raise LiveMatrixError("owned operations report is unsafe")
-            chunks: list[bytes] = []
-            while True:
-                chunk = os.read(descriptor, 65_536)
-                if not chunk:
-                    break
-                chunks.append(chunk)
-            return b"".join(chunks)
-        finally:
-            os.close(descriptor)
+    try:
+        descriptor = os.open(lease.target_name, flags, dir_fd=lease.directory_fd)
+    except OSError as exc:
+        raise LiveMatrixError("owned operations report is unavailable") from exc
+    try:
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode):
+            raise LiveMatrixError("owned operations report is unsafe")
+        if require_expected_inode and (
+            lease.target_dev is None
+            or lease.target_inode is None
+            or (opened.st_dev, opened.st_ino)
+            != (lease.target_dev, lease.target_inode)
+        ):
+            raise LiveMatrixError("owned operations report inode drift")
+        if opened.st_size > MAX_OPERATIONS_REPORT_BYTES:
+            raise LiveMatrixError("owned operations report exceeds bound")
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = os.read(descriptor, min(65_536, MAX_OPERATIONS_REPORT_BYTES + 1 - total))
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_OPERATIONS_REPORT_BYTES:
+                raise LiveMatrixError("owned operations report exceeds bound")
+            chunks.append(chunk)
+        return b"".join(chunks), opened
+    finally:
+        os.close(descriptor)
 
 
-def _create_operations_report(repository_root: pathlib.Path, target: pathlib.Path, payload: bytes) -> None:
-    name = _report_filename(target, repository_root)
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-    with _operations_directory(repository_root, create=True) as directory_fd:
-        try:
-            descriptor = os.open(name, flags, 0o644, dir_fd=directory_fd)
-        except FileExistsError as exc:
-            raise LiveMatrixError("operations report already exists without matching run state") from exc
-        except OSError as exc:
-            raise LiveMatrixError("cannot create operations report") from exc
-        try:
-            opened = os.fstat(descriptor)
-            if not stat.S_ISREG(opened.st_mode):
-                raise LiveMatrixError("operations report target is unsafe")
-            os.fchmod(descriptor, 0o644)
-            _write_bytes(descriptor, payload)
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
-        os.fsync(directory_fd)
+def _validate_report_lease_current_path(lease: ReportLease) -> None:
+    _require_open_report_lease(lease)
+    try:
+        current_fd = _open_operations_directory_fd(
+            lease.repository_root, create=False
+        )
+    except LiveMatrixError as exc:
+        raise LiveMatrixError("report lease current path inode drift") from exc
+    try:
+        current = os.fstat(current_fd)
+        if (current.st_dev, current.st_ino) != (
+            lease.directory_dev,
+            lease.directory_inode,
+        ):
+            raise LiveMatrixError("report lease current path inode drift")
+    finally:
+        os.close(current_fd)
 
 
-def _replace_operations_report(repository_root: pathlib.Path, target: pathlib.Path, payload: bytes) -> None:
-    name = _report_filename(target, repository_root)
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-    temporary = f".{name}.{secrets.token_hex(16)}.partial"
-    with _operations_directory(repository_root, create=False) as directory_fd:
-        try:
-            descriptor = os.open(temporary, flags, 0o644, dir_fd=directory_fd)
-        except OSError as exc:
-            raise LiveMatrixError("cannot create report staging file") from exc
-        published = False
-        try:
-            os.fchmod(descriptor, 0o644)
-            _write_bytes(descriptor, payload)
-            os.fsync(descriptor)
-            try:
-                existing = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
-            except OSError as exc:
-                raise LiveMatrixError("owned operations report is unavailable") from exc
-            if not stat.S_ISREG(existing.st_mode):
-                raise LiveMatrixError("owned operations report is unsafe")
-            os.replace(temporary, name, src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
-            published = True
-            os.fsync(directory_fd)
-        finally:
-            os.close(descriptor)
-            if not published:
-                try:
-                    os.unlink(temporary, dir_fd=directory_fd)
-                except FileNotFoundError:
-                    pass
+def _validate_report_lease(
+    lease: ReportLease, *, require_current_path: bool
+) -> None:
+    _require_open_report_lease(lease)
+    if lease.report_state is None:
+        raise LiveMatrixError("report lease has no owned state")
+    if require_current_path:
+        _validate_report_lease_current_path(lease)
+    durable_state = _load_report_state(lease.run_root)
+    if durable_state != lease.report_state:
+        raise LiveMatrixError("report lease durable state drift")
+    _validate_report_state_target(
+        durable_state, lease.repository_root, lease.target, lease.identity
+    )
+    payload, _ = _read_report_from_lease(lease, require_expected_inode=True)
+    if hashlib.sha256(payload).hexdigest() != durable_state.sha256:
+        raise LiveMatrixError("owned operations report hash drift")
 
 
 def _write_report_state(run_root: pathlib.Path, state: ReportState, *, replace_existing: bool) -> None:
@@ -3300,69 +3626,107 @@ def _write_report_state(run_root: pathlib.Path, state: ReportState, *, replace_e
     _atomic_replace_file(path, _canonical_json_bytes(state.as_json()), mode=0o600)
 
 
-def reserve_operations_report(
-    path: pathlib.Path,
-    repository_root: pathlib.Path,
-    *,
-    run_root: pathlib.Path,
-    identity: RunIdentity,
-) -> ReportState:
+def reserve_operations_report(lease: ReportLease) -> ReportState:
     """Reserve a report before dispatch, or validate the exact owned reservation."""
-    try:
-        repository_root = repository_root.resolve(strict=True)
-    except OSError as exc:
-        raise LiveMatrixError("cannot resolve repository root for report") from exc
-    target = _validated_operations_report_path(path, repository_root)
-    existing_state = _load_report_state(run_root)
+    _require_open_report_lease(lease)
+    existing_state = _load_report_state(lease.run_root)
     if existing_state is not None:
-        return _report_state_for_target(run_root, repository_root, target, identity)
+        _validate_report_state_target(
+            existing_state, lease.repository_root, lease.target, lease.identity
+        )
+        payload, opened = _read_report_from_lease(
+            lease, require_expected_inode=False
+        )
+        if hashlib.sha256(payload).hexdigest() != existing_state.sha256:
+            raise LiveMatrixError("owned operations report hash drift")
+        lease.report_state = existing_state
+        lease.target_dev = opened.st_dev
+        lease.target_inode = opened.st_ino
+        lease.validate_for_dispatch()
+        return existing_state
     if len(PENDING_OPERATIONS_REPORT) > 1024:
         raise LiveMatrixError("pending operations report exceeds bound")
-    _create_operations_report(repository_root, target, PENDING_OPERATIONS_REPORT)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
     try:
-        relative = target.relative_to(repository_root).as_posix()
-    except ValueError as exc:
-        raise LiveMatrixError("report target escapes repository") from exc
-    state = ReportState(identity, relative, hashlib.sha256(PENDING_OPERATIONS_REPORT).hexdigest())
-    _write_report_state(run_root, state, replace_existing=False)
-    return _report_state_for_target(run_root, repository_root, target, identity)
-
-
-def write_operations_report(
-    path: pathlib.Path,
-    report: str,
-    repository_root: pathlib.Path,
-    *,
-    run_root: pathlib.Path | None = None,
-    identity: RunIdentity | None = None,
-    report_state: ReportState | None = None,
-) -> None:
-    """Safely publish or atomically update only the report owned by this run."""
-    try:
-        repository_root = repository_root.resolve(strict=True)
-    except OSError as exc:
-        raise LiveMatrixError("cannot resolve repository root for report") from exc
-    target = _validated_operations_report_path(path, repository_root)
-    payload = report.encode("utf-8")
-    if report_state is not None:
-        if run_root is None or identity is None:
-            raise LiveMatrixError("report state update requires run identity")
-        _report_state_for_target(run_root, repository_root, target, identity)
-        _replace_operations_report(repository_root, target, payload)
-    else:
-        _create_operations_report(repository_root, target, payload)
-    if run_root is not None or identity is not None:
-        if run_root is None or identity is None:
-            raise LiveMatrixError("report state requires run identity")
-        try:
-            relative = target.relative_to(repository_root).as_posix()
-        except ValueError as exc:
-            raise LiveMatrixError("report target escapes repository") from exc
-        _write_report_state(
-            run_root,
-            ReportState(identity, relative, hashlib.sha256(payload).hexdigest()),
-            replace_existing=report_state is not None,
+        descriptor = os.open(
+            lease.target_name, flags, 0o644, dir_fd=lease.directory_fd
         )
+    except FileExistsError as exc:
+        raise LiveMatrixError(
+            "operations report already exists without matching run state"
+        ) from exc
+    except OSError as exc:
+        raise LiveMatrixError("cannot create operations report") from exc
+    try:
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode):
+            raise LiveMatrixError("operations report target is unsafe")
+        os.fchmod(descriptor, 0o644)
+        _write_bytes(descriptor, PENDING_OPERATIONS_REPORT)
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    os.fsync(lease.directory_fd)
+    state = ReportState(
+        lease.identity,
+        lease.relative_target,
+        hashlib.sha256(PENDING_OPERATIONS_REPORT).hexdigest(),
+    )
+    lease.target_dev = opened.st_dev
+    lease.target_inode = opened.st_ino
+    _write_report_state(lease.run_root, state, replace_existing=False)
+    lease.report_state = state
+    lease.validate_for_dispatch()
+    return state
+
+
+def write_operations_report(lease: ReportLease, report: str) -> None:
+    """Safely publish or atomically update only the report owned by this run."""
+    _validate_report_lease(lease, require_current_path=True)
+    payload = report.encode("utf-8")
+    if len(payload) > MAX_OPERATIONS_REPORT_BYTES:
+        raise LiveMatrixError("operations report exceeds bound")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    temporary = f".{lease.target_name}.{secrets.token_hex(16)}.partial"
+    try:
+        descriptor = os.open(temporary, flags, 0o644, dir_fd=lease.directory_fd)
+    except OSError as exc:
+        raise LiveMatrixError("cannot create report staging file") from exc
+    try:
+        os.fchmod(descriptor, 0o644)
+        _write_bytes(descriptor, payload)
+        os.fsync(descriptor)
+        _validate_report_lease_current_path(lease)
+        _validate_report_lease(lease, require_current_path=False)
+        os.replace(
+            temporary,
+            lease.target_name,
+            src_dir_fd=lease.directory_fd,
+            dst_dir_fd=lease.directory_fd,
+        )
+        os.fsync(lease.directory_fd)
+        written, opened = _read_report_from_lease(
+            lease, require_expected_inode=False
+        )
+        if written != payload:
+            raise LiveMatrixError("published operations report content mismatch")
+        state = ReportState(
+            lease.identity, lease.relative_target, hashlib.sha256(payload).hexdigest()
+        )
+        _write_report_state(lease.run_root, state, replace_existing=True)
+        lease.target_dev = opened.st_dev
+        lease.target_inode = opened.st_ino
+        lease.report_state = state
+    finally:
+        os.close(descriptor)
+        try:
+            os.unlink(temporary, dir_fd=lease.directory_fd)
+        except FileNotFoundError:
+            pass
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -3450,6 +3814,7 @@ def main(argv: list[str] | None = None) -> int:
     evidence_root = args.evidence_root or (
         repository_root / ".superpowers" / "kws-korean-writing-editor" / "live"
     )
+    report_lease: ReportLease | None = None
     try:
         preflight = validate_preflight(
             source_skill_root=source_root,
@@ -3474,14 +3839,16 @@ def main(argv: list[str] | None = None) -> int:
             if report_path is not None:
                 if preflight.run_root is None:
                     raise LiveMatrixError("report reservation requires an evidence run root")
+                report_lease = open_report_lease(
+                    report_path,
+                    preflight.repository_root,
+                    run_root=preflight.run_root,
+                    identity=preflight.identity,
+                )
                 preflight = replace(
                     preflight,
-                    report_state=reserve_operations_report(
-                        report_path,
-                        preflight.repository_root,
-                        run_root=preflight.run_root,
-                        identity=preflight.identity,
-                    ),
+                    report_state=reserve_operations_report(report_lease),
+                    report_lease=report_lease,
                 )
             cases = load_live_cases(source_root / "evals" / "live_cases.json")
             full_plan = build_producer_plan(cases, build_producers())
@@ -3519,8 +3886,12 @@ def main(argv: list[str] | None = None) -> int:
                 samples = ()
                 dispatched_reviewers, new_review_responses = (), ()
             reservations = _load_attempt_reservations(preflight.run_root, preflight.identity)
+            persisted_attempts = _load_receipt_attempts(preflight.run_root)
+            _validate_receipt_reservations(
+                persisted_attempts, reservations, preflight.identity
+            )
             durable_receipts = _latest_by_logical_id(
-                (*_load_receipts(preflight.run_root).values(), *dispatched_producers, *dispatched_reviewers)
+                (*persisted_attempts, *dispatched_producers, *dispatched_reviewers)
             )
             producer_receipts = tuple(
                 receipt for receipt in durable_receipts.values() if not _is_reviewer_receipt(receipt)
@@ -3534,6 +3905,8 @@ def main(argv: list[str] | None = None) -> int:
             producer_attempted_calls = sum(reservation.kind == "producer" for reservation in reservations)
             reviewer_attempted_calls = sum(reservation.kind == "reviewer" for reservation in reservations)
             if report_path is not None:
+                if report_lease is None:
+                    raise LiveMatrixError("report execution lost its active lease")
                 report_input = build_report_input(
                     preflight,
                     cases,
@@ -3543,14 +3916,7 @@ def main(argv: list[str] | None = None) -> int:
                     producer_attempted_calls=producer_attempted_calls,
                     reviewer_attempted_calls=reviewer_attempted_calls,
                 )
-                write_operations_report(
-                    report_path,
-                    render_operations_report(report_input),
-                    preflight.repository_root,
-                    run_root=preflight.run_root,
-                    identity=preflight.identity,
-                    report_state=preflight.report_state,
-                )
+                write_operations_report(report_lease, render_operations_report(report_input))
             payload = {
                 "producer_attempted_calls": producer_attempted_calls,
                 "reviewer_attempted_calls": reviewer_attempted_calls,
@@ -3567,6 +3933,9 @@ def main(argv: list[str] | None = None) -> int:
     except LiveMatrixError as exc:
         print(json.dumps({"error": str(exc)}, sort_keys=True), file=sys.stderr)
         return 1
+    finally:
+        if report_lease is not None:
+            report_lease.close()
     print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
     return 0
 
