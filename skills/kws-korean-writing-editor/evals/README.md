@@ -34,6 +34,14 @@ crash-only reservation remains charged and resumable, but it cannot support a
 successful packet or report until that logical call has a durable terminal
 receipt. Remediation dispatches producers only and has no reviewer plan.
 
+Dispatcher returns are completion claims only: every returned receipt must
+match the exact canonical bytes of one reloaded durable receipt, and the return
+value never contributes evidence. Each normalized producer or reviewer body
+must be owned by the receipt's exact positive call path and match its
+`response_sha256`. A reviewer receipt is reusable only when its `prompt_sha256`
+matches the current review packet; stale, missing, deleted, or mutable evidence
+fails closed before packet or report success.
+
 A missing executable or another pre-invocation prerequisite stops before
 reservation and consumes zero calls; the run remains blocked. A requested
 Cursor model known to be unavailable emits an honest zero-provider
