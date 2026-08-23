@@ -18,8 +18,8 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, replace
 from typing import Any
 
 
@@ -210,6 +210,7 @@ class CallReceipt:
     requested_model: str | None
     reported_model: str | None
     case_id: str
+    band: str | None
     repeat_index: int
     prompt_sha256: str
     started_at: str
@@ -233,6 +234,11 @@ class CallReceipt:
         status: str = "verified",
         **overrides: Any,
     ) -> "CallReceipt":
+        finding_code = overrides.pop("finding_code", None)
+        if finding_code is not None:
+            if not isinstance(finding_code, str) or not finding_code:
+                raise TypeError("finding_code must be a non-empty string")
+            overrides["findings"] = (Finding(finding_code, "synthetic deterministic finding"),)
         values: dict[str, Any] = {
             "identity": identity if identity is not None else RunIdentity.for_test(),
             "call_id": call_id,
@@ -241,6 +247,7 @@ class CallReceipt:
             "requested_model": "test-model",
             "reported_model": "test-model",
             "case_id": "test-case",
+            "band": None,
             "repeat_index": 1,
             "prompt_sha256": "0" * 64,
             "started_at": "1970-01-01T00:00:00Z",
@@ -267,6 +274,7 @@ class CallReceipt:
             "call_id": self.call_id,
             "call_number": self.call_number,
             "case_id": self.case_id,
+            "band": self.band,
             "duration_ms": self.duration_ms,
             "exit_code": self.exit_code,
             "findings": [
@@ -1283,6 +1291,7 @@ def _receipt_from_json(payload: Any) -> CallReceipt:
             requested_model=payload["requested_model"],
             reported_model=payload["reported_model"],
             case_id=payload["case_id"],
+            band=payload.get("band"),
             repeat_index=payload["repeat_index"],
             prompt_sha256=payload["prompt_sha256"],
             started_at=payload["started_at"],
@@ -1357,7 +1366,11 @@ def _write_call_receipt(run_root: pathlib.Path, receipt: CallReceipt) -> None:
 
 
 def _not_measured_receipt(
-    call: PlannedCall, producer: Producer, identity: RunIdentity, reason: str
+    call: PlannedCall,
+    producer: Producer,
+    identity: RunIdentity,
+    reason: str,
+    band: str | None = None,
 ) -> CallReceipt:
     timestamp = _utc_now()
     return CallReceipt(
@@ -1368,6 +1381,7 @@ def _not_measured_receipt(
         requested_model=producer.requested_model,
         reported_model=None,
         case_id=call.case_id,
+        band=band,
         repeat_index=call.repeat_index,
         prompt_sha256=hashlib.sha256(b"").hexdigest(),
         started_at=timestamp,
@@ -1396,6 +1410,7 @@ def _blocked_receipt(
     message: str,
     capture: CommandCapture | None = None,
     raw_paths: tuple[str, ...] = (),
+    band: str | None = None,
 ) -> CallReceipt:
     return CallReceipt(
         identity=identity,
@@ -1405,6 +1420,7 @@ def _blocked_receipt(
         requested_model=producer.requested_model,
         reported_model=None,
         case_id=call.case_id,
+        band=band,
         repeat_index=call.repeat_index,
         prompt_sha256=prompt_sha256,
         started_at=started_at,
@@ -1457,6 +1473,7 @@ def _dispatch_one(
             prompt_sha256=prompt_sha256,
             started_at=started_at,
             message=str(exc),
+            band=case.band,
         )
 
     raw_paths = (
@@ -1478,6 +1495,7 @@ def _dispatch_one(
             message="provider returned non-zero exit status",
             capture=capture,
             raw_paths=raw_paths,
+            band=case.band,
         )
     try:
         if producer.host == "codex":
@@ -1495,6 +1513,7 @@ def _dispatch_one(
             message=str(exc),
             capture=capture,
             raw_paths=raw_paths,
+            band=case.band,
         )
     findings = evaluate_response(case, response)
     return CallReceipt(
@@ -1505,6 +1524,7 @@ def _dispatch_one(
         requested_model=producer.requested_model,
         reported_model=reported_model,
         case_id=call.case_id,
+        band=case.band,
         repeat_index=call.repeat_index,
         prompt_sha256=prompt_sha256,
         started_at=started_at,
@@ -1584,7 +1604,11 @@ def dispatch_calls(
         if producer.host == "cursor" and producer.requested_model is not None:
             if not preflight.model_availability.get(producer.requested_model, False):
                 receipt = _not_measured_receipt(
-                    call, producer, preflight.identity, "requested Cursor model is unavailable"
+                    call,
+                    producer,
+                    preflight.identity,
+                    "requested Cursor model is unavailable",
+                    case.band,
                 )
                 not_measured.append(receipt)
                 continue
@@ -1634,6 +1658,460 @@ def dispatch_calls(
                     continue
                 in_flight.add(executor.submit(_dispatch_one, call, producer, case, preflight, budget))
     return tuple(result)
+
+
+REVIEWER_MODELS = (
+    ("reviewer-claude", "claude-sonnet-5-thinking-high"),
+    ("reviewer-gemini", "gemini-3.7-flash-high"),
+    ("reviewer-grok", "cursor-grok-4.6-high"),
+)
+REVIEW_CONTROL_BANDS = ("valid-mode", "preservation", "noop-hold", "near-miss")
+STATUS_PRIORITY = {
+    "not_measured": 0,
+    "verified": 1,
+    "partially_verified": 2,
+    "blocked": 3,
+    "failed": 4,
+}
+REVIEW_IDENTITY_RE = re.compile(
+    r"\b(?:codex-direct|cursor-[A-Za-z0-9.-]+|claude-[A-Za-z0-9.-]+|"
+    r"gemini-[A-Za-z0-9.-]+|grok-[A-Za-z0-9.-]+|kimi-[A-Za-z0-9.-]+|glm-[A-Za-z0-9.-]+)\b"
+)
+
+
+@dataclass(frozen=True)
+class ReviewSample:
+    """A bounded anonymous review candidate, never a raw provider transcript."""
+
+    candidate_id: str
+    is_failure: bool
+    missing_control: bool
+    case_id: str
+    band: str
+    request: str
+    source: str
+    candidate: str
+    hard_findings: tuple[str, ...]
+    axes: tuple[str, ...]
+    response_sha256: str | None
+
+
+@dataclass(frozen=True)
+class ReviewIssue:
+    axis: str
+    severity: str
+    reason: str
+
+
+@dataclass(frozen=True)
+class ReviewAssessment:
+    candidate_id: str
+    issues: tuple[ReviewIssue, ...]
+    assessment: str
+
+
+@dataclass(frozen=True)
+class ReviewResponse:
+    samples: tuple[ReviewAssessment, ...]
+    packet_limitations: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ReviewerCall:
+    reviewer_id: str
+    requested_model: str
+    prompt: str
+
+
+@dataclass(frozen=True)
+class ReportInput:
+    """Facts available to the renderer; raw streams are deliberately absent."""
+
+    identity: RunIdentity
+    producer_receipts: tuple[CallReceipt, ...]
+    reviewer_receipts: tuple[CallReceipt, ...]
+    branch: str
+    head: str
+    source_skill_hash: str
+    installed_skill_hash: str
+    producer_attempted_calls: int
+    reviewer_attempted_calls: int
+    approved_baseline_ceiling: int
+    approved_total_ceiling: int
+    verification_results: tuple[tuple[str, str], ...]
+    git_state: str
+    installation_state: str
+    producer_ids: tuple[str, ...]
+    responses: Mapping[str, str]
+    cases: Mapping[str, LiveCase]
+    review_responses: tuple[ReviewResponse, ...]
+    report_date: str
+    supervisory_classification: str = "pending_adjudication"
+
+    @classmethod
+    def for_test(cls, *, receipts: Sequence[CallReceipt], **overrides: Any) -> "ReportInput":
+        identity = RunIdentity.for_test(producer_ids=("test-producer",))
+        values: dict[str, Any] = {
+            "identity": identity,
+            "producer_receipts": tuple(receipts),
+            "reviewer_receipts": (),
+            "branch": "test-branch",
+            "head": "test-head",
+            "source_skill_hash": "test-source-hash",
+            "installed_skill_hash": "test-installed-hash",
+            "producer_attempted_calls": sum(receipt.call_number > 0 for receipt in receipts),
+            "reviewer_attempted_calls": 0,
+            "approved_baseline_ceiling": BASELINE_CALL_CEILING,
+            "approved_total_ceiling": GLOBAL_CALL_CEILING,
+            "verification_results": (("synthetic renderer", "partially_verified"),),
+            "git_state": "clean synthetic checkout",
+            "installation_state": "not installed (synthetic)",
+            "producer_ids": ("test-producer",),
+            "responses": {},
+            "cases": {},
+            "review_responses": (),
+            "report_date": "2026-08-23",
+            "supervisory_classification": "pending_adjudication",
+        }
+        unknown = set(overrides) - set(values)
+        if unknown:
+            raise TypeError(f"unknown ReportInput test override: {sorted(unknown)[0]}")
+        values.update(overrides)
+        return cls(**values)
+
+
+def _review_excerpt(value: str) -> str:
+    """Redact known secrets and identities, then cap at 240 UTF-8 bytes."""
+    redacted = normalize_response(value)
+    for pattern in SECRET_PATTERNS:
+        redacted = pattern.sub("[REDACTED]", redacted)
+    redacted = REVIEW_IDENTITY_RE.sub("[REDACTED]", redacted)
+    encoded = redacted.encode("utf-8")
+    if len(encoded) <= 240:
+        return redacted
+    limit = 237
+    clipped: list[str] = []
+    used = 0
+    for character in redacted:
+        width = len(character.encode("utf-8"))
+        if used + width > limit:
+            break
+        clipped.append(character)
+        used += width
+    return "".join(clipped) + "..."
+
+
+def _failure_priority(code: str) -> tuple[int, str]:
+    lowered = code.lower()
+    for position, marker in enumerate(("literal", "negation", "attribution", "embedded")):
+        if marker in lowered:
+            return position, code
+    return 4, code
+
+
+def _case_for_sample(receipt: CallReceipt, cases: Mapping[str, LiveCase]) -> LiveCase | None:
+    return cases.get(receipt.case_id)
+
+
+def _sample_from_receipt(
+    receipt: CallReceipt | None,
+    *,
+    candidate_id: str,
+    is_failure: bool,
+    band: str,
+    responses: Mapping[str, str],
+    cases: Mapping[str, LiveCase],
+    finding_code: str | None = None,
+) -> ReviewSample:
+    if receipt is None:
+        return ReviewSample(
+            candidate_id=candidate_id,
+            is_failure=False,
+            missing_control=True,
+            case_id="not-measured",
+            band=band,
+            request="[not measured control]",
+            source="[not measured control]",
+            candidate="[not measured control]",
+            hard_findings=("control_not_measured",),
+            axes=(),
+            response_sha256=None,
+        )
+    case = _case_for_sample(receipt, cases)
+    hard_findings = (
+        (finding_code,)
+        if finding_code is not None
+        else tuple(finding.code for finding in receipt.findings)
+    )
+    return ReviewSample(
+        candidate_id=candidate_id,
+        is_failure=is_failure,
+        missing_control=False,
+        case_id=receipt.case_id,
+        band=band,
+        request=_review_excerpt(case.request if case is not None else "[case request unavailable]"),
+        source=_review_excerpt(case.source if case is not None else "[case source unavailable]"),
+        candidate=_review_excerpt(responses.get(receipt.call_id, "[response unavailable]")),
+        hard_findings=hard_findings,
+        axes=case.review_axes if case is not None else (),
+        response_sha256=receipt.response_sha256,
+    )
+
+
+def select_review_samples(
+    receipts: Sequence[CallReceipt],
+    *,
+    responses: Mapping[str, str] | None = None,
+    cases: Mapping[str, LiveCase] | None = None,
+) -> tuple[ReviewSample, ...]:
+    """Choose a deterministic capped failure packet plus one control per band."""
+    response_map = responses or {}
+    case_map = cases or {}
+    representatives: dict[str, CallReceipt] = {}
+    for receipt in sorted(receipts, key=lambda item: (item.case_id, item.repeat_index, item.call_id)):
+        if receipt.status != "failed":
+            continue
+        for finding in receipt.findings or (Finding("failed_without_finding", "failed receipt lacks finding"),):
+            representatives.setdefault(finding.code, receipt)
+    ordered_codes = sorted(representatives, key=_failure_priority)[:8]
+    selected: list[tuple[CallReceipt | None, bool, str, str | None]] = [
+        (representatives[code], True, representatives[code].band or "unclassified", code)
+        for code in ordered_codes
+    ]
+    for band in REVIEW_CONTROL_BANDS:
+        control_candidates = sorted(
+            (receipt for receipt in receipts if receipt.status == "verified" and receipt.band == band),
+            key=lambda item: (item.case_id, item.repeat_index, item.call_id),
+        )
+        selected.append((control_candidates[0] if control_candidates else None, False, band, None))
+    return tuple(
+        _sample_from_receipt(
+            receipt,
+            candidate_id=f"candidate-{index:03d}",
+            is_failure=is_failure,
+            band=band,
+            responses=response_map,
+            cases=case_map,
+            finding_code=finding_code,
+        )
+        for index, (receipt, is_failure, band, finding_code) in enumerate(selected, start=1)
+    )
+
+
+def build_review_prompt(samples: Sequence[ReviewSample]) -> str:
+    """Build the identity-free JSON-only review packet without provider metadata."""
+    packet = {
+        "samples": [
+            {
+                "candidate_id": sample.candidate_id,
+                "request": sample.request,
+                "source": sample.source,
+                "candidate": sample.candidate,
+                "hard_findings": list(sample.hard_findings),
+                "axes": list(sample.axes),
+                "band": sample.band,
+                "missing_control": sample.missing_control,
+            }
+            for sample in samples
+        ]
+    }
+    contract = (
+        'Return one JSON object only:\n'
+        '{"samples":[{"candidate_id":"candidate-001","issues":[{"axis":"meaning","severity":"material|minor","reason":"..."}],"assessment":"pass|concern"}],"packet_limitations":["..."]}\n'
+        "Do not score or rank models, rewrite candidates, infer producers, or claim that agreement proves general Korean quality."
+    )
+    return f"{contract}\n\nReview packet:\n{json.dumps(packet, ensure_ascii=False, sort_keys=True)}"
+
+
+def build_reviewer_plan(samples: Sequence[ReviewSample]) -> tuple[ReviewerCall, ...]:
+    """Describe exactly three fresh Cursor reviews; dispatch remains opt-in."""
+    prompt = build_review_prompt(samples)
+    return tuple(ReviewerCall(reviewer_id, requested_model, prompt) for reviewer_id, requested_model in REVIEWER_MODELS)
+
+
+def parse_review_response(payload: str, samples: Sequence[ReviewSample]) -> ReviewResponse:
+    """Accept only the declared reviewer JSON object; never repair or retry it."""
+    if not isinstance(payload, str) or not payload.strip().startswith("{"):
+        raise LiveMatrixError("review response is not one JSON object")
+    try:
+        document = json.loads(payload)
+    except (json.JSONDecodeError, RecursionError) as exc:
+        raise LiveMatrixError("review response is not valid JSON") from exc
+    if not isinstance(document, dict) or set(document) != {"samples", "packet_limitations"}:
+        raise LiveMatrixError("review response does not match exact contract")
+    raw_samples = document["samples"]
+    limitations = document["packet_limitations"]
+    expected_ids = [sample.candidate_id for sample in samples]
+    if not isinstance(raw_samples, list) or not isinstance(limitations, list):
+        raise LiveMatrixError("review response has invalid collections")
+    parsed: list[ReviewAssessment] = []
+    for item in raw_samples:
+        if not isinstance(item, dict) or set(item) != {"candidate_id", "issues", "assessment"}:
+            raise LiveMatrixError("review response sample does not match exact contract")
+        candidate_id = item["candidate_id"]
+        if not isinstance(candidate_id, str) or not isinstance(item["issues"], list):
+            raise LiveMatrixError("review response sample has invalid fields")
+        if item["assessment"] not in {"pass", "concern"}:
+            raise LiveMatrixError("review response assessment is invalid")
+        issues: list[ReviewIssue] = []
+        for issue in item["issues"]:
+            if not isinstance(issue, dict) or set(issue) != {"axis", "severity", "reason"}:
+                raise LiveMatrixError("review response issue does not match exact contract")
+            if issue["axis"] not in ALLOWED_AXES or issue["severity"] not in {"material", "minor"}:
+                raise LiveMatrixError("review response issue is invalid")
+            if not isinstance(issue["reason"], str) or not issue["reason"].strip():
+                raise LiveMatrixError("review response issue reason is invalid")
+            issues.append(ReviewIssue(issue["axis"], issue["severity"], _review_excerpt(issue["reason"])))
+        parsed.append(ReviewAssessment(candidate_id, tuple(issues), item["assessment"]))
+    if [assessment.candidate_id for assessment in parsed] != expected_ids:
+        raise LiveMatrixError("review response candidate IDs do not match packet")
+    if any(not isinstance(item, str) for item in limitations):
+        raise LiveMatrixError("review response limitations are invalid")
+    return ReviewResponse(tuple(parsed), tuple(_review_excerpt(item) for item in limitations))
+
+
+def parse_reviewer_response_or_block(
+    receipt: CallReceipt, payload: str, samples: Sequence[ReviewSample]
+) -> tuple[ReviewResponse | None, CallReceipt]:
+    """Convert one malformed reviewer reply to one blocked receipt without a repair call."""
+    try:
+        return parse_review_response(payload, samples), receipt
+    except LiveMatrixError as exc:
+        return None, replace(
+            receipt,
+            status="blocked",
+            findings=(Finding("review_json_invalid", "review response rejected without repair", _review_excerpt(str(exc))),),
+        )
+
+
+def _producer_for_receipt(receipt: CallReceipt, producer_ids: Sequence[str]) -> str:
+    for producer_id in producer_ids:
+        if receipt.call_id.startswith(f"{producer_id}:"):
+            return producer_id
+    return receipt.call_id.split(":", 1)[0]
+
+
+def aggregate_statuses(
+    receipts: Sequence[CallReceipt],
+    *,
+    producer_ids: Sequence[str] = (),
+    bands: Sequence[str] = REVIEW_CONTROL_BANDS,
+) -> dict[tuple[str, str], str]:
+    """Reduce each producer/band with failure precedence; no status is averaged."""
+    known_producers = list(dict.fromkeys((*producer_ids, *(_producer_for_receipt(r, producer_ids) for r in receipts))))
+    result: dict[tuple[str, str], str] = {}
+    for producer_id in known_producers:
+        for band in bands:
+            statuses = [
+                receipt.status
+                for receipt in receipts
+                if _producer_for_receipt(receipt, producer_ids) == producer_id and receipt.band == band
+            ]
+            if any(status not in STATUS_PRIORITY for status in statuses):
+                raise LiveMatrixError("unknown receipt status for aggregation")
+            result[(producer_id, band)] = max(statuses, key=STATUS_PRIORITY.__getitem__) if statuses else "not_measured"
+    return result
+
+
+def _render_status(status: str) -> str:
+    return status.replace("_", " ")
+
+
+def _finding_severity(finding: Finding) -> str:
+    return "material" if _failure_priority(finding.code)[0] < 4 else "minor"
+
+
+def render_operations_report(report_input: ReportInput) -> str:
+    """Render fact-only markdown without raw streams, identities, paths, or response bodies."""
+    receipts = report_input.producer_receipts
+    producer_ids = report_input.producer_ids or report_input.identity.producer_ids
+    matrix = aggregate_statuses(receipts, producer_ids=producer_ids)
+    lines = [
+        "# KWS Korean Writing Editor Cross-Model Evaluation",
+        "",
+        "## Fixed Evidence",
+        "",
+        f"- Report date: {report_input.report_date}",
+        f"- Run ID: {report_input.identity.run_id}",
+        f"- Branch: {report_input.branch}",
+        f"- Repository HEAD: {report_input.head}",
+        f"- Source skill hash: {report_input.source_skill_hash}",
+        f"- Installed skill hash: {report_input.installed_skill_hash}",
+        f"- Producer attempted calls: {report_input.producer_attempted_calls}",
+        f"- Reviewer attempted calls: {report_input.reviewer_attempted_calls}",
+        f"- Approved ceilings: baseline {report_input.approved_baseline_ceiling}; total {report_input.approved_total_ceiling}",
+        "",
+        "## Model Matrix",
+        "",
+        "| Producer | valid mode | preservation | noop hold | near miss |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for producer_id in producer_ids:
+        lines.append(
+            "| " + producer_id + " | " + " | ".join(
+                _render_status(matrix.get((producer_id, band), "not_measured")) for band in REVIEW_CONTROL_BANDS
+            ) + " |"
+        )
+    lines.extend(("", "## Results By Band", ""))
+    for band in REVIEW_CONTROL_BANDS:
+        counts = {status: 0 for status in STATUS_PRIORITY}
+        for producer_id in producer_ids:
+            counts[matrix.get((producer_id, band), "not_measured")] += 1
+        lines.append(
+            f"- {band}: " + ", ".join(f"{_render_status(status)}={counts[status]}" for status in STATUS_PRIORITY)
+        )
+    lines.extend(("", "## Defect Register", ""))
+    defect_number = 0
+    for receipt in sorted(receipts, key=lambda item: (item.case_id, item.repeat_index, item.call_id)):
+        if receipt.status != "failed":
+            continue
+        for finding in receipt.findings:
+            defect_number += 1
+            excerpt = _review_excerpt(finding.literal or finding.message)
+            lines.append(
+                f"- D-{defect_number:03d} | {_finding_severity(finding)} | case={receipt.case_id} | "
+                f"repeat={receipt.repeat_index} | response_sha256={receipt.response_sha256 or 'not measured'} | "
+                f"{finding.code}: {excerpt}"
+            )
+    if defect_number == 0:
+        lines.append("- No deterministic failures recorded.")
+    lines.extend(("", "## Review Findings", ""))
+    if not report_input.review_responses:
+        lines.append("- No reviewer opinion recorded; reviewer evidence is not model truth.")
+    else:
+        for index, response in enumerate(report_input.review_responses, start=1):
+            concerns = sum(assessment.assessment == "concern" for assessment in response.samples)
+            lines.append(f"- Reviewer packet {index}: concerns={concerns}; limitations={len(response.packet_limitations)}.")
+        lines.append("- Disagreement is retained as diagnostic evidence and is not an aggregate quality score.")
+    lines.extend(
+        (
+            "",
+            "## Adopted And Rejected Improvements",
+            "",
+            f"- Supervisory classification: {_render_status(report_input.supervisory_classification)}.",
+            "- No reviewer suggestion is adopted or rejected before evidence-based adjudication.",
+            "",
+            "## Verification",
+            "",
+        )
+    )
+    lines.extend(f"- {command}: {_render_status(status)}" for command, status in report_input.verification_results)
+    lines.extend(
+        (
+            "",
+            "## Limitations And Residual Risks",
+            "",
+            "- Review packets use redacted 240-byte excerpts and do not establish general Korean quality.",
+            "- Failed evidence has precedence in aggregation and is never averaged away.",
+            "- Pending adjudication remains until the dedicated Task 8 classification step.",
+            "",
+            "## Git And Installation State",
+            "",
+            f"- Git: {report_input.git_state}",
+            f"- Installation: {report_input.installation_state}",
+        )
+    )
+    return "\n".join(lines) + "\n"
 
 
 def main(argv: list[str] | None = None) -> int:
