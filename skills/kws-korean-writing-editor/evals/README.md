@@ -3,83 +3,84 @@
 ## Purpose And Evidence Boundary
 
 This optional operator procedure compares the installed Korean Writing Editor
-against its tracked source using only synthetic cases in `live_cases.json`.
-It is not a product-quality score and does not replace the offline contract.
-The approved baseline is 119 producer calls plus 3 independent review calls:
-122 calls at most.
+with its tracked source using only the synthetic cases in `live_cases.json`.
+Only an operator with explicit authorization may run `--execute`; it may be
+billable. A dry run, preflight, fixture pass, or blocked environment is not
+evidence that a provider ran or that model quality was proven.
 
-Only an operator with explicit authorization may start a paid baseline. An
-`--execute` run may be billable. Do not treat a dry run, preflight, or fixture
-pass as evidence that a provider was invoked or that model quality was proven.
-The 122-call baseline and 38-call remediation reserve define one approved
-evaluation cycle boundary. The runner cannot prevent an operator from starting
-multiple separately authorized cycles; do not represent those cycles as one
-approved 160-call result.
+The approved baseline is 119 producer calls plus 3 independent review calls,
+with a 122-call ceiling. A separately authorized remediation run may use at
+most 38 calls, for one approved-cycle ceiling of 160. Starting multiple cycles
+does not turn them into one approved 160-call result.
 
-Before every Codex or Cursor provider invocation, the runner writes an ignored
-immutable attempt reservation before invoking a provider. It binds the complete
-run identity, logical and actual call IDs, global call number, kind, host,
-model, and case. A reservation remains charged after a crash before receipt
-publication, so resume never reuses that provider budget; a retry with spare
-budget receives a new call number and actual call ID.
+Before every Codex or Cursor provider process invocation, the runner validates
+CLI availability, argv, immutable run identity, and the active report lease,
+then durably records one immutable attempt reservation immediately before
+process invocation. The reservation binds the complete run identity, logical
+and actual call IDs, positive gap-free global call number, producer or reviewer
+kind, host, requested model, case ID, and repeat index. Only a true
+zero-provider `not_measured` receipt may use call number zero without a
+reservation; every `verified`, `partially_verified`, `failed`, or `blocked`
+receipt must match one positive reservation exactly, and a reviewer receipt
+cannot match a producer reservation. Crash-only reservations remain charged,
+drive unique `:attempt-N` retry IDs, and count in budgets and reports.
+
+A missing executable or another pre-invocation prerequisite stops before
+reservation and consumes zero calls; the run remains blocked. A requested
+Cursor model known to be unavailable emits an honest zero-provider
+`not_measured` receipt and consumes zero calls.
 
 ## Safety And Privacy
 
-Use synthetic prompts only. Do not place private manuscripts, credentials, or
-full provider transcripts in `live_cases.json`, receipts intended for review,
-or reports. Evidence stays in the ignored exact root
-`.superpowers/kws-korean-writing-editor/live`; the evaluator rejects another
-evidence root.
-
-Reports use hashes and minimal redacted excerpts for review. Keep raw response
-files inside the ignored run directory, and do not copy them into an issue,
-commit, or dated operations report.
+Use synthetic prompts only. Do not place private manuscripts, credentials,
+secrets, personal data, or full provider transcripts in `live_cases.json`,
+receipts intended for review, commits, issues, or reports. Raw and normalized
+provider bodies stay only in the ignored exact evidence root
+`.superpowers/kws-korean-writing-editor/live`; reports contain hashes, status
+facts, and only bounded redacted excerpts.
 
 ## Offline Validation
 
-Run the deterministic evaluator before requesting or using live authorization:
+The offline command below does not call Codex, Cursor, or any provider and does
+not authorize or prove live execution; it verifies only the thirty synthetic
+offline fixtures and their mutation contract.
 
 ```bash
 python3 skills/kws-korean-writing-editor/evals/run.py --scope full
 ```
 
-Its 30 fixtures prove only the offline oracle contract. They make no live
-invocation or model-quality claim.
-
 ## Dry Run
 
-This command is provider-free: it only prints the approved call plan and
-budget.
+This provider-free command prints only the approved call plan and budgets:
 
 ```bash
 python3 skills/kws-korean-writing-editor/evals/live_matrix.py --dry-run
 ```
 
-Expected baseline accounting is 119 producer calls, 3 reviewer calls, and 122
-baseline calls. The dry-run payload also reports 38 remediation calls and the
-global ceiling shown as `approved_total_ceiling` is 160.
+The payload must show 119 producer calls, 3 reviewer calls, and 122 baseline
+calls, plus 38 remediation calls and `approved_total_ceiling` equal to 160.
 
 ## Baseline Preflight
 
-Before execution, ensure the source and installed skill manifests are equal,
-the checkout is clean, and the chosen lowercase hyphenated run ID has not been
-used. Preflight writes the immutable run identity to the ignored evidence root
-and performs no provider inference.
+Before execution, ensure that source and installed skill manifests match, the
+relevant checkout is clean, and the approved run ID is unused. Preflight writes
+the immutable identity to the ignored evidence root and makes no provider call.
+
+The approved Task 7 baseline run ID is
+`kws-editor-20260823-baseline-01`, and the approved operations artifact date is
+intentionally `2026-08-23`. Keep both values unchanged across the 2026-08-24
+wall-date rollover; do not substitute the current date.
 
 ```bash
-RUN_ID="2026-08-23-korean-editor-baseline"
+RUN_ID="kws-editor-20260823-baseline-01"
 python3 skills/kws-korean-writing-editor/evals/live_matrix.py \
   --preflight --scope baseline --run-id "$RUN_ID" --jobs 3 --max-calls 122 \
   --evidence-root .superpowers/kws-korean-writing-editor/live \
   --report docs/operations/2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md
 ```
 
-`--jobs` accepts 1 through 4; the approved example uses 3. The report path
-must be the dated filename under `docs/operations` shown above.
-
-The `2026-08-23` run ID and report filename are the approved artifact date,
-intentionally retained across the wall-date rollover. Do not replace them with
-the wall-clock date when following this approved plan.
+`--jobs` accepts 1 through 4. The report path must be the exact dated filename
+under `docs/operations` shown above.
 
 ## Paid Baseline
 
@@ -87,40 +88,49 @@ After explicit authorization, execute the same preflighted identity. This is
 the operation that may be billable.
 
 ```bash
-RUN_ID="2026-08-23-korean-editor-baseline"
+RUN_ID="kws-editor-20260823-baseline-01"
 python3 skills/kws-korean-writing-editor/evals/live_matrix.py \
   --execute --scope baseline --run-id "$RUN_ID" --jobs 3 --max-calls 122 \
   --evidence-root .superpowers/kws-korean-writing-editor/live \
   --report docs/operations/2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md
 ```
 
-Do not raise the baseline above 122. The 38-call reserve is for separately
-authorized remediation, and the baseline plus remediation total must never
-exceed the 160-call ceiling.
+Do not raise the baseline above 122. Remediation requires separate
+authorization, and the approved baseline plus remediation total never exceeds
+160.
 
 ## Resume
 
-Use `--resume` only with `--execute` after an interrupted run, with the same
-run ID and scope. Resume validates the complete run identity: runner version,
-repository HEAD, source and installed skill hashes, `live_cases.json` hash,
-producer identities, requested-model identities, and scope. Any mismatch needs
-a new run ID.
+Use `--resume` only with `--execute` after an interrupted run, using the same
+run ID and scope.
 
-When the matching preflight exists but the report target is absent and no
-report-state exists, execute first makes an exclusive creation with bounded
-pending content and persists its exact state before producer or reviewer
-dispatch. A report target without state, state without its exact report, an
-unsafe target or symlink, identity or hash drift, or any extra checkout dirt
-fails before dispatch. Exact matching report and state use the atomic update
-path.
+Resume validates the complete run identity: run ID, runner version, repository
+HEAD, source skill hash, installed skill hash, `live_cases.json` hash, producer
+IDs, requested model IDs, scope, and canonical selected call IDs. A missing
+field or any mismatch fails closed and requires a new run ID.
 
-Report reservation, ownership hashing, and final publication operate through a
-held `docs/operations` directory inode. If that current pathname becomes
-unsafe after inspection, dispatch validation fails; the runner never follows a
-replacement directory while writing the owned report.
+When matching preflight state exists but both report target and report state
+are absent, execute exclusively creates bounded pending content and persists
+its exact state before any producer or reviewer dispatch. A target without
+state, state without its exact target, an unsafe target, ownership drift, or
+extra relevant checkout dirt fails before dispatch.
+
+One `ReportLease` holds one open `docs/operations` directory FD from pending
+report reservation through every producer and reviewer call and final report
+replacement. Pending creation, owned-state hash validation, temporary-file
+creation, owned inode and hash recheck, replacement, and directory fsync all
+use that same FD. Immediately before every provider process invocation, the
+current repository `docs/operations` path must resolve to the leased device and
+inode, and the leased report must match the expected target, state, device,
+inode, and hash; drift consumes zero next call. A path swap after the last
+validation may consume at most the already-reserved current call, but it does
+not redirect report mutation because every mutation remains relative to the
+held FD; the next validation, if any, fails and the old leased inode may retain
+a safe pending or owned residual. This is the achievable invariant, not an
+atomic guarantee against a malicious rename after process spawn.
 
 ```bash
-RUN_ID="2026-08-23-korean-editor-baseline"
+RUN_ID="kws-editor-20260823-baseline-01"
 python3 skills/kws-korean-writing-editor/evals/live_matrix.py \
   --execute --resume --scope baseline --run-id "$RUN_ID" --jobs 3 --max-calls 122 \
   --evidence-root .superpowers/kws-korean-writing-editor/live \
@@ -128,73 +138,71 @@ python3 skills/kws-korean-writing-editor/evals/live_matrix.py \
 ```
 
 Completed `verified`, `partially_verified`, `failed`, and `not_measured`
-receipts are retained; a `blocked` call can be attempted again within the
-approved budget.
+receipts remain complete. A `blocked` logical call may receive a new actual
+`:attempt-N` ID only when spare budget remains.
 
 ## Review Packet
 
-The baseline reserves 3 reviewer calls after the 119 producer calls. Review
-packets contain bounded synthetic candidates and record review findings, not a
-full transcript. The dated operations report records hashes, minimal excerpts,
-receipt status, verification facts, and local-versus-remote facts. Inspect the
-packet and report as evidence, not as an automatic release decision.
+The baseline reserves three reviewer calls after the producer matrix. Review
+packets contain bounded synthetic candidates rather than full transcripts.
+Reviewer opinions are diagnostic evidence, not an automatic release decision
+or a numeric truth score.
 
 ## Status Meanings
 
-The dated report uses five executed-evidence labels:
+The dated report uses exactly these executed-evidence definitions:
 
-- `verified`: the returned body met the deterministic case checks.
-- `partially_verified`: body checks passed but the case cannot observe skill activation.
-- `blocked`: dispatch or response processing could not produce usable evidence.
-- `failed`: a returned body violated one or more case checks.
-- `not_measured`: no usable body was measured for the planned evidence item.
+- `verified`: the provider process executed and the returned body met every declared deterministic hard property.
+- `partially_verified`: the provider process executed and observed hard properties passed, but activation or another required dimension remained unproven.
+- `failed`: the provider process executed and returned output violated at least one declared deterministic hard property.
+- `blocked`: a positively reserved provider attempt could not produce usable evidence because execution or response processing failed.
+- `not_measured`: no provider process was invoked for that evidence item; this is the only status permitted to have call number zero and no reservation.
 
-Status is never averaged into a quality score. Failure takes precedence when a
-producer and control band are summarized.
+No aggregate average erases a severe failure. Every report states the level at
+which a status applies.
 
 ## Remediation Budget
 
-Baseline authorization is 122 calls maximum. Keep 38 calls in reserve for a
-separately authorized `--scope remediation` run; all attempts across the
-baseline and remediation must stay at or below 160. Do not spend the reserve
-to repeat a successful baseline merely for a larger sample.
-
-The remediation CLI defaults to 38 and rejects a higher value. It is a
-separate explicitly authorized run, not an automatic extension of a baseline.
-Preflight the remediation identity before its separately authorized execution.
-Task 8 supplies the exact remediation call IDs from evidence; do not invent a
-call ID or finding here. Repeat `--remediation-call` only for exact immutable
-producer call IDs, and omit it entirely for baseline runs.
+Keep 38 calls in reserve for a separately authorized `--scope remediation`
+run. The remediation CLI defaults to 38 and rejects a higher value. Task 8
+supplies the approved remediation run ID and exact immutable producer call IDs
+from evidence; do not invent either value here. Repeat `--remediation-call`
+only for those exact IDs, in canonical plan order.
 
 ```bash
-RUN_ID="2026-08-23-korean-editor-remediation"
 python3 skills/kws-korean-writing-editor/evals/live_matrix.py \
-  --preflight --scope remediation --run-id "$RUN_ID" --jobs 3 --max-calls 38 \
+  --preflight --scope remediation --run-id "<Task-8 approved remediation run ID>" \
+  --jobs 3 --max-calls 38 \
   --remediation-call "<Task-8 exact planned producer call ID>" \
   --evidence-root .superpowers/kws-korean-writing-editor/live
 ```
 
 ```bash
-RUN_ID="2026-08-23-korean-editor-remediation"
 python3 skills/kws-korean-writing-editor/evals/live_matrix.py \
-  --execute --scope remediation --run-id "$RUN_ID" --jobs 3 --max-calls 38 \
+  --execute --scope remediation --run-id "<Task-8 approved remediation run ID>" \
+  --jobs 3 --max-calls 38 \
   --remediation-call "<Task-8 exact planned producer call ID>" \
   --evidence-root .superpowers/kws-korean-writing-editor/live
 ```
 
 ## Evidence Layout
 
-For a run ID, the ignored evidence root contains the preflight receipt,
-`attempt-reservations/`, `receipts/`, `raw/`, and `normalized/` evidence.
-Reservations, rather than completed receipts, are the durable attempt-budget
-ledger. Receipt metadata binds the identity and response hashes. Raw and
-normalized bodies are local operational evidence, not report attachments. The optional dated report is written only to
+Each ignored run directory contains immutable preflight state,
+`attempt-reservations/`, `receipts/`, `raw/`, and `normalized/` evidence plus
+report ownership state when a report was requested. Positive reservation
+numbers and filenames are exactly gap-free `1..N`; crash-only reservations are
+part of that ledger. Every positive receipt matches the full reservation
+identity. Raw and normalized bodies are local operational evidence, not report
+attachments.
+
+The optional dated report is written only to
 `docs/operations/YYYY-MM-DD-kws-korean-writing-editor-cross-model-evaluation.md`.
 
 ## Limitations
 
-An explicit host invocation and a compliant returned body do not prove that
-the host activated the skill internally. Cases whose activation is not
-observable are intentionally `partially_verified`; do not infer hidden routing
-or activation from a self-report. Offline fixtures and synthetic live evidence
-also cannot establish general writing quality or authorship.
+An explicit host invocation and a compliant returned body do not prove that the
+host activated the skill internally. Cases whose activation is not observable
+are `partially_verified`; the evaluator does not infer hidden routing or
+activation from a self-report. Offline fixtures and synthetic live evidence do
+not establish general writing quality, authorship, or provider-wide
+reliability.

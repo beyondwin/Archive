@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import contextlib
+import concurrent.futures
+import dataclasses
 import io
 import json
+import os
 import pathlib
 import re
-import shlex
 import subprocess
 import sys
 import tempfile
@@ -65,6 +67,69 @@ def case_by_id(case_id: str) -> live_matrix.LiveCase:
     )
 
 
+def single_codex_dispatch_fixture(
+    run_root: pathlib.Path,
+) -> tuple[
+    live_matrix.PlannedCall,
+    live_matrix.LiveCase,
+    live_matrix.PreflightResult,
+    live_matrix.Producer,
+    live_matrix.CommandCapture,
+]:
+    call = live_matrix.PlannedCall(
+        "codex-direct:correct-obligation:1",
+        "producer",
+        "codex-direct",
+        "correct-obligation",
+        1,
+    )
+    identity = live_matrix.RunIdentity.for_test(
+        selected_call_ids=(call.call_id,),
+        installed_skill_hash="test-skill",
+        producer_ids=("codex-direct",),
+        requested_models=(),
+    )
+    case = case_by_id("correct-obligation")
+    producer = live_matrix.Producer("codex-direct", "codex", None)
+    preflight = live_matrix.PreflightResult(
+        identity=identity,
+        repository_root=run_root,
+        repository_branch="test",
+        source_skill_root=HERE.parent,
+        installed_skill_root=HERE.parent,
+        run_root=run_root,
+        cli_info={
+            "codex": live_matrix.CliInfo("codex", "v", None),
+            "cursor-agent": live_matrix.CliInfo(None, None, None),
+        },
+        model_availability={},
+        discovery_sha256=None,
+        discovery_diagnostic=None,
+    )
+    capture = live_matrix.CommandCapture(
+        0,
+        b'{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}\n',
+        b"",
+        1,
+    )
+    return call, case, preflight, producer, capture
+
+
+def owned_report_state(
+    run_root: pathlib.Path,
+    repository_root: pathlib.Path,
+    target: pathlib.Path,
+    identity: live_matrix.RunIdentity,
+) -> live_matrix.ReportState:
+    lease = live_matrix.open_report_lease(
+        target, repository_root, run_root=run_root, identity=identity
+    )
+    try:
+        return live_matrix.reserve_operations_report(lease)
+    finally:
+        lease.close()
+
+
 def assert_balanced_nonempty_inline_code_spans(
     test_case: unittest.TestCase, markdown: str
 ) -> str:
@@ -92,16 +157,78 @@ def assert_balanced_nonempty_inline_code_spans(
     return "".join(outside)
 
 
-def guide_commands(markdown: str) -> list[tuple[str | None, list[str]]]:
-    """Parse the guide's fenced shell examples without executing them."""
-    commands: list[tuple[str | None, list[str]]] = []
-    for block in re.findall(r"```bash\n(.*?)\n```", markdown, flags=re.DOTALL):
-        lines = block.replace("\\\n", " ").splitlines()
-        run_id = None
-        if lines and lines[0].startswith("RUN_ID="):
-            run_id = lines.pop(0)
-        commands.append((run_id, shlex.split(" ".join(lines))))
-    return commands
+def normalized_markdown_paragraphs(markdown: str) -> set[str]:
+    """Return complete prose/list paragraphs with wrapping normalized."""
+    prose = re.sub(r"```bash\n.*?\n```", "", markdown, flags=re.DOTALL)
+    return {
+        re.sub(r"\s+", " ", paragraph.strip())
+        for paragraph in re.split(r"\n\s*\n", prose)
+        if paragraph.strip()
+    }
+
+
+GUIDE_RESERVATION_PARAGRAPH = (
+    "Before every Codex or Cursor provider process invocation, the runner "
+    "validates CLI availability, argv, immutable run identity, and the active "
+    "report lease, then durably records one immutable attempt reservation "
+    "immediately before process invocation. The reservation binds the complete "
+    "run identity, logical and actual call IDs, positive gap-free global call "
+    "number, producer or reviewer kind, host, requested model, case ID, and "
+    "repeat index. Only a true zero-provider `not_measured` receipt may use call "
+    "number zero without a reservation; every `verified`, `partially_verified`, "
+    "`failed`, or `blocked` receipt must match one positive reservation exactly, "
+    "and a reviewer receipt cannot match a producer reservation. Crash-only "
+    "reservations remain charged, drive unique `:attempt-N` retry IDs, and count "
+    "in budgets and reports."
+)
+GUIDE_PRIVACY_PARAGRAPH = (
+    "Use synthetic prompts only. Do not place private manuscripts, credentials, "
+    "secrets, personal data, or full provider transcripts in `live_cases.json`, "
+    "receipts intended for review, commits, issues, or reports. Raw and normalized "
+    "provider bodies stay only in the ignored exact evidence root "
+    "`.superpowers/kws-korean-writing-editor/live`; reports contain hashes, status "
+    "facts, and only bounded redacted excerpts."
+)
+GUIDE_OFFLINE_PARAGRAPH = (
+    "The offline command below does not call Codex, Cursor, or any provider and "
+    "does not authorize or prove live execution; it verifies only the thirty "
+    "synthetic offline fixtures and their mutation contract."
+)
+GUIDE_ARTIFACT_PARAGRAPH = (
+    "The approved Task 7 baseline run ID is "
+    "`kws-editor-20260823-baseline-01`, and the approved operations artifact date "
+    "is intentionally `2026-08-23`. Keep both values unchanged across the "
+    "2026-08-24 wall-date rollover; do not substitute the current date."
+)
+GUIDE_IDENTITY_PARAGRAPH = (
+    "Resume validates the complete run identity: run ID, runner version, "
+    "repository HEAD, source skill hash, installed skill hash, `live_cases.json` "
+    "hash, producer IDs, requested model IDs, scope, and canonical selected call "
+    "IDs. A missing field or any mismatch fails closed and requires a new run ID."
+)
+GUIDE_LEASE_PARAGRAPH = (
+    "One `ReportLease` holds one open `docs/operations` directory FD from pending "
+    "report reservation through every producer and reviewer call and final report "
+    "replacement. Pending creation, owned-state hash validation, temporary-file "
+    "creation, owned inode and hash recheck, replacement, and directory fsync all "
+    "use that same FD. Immediately before every provider process invocation, the "
+    "current repository `docs/operations` path must resolve to the leased device "
+    "and inode, and the leased report must match the expected target, state, "
+    "device, inode, and hash; drift consumes zero next call. A path swap after the "
+    "last validation may consume at most the already-reserved current call, but it "
+    "does not redirect report mutation because every mutation remains relative to "
+    "the held FD; the next validation, if any, fails and the old leased inode may "
+    "retain a safe pending or owned residual. This is the achievable invariant, "
+    "not an atomic guarantee against a malicious rename after process spawn."
+)
+GUIDE_ACTIVATION_PARAGRAPH = (
+    "An explicit host invocation and a compliant returned body do not prove that "
+    "the host activated the skill internally. Cases whose activation is not "
+    "observable are `partially_verified`; the evaluator does not infer hidden "
+    "routing or activation from a self-report. Offline fixtures and synthetic live "
+    "evidence do not establish general writing quality, authorship, or "
+    "provider-wide reliability."
+)
 
 
 def assert_live_guide_contract(markdown: str) -> None:
@@ -121,57 +248,55 @@ def assert_live_guide_contract(markdown: str) -> None:
         ("##", "Evidence Layout"),
         ("##", "Limitations"),
     ]
-    command_path = "skills/kws-korean-writing-editor/evals/live_matrix.py"
-    report_path = "docs/operations/2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md"
-    evidence_root = ".superpowers/kws-korean-writing-editor/live"
-    expected = [
-        (None, ["python3", command_path, "--dry-run"]),
-        (
-            'RUN_ID="2026-08-23-korean-editor-baseline"',
-            ["python3", command_path, "--preflight", "--scope", "baseline", "--run-id", "$RUN_ID", "--jobs", "3", "--max-calls", str(live_matrix.BASELINE_CALL_CEILING), "--evidence-root", evidence_root, "--report", report_path],
-        ),
-        (
-            'RUN_ID="2026-08-23-korean-editor-baseline"',
-            ["python3", command_path, "--execute", "--scope", "baseline", "--run-id", "$RUN_ID", "--jobs", "3", "--max-calls", str(live_matrix.BASELINE_CALL_CEILING), "--evidence-root", evidence_root, "--report", report_path],
-        ),
-        (
-            'RUN_ID="2026-08-23-korean-editor-baseline"',
-            ["python3", command_path, "--execute", "--resume", "--scope", "baseline", "--run-id", "$RUN_ID", "--jobs", "3", "--max-calls", str(live_matrix.BASELINE_CALL_CEILING), "--evidence-root", evidence_root, "--report", report_path],
-        ),
-        (
-            'RUN_ID="2026-08-23-korean-editor-remediation"',
-            ["python3", command_path, "--preflight", "--scope", "remediation", "--run-id", "$RUN_ID", "--jobs", "3", "--max-calls", str(live_matrix.REMEDIATION_CALL_CEILING), "--remediation-call", "<Task-8 exact planned producer call ID>", "--evidence-root", evidence_root],
-        ),
-        (
-            'RUN_ID="2026-08-23-korean-editor-remediation"',
-            ["python3", command_path, "--execute", "--scope", "remediation", "--run-id", "$RUN_ID", "--jobs", "3", "--max-calls", str(live_matrix.REMEDIATION_CALL_CEILING), "--remediation-call", "<Task-8 exact planned producer call ID>", "--evidence-root", evidence_root],
-        ),
+    expected_bash_fences = [
+        "python3 skills/kws-korean-writing-editor/evals/run.py --scope full",
+        "python3 skills/kws-korean-writing-editor/evals/live_matrix.py --dry-run",
+        'RUN_ID="kws-editor-20260823-baseline-01"\n'
+        "python3 skills/kws-korean-writing-editor/evals/live_matrix.py \\\n"
+        '  --preflight --scope baseline --run-id "$RUN_ID" --jobs 3 --max-calls 122 \\\n'
+        "  --evidence-root .superpowers/kws-korean-writing-editor/live \\\n"
+        "  --report docs/operations/2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md",
+        'RUN_ID="kws-editor-20260823-baseline-01"\n'
+        "python3 skills/kws-korean-writing-editor/evals/live_matrix.py \\\n"
+        '  --execute --scope baseline --run-id "$RUN_ID" --jobs 3 --max-calls 122 \\\n'
+        "  --evidence-root .superpowers/kws-korean-writing-editor/live \\\n"
+        "  --report docs/operations/2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md",
+        'RUN_ID="kws-editor-20260823-baseline-01"\n'
+        "python3 skills/kws-korean-writing-editor/evals/live_matrix.py \\\n"
+        '  --execute --resume --scope baseline --run-id "$RUN_ID" --jobs 3 --max-calls 122 \\\n'
+        "  --evidence-root .superpowers/kws-korean-writing-editor/live \\\n"
+        "  --report docs/operations/2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md",
+        "python3 skills/kws-korean-writing-editor/evals/live_matrix.py \\\n"
+        '  --preflight --scope remediation --run-id "<Task-8 approved remediation run ID>" \\\n'
+        "  --jobs 3 --max-calls 38 \\\n"
+        '  --remediation-call "<Task-8 exact planned producer call ID>" \\\n'
+        "  --evidence-root .superpowers/kws-korean-writing-editor/live",
+        "python3 skills/kws-korean-writing-editor/evals/live_matrix.py \\\n"
+        '  --execute --scope remediation --run-id "<Task-8 approved remediation run ID>" \\\n'
+        "  --jobs 3 --max-calls 38 \\\n"
+        '  --remediation-call "<Task-8 exact planned producer call ID>" \\\n'
+        "  --evidence-root .superpowers/kws-korean-writing-editor/live",
     ]
-    assert guide_commands(markdown) == [
-        (None, ["python3", "skills/kws-korean-writing-editor/evals/run.py", "--scope", "full"]),
-        *expected,
-    ]
+    assert re.findall(r"```bash\n(.*?)\n```", markdown, flags=re.DOTALL) == expected_bash_fences
     statuses = dict(re.findall(r"^- `([^`]+)`: (.+)$", markdown, flags=re.MULTILINE))
     assert statuses == {
-        "verified": "the returned body met the deterministic case checks.",
-        "partially_verified": "body checks passed but the case cannot observe skill activation.",
-        "blocked": "dispatch or response processing could not produce usable evidence.",
-        "failed": "a returned body violated one or more case checks.",
-        "not_measured": "no usable body was measured for the planned evidence item.",
+        "verified": "the provider process executed and the returned body met every declared deterministic hard property.",
+        "partially_verified": "the provider process executed and observed hard properties passed, but activation or another required dimension remained unproven.",
+        "failed": "the provider process executed and returned output violated at least one declared deterministic hard property.",
+        "blocked": "a positively reserved provider attempt could not produce usable evidence because execution or response processing failed.",
+        "not_measured": "no provider process was invoked for that evidence item; this is the only status permitted to have call number zero and no reservation.",
     }
-    for phrase in (
-        "Do not place private manuscripts, credentials, or\nfull provider transcripts",
-        "report target is absent and no\nreport-state exists, execute first makes an exclusive creation",
-        "fails before dispatch",
-        "immutable attempt reservation before invoking a provider",
-        "reservation remains charged after a crash before receipt\npublication",
-        "held `docs/operations` directory inode",
-        "runner version,\nrepository HEAD",
-        "do not prove that\nthe host activated the skill internally",
-        "are the approved artifact date,\nintentionally retained across the wall-date rollover",
-        "Task 8 supplies the exact remediation call IDs",
+    paragraphs = normalized_markdown_paragraphs(markdown)
+    for paragraph in (
+        GUIDE_RESERVATION_PARAGRAPH,
+        GUIDE_PRIVACY_PARAGRAPH,
+        GUIDE_OFFLINE_PARAGRAPH,
+        GUIDE_ARTIFACT_PARAGRAPH,
+        GUIDE_IDENTITY_PARAGRAPH,
+        GUIDE_LEASE_PARAGRAPH,
+        GUIDE_ACTIVATION_PARAGRAPH,
     ):
-        assert phrase in markdown
+        assert paragraph in paragraphs
 
 
 class LiveDocumentationTests(unittest.TestCase):
@@ -185,25 +310,40 @@ class LiveDocumentationTests(unittest.TestCase):
             assert_live_guide_contract(
                 text.replace("--preflight --scope baseline", "--execute --scope baseline", 1)
             )
+        verified_definition = (
+            "the provider process executed and the returned body met every declared "
+            "deterministic hard property."
+        )
+        failed_definition = (
+            "the provider process executed and returned output violated at least one "
+            "declared deterministic hard property."
+        )
         with self.assertRaises(AssertionError):
             assert_live_guide_contract(
                 text.replace(
-                    "`verified`: the returned body met the deterministic case checks.",
-                    "`verified`: a returned body violated one or more case checks.",
+                    f"`verified`: {verified_definition}",
+                    f"`verified`: {failed_definition}",
                 ).replace(
-                    "`failed`: a returned body violated one or more case checks.",
-                    "`failed`: the returned body met the deterministic case checks.",
+                    f"`failed`: {failed_definition}",
+                    f"`failed`: {verified_definition}",
                 )
             )
         for original, mutated in (
             ("evals/run.py --scope full", "evals/run.py --scope fast"),
+            ("does not call Codex, Cursor, or any provider", "may call Codex, Cursor, or another provider"),
+            ("does not redirect report mutation", "can redirect report mutation"),
+            ("requested model IDs, scope", "scope"),
             ("Do not place private manuscripts", "Place private manuscripts"),
-            ("fails before dispatch", "continues after dispatch"),
-            ("intentionally retained across the wall-date rollover", "automatically replaced at wall-date rollover"),
+            ("do not substitute the current date", "substitute the current date"),
         ):
             with self.subTest(original=original):
+                pattern = re.escape(original).replace(r"\ ", r"\s+")
+                mutated_text, replacements = re.subn(
+                    pattern, mutated, text, count=1
+                )
+                self.assertEqual(replacements, 1)
                 with self.assertRaises(AssertionError):
-                    assert_live_guide_contract(text.replace(original, mutated, 1))
+                    assert_live_guide_contract(mutated_text)
 
     def test_user_readme_links_optional_guide(self) -> None:
         text = (HERE.parent / "README.md").read_text(encoding="utf-8")
@@ -220,6 +360,9 @@ class LiveDocumentationTests(unittest.TestCase):
             "does not bump the skill version",
         ):
             self.assertIn(phrase, text)
+        paragraphs = normalized_markdown_paragraphs(text)
+        self.assertIn(GUIDE_RESERVATION_PARAGRAPH, paragraphs)
+        self.assertIn(GUIDE_LEASE_PARAGRAPH, paragraphs)
 
     def test_eval_guide_advertises_safe_commands(self) -> None:
         text = (HERE / "README.md").read_text(encoding="utf-8")
@@ -263,8 +406,13 @@ class LiveDocumentationTests(unittest.TestCase):
             f"{live_matrix.BASELINE_CALL_CEILING} baseline calls",
             normalized,
         )
-        self.assertIn(f"{live_matrix.REMEDIATION_CALL_CEILING}-call reserve", text)
-        self.assertIn(f"{live_matrix.GLOBAL_CALL_CEILING}-call ceiling", text)
+        self.assertIn(
+            f"at most {live_matrix.REMEDIATION_CALL_CEILING} calls", normalized
+        )
+        self.assertIn(
+            f"one approved-cycle ceiling of {live_matrix.GLOBAL_CALL_CEILING}",
+            normalized,
+        )
 
     def test_eval_guide_commands_and_evidence_boundaries_match_the_live_contract(self) -> None:
         text = (HERE / "README.md").read_text(encoding="utf-8")
@@ -285,16 +433,20 @@ class LiveDocumentationTests(unittest.TestCase):
         self.assertIn("--preflight", remediation[0])
         self.assertIn("--execute", remediation[1])
         for command in remediation:
-            self.assertIn('--run-id "$RUN_ID"', command)
+            self.assertIn(
+                '--run-id "<Task-8 approved remediation run ID>"', command
+            )
             self.assertIn("--jobs 3", command)
             self.assertIn(f"--max-calls {live_matrix.REMEDIATION_CALL_CEILING}", command)
             self.assertIn("--evidence-root .superpowers/kws-korean-writing-editor/live", command)
-        self.assertIn("private manuscripts", text)
-        self.assertIn("full provider transcripts", text)
-        self.assertIn("runner version", text)
-        self.assertIn("report target is absent", text)
-        self.assertIn("approved artifact date", text)
-        self.assertIn("wall-date rollover", text)
+        paragraphs = normalized_markdown_paragraphs(text)
+        for paragraph in (
+            GUIDE_PRIVACY_PARAGRAPH,
+            GUIDE_IDENTITY_PARAGRAPH,
+            GUIDE_ARTIFACT_PARAGRAPH,
+            GUIDE_LEASE_PARAGRAPH,
+        ):
+            self.assertIn(paragraph, paragraphs)
 
     def test_eval_guide_documents_all_statuses_and_activation_limit(self) -> None:
         text = (HERE / "README.md").read_text(encoding="utf-8")
@@ -649,9 +801,138 @@ class ReceiptAndBudgetTests(unittest.TestCase):
             )
             self.assertEqual(live_matrix._load_attempt_reservations(run_root, identity), (reservation,))
             receipt = live_matrix.CallReceipt.for_test(
-                call.call_id, identity=identity, call_number=1, host="codex", requested_model="model", case_id="case"
+                call.call_id,
+                identity=identity,
+                logical_call_id=call.call_id,
+                kind="producer",
+                call_number=1,
+                host="codex",
+                requested_model="model",
+                case_id="case",
             )
             live_matrix._validate_receipt_reservations((receipt,), (reservation,), identity)
+
+            for field, value in (
+                ("logical_call_id", "another:logical:call"),
+                ("call_id", "producer:case:1:attempt-2"),
+                ("kind", "reviewer"),
+                ("call_number", 2),
+                ("host", "cursor"),
+                ("requested_model", "another-model"),
+                ("case_id", "another-case"),
+                ("repeat_index", 2),
+            ):
+                with self.subTest(field=field):
+                    with self.assertRaisesRegex(live_matrix.LiveMatrixError, "reservation"):
+                        live_matrix._validate_receipt_reservations(
+                            (dataclasses.replace(receipt, **{field: value}),),
+                            (reservation,),
+                            identity,
+                        )
+
+    def test_only_true_zero_provider_not_measured_receipts_may_skip_reservations(self) -> None:
+        identity = live_matrix.RunIdentity.for_test()
+        call = live_matrix.PlannedCall("producer:case:1", "producer", "producer", "case", 1)
+        producer = live_matrix.Producer("producer", "cursor", "missing-model")
+        zero = live_matrix._not_measured_receipt(
+            call, producer, identity, "requested model is unavailable"
+        )
+        live_matrix._validate_receipt_reservations((zero,), (), identity)
+        with self.assertRaisesRegex(live_matrix.LiveMatrixError, "retry IDs"):
+            live_matrix._validate_receipt_reservations(
+                (
+                    dataclasses.replace(
+                        zero,
+                        call_id="producer:case:1:attempt-3",
+                        logical_call_id="producer:case:1",
+                    ),
+                ),
+                (),
+                identity,
+            )
+
+        for status in ("verified", "partially_verified", "failed", "blocked"):
+            with self.subTest(status=status):
+                with self.assertRaisesRegex(live_matrix.LiveMatrixError, "zero-provider"):
+                    live_matrix._validate_receipt_reservations(
+                        (dataclasses.replace(zero, status=status),), (), identity
+                    )
+        for field, value in (
+            ("reported_model", "model"),
+            ("duration_ms", 1),
+            ("exit_code", 0),
+            ("stdout_bytes", 1),
+            ("stdout_sha256", "0" * 64),
+            ("stderr_bytes", 1),
+            ("stderr_sha256", "0" * 64),
+            ("response_sha256", "0" * 64),
+            ("raw_paths", ("raw/0001.stdout.bin",)),
+        ):
+            with self.subTest(field=field):
+                with self.assertRaisesRegex(live_matrix.LiveMatrixError, "zero-provider"):
+                    live_matrix._validate_receipt_reservations(
+                        (dataclasses.replace(zero, **{field: value}),), (), identity
+                    )
+
+    def test_zero_provider_receipt_cannot_claim_an_existing_actual_reservation(self) -> None:
+        identity = live_matrix.RunIdentity.for_test()
+        call = live_matrix.PlannedCall("producer:case:1", "producer", "producer", "case", 1)
+        producer = live_matrix.Producer("producer", "cursor", "missing-model")
+        with tempfile.TemporaryDirectory() as directory:
+            run_root = pathlib.Path(directory)
+            reservation = live_matrix.reserve_attempt(
+                run_root, identity, call, producer, kind="producer", call_number=1
+            )
+            zero = live_matrix._not_measured_receipt(
+                call, producer, identity, "requested model is unavailable"
+            )
+            with self.assertRaisesRegex(live_matrix.LiveMatrixError, "zero-provider"):
+                live_matrix._validate_receipt_reservations((zero,), (reservation,), identity)
+
+    def test_loaded_attempt_reservations_are_exactly_gap_free(self) -> None:
+        identity = live_matrix.RunIdentity.for_test()
+        producer = live_matrix.Producer("producer", "codex", "model")
+        first = live_matrix.PlannedCall("producer:case-a:1", "producer", "producer", "case-a", 1)
+        second = live_matrix.PlannedCall("producer:case-b:1", "producer", "producer", "case-b", 1)
+        with tempfile.TemporaryDirectory() as directory:
+            run_root = pathlib.Path(directory)
+            live_matrix.reserve_attempt(
+                run_root, identity, first, producer, kind="producer", call_number=1
+            )
+            live_matrix.reserve_attempt(
+                run_root, identity, second, producer, kind="producer", call_number=2
+            )
+            (run_root / live_matrix.ATTEMPT_RESERVATION_DIRECTORY_NAME / "0001.json").unlink()
+            with self.assertRaisesRegex(live_matrix.LiveMatrixError, "gap-free"):
+                live_matrix._load_attempt_reservations(run_root, identity)
+
+    def test_first_reservation_fsyncs_file_directory_and_run_root(self) -> None:
+        identity = live_matrix.RunIdentity.for_test()
+        producer = live_matrix.Producer("producer", "codex", "model")
+        call = live_matrix.PlannedCall("producer:case:1", "producer", "producer", "case", 1)
+        with tempfile.TemporaryDirectory() as directory:
+            run_root = pathlib.Path(directory)
+            fsynced: list[tuple[int, int, int]] = []
+            original_fsync = os.fsync
+
+            def record_fsync(descriptor: int) -> None:
+                opened = os.fstat(descriptor)
+                fsynced.append((opened.st_dev, opened.st_ino, opened.st_mode))
+                original_fsync(descriptor)
+
+            with mock.patch("live_matrix.os.fsync", side_effect=record_fsync):
+                live_matrix.reserve_attempt(
+                    run_root, identity, call, producer, kind="producer", call_number=1
+                )
+            reservation_root = run_root / live_matrix.ATTEMPT_RESERVATION_DIRECTORY_NAME
+            reservation_file = reservation_root / "0001.json"
+            for path in (run_root, reservation_root, reservation_file):
+                with self.subTest(path=path.name):
+                    current = path.stat()
+                    self.assertIn(
+                        (current.st_dev, current.st_ino),
+                        {(device, inode) for device, inode, _ in fsynced},
+                    )
 
     def test_reservation_not_receipt_consumes_crashed_provider_attempt_budget(self) -> None:
         identity = live_matrix.RunIdentity.for_test()
@@ -661,7 +942,7 @@ class ReceiptAndBudgetTests(unittest.TestCase):
             run_root = pathlib.Path(directory)
             live_matrix.reserve_attempt(run_root, identity, call, producer, kind="producer", call_number=1)
             reservations = live_matrix._load_attempt_reservations(run_root, identity)
-            self.assertEqual(live_matrix.attempted_call_count(reservations), 1)
+            self.assertEqual(len(reservations), 1)
             with self.assertRaisesRegex(live_matrix.LiveMatrixError, "budget exhausted"):
                 live_matrix.reserve_attempt(run_root, identity, call, producer, kind="producer", call_number=2, ceiling=1)
 
@@ -672,28 +953,13 @@ class ReceiptAndBudgetTests(unittest.TestCase):
             live_matrix._validate_receipt_reservations((receipt,), (), identity)
 
     def test_crash_after_provider_return_cannot_reuse_a_maxed_reservation(self) -> None:
-        call = live_matrix.PlannedCall("codex-direct:correct-obligation:1", "producer", "codex-direct", "correct-obligation", 1)
-        identity = live_matrix.RunIdentity.for_test(
-            selected_call_ids=(call.call_id,), installed_skill_hash="test-skill", producer_ids=("codex-direct",), requested_models=()
-        )
-        case = case_by_id("correct-obligation")
         with tempfile.TemporaryDirectory() as directory:
             run_root = pathlib.Path(directory)
-            preflight = live_matrix.PreflightResult(
-                identity=identity,
-                repository_root=run_root,
-                repository_branch="test",
-                source_skill_root=HERE.parent,
-                installed_skill_root=HERE.parent,
-                run_root=run_root,
-                cli_info={"codex": live_matrix.CliInfo("codex", "v", None), "cursor-agent": live_matrix.CliInfo(None, None, None)},
-                model_availability={},
-                discovery_sha256=None,
-                discovery_diagnostic=None,
+            call, case, preflight, producer_definition, capture = single_codex_dispatch_fixture(
+                run_root
             )
-            capture = live_matrix.CommandCapture(0, b'{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}\n', b"", 1)
             with mock.patch("live_matrix.validate_dispatch_identity"):
-                with mock.patch("live_matrix.build_producers", return_value=(live_matrix.Producer("codex-direct", "codex", None),)):
+                with mock.patch("live_matrix.build_producers", return_value=(producer_definition,)):
                     with mock.patch("live_matrix.run_command", return_value=capture) as provider:
                         with mock.patch("live_matrix._write_raw_file", side_effect=RuntimeError("crash after provider")):
                             with self.assertRaisesRegex(RuntimeError, "crash after provider"):
@@ -701,6 +967,238 @@ class ReceiptAndBudgetTests(unittest.TestCase):
                         with self.assertRaisesRegex(live_matrix.LiveMatrixError, "budget exhausted"):
                             live_matrix.dispatch_calls(preflight, (call,), (case,), jobs=1, max_calls=1)
             self.assertEqual(provider.call_count, 1)
+
+    def test_crash_only_reservations_use_monotonic_attempt_ids_through_three(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_root = pathlib.Path(directory)
+            call, case, preflight, producer_definition, capture = single_codex_dispatch_fixture(
+                run_root
+            )
+            with mock.patch("live_matrix.validate_dispatch_identity"):
+                with mock.patch("live_matrix.build_producers", return_value=(producer_definition,)):
+                    with mock.patch("live_matrix.run_command", return_value=capture) as provider:
+                        for _ in range(2):
+                            with mock.patch(
+                                "live_matrix._write_raw_file",
+                                side_effect=RuntimeError("crash before raw"),
+                            ):
+                                with self.assertRaisesRegex(
+                                    RuntimeError, "crash before raw"
+                                ):
+                                    live_matrix.dispatch_calls(
+                                        preflight,
+                                        (call,),
+                                        (case,),
+                                        jobs=1,
+                                        max_calls=3,
+                                    )
+                        receipts = live_matrix.dispatch_calls(
+                            preflight, (call,), (case,), jobs=1, max_calls=3
+                        )
+            reservations = live_matrix._load_attempt_reservations(run_root, preflight.identity)
+            self.assertEqual(
+                [(item.call_number, item.call_id) for item in reservations],
+                [
+                    (1, call.call_id),
+                    (2, f"{call.call_id}:attempt-2"),
+                    (3, f"{call.call_id}:attempt-3"),
+                ],
+            )
+            self.assertEqual(
+                [(item.call_number, item.call_id) for item in receipts],
+                [(3, f"{call.call_id}:attempt-3")],
+            )
+            self.assertEqual(provider.call_count, 3)
+
+    def test_missing_executable_blocks_before_reservation_or_provider_call(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_root = pathlib.Path(directory)
+            call, case, preflight, producer_definition, _ = single_codex_dispatch_fixture(run_root)
+            preflight = dataclasses.replace(
+                preflight,
+                cli_info={
+                    **preflight.cli_info,
+                    "codex": live_matrix.CliInfo(None, None, "codex is not on PATH"),
+                },
+            )
+            with mock.patch("live_matrix.validate_dispatch_identity"):
+                with mock.patch("live_matrix.build_producers", return_value=(producer_definition,)):
+                    with mock.patch("live_matrix.run_command") as provider:
+                        with self.assertRaisesRegex(live_matrix.LiveMatrixError, "codex CLI is unavailable"):
+                            live_matrix.dispatch_calls(
+                                preflight, (call,), (case,), jobs=1, max_calls=1
+                            )
+            self.assertEqual(live_matrix._load_attempt_reservations(run_root), ())
+            provider.assert_not_called()
+
+    def test_reserve_pre_call_post_call_pre_raw_and_pre_receipt_crashes_are_charged_once(self) -> None:
+        stages = ("reserve", "pre-call", "post-call", "pre-raw", "pre-receipt")
+        for stage in stages:
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as directory:
+                run_root = pathlib.Path(directory)
+                call, case, preflight, producer_definition, capture = single_codex_dispatch_fixture(
+                    run_root
+                )
+                original_reserve = live_matrix.reserve_attempt
+
+                def crash_after_reserve(*args: object, **kwargs: object) -> live_matrix.AttemptReservation:
+                    reservation = original_reserve(*args, **kwargs)
+                    raise RuntimeError("crash at reserve")
+
+                patches: list[mock._patch[object]] = [
+                    mock.patch("live_matrix.validate_dispatch_identity"),
+                    mock.patch("live_matrix.build_producers", return_value=(producer_definition,)),
+                    mock.patch("live_matrix.run_command", return_value=capture),
+                ]
+                if stage == "reserve":
+                    patches.append(
+                        mock.patch("live_matrix.reserve_attempt", side_effect=crash_after_reserve)
+                    )
+                elif stage == "pre-call":
+                    patches[-1] = mock.patch(
+                        "live_matrix.run_command", side_effect=RuntimeError("crash before call")
+                    )
+                elif stage == "post-call":
+                    patches.append(
+                        mock.patch(
+                            "live_matrix.extract_codex_response",
+                            side_effect=RuntimeError("crash after call"),
+                        )
+                    )
+                elif stage == "pre-raw":
+                    patches.append(
+                        mock.patch(
+                            "live_matrix._write_raw_file",
+                            side_effect=RuntimeError("crash before raw"),
+                        )
+                    )
+                else:
+                    patches.append(
+                        mock.patch(
+                            "live_matrix._write_call_receipt",
+                            side_effect=RuntimeError("crash before receipt"),
+                        )
+                    )
+                with contextlib.ExitStack() as stack:
+                    for patcher in patches:
+                        stack.enter_context(patcher)
+                    with self.assertRaisesRegex(RuntimeError, "crash"):
+                        live_matrix.dispatch_calls(
+                            preflight, (call,), (case,), jobs=1, max_calls=1
+                        )
+                reservations = live_matrix._load_attempt_reservations(
+                    run_root, preflight.identity
+                )
+                self.assertEqual(
+                    [(item.call_number, item.call_id) for item in reservations],
+                    [(1, call.call_id)],
+                )
+                self.assertEqual(live_matrix._load_receipt_attempts(run_root), ())
+
+    def test_concurrent_producer_reservations_are_controller_sequential_immediately_before_submit(self) -> None:
+        events: list[tuple[str, str]] = []
+
+        class ImmediateExecutor:
+            def __init__(self, *, max_workers: int) -> None:
+                self.max_workers = max_workers
+
+            def __enter__(self) -> "ImmediateExecutor":
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                return None
+
+            def submit(self, function: object, *args: object) -> concurrent.futures.Future[object]:
+                reservation = next(
+                    item for item in args if isinstance(item, live_matrix.AttemptReservation)
+                )
+                events.append(("submit", reservation.call_id))
+                future: concurrent.futures.Future[object] = concurrent.futures.Future()
+                try:
+                    future.set_result(function(*args))
+                except BaseException as exc:
+                    future.set_exception(exc)
+                return future
+
+        with tempfile.TemporaryDirectory() as directory:
+            run_root = pathlib.Path(directory)
+            first_case = case_by_id("correct-obligation")
+            second_case = case_by_id("polish-local-flow")
+            calls = (
+                live_matrix.PlannedCall(
+                    "codex-direct:correct-obligation:1",
+                    "producer",
+                    "codex-direct",
+                    first_case.id,
+                    1,
+                ),
+                live_matrix.PlannedCall(
+                    "codex-direct:polish-local-flow:1",
+                    "producer",
+                    "codex-direct",
+                    second_case.id,
+                    1,
+                ),
+            )
+            identity = live_matrix.RunIdentity.for_test(
+                selected_call_ids=tuple(call.call_id for call in calls),
+                installed_skill_hash="test-skill",
+                producer_ids=("codex-direct",),
+                requested_models=(),
+            )
+            producer_definition = live_matrix.Producer("codex-direct", "codex", None)
+            preflight = live_matrix.PreflightResult(
+                identity=identity,
+                repository_root=run_root,
+                repository_branch="test",
+                source_skill_root=HERE.parent,
+                installed_skill_root=HERE.parent,
+                run_root=run_root,
+                cli_info={
+                    "codex": live_matrix.CliInfo("codex", "v", None),
+                    "cursor-agent": live_matrix.CliInfo(None, None, None),
+                },
+                model_availability={},
+                discovery_sha256=None,
+                discovery_diagnostic=None,
+            )
+            capture = live_matrix.CommandCapture(
+                0,
+                b'{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}\n',
+                b"",
+                1,
+            )
+            original_reserve = live_matrix.reserve_attempt
+
+            def record_reserve(*args: object, **kwargs: object) -> live_matrix.AttemptReservation:
+                reservation = original_reserve(*args, **kwargs)
+                events.append(("reserve", reservation.call_id))
+                return reservation
+
+            with mock.patch("live_matrix.validate_dispatch_identity"):
+                with mock.patch("live_matrix.build_producers", return_value=(producer_definition,)):
+                    with mock.patch("live_matrix.run_command", return_value=capture):
+                        with mock.patch("live_matrix.reserve_attempt", side_effect=record_reserve):
+                            with mock.patch(
+                                "live_matrix.concurrent.futures.ThreadPoolExecutor",
+                                ImmediateExecutor,
+                            ):
+                                live_matrix.dispatch_calls(
+                                    preflight,
+                                    calls,
+                                    (first_case, second_case),
+                                    jobs=2,
+                                    max_calls=2,
+                                )
+        self.assertEqual(
+            events,
+            [
+                ("reserve", calls[0].call_id),
+                ("submit", calls[0].call_id),
+                ("reserve", calls[1].call_id),
+                ("submit", calls[1].call_id),
+            ],
+        )
 
 
 class LiveMatrixCliTests(unittest.TestCase):
@@ -880,14 +1378,15 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
         with mock.patch("live_matrix.validate_preflight", return_value=preflight_result) as preflight:
             with mock.patch("live_matrix.dispatch_calls", return_value=()) as dispatch:
                     with mock.patch("live_matrix._load_receipts", return_value={}):
-                        with mock.patch("live_matrix.load_normalized_responses", return_value={}):
-                            with mock.patch("live_matrix.dispatch_reviewer_calls", return_value=((), ())):
-                                with mock.patch("live_matrix.load_review_responses", return_value=()):
-                                    with mock.patch("live_matrix._load_attempt_reservations", return_value=()):
-                                        with contextlib.redirect_stdout(io.StringIO()):
-                                            status = live_matrix.main(
-                                                ["--execute", "--scope", "baseline", "--run-id", "baseline-1"]
-                                            )
+                        with mock.patch("live_matrix._load_receipt_attempts", return_value=()):
+                            with mock.patch("live_matrix.load_normalized_responses", return_value={}):
+                                with mock.patch("live_matrix.dispatch_reviewer_calls", return_value=((), ())):
+                                    with mock.patch("live_matrix.load_review_responses", return_value=()):
+                                        with mock.patch("live_matrix._load_attempt_reservations", return_value=()):
+                                            with contextlib.redirect_stdout(io.StringIO()):
+                                                status = live_matrix.main(
+                                                    ["--execute", "--scope", "baseline", "--run-id", "baseline-1"]
+                                                )
         self.assertEqual(status, 0)
         self.assertTrue(preflight.call_args.kwargs["reuse_preflight"])
         dispatch.assert_called_once()
@@ -905,7 +1404,7 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
             with mock.patch("live_matrix.dispatch_calls", return_value=()) as producers:
                 with mock.patch("live_matrix.dispatch_reviewer_calls") as reviewers:
                     with mock.patch("live_matrix._load_receipts", return_value={}):
-                        with mock.patch("live_matrix._all_attempts_with_new", return_value=()):
+                        with mock.patch("live_matrix._load_receipt_attempts", return_value=()):
                             with mock.patch("live_matrix._load_attempt_reservations", return_value=()):
                                 with contextlib.redirect_stdout(io.StringIO()):
                                     status = live_matrix.main(
@@ -927,7 +1426,7 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
         receipt = live_matrix.CallReceipt.for_test("call-1", repeat_index=2)
         self.assertEqual(live_matrix._receipt_from_json(receipt.as_json()), receipt)
 
-    def test_unordered_attempt_files_keep_latest_receipt_and_max_budget(self) -> None:
+    def test_unordered_attempt_files_keep_latest_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             run_root = pathlib.Path(directory)
             receipt_root = run_root / live_matrix.RECEIPT_DIRECTORY_NAME
@@ -941,7 +1440,40 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
             latest = live_matrix._load_receipts(run_root)
             attempts = live_matrix._load_receipt_attempts(run_root)
         self.assertEqual(latest, {"c": retry})
-        self.assertEqual(live_matrix.attempted_call_count(attempts), 7)
+        self.assertEqual(attempts, (retry, first))
+
+    def test_latest_receipt_uses_actual_attempt_id_when_zero_provider_follows_blocked(self) -> None:
+        identity = live_matrix.RunIdentity.for_test()
+        producer = live_matrix.Producer("producer", "cursor", "model")
+        with tempfile.TemporaryDirectory() as directory:
+            run_root = pathlib.Path(directory)
+            receipt_root = run_root / live_matrix.RECEIPT_DIRECTORY_NAME
+            receipt_root.mkdir()
+            blocked = live_matrix.CallReceipt.for_test(
+                "producer:case:1",
+                identity=identity,
+                status="blocked",
+                call_number=1,
+                host="cursor",
+                requested_model="model",
+                case_id="case",
+            )
+            unmeasured = live_matrix._not_measured_receipt(
+                live_matrix.PlannedCall(
+                    "producer:case:1:attempt-2",
+                    "producer",
+                    "producer",
+                    "case",
+                    1,
+                ),
+                producer,
+                identity,
+                "model unavailable on resume",
+            )
+            live_matrix.write_receipt(receipt_root / "blocked.json", blocked)
+            live_matrix.write_receipt(receipt_root / "unmeasured.json", unmeasured)
+            latest = live_matrix._load_receipts(run_root)
+        self.assertEqual(latest, {"producer:case:1": unmeasured})
 
     def test_duplicate_reserved_call_number_is_corrupt(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1059,7 +1591,7 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
             relative = target.relative_to(root).as_posix()
             state = live_matrix.ReportState(identity, relative, live_matrix._sha256_file(target))
             live_matrix._write_report_state(run_root, state, replace_existing=False)
-            loaded = live_matrix._report_state_for_target(run_root, root, target, identity)
+            loaded = owned_report_state(run_root, root, target, identity)
             status = live_matrix.CommandCapture(0, f"?? {relative}\0".encode(), b"", 1)
             with mock.patch("live_matrix.run_command", return_value=status):
                 self.assertTrue(
@@ -1067,7 +1599,7 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
                 )
             target.write_text("user edit\n", encoding="utf-8")
             with self.assertRaisesRegex(live_matrix.LiveMatrixError, "hash drift"):
-                live_matrix._report_state_for_target(run_root, root, target, identity)
+                owned_report_state(run_root, root, target, identity)
             target.write_text("first report\n", encoding="utf-8")
             extra = live_matrix.CommandCapture(
                 0, f"?? {relative}\0?? notes.txt\0".encode(), b"", 1
@@ -1084,19 +1616,26 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
             run_root = root / "ignored-run"
             target = root / "docs" / "operations" / "2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md"
             run_root.mkdir()
-            live_matrix.write_operations_report(
-                target, "first report\n", root, run_root=run_root, identity=identity
+            lease = live_matrix.open_report_lease(
+                target, root, run_root=run_root, identity=identity
             )
+            try:
+                live_matrix.reserve_operations_report(lease)
+                live_matrix.write_operations_report(lease, "first report\n")
+            finally:
+                lease.close()
             first = live_matrix._load_report_state(run_root)
             self.assertIsNotNone(first)
-            live_matrix.write_operations_report(
-                target,
-                "resumed report\n",
-                root,
-                run_root=run_root,
-                identity=identity,
-                report_state=first,
+            resumed_lease = live_matrix.open_report_lease(
+                target, root, run_root=run_root, identity=identity
             )
+            try:
+                self.assertEqual(
+                    live_matrix.reserve_operations_report(resumed_lease), first
+                )
+                live_matrix.write_operations_report(resumed_lease, "resumed report\n")
+            finally:
+                resumed_lease.close()
             self.assertEqual(target.read_text(encoding="utf-8"), "resumed report\n")
             self.assertEqual(live_matrix._load_report_state(run_root).sha256, live_matrix._sha256_file(target))
 
@@ -1125,13 +1664,19 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
                             evidence_root=evidence_root,
                             report_path=target,
                         )
-                        live_matrix.write_operations_report(
+                        lease = live_matrix.open_report_lease(
                             target,
-                            "runner-owned report\n",
                             root,
                             run_root=first.run_root,
                             identity=first.identity,
                         )
+                        try:
+                            live_matrix.reserve_operations_report(lease)
+                            live_matrix.write_operations_report(
+                                lease, "runner-owned report\n"
+                            )
+                        finally:
+                            lease.close()
                         resumed = live_matrix.validate_preflight(
                             source_skill_root=HERE.parent,
                             installed_skill_root=HERE.parent,
@@ -1150,20 +1695,32 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
             with mock.patch("live_matrix._cli_info", side_effect=cli):
                 with mock.patch("live_matrix._discover_models", return_value=(b"", None)):
                     with mock.patch("live_matrix._run_offline_checks"):
-                        with self.assertRaisesRegex(live_matrix.LiveMatrixError, "hash drift"):
-                            live_matrix.validate_preflight(
-                                source_skill_root=HERE.parent,
-                                installed_skill_root=HERE.parent,
-                                repository_root=root,
-                                run_id="baseline-1",
-                                scope="baseline",
-                                jobs=1,
-                                max_calls=122,
-                                evidence_root=evidence_root,
-                                resume=True,
-                                reuse_preflight=True,
-                                report_path=target,
-                            )
+                        resumed_after_edit = live_matrix.validate_preflight(
+                            source_skill_root=HERE.parent,
+                            installed_skill_root=HERE.parent,
+                            repository_root=root,
+                            run_id="baseline-1",
+                            scope="baseline",
+                            jobs=1,
+                            max_calls=122,
+                            evidence_root=evidence_root,
+                            resume=True,
+                            reuse_preflight=True,
+                            report_path=target,
+                        )
+                        lease = live_matrix.open_report_lease(
+                            target,
+                            root,
+                            run_root=resumed_after_edit.run_root,
+                            identity=resumed_after_edit.identity,
+                        )
+                        try:
+                            with self.assertRaisesRegex(
+                                live_matrix.LiveMatrixError, "hash drift"
+                            ):
+                                live_matrix.reserve_operations_report(lease)
+                        finally:
+                            lease.close()
 
     def test_actual_resume_before_first_report_dispatches_and_publishes_once(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1200,7 +1757,7 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
                             self.assertIsNotNone(dispatched_preflight.report_state)
                             self.assertTrue(target.is_file())
                             self.assertEqual(
-                                live_matrix._report_state_for_target(
+                                owned_report_state(
                                     evidence_root / "baseline-1",
                                     root,
                                     target,
@@ -1243,7 +1800,7 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
             self.assertIsNotNone(dispatch.call_args.args[0].report_state)
             self.assertTrue(target.is_file())
             self.assertIsNotNone(
-                live_matrix._report_state_for_target(
+                owned_report_state(
                     evidence_root / "baseline-1", root, target, dispatch.call_args.args[0].identity
                 )
             )
@@ -1411,13 +1968,19 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
                             "live_matrix._write_report_state",
                             side_effect=live_matrix.LiveMatrixError("simulated crash"),
                         ):
-                            with self.assertRaisesRegex(live_matrix.LiveMatrixError, "simulated crash"):
-                                live_matrix.reserve_operations_report(
-                                    target,
-                                    root,
-                                    run_root=preflight.run_root,
-                                    identity=preflight.identity,
-                                )
+                            lease = live_matrix.open_report_lease(
+                                target,
+                                root,
+                                run_root=preflight.run_root,
+                                identity=preflight.identity,
+                            )
+                            try:
+                                with self.assertRaisesRegex(
+                                    live_matrix.LiveMatrixError, "simulated crash"
+                                ):
+                                    live_matrix.reserve_operations_report(lease)
+                            finally:
+                                lease.close()
                         self.assertTrue(target.is_file())
                         self.assertIsNone(live_matrix._load_report_state(preflight.run_root))
                         with mock.patch("live_matrix.dispatch_calls") as dispatch:
@@ -1476,6 +2039,40 @@ def synthetic_receipts_for_test(failure_classes: int, passing_bands: int):
 
 
 class ReviewAndReportTests(unittest.TestCase):
+    def test_report_date_is_the_intentional_artifact_date_from_owned_target(self) -> None:
+        identity = live_matrix.RunIdentity.for_test()
+        report_path = pathlib.Path(
+            "/repo/docs/operations/"
+            "2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md"
+        )
+        preflight = live_matrix.PreflightResult(
+            identity=identity,
+            repository_root=pathlib.Path("/repo"),
+            repository_branch="test",
+            source_skill_root=HERE.parent,
+            installed_skill_root=HERE.parent,
+            run_root=pathlib.Path("/run"),
+            cli_info={},
+            model_availability={},
+            discovery_sha256=None,
+            discovery_diagnostic=None,
+            report_path=report_path,
+            git_facts=live_matrix.GitReportFacts(
+                "base", 0, 0, (), "local", "remote"
+            ),
+        )
+        with mock.patch("live_matrix._skill_version", return_value="1.0.2"):
+            report_input = live_matrix.build_report_input(
+                preflight,
+                (),
+                (),
+                (),
+                (),
+                producer_attempted_calls=0,
+                reviewer_attempted_calls=0,
+            )
+        self.assertEqual(report_input.report_date, "2026-08-23")
+
     def test_packet_caps_one_representative_per_failure_class_and_has_four_controls(self) -> None:
         receipts = synthetic_receipts_for_test(failure_classes=10, passing_bands=4)
         samples = live_matrix.select_review_samples(receipts)
@@ -2108,6 +2705,356 @@ class ReviewAndReportTests(unittest.TestCase):
 
 
 class ReviewExecutionWiringTests(unittest.TestCase):
+    def test_report_lease_binds_directory_target_inode_hash_and_state(self) -> None:
+        identity = live_matrix.RunIdentity.for_test()
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory) / "repo"
+            run_root = pathlib.Path(directory) / "run"
+            root.mkdir()
+            run_root.mkdir()
+            target = (
+                root
+                / "docs"
+                / "operations"
+                / "2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md"
+            )
+            lease = live_matrix.open_report_lease(
+                target, root, run_root=run_root, identity=identity
+            )
+            try:
+                state = live_matrix.reserve_operations_report(lease)
+                directory_stat = os.fstat(lease.directory_fd)
+                target_stat = target.stat()
+                self.assertEqual(
+                    (lease.directory_dev, lease.directory_inode),
+                    (directory_stat.st_dev, directory_stat.st_ino),
+                )
+                self.assertEqual(
+                    (lease.target_dev, lease.target_inode),
+                    (target_stat.st_dev, target_stat.st_ino),
+                )
+                self.assertEqual(lease.report_state, state)
+                lease.validate_for_dispatch()
+            finally:
+                descriptor = lease.directory_fd
+                lease.close()
+            self.assertTrue(lease.closed)
+            with self.assertRaises(OSError):
+                os.fstat(descriptor)
+
+    def test_report_lease_never_overwrites_same_hash_user_inode_substitution(self) -> None:
+        identity = live_matrix.RunIdentity.for_test()
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory) / "repo"
+            run_root = pathlib.Path(directory) / "run"
+            root.mkdir()
+            run_root.mkdir()
+            target = (
+                root
+                / "docs"
+                / "operations"
+                / "2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md"
+            )
+            lease = live_matrix.open_report_lease(
+                target, root, run_root=run_root, identity=identity
+            )
+            try:
+                live_matrix.reserve_operations_report(lease)
+                lease.validate_for_dispatch()
+                owned_bytes = target.read_bytes()
+                target.unlink()
+                target.write_bytes(owned_bytes)
+                substituted_inode = target.stat().st_ino
+                with self.assertRaisesRegex(live_matrix.LiveMatrixError, "inode"):
+                    live_matrix.write_operations_report(lease, "final report\n")
+                self.assertEqual(target.stat().st_ino, substituted_inode)
+                self.assertEqual(target.read_bytes(), owned_bytes)
+            finally:
+                lease.close()
+
+    def test_report_lease_parent_symlink_swap_never_writes_external_directory(self) -> None:
+        identity = live_matrix.RunIdentity.for_test()
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory) / "repo"
+            outside = pathlib.Path(directory) / "outside"
+            run_root = pathlib.Path(directory) / "run"
+            root.mkdir()
+            outside.mkdir()
+            run_root.mkdir()
+            target = (
+                root
+                / "docs"
+                / "operations"
+                / "2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md"
+            )
+            lease = live_matrix.open_report_lease(
+                target, root, run_root=run_root, identity=identity
+            )
+            try:
+                live_matrix.reserve_operations_report(lease)
+                lease.validate_for_dispatch()
+                (root / "docs").rename(root / "docs-held")
+                (root / "docs").symlink_to(outside, target_is_directory=True)
+                with self.assertRaisesRegex(live_matrix.LiveMatrixError, "lease.*path"):
+                    live_matrix.write_operations_report(lease, "final report\n")
+                self.assertEqual(tuple(outside.iterdir()), ())
+                held_report = root / "docs-held" / "operations" / target.name
+                self.assertEqual(held_report.read_bytes(), live_matrix.PENDING_OPERATIONS_REPORT)
+            finally:
+                lease.close()
+
+    def test_pre_call_report_lease_drift_blocks_without_attempt_reservation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory) / "repo"
+            outside = pathlib.Path(directory) / "outside"
+            run_root = pathlib.Path(directory) / "run"
+            root.mkdir()
+            outside.mkdir()
+            run_root.mkdir()
+            call, case, preflight, producer_definition, _ = single_codex_dispatch_fixture(
+                run_root
+            )
+            preflight = dataclasses.replace(preflight, repository_root=root)
+            target = (
+                root
+                / "docs"
+                / "operations"
+                / "2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md"
+            )
+            lease = live_matrix.open_report_lease(
+                target, root, run_root=run_root, identity=preflight.identity
+            )
+            try:
+                state = live_matrix.reserve_operations_report(lease)
+                preflight = dataclasses.replace(
+                    preflight,
+                    report_path=target,
+                    report_state=state,
+                    report_lease=lease,
+                )
+                (root / "docs").rename(root / "docs-held")
+                (root / "docs").symlink_to(outside, target_is_directory=True)
+                with mock.patch("live_matrix.build_producers", return_value=(producer_definition,)):
+                    with mock.patch("live_matrix.run_command") as provider:
+                        with self.assertRaisesRegex(
+                            live_matrix.LiveMatrixError, "lease.*path"
+                        ):
+                            live_matrix.dispatch_calls(
+                                preflight, (call,), (case,), jobs=1, max_calls=1
+                            )
+                self.assertEqual(live_matrix._load_attempt_reservations(run_root), ())
+                provider.assert_not_called()
+                self.assertEqual(tuple(outside.iterdir()), ())
+            finally:
+                lease.close()
+
+    def test_post_check_parent_swap_charges_only_current_call_and_leaves_safe_residual(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory) / "repo"
+            outside = pathlib.Path(directory) / "outside"
+            run_root = pathlib.Path(directory) / "run"
+            root.mkdir()
+            outside.mkdir()
+            run_root.mkdir()
+            first_case = case_by_id("correct-obligation")
+            second_case = case_by_id("polish-local-flow")
+            calls = (
+                live_matrix.PlannedCall(
+                    "codex-direct:correct-obligation:1",
+                    "producer",
+                    "codex-direct",
+                    first_case.id,
+                    1,
+                ),
+                live_matrix.PlannedCall(
+                    "codex-direct:polish-local-flow:1",
+                    "producer",
+                    "codex-direct",
+                    second_case.id,
+                    1,
+                ),
+            )
+            identity = live_matrix.RunIdentity.for_test(
+                selected_call_ids=tuple(call.call_id for call in calls),
+                installed_skill_hash="test-skill",
+                producer_ids=("codex-direct",),
+                requested_models=(),
+            )
+            producer_definition = live_matrix.Producer("codex-direct", "codex", None)
+            preflight = live_matrix.PreflightResult(
+                identity=identity,
+                repository_root=root,
+                repository_branch="test",
+                source_skill_root=HERE.parent,
+                installed_skill_root=HERE.parent,
+                run_root=run_root,
+                cli_info={
+                    "codex": live_matrix.CliInfo("codex", "v", None),
+                    "cursor-agent": live_matrix.CliInfo(None, None, None),
+                },
+                model_availability={},
+                discovery_sha256=None,
+                discovery_diagnostic=None,
+            )
+            target = (
+                root
+                / "docs"
+                / "operations"
+                / "2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md"
+            )
+            lease = live_matrix.open_report_lease(
+                target, root, run_root=run_root, identity=identity
+            )
+            try:
+                state = live_matrix.reserve_operations_report(lease)
+                preflight = dataclasses.replace(
+                    preflight,
+                    report_path=target,
+                    report_state=state,
+                    report_lease=lease,
+                )
+                capture = live_matrix.CommandCapture(
+                    0,
+                    b'{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}\n',
+                    b"",
+                    1,
+                )
+                swapped = False
+
+                def swap_after_last_check(*args: object, **kwargs: object) -> live_matrix.CommandCapture:
+                    nonlocal swapped
+                    if not swapped:
+                        (root / "docs").rename(root / "docs-held")
+                        (root / "docs").symlink_to(outside, target_is_directory=True)
+                        swapped = True
+                    return capture
+
+                with mock.patch("live_matrix.build_producers", return_value=(producer_definition,)):
+                    with mock.patch(
+                        "live_matrix._git_status_is_clean", return_value=True
+                    ):
+                        with mock.patch(
+                            "live_matrix._git_value", return_value=identity.repository_head
+                        ):
+                            with mock.patch(
+                                "live_matrix.recursive_manifest_hash",
+                                return_value=identity.skill_hash,
+                            ):
+                                with mock.patch(
+                                    "live_matrix._sha256_file",
+                                    return_value=identity.live_cases_hash,
+                                ):
+                                    with mock.patch(
+                                        "live_matrix.run_command",
+                                        side_effect=swap_after_last_check,
+                                    ) as provider:
+                                        with self.assertRaisesRegex(
+                                            live_matrix.LiveMatrixError, "lease.*path"
+                                        ):
+                                            live_matrix.dispatch_calls(
+                                                preflight,
+                                                calls,
+                                                (first_case, second_case),
+                                                jobs=1,
+                                                max_calls=2,
+                                            )
+                reservations = live_matrix._load_attempt_reservations(run_root, identity)
+                self.assertEqual(len(reservations), 1)
+                self.assertEqual(provider.call_count, 1)
+                self.assertEqual(tuple(outside.iterdir()), ())
+                held_report = root / "docs-held" / "operations" / target.name
+                self.assertEqual(held_report.read_bytes(), live_matrix.PENDING_OPERATIONS_REPORT)
+            finally:
+                lease.close()
+
+    def test_report_lease_cleans_staging_file_and_fd_on_final_write_exception(self) -> None:
+        identity = live_matrix.RunIdentity.for_test()
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory) / "repo"
+            run_root = pathlib.Path(directory) / "run"
+            root.mkdir()
+            run_root.mkdir()
+            target = (
+                root
+                / "docs"
+                / "operations"
+                / "2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md"
+            )
+            lease = live_matrix.open_report_lease(
+                target, root, run_root=run_root, identity=identity
+            )
+            descriptor = lease.directory_fd
+            try:
+                live_matrix.reserve_operations_report(lease)
+                with mock.patch(
+                    "live_matrix._write_bytes", side_effect=RuntimeError("staging crash")
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "staging crash"):
+                        live_matrix.write_operations_report(lease, "final report\n")
+                self.assertEqual(
+                    [path.name for path in target.parent.iterdir() if path.name.endswith(".partial")],
+                    [],
+                )
+            finally:
+                lease.close()
+            with self.assertRaises(OSError):
+                os.fstat(descriptor)
+
+    def test_execute_closes_report_lease_when_dispatch_fails(self) -> None:
+        identity = live_matrix.RunIdentity.for_test(run_id="baseline-1")
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            run_root = root / "run"
+            run_root.mkdir()
+            report = (
+                root
+                / "docs"
+                / "operations"
+                / "2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md"
+            )
+            preflight = live_matrix.PreflightResult(
+                identity=identity,
+                repository_root=root,
+                repository_branch="test",
+                source_skill_root=HERE.parent,
+                installed_skill_root=HERE.parent,
+                run_root=run_root,
+                cli_info={},
+                model_availability={},
+                discovery_sha256=None,
+                discovery_diagnostic=None,
+            )
+            lease = mock.Mock()
+            state = live_matrix.ReportState(
+                identity,
+                "docs/operations/2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md",
+                "0" * 64,
+            )
+            with mock.patch("live_matrix.validate_preflight", return_value=preflight):
+                with mock.patch("live_matrix.open_report_lease", return_value=lease) as opened:
+                    with mock.patch(
+                        "live_matrix.reserve_operations_report", return_value=state
+                    ):
+                        with mock.patch(
+                            "live_matrix.dispatch_calls",
+                            side_effect=live_matrix.LiveMatrixError("dispatch stopped"),
+                        ):
+                            with contextlib.redirect_stderr(io.StringIO()):
+                                status = live_matrix.main(
+                                    [
+                                        "--execute",
+                                        "--scope",
+                                        "baseline",
+                                        "--run-id",
+                                        "baseline-1",
+                                        "--report",
+                                        str(report),
+                                    ]
+                                )
+            self.assertEqual(status, 1)
+            opened.assert_called_once()
+            lease.close.assert_called_once_with()
+
     def test_report_reservation_parent_swap_cannot_write_to_replacement_directory(self) -> None:
         identity = live_matrix.RunIdentity.for_test()
         with tempfile.TemporaryDirectory() as directory:
@@ -2118,6 +3065,9 @@ class ReviewExecutionWiringTests(unittest.TestCase):
             outside.mkdir()
             run_root.mkdir()
             target = root / "docs" / "operations" / "2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md"
+            lease = live_matrix.open_report_lease(
+                target, root, run_root=run_root, identity=identity
+            )
             original_write = live_matrix._write_bytes
             swapped = False
 
@@ -2129,9 +3079,14 @@ class ReviewExecutionWiringTests(unittest.TestCase):
                     swapped = True
                 original_write(descriptor, payload)
 
-            with mock.patch("live_matrix._write_bytes", side_effect=swap_after_open):
-                with self.assertRaisesRegex(live_matrix.LiveMatrixError, "report parent is unsafe"):
-                    live_matrix.reserve_operations_report(target, root, run_root=run_root, identity=identity)
+            try:
+                with mock.patch("live_matrix._write_bytes", side_effect=swap_after_open):
+                    with self.assertRaisesRegex(
+                        live_matrix.LiveMatrixError, "report lease current path"
+                    ):
+                        live_matrix.reserve_operations_report(lease)
+            finally:
+                lease.close()
             self.assertTrue((root / "docs-held" / "operations" / target.name).is_file())
             self.assertEqual(tuple(outside.iterdir()), ())
 
@@ -2145,7 +3100,10 @@ class ReviewExecutionWiringTests(unittest.TestCase):
             outside.mkdir()
             run_root.mkdir()
             target = root / "docs" / "operations" / "2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md"
-            state = live_matrix.reserve_operations_report(target, root, run_root=run_root, identity=identity)
+            lease = live_matrix.open_report_lease(
+                target, root, run_root=run_root, identity=identity
+            )
+            live_matrix.reserve_operations_report(lease)
             original_write = live_matrix._write_bytes
             swapped = False
 
@@ -2157,11 +3115,18 @@ class ReviewExecutionWiringTests(unittest.TestCase):
                     swapped = True
                 original_write(descriptor, payload)
 
-            with mock.patch("live_matrix._write_bytes", side_effect=swap_after_open):
-                live_matrix.write_operations_report(
-                    target, "final report\n", root, run_root=run_root, identity=identity, report_state=state
-                )
-            self.assertEqual((root / "docs-held" / "operations" / target.name).read_text(encoding="utf-8"), "final report\n")
+            try:
+                with mock.patch("live_matrix._write_bytes", side_effect=swap_after_open):
+                    with self.assertRaisesRegex(
+                        live_matrix.LiveMatrixError, "report lease current path"
+                    ):
+                        live_matrix.write_operations_report(lease, "final report\n")
+            finally:
+                lease.close()
+            self.assertEqual(
+                (root / "docs-held" / "operations" / target.name).read_bytes(),
+                live_matrix.PENDING_OPERATIONS_REPORT,
+            )
             self.assertEqual(tuple(outside.iterdir()), ())
     def test_execute_path_dispatches_reviewers_and_writes_report_with_shared_summary(self) -> None:
         cases = (case_by_id("correct-obligation"),)
@@ -2178,9 +3143,20 @@ class ReviewExecutionWiringTests(unittest.TestCase):
             discovery_sha256=None,
             discovery_diagnostic=None,
         )
-        producer_receipt = live_matrix.CallReceipt.for_test("codex-direct:correct-obligation:1", call_number=1, status="blocked")
-        producer_retry = live_matrix.CallReceipt.for_test("codex-direct:correct-obligation:1:attempt-2", call_number=2)
-        reviewer_receipt = live_matrix.CallReceipt.for_test("reviewer-claude:packet:1", call_number=3)
+        producer_receipt = live_matrix.CallReceipt.for_test(
+            "codex-direct:correct-obligation:1",
+            call_number=1,
+            status="blocked",
+            identity=identity,
+        )
+        producer_retry = live_matrix.CallReceipt.for_test(
+            "codex-direct:correct-obligation:1:attempt-2",
+            call_number=2,
+            identity=identity,
+        )
+        reviewer_receipt = live_matrix.CallReceipt.for_test(
+            "reviewer-claude:packet:1", call_number=3, identity=identity
+        )
         reservations = tuple(
             live_matrix.AttemptReservation(
                 receipt.identity,
@@ -2195,6 +3171,10 @@ class ReviewExecutionWiringTests(unittest.TestCase):
             )
             for receipt in (producer_receipt, producer_retry, reviewer_receipt)
         )
+        lease = mock.Mock()
+        state = live_matrix.ReportState(
+            identity, "docs/operations/report.md", "0" * 64
+        )
         with mock.patch("live_matrix.validate_preflight", return_value=preflight):
             with mock.patch("live_matrix.load_live_cases", return_value=cases):
                 with mock.patch("live_matrix.dispatch_calls", return_value=(producer_receipt, producer_retry)) as producers:
@@ -2207,26 +3187,32 @@ class ReviewExecutionWiringTests(unittest.TestCase):
                                 "live_matrix._validated_operations_report_path", return_value=pathlib.Path("/report")
                             ):
                                 with mock.patch(
-                                    "live_matrix.reserve_operations_report",
-                                    return_value=live_matrix.ReportState(identity, "docs/operations/report.md", "0" * 64),
+                                    "live_matrix.open_report_lease",
+                                    return_value=lease,
                                 ):
                                     with mock.patch(
-                                        "live_matrix._git_report_facts",
-                                        return_value=live_matrix.GitReportFacts("base", 0, 0, (), "local", "remote"),
+                                        "live_matrix.reserve_operations_report",
+                                        return_value=state,
                                     ):
-                                        with mock.patch("live_matrix._load_attempt_reservations", return_value=reservations):
-                                            output = io.StringIO()
-                                            with contextlib.redirect_stdout(output):
-                                                status = live_matrix.main(
-                                                    [
-                                                        "--execute", "--scope", "baseline", "--run-id", "baseline-1",
-                                                        "--max-calls", "122", "--report", "docs/operations/2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md",
-                                                    ]
-                                                )
+                                        with mock.patch(
+                                            "live_matrix._git_report_facts",
+                                            return_value=live_matrix.GitReportFacts("base", 0, 0, (), "local", "remote"),
+                                        ):
+                                            with mock.patch("live_matrix._load_attempt_reservations", return_value=reservations):
+                                                output = io.StringIO()
+                                                with contextlib.redirect_stdout(output):
+                                                    status = live_matrix.main(
+                                                        [
+                                                            "--execute", "--scope", "baseline", "--run-id", "baseline-1",
+                                                            "--max-calls", "122", "--report", "docs/operations/2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md",
+                                                        ]
+                                                    )
         self.assertEqual(status, 0)
         producers.assert_called_once()
         reviewers.assert_called_once()
         report_writer.assert_called_once()
+        report_writer.assert_called_once_with(lease, mock.ANY)
+        lease.close.assert_called_once_with()
         payload = json.loads(output.getvalue())
         self.assertEqual((payload["producer_attempted_calls"], payload["reviewer_attempted_calls"], payload["attempted_calls"]), (2, 1, 3))
 
@@ -2285,6 +3271,116 @@ class ReviewExecutionWiringTests(unittest.TestCase):
         self.assertEqual(run.call_count, 3)
         resumed_run.assert_not_called()
 
+    def test_reviewer_crash_only_reservation_uses_attempt_two_with_spare_budget(self) -> None:
+        samples = live_matrix.select_review_samples(synthetic_receipts_for_test(1, 4))
+        reviewer = live_matrix.ReviewerCall(
+            "reviewer-claude", "claude-sonnet-5-thinking-high", "review prompt"
+        )
+        identity = live_matrix.RunIdentity.for_test(run_id="baseline-1")
+        with tempfile.TemporaryDirectory() as directory:
+            run_root = pathlib.Path(directory)
+            preflight = live_matrix.PreflightResult(
+                identity=identity,
+                repository_root=run_root,
+                repository_branch="test",
+                source_skill_root=HERE.parent,
+                installed_skill_root=HERE.parent,
+                run_root=run_root,
+                cli_info={
+                    "codex": live_matrix.CliInfo(None, None, None),
+                    "cursor-agent": live_matrix.CliInfo("cursor-agent", "v", None),
+                },
+                model_availability={reviewer.requested_model: True},
+                discovery_sha256=None,
+                discovery_diagnostic=None,
+            )
+            review_response = json.dumps(
+                {
+                    "samples": [
+                        {
+                            "candidate_id": sample.candidate_id,
+                            "issues": [],
+                            "assessment": "pass",
+                        }
+                        for sample in samples
+                    ],
+                    "packet_limitations": [],
+                }
+            )
+            capture = live_matrix.CommandCapture(
+                0,
+                json.dumps(
+                    {"result": review_response, "model": "reviewer-model"}
+                ).encode(),
+                b"",
+                1,
+            )
+            with mock.patch("live_matrix.validate_dispatch_identity"):
+                with mock.patch("live_matrix.build_reviewer_plan", return_value=(reviewer,)):
+                    with mock.patch("live_matrix.run_command", return_value=capture) as provider:
+                        with mock.patch(
+                            "live_matrix._write_raw_file",
+                            side_effect=RuntimeError("reviewer crash before raw"),
+                        ):
+                            with self.assertRaisesRegex(RuntimeError, "crash before raw"):
+                                live_matrix.dispatch_reviewer_calls(
+                                    preflight, samples, max_calls=2
+                                )
+                        receipts, _ = live_matrix.dispatch_reviewer_calls(
+                            preflight, samples, max_calls=2
+                        )
+            reservations = live_matrix._load_attempt_reservations(run_root, identity)
+            logical_id = "reviewer-claude:packet:1"
+            self.assertEqual(
+                [(item.call_number, item.call_id, item.kind) for item in reservations],
+                [
+                    (1, logical_id, "reviewer"),
+                    (2, f"{logical_id}:attempt-2", "reviewer"),
+                ],
+            )
+            self.assertEqual(
+                [(item.call_number, item.call_id, item.kind) for item in receipts],
+                [(2, f"{logical_id}:attempt-2", "reviewer")],
+            )
+            self.assertEqual(provider.call_count, 2)
+
+    def test_reviewer_missing_executable_blocks_before_reservation(self) -> None:
+        samples = live_matrix.select_review_samples(synthetic_receipts_for_test(1, 4))
+        reviewer = live_matrix.ReviewerCall(
+            "reviewer-claude", "claude-sonnet-5-thinking-high", "review prompt"
+        )
+        identity = live_matrix.RunIdentity.for_test(run_id="baseline-1")
+        with tempfile.TemporaryDirectory() as directory:
+            run_root = pathlib.Path(directory)
+            preflight = live_matrix.PreflightResult(
+                identity=identity,
+                repository_root=run_root,
+                repository_branch="test",
+                source_skill_root=HERE.parent,
+                installed_skill_root=HERE.parent,
+                run_root=run_root,
+                cli_info={
+                    "codex": live_matrix.CliInfo(None, None, None),
+                    "cursor-agent": live_matrix.CliInfo(
+                        None, None, "cursor-agent is not on PATH"
+                    ),
+                },
+                model_availability={reviewer.requested_model: True},
+                discovery_sha256=None,
+                discovery_diagnostic=None,
+            )
+            with mock.patch("live_matrix.validate_dispatch_identity"):
+                with mock.patch("live_matrix.build_reviewer_plan", return_value=(reviewer,)):
+                    with mock.patch("live_matrix.run_command") as provider:
+                        with self.assertRaisesRegex(
+                            live_matrix.LiveMatrixError, "cursor-agent CLI is unavailable"
+                        ):
+                            live_matrix.dispatch_reviewer_calls(
+                                preflight, samples, max_calls=1
+                            )
+            self.assertEqual(live_matrix._load_attempt_reservations(run_root), ())
+            provider.assert_not_called()
+
     def test_operations_report_rejects_symlinked_parent_before_writing(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory) / "repo"
@@ -2294,7 +3390,12 @@ class ReviewExecutionWiringTests(unittest.TestCase):
             (root / "docs").symlink_to(outside, target_is_directory=True)
             target = root / "docs" / "operations" / "2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md"
             with self.assertRaisesRegex(live_matrix.LiveMatrixError, "report.*unsafe"):
-                live_matrix.write_operations_report(target, "safe report\n", root)
+                live_matrix.open_report_lease(
+                    target,
+                    root,
+                    run_root=root,
+                    identity=live_matrix.RunIdentity.for_test(),
+                )
             self.assertEqual(tuple(outside.iterdir()), ())
 
     def test_execute_rejects_unsafe_report_path_before_provider_dispatch(self) -> None:
