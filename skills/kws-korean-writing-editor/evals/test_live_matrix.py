@@ -8,6 +8,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import unicodedata
 import unittest
 from unittest import mock
 
@@ -21,6 +22,33 @@ def case_by_id(case_id: str) -> live_matrix.LiveCase:
         case for case in live_matrix.load_live_cases(HERE / "live_cases.json")
         if case.id == case_id
     )
+
+
+def assert_balanced_nonempty_inline_code_spans(
+    test_case: unittest.TestCase, markdown: str
+) -> str:
+    """Return text outside balanced, non-empty single-backtick spans."""
+    delimiters = list(re.finditer(r"`+", markdown))
+    test_case.assertTrue(delimiters, "expected inert inline-code spans")
+    test_case.assertTrue(
+        all(match.group(0) == "`" for match in delimiters),
+        "every inline-code delimiter must be one backtick",
+    )
+    test_case.assertEqual(
+        len(delimiters) % 2,
+        0,
+        "inline-code delimiters must be balanced",
+    )
+    outside: list[str] = []
+    cursor = 0
+    for opening, closing in zip(delimiters[::2], delimiters[1::2]):
+        content = markdown[opening.end():closing.start()]
+        test_case.assertTrue(content, "inline-code spans must be non-empty")
+        test_case.assertNotIn("\n", content, "inline-code spans must stay on one line")
+        outside.append(markdown[cursor:opening.start()])
+        cursor = closing.end()
+    outside.append(markdown[cursor:])
+    return "".join(outside)
 
 
 class LiveCaseManifestTests(unittest.TestCase):
@@ -1005,6 +1033,133 @@ class ReviewAndReportTests(unittest.TestCase):
         self.assertIn(f"`{candidate}`: insufficient cross-review evidence; partial reviewer coverage=1/3", one_with_blocked)
         self.assertNotIn("score=", one_with_blocked.lower())
         self.assertNotIn("rank=", one_with_blocked.lower())
+
+    def test_report_text_removes_all_unicode_controls_and_formats_before_redaction(self) -> None:
+        line_separators = (
+            "\n",
+            "\r",
+            "\r\n",
+            "\v",
+            "\f",
+            "\x1c",
+            "\x1d",
+            "\x1e",
+            "\x85",
+            "\u2028",
+            "\u2029",
+        )
+        single_character_line_separators = frozenset(
+            separator for separator in line_separators if len(separator) == 1
+        )
+
+        # The expectation follows the runtime Unicode category database rather
+        # than a version-specific code-point count. Every Cc/Cf value is tried.
+        for codepoint in range(sys.maxunicode + 1):
+            character = chr(codepoint)
+            category = unicodedata.category(character)
+            if category not in {"Cc", "Cf"}:
+                continue
+            expected = (
+                "`한 Latin`"
+                if character in single_character_line_separators
+                else "`한Latin`"
+            )
+            with self.subTest(codepoint=f"U+{codepoint:04X}", category=category):
+                self.assertEqual(
+                    live_matrix._safe_report_text(f"한{character}Latin"), expected
+                )
+
+        for separator in line_separators:
+            with self.subTest(
+                separator=separator.encode("unicode_escape").decode("ascii")
+            ):
+                self.assertEqual(
+                    live_matrix._safe_report_text(f"한{separator}Latin"),
+                    "`한 Latin`",
+                )
+
+        safe = "한글 Latin python3 skills/kws-korean-writing-editor/evals/run.py --scope full"
+        self.assertEqual(live_matrix._safe_report_text(safe), f"`{safe}`")
+        self.assertEqual(live_matrix._safe_report_text("\u202e" * 300 + safe), f"`{safe}`")
+        self.assertEqual(
+            live_matrix._safe_report_text("/Use\u202ers/name/secret"),
+            "`[REDACTED_PATH]`",
+        )
+
+    def test_empty_external_values_use_nonempty_spans_without_capturing_fixed_labels(self) -> None:
+        for empty in ("", "   ", "\t\r\n", "\u202e\u2066\u200f\ufeff"):
+            with self.subTest(empty=empty.encode("unicode_escape").decode("ascii")):
+                self.assertEqual(live_matrix._safe_report_text(empty), "`empty`")
+        self.assertEqual(live_matrix._safe_report_text(None), "not measured")
+
+        producer = live_matrix.CallReceipt.for_test(
+            "producer:empty:1",
+            status="failed",
+            requested_model="",
+            reported_model="",
+            response_sha256="",
+            findings=(live_matrix.Finding("", "", ""),),
+        )
+        reviewer = live_matrix.CallReceipt.for_test(
+            "reviewer:empty:1",
+            status="blocked",
+            requested_model="",
+            reported_model="",
+            response_sha256="",
+            findings=(live_matrix.Finding("", ""),),
+        )
+        review = live_matrix.ReviewResponse(
+            samples=(
+                live_matrix.ReviewAssessment(
+                    "",
+                    (live_matrix.ReviewIssue("", "material", ""),),
+                    "concern",
+                ),
+            ),
+            packet_limitations=("", " \t\u202e"),
+        )
+        report = live_matrix.render_operations_report(
+            live_matrix.ReportInput.for_test(
+                receipts=(producer,),
+                reviewer_receipts=(reviewer,),
+                review_responses=(review,),
+                cli_versions={"": ""},
+                changed_files=("", " \t"),
+                local_state="",
+                remote_state=" \u202e",
+                git_state="",
+                installation_state="\ufeff",
+                verification_results=(("", ""), (" \t", "\u2066")),
+            )
+        )
+
+        outside = assert_balanced_nonempty_inline_code_spans(self, report)
+        self.assertNotIn("``", report)
+        self.assertIn(
+            "Producer receipt: requested=`empty`; reported=`empty`; response_sha256=`empty`",
+            report,
+        )
+        self.assertIn("Reviewer packet 1 limitations: `empty`; `empty`.", report)
+        self.assertIn("details=`empty`/material/`empty`.", report)
+        self.assertGreaterEqual(report.count("- `empty`: `empty`"), 2)
+        for fixed_label in (
+            "# KWS Korean Writing Editor Cross-Model Evaluation",
+            "## Fixed Evidence",
+            "Producer receipt: requested=",
+            "reported=",
+            "response_sha256=",
+            "Reviewer packet 1 limitations:",
+            "status=blocked",
+            "cause=",
+            "## Verification",
+            "## Limitations And Residual Risks",
+            "## Git And Installation State",
+            "Local:",
+            "Remote:",
+            "Git:",
+            "Installation:",
+        ):
+            self.assertIn(fixed_label, outside)
 
     def test_all_external_report_fields_are_inert_across_commonmark_and_gfm_inline_syntax(self) -> None:
         hostile = (

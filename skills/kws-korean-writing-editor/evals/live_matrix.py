@@ -18,6 +18,7 @@ import subprocess
 import sys
 import threading
 import time
+import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
@@ -1878,6 +1879,8 @@ POSIX_ABSOLUTE_PATH_RE = re.compile(r"(?<![A-Za-z0-9_.])/(?:[^\s|`'\"]+)")
 WINDOWS_DRIVE_PATH_RE = re.compile(r"(?i)(?<![A-Za-z0-9_.-])[A-Z]:[\\/](?:[^\s|`'\"]+)")
 WINDOWS_UNC_PATH_RE = re.compile(r"\\\\(?:[^\\/\s|`'\"]+)[\\/](?:[^\s|`'\"]+)")
 RAW_EVIDENCE_PATH_RE = re.compile(r"\b(?:raw|normalized)/[^\s`'\"]+")
+REPORT_LINE_SEPARATORS = frozenset("\n\r\v\f\x1c\x1d\x1e\x85")
+EMPTY_REPORT_TEXT = "empty"
 OPERATIONS_REPORT_RE = re.compile(
     r"^\d{4}-\d{2}-\d{2}-kws-korean-writing-editor-cross-model-evaluation\.md$"
 )
@@ -2493,14 +2496,26 @@ def _finding_severity(finding: Finding, case: LiveCase | None) -> str:
     return "material" if _failure_priority(finding, case)[0] < 4 else "minor"
 
 
+def _normalize_report_characters(value: str) -> str:
+    """Normalize line separators and remove Unicode controls and formats."""
+    normalized: list[str] = []
+    for character in value:
+        category = unicodedata.category(character)
+        if character in REPORT_LINE_SEPARATORS or category in {"Zl", "Zp"}:
+            if not normalized or normalized[-1] != " ":
+                normalized.append(" ")
+        elif category not in {"Cc", "Cf"}:
+            normalized.append(character)
+    return "".join(normalized)
+
+
 def _safe_report_text(value: str | None) -> str:
     """Render one bounded external fact as inert Markdown inline code."""
     if value is None:
         return "not measured"
     if not isinstance(value, str):
         raise LiveMatrixError("report fact must be a string")
-    redacted = normalize_response(value)
-    redacted = re.sub(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]+", " ", redacted)
+    redacted = _normalize_report_characters(normalize_response(value))
     redacted = redacted.translate(
         str.maketrans({
             "&": "＆", "<": "‹", ">": "›", "[": "［", "]": "］",
@@ -2515,7 +2530,7 @@ def _safe_report_text(value: str | None) -> str:
     redacted = RAW_EVIDENCE_PATH_RE.sub("[REDACTED_PATH]", redacted)
     # Backticks delimit the positive inline-code boundary. The translation
     # above also keeps raw HTML/link text and GFM table pipes visibly inert.
-    inert = redacted.strip()
+    inert = redacted.strip() or EMPTY_REPORT_TEXT
     return f"`{_bounded_utf8(inert)}`"
 
 
