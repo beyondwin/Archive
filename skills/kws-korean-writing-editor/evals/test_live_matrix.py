@@ -17,6 +17,46 @@ sys.path.insert(0, str(HERE))
 import live_matrix  # noqa: E402
 
 
+REPORT_SEPARATOR_CASES = (
+    ("LF", "\n"),
+    ("CR", "\r"),
+    ("CRLF", "\r\n"),
+    ("VT", "\v"),
+    ("FF", "\f"),
+    ("FS", "\x1c"),
+    ("GS", "\x1d"),
+    ("RS", "\x1e"),
+    ("NEL", "\x85"),
+    ("LS", "\u2028"),
+    ("PS", "\u2029"),
+)
+SECRET_REDACTION_CASES = (
+    ("sk", "sk-abcdefghijkl", "`[REDACTED]`"),
+    ("bearer", "Bearer abcdefghijkl", "`[REDACTED]`"),
+    ("key-value", "api_key=abcdefghijkl", "`[REDACTED]`"),
+)
+PATH_REDACTION_CASES = (
+    ("posix", "/Users/alice/private.txt", "`[REDACTED_PATH]`"),
+    ("windows", r"C:\Users\alice\private.txt", "`[REDACTED_PATH]`"),
+    ("unc", r"\\server\share\private.txt", "`[REDACTED_PATH]`"),
+    ("raw", "raw/0001.json", "`[REDACTED_PATH]`"),
+    ("normalized", "normalized/0001.txt", "`[REDACTED_PATH]`"),
+)
+
+
+def sensitive_redaction_failures(
+    cases: tuple[tuple[str, str, str], ...], separator: str
+) -> list[str]:
+    """Return every boundary where one separator defeats canonical redaction."""
+    failures: list[str] = []
+    for label, value, expected in cases:
+        for position in range(len(value) + 1):
+            candidate = value[:position] + separator + value[position:]
+            if live_matrix._safe_report_text(candidate) != expected:
+                failures.append(f"{label}@{position}")
+    return failures
+
+
 def case_by_id(case_id: str) -> live_matrix.LiveCase:
     return next(
         case for case in live_matrix.load_live_cases(HERE / "live_cases.json")
@@ -1035,23 +1075,6 @@ class ReviewAndReportTests(unittest.TestCase):
         self.assertNotIn("rank=", one_with_blocked.lower())
 
     def test_report_text_removes_all_unicode_controls_and_formats_before_redaction(self) -> None:
-        line_separators = (
-            "\n",
-            "\r",
-            "\r\n",
-            "\v",
-            "\f",
-            "\x1c",
-            "\x1d",
-            "\x1e",
-            "\x85",
-            "\u2028",
-            "\u2029",
-        )
-        single_character_line_separators = frozenset(
-            separator for separator in line_separators if len(separator) == 1
-        )
-
         # The expectation follows the runtime Unicode category database rather
         # than a version-specific code-point count. Every Cc/Cf value is tried.
         for codepoint in range(sys.maxunicode + 1):
@@ -1059,23 +1082,19 @@ class ReviewAndReportTests(unittest.TestCase):
             category = unicodedata.category(character)
             if category not in {"Cc", "Cf"}:
                 continue
-            expected = (
-                "`한 Latin`"
-                if character in single_character_line_separators
-                else "`한Latin`"
-            )
             with self.subTest(codepoint=f"U+{codepoint:04X}", category=category):
                 self.assertEqual(
-                    live_matrix._safe_report_text(f"한{character}Latin"), expected
+                    live_matrix._safe_report_text(f"한{character}Latin"),
+                    "`한Latin`",
                 )
 
-        for separator in line_separators:
+        for name, separator in REPORT_SEPARATOR_CASES:
             with self.subTest(
-                separator=separator.encode("unicode_escape").decode("ascii")
+                separator=name,
             ):
                 self.assertEqual(
                     live_matrix._safe_report_text(f"한{separator}Latin"),
-                    "`한 Latin`",
+                    "`한Latin`",
                 )
 
         safe = "한글 Latin python3 skills/kws-korean-writing-editor/evals/run.py --scope full"
@@ -1084,6 +1103,46 @@ class ReviewAndReportTests(unittest.TestCase):
         self.assertEqual(
             live_matrix._safe_report_text("/Use\u202ers/name/secret"),
             "`[REDACTED_PATH]`",
+        )
+
+    def test_each_line_separator_is_removed_before_secret_redaction(self) -> None:
+        for name, separator in REPORT_SEPARATOR_CASES:
+            with self.subTest(separator=name):
+                failures = sensitive_redaction_failures(
+                    SECRET_REDACTION_CASES, separator
+                )
+                self.assertFalse(
+                    failures,
+                    f"{len(failures)} secret boundaries leaked; first={failures[:1]}",
+                )
+
+    def test_each_line_separator_is_removed_before_path_redaction(self) -> None:
+        for name, separator in REPORT_SEPARATOR_CASES:
+            with self.subTest(separator=name):
+                failures = sensitive_redaction_failures(PATH_REDACTION_CASES, separator)
+                self.assertFalse(
+                    failures,
+                    f"{len(failures)} path boundaries leaked; first={failures[:1]}",
+                )
+
+    def test_every_unicode_control_and_format_precedes_sensitive_redaction(self) -> None:
+        cases = SECRET_REDACTION_CASES + PATH_REDACTION_CASES
+        failure_count = 0
+        first_failure: str | None = None
+        for codepoint in range(sys.maxunicode + 1):
+            character = chr(codepoint)
+            category = unicodedata.category(character)
+            if category not in {"Cc", "Cf", "Zl", "Zp"}:
+                continue
+            failures = sensitive_redaction_failures(cases, character)
+            if failures:
+                failure_count += len(failures)
+                if first_failure is None:
+                    first_failure = f"U+{codepoint:04X}/{category}/{failures[0]}"
+        self.assertEqual(
+            failure_count,
+            0,
+            f"rendering controls bypassed redaction; first={first_failure}",
         )
 
     def test_empty_external_values_use_nonempty_spans_without_capturing_fixed_labels(self) -> None:

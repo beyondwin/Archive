@@ -1879,7 +1879,7 @@ POSIX_ABSOLUTE_PATH_RE = re.compile(r"(?<![A-Za-z0-9_.])/(?:[^\s|`'\"]+)")
 WINDOWS_DRIVE_PATH_RE = re.compile(r"(?i)(?<![A-Za-z0-9_.-])[A-Z]:[\\/](?:[^\s|`'\"]+)")
 WINDOWS_UNC_PATH_RE = re.compile(r"\\\\(?:[^\\/\s|`'\"]+)[\\/](?:[^\s|`'\"]+)")
 RAW_EVIDENCE_PATH_RE = re.compile(r"\b(?:raw|normalized)/[^\s`'\"]+")
-REPORT_LINE_SEPARATORS = frozenset("\n\r\v\f\x1c\x1d\x1e\x85")
+REPORT_REMOVED_CATEGORIES = frozenset({"Cc", "Cf", "Zl", "Zp"})
 EMPTY_REPORT_TEXT = "empty"
 OPERATIONS_REPORT_RE = re.compile(
     r"^\d{4}-\d{2}-\d{2}-kws-korean-writing-editor-cross-model-evaluation\.md$"
@@ -2497,16 +2497,12 @@ def _finding_severity(finding: Finding, case: LiveCase | None) -> str:
 
 
 def _normalize_report_characters(value: str) -> str:
-    """Normalize line separators and remove Unicode controls and formats."""
-    normalized: list[str] = []
-    for character in value:
-        category = unicodedata.category(character)
-        if character in REPORT_LINE_SEPARATORS or category in {"Zl", "Zp"}:
-            if not normalized or normalized[-1] != " ":
-                normalized.append(" ")
-        elif category not in {"Cc", "Cf"}:
-            normalized.append(character)
-    return "".join(normalized)
+    """Remove controls, formats, and line/paragraph separators."""
+    return "".join(
+        character
+        for character in value
+        if unicodedata.category(character) not in REPORT_REMOVED_CATEGORIES
+    )
 
 
 def _safe_report_text(value: str | None) -> str:
