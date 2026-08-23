@@ -422,10 +422,14 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
         )
         with mock.patch("live_matrix.validate_preflight", return_value=preflight_result) as preflight:
             with mock.patch("live_matrix.dispatch_calls", return_value=()) as dispatch:
-                with contextlib.redirect_stdout(io.StringIO()):
-                    status = live_matrix.main(
-                        ["--execute", "--scope", "baseline", "--run-id", "baseline-1"]
-                    )
+                with mock.patch("live_matrix._load_receipts", return_value={}):
+                    with mock.patch("live_matrix.load_normalized_responses", return_value={}):
+                        with mock.patch("live_matrix.dispatch_reviewer_calls", return_value=((), ())):
+                            with mock.patch("live_matrix.load_review_responses", return_value=()):
+                                with contextlib.redirect_stdout(io.StringIO()):
+                                    status = live_matrix.main(
+                                        ["--execute", "--scope", "baseline", "--run-id", "baseline-1"]
+                                    )
         self.assertEqual(status, 0)
         self.assertTrue(preflight.call_args.kwargs["reuse_preflight"])
         dispatch.assert_called_once()
@@ -602,8 +606,8 @@ class ReviewAndReportTests(unittest.TestCase):
         )
         samples = live_matrix.select_review_samples(receipts)
         self.assertEqual(
-            [sample.hard_findings[0] for sample in samples if sample.is_failure],
-            ["literal_changed", "negation_changed", "attribution_changed", "embedded_instruction_changed", "ordinary"],
+            {sample.hard_findings[0] for sample in samples if sample.is_failure},
+            {"literal_changed", "negation_changed", "attribution_changed", "embedded_instruction_changed", "ordinary"},
         )
         missing = [sample for sample in samples if not sample.is_failure and sample.missing_control]
         self.assertEqual([sample.band for sample in missing], ["preservation", "noop-hold", "near-miss"])
@@ -700,3 +704,222 @@ class ReviewAndReportTests(unittest.TestCase):
         self.assertNotIn("sk-secret-token", report)
         self.assertNotIn("/Users/", report)
         self.assertIn("pending adjudication", report)
+
+    def test_real_finding_properties_prioritize_literal_then_embedded_failures(self) -> None:
+        literal_case = case_by_id("preserve-literals-attribution")
+        embedded_case = case_by_id("structure-embedded-instruction")
+        receipts = (
+            live_matrix.CallReceipt.for_test(
+                "producer:embedded:1",
+                status="failed",
+                case_id=embedded_case.id,
+                band=embedded_case.band,
+                finding_code="missing_structural_sentinel",
+            ),
+            live_matrix.CallReceipt.for_test(
+                "producer:literal:1",
+                status="failed",
+                case_id=literal_case.id,
+                band=literal_case.band,
+                finding_code="occurrence_count_changed",
+            ),
+        )
+        samples = live_matrix.select_review_samples(
+            receipts,
+            cases={literal_case.id: literal_case, embedded_case.id: embedded_case},
+        )
+        failures = [sample for sample in samples if sample.is_failure]
+        self.assertEqual(
+            [sample.hard_findings[0] for sample in failures],
+            ["occurrence_count_changed", "missing_structural_sentinel"],
+        )
+        report = live_matrix.render_operations_report(
+            live_matrix.ReportInput.for_test(
+                receipts=receipts,
+                cases={literal_case.id: literal_case, embedded_case.id: embedded_case},
+            )
+        )
+        self.assertIn("occurrence_count_changed", report)
+        self.assertIn("| material |", report)
+
+    def test_packet_redacts_actual_receipt_identity_tokens(self) -> None:
+        receipt = live_matrix.CallReceipt.for_test(
+            "cursor-auto:case:1",
+            status="failed",
+            finding_code="occurrence_count_changed",
+            requested_model="auto",
+            reported_model="gpt-5.6-secret",
+            identity=live_matrix.RunIdentity.for_test(producer_ids=("cursor-auto",)),
+        )
+        samples = live_matrix.select_review_samples(
+            (receipt,),
+            responses={"cursor-auto:case:1": "cursor-auto auto gpt-5.6-secret bearer token-value"},
+        )
+        prompt = live_matrix.build_review_prompt(samples)
+        for token in ("cursor-auto", "auto", "gpt-5.6-secret", "token-value"):
+            self.assertNotIn(token, prompt)
+        self.assertIn("[REDACTED]", prompt)
+
+    def test_report_redacts_hostile_external_facts_and_renders_receipt_details(self) -> None:
+        producer = live_matrix.CallReceipt.for_test(
+            "cursor-auto:case:1",
+            status="failed",
+            finding_code="occurrence_count_changed",
+            requested_model="auto",
+            reported_model="gpt-5.6-secret",
+            response_sha256="a" * 64,
+        )
+        reviewer = live_matrix.CallReceipt.for_test(
+            "reviewer-claude:packet:1",
+            status="blocked",
+            requested_model="claude-sonnet-5-thinking-high",
+            reported_model="gpt-reviewer",
+            response_sha256="b" * 64,
+            findings=(live_matrix.Finding("review_json_invalid", "bearer token-value /Users/name/raw/0001"),),
+        )
+        report = live_matrix.render_operations_report(
+            live_matrix.ReportInput.for_test(
+                receipts=(producer,),
+                reviewer_receipts=(reviewer,),
+                cli_versions={"cursor-agent": "v1 /Users/name sk-secret-token"},
+                skill_version="1.0.2",
+                case_counts={"total": 14, "repeats": 17},
+                changed_files=("/Users/name/raw/0001",),
+                producer_ids=("producer-/Users/name",),
+                local_state="branch=test; divergence=0",
+                remote_state="not published; remote unchanged",
+                installation_state="retained /Users/name/.agents",
+                verification_results=(("python /Users/name/check", "bearer token-value"),),
+            )
+        )
+        for token in ("/Users/name", "sk-secret-token", "token-value", "raw/0001"):
+            self.assertNotIn(token, report)
+        for token in ("gpt-5.6-secret", "gpt-reviewer", "review_json_invalid", "b" * 64, "not published"):
+            self.assertIn(token, report)
+
+
+class ReviewExecutionWiringTests(unittest.TestCase):
+    def test_execute_path_dispatches_reviewers_and_writes_report_with_shared_summary(self) -> None:
+        cases = (case_by_id("correct-obligation"),)
+        identity = live_matrix.RunIdentity.for_test(run_id="baseline-1")
+        preflight = live_matrix.PreflightResult(
+            identity=identity,
+            repository_root=pathlib.Path("/repo"),
+            repository_branch="test-branch",
+            source_skill_root=HERE.parent,
+            installed_skill_root=HERE.parent,
+            run_root=pathlib.Path("/evidence/baseline-1"),
+            cli_info={"codex": live_matrix.CliInfo(None, "codex-v", None), "cursor-agent": live_matrix.CliInfo(None, "cursor-v", None)},
+            model_availability={},
+            discovery_sha256=None,
+            discovery_diagnostic=None,
+        )
+        producer_receipt = live_matrix.CallReceipt.for_test("codex-direct:correct-obligation:1", call_number=1, status="blocked")
+        producer_retry = live_matrix.CallReceipt.for_test("codex-direct:correct-obligation:1:attempt-2", call_number=2)
+        reviewer_receipt = live_matrix.CallReceipt.for_test("reviewer-claude:packet:1", call_number=3)
+        with mock.patch("live_matrix.validate_preflight", return_value=preflight):
+            with mock.patch("live_matrix.load_live_cases", return_value=cases):
+                with mock.patch("live_matrix.dispatch_calls", return_value=(producer_receipt, producer_retry)) as producers:
+                    with mock.patch(
+                        "live_matrix.dispatch_reviewer_calls",
+                        return_value=((reviewer_receipt,), ()),
+                    ) as reviewers:
+                        with mock.patch("live_matrix.write_operations_report") as report_writer:
+                            output = io.StringIO()
+                            with contextlib.redirect_stdout(output):
+                                status = live_matrix.main(
+                                    [
+                                        "--execute", "--scope", "baseline", "--run-id", "baseline-1",
+                                        "--max-calls", "122", "--report", "docs/operations/2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md",
+                                    ]
+                                )
+        self.assertEqual(status, 0)
+        producers.assert_called_once()
+        reviewers.assert_called_once()
+        report_writer.assert_called_once()
+        payload = json.loads(output.getvalue())
+        self.assertEqual((payload["producer_attempted_calls"], payload["reviewer_attempted_calls"], payload["attempted_calls"]), (2, 1, 3))
+
+    def test_reviewer_dispatch_reserves_remaining_budget_and_blocks_invalid_json_once(self) -> None:
+        samples = live_matrix.select_review_samples(synthetic_receipts_for_test(1, 4))
+        identity = live_matrix.RunIdentity.for_test(run_id="baseline-1")
+        with tempfile.TemporaryDirectory() as directory:
+            run_root = pathlib.Path(directory)
+            receipt_root = run_root / live_matrix.RECEIPT_DIRECTORY_NAME
+            receipt_root.mkdir()
+            live_matrix.write_receipt(
+                receipt_root / "producer.json",
+                live_matrix.CallReceipt.for_test("producer:case:1", call_number=119, identity=identity),
+            )
+            preflight = live_matrix.PreflightResult(
+                identity=identity,
+                repository_root=run_root,
+                repository_branch="test",
+                source_skill_root=HERE.parent,
+                installed_skill_root=HERE.parent,
+                run_root=run_root,
+                cli_info={"codex": live_matrix.CliInfo(None, None, None), "cursor-agent": live_matrix.CliInfo("cursor-agent", "v", None)},
+                model_availability={model: True for _, model in live_matrix.REVIEWER_MODELS},
+                discovery_sha256=None,
+                discovery_diagnostic=None,
+            )
+            review_response = json.dumps({"samples": [{"candidate_id": sample.candidate_id, "issues": [], "assessment": "pass"} for sample in samples], "packet_limitations": []})
+            valid = json.dumps({"result": review_response, "model": "reviewer-model"}).encode()
+            captures = iter((
+                live_matrix.CommandCapture(0, valid, b"", 1),
+                live_matrix.CommandCapture(0, json.dumps({"result": "not json", "model": "reviewer-model"}).encode(), b"", 1),
+                live_matrix.CommandCapture(0, valid, b"", 1),
+            ))
+            with mock.patch("live_matrix.validate_dispatch_identity"):
+                with mock.patch("live_matrix.run_command", side_effect=lambda *args, **kwargs: next(captures)) as run:
+                    receipts, responses = live_matrix.dispatch_reviewer_calls(preflight, samples, max_calls=122)
+            with mock.patch("live_matrix.validate_dispatch_identity"):
+                with mock.patch("live_matrix.run_command") as resumed_run:
+                    with self.assertRaisesRegex(live_matrix.LiveMatrixError, "budget exhausted"):
+                        live_matrix.dispatch_reviewer_calls(preflight, samples, max_calls=122)
+        self.assertEqual([receipt.call_number for receipt in receipts], [120, 121, 122])
+        self.assertEqual([receipt.status for receipt in receipts], ["verified", "blocked", "verified"])
+        self.assertEqual(receipts[1].findings[0].code, "review_json_invalid")
+        self.assertEqual(len(responses), 2)
+        self.assertEqual(run.call_count, 3)
+        resumed_run.assert_not_called()
+
+    def test_operations_report_rejects_symlinked_parent_before_writing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory) / "repo"
+            outside = pathlib.Path(directory) / "outside"
+            root.mkdir()
+            outside.mkdir()
+            (root / "docs").symlink_to(outside, target_is_directory=True)
+            target = root / "docs" / "operations" / "2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md"
+            with self.assertRaisesRegex(live_matrix.LiveMatrixError, "report.*unsafe"):
+                live_matrix.write_operations_report(target, "safe report\n", root)
+            self.assertEqual(tuple(outside.iterdir()), ())
+
+    def test_execute_rejects_unsafe_report_path_before_provider_dispatch(self) -> None:
+        identity = live_matrix.RunIdentity.for_test(run_id="baseline-1")
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            preflight = live_matrix.PreflightResult(
+                identity=identity,
+                repository_root=root,
+                repository_branch="test",
+                source_skill_root=HERE.parent,
+                installed_skill_root=HERE.parent,
+                run_root=root,
+                cli_info={},
+                model_availability={},
+                discovery_sha256=None,
+                discovery_diagnostic=None,
+            )
+            with mock.patch("live_matrix.validate_preflight", return_value=preflight):
+                with mock.patch("live_matrix.dispatch_calls") as dispatch:
+                    with contextlib.redirect_stderr(io.StringIO()):
+                        status = live_matrix.main(
+                            [
+                                "--execute", "--scope", "baseline", "--run-id", "baseline-1",
+                                "--report", "outside.md",
+                            ]
+                        )
+        self.assertEqual(status, 1)
+        dispatch.assert_not_called()
