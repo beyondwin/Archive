@@ -28,6 +28,9 @@ fixture schema나 판단 규칙은 evaluator self-test와 positive/near-miss fix
 바꿔 RED를 확인한 뒤 구현합니다. inspector output 변경은 script self-test, evaluator
 full-scope expectation, README를 같이 고치고 behavior가 달라지면 SemVer를 올립니다.
 offline fixture는 image quality의 증명이 아니며 live canary는 opt-in으로 별도 보고합니다.
+evaluator/inspector command 또는 package path가 바뀌면
+`scripts/agent/verification-map.ts`와 `scripts/agent/verification-map.test.ts`를 함께
+갱신해 repository routing을 동기화합니다.
 
 ## Versioning
 
