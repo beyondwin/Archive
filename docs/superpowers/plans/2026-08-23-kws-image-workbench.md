@@ -66,6 +66,7 @@ Supported commands:
 
 ```bash
 python3 skills/kws-image-workbench/evals/run.py --self-test
+python3 skills/kws-image-workbench/evals/run.py --cases skills/kws-image-workbench/evals/cases.json
 python3 skills/kws-image-workbench/evals/run.py --scope fixtures
 python3 skills/kws-image-workbench/evals/run.py --scope core
 python3 skills/kws-image-workbench/evals/run.py --scope full
@@ -484,12 +485,20 @@ Use this exact frontmatter:
 ---
 name: kws-image-workbench
 description: Use when the user asks to plan, generate, edit, compare, or production-check a raster image asset that must fit a local project, preserve input constraints, or be saved and integrated. Inspect project context, compile a compact ImageSpec, use Codex image generation only for a clear generation or edit request, validate the result, and save non-destructively. Do not use for casual one-off image requests, SVG or code-native assets, actual frontend implementation, or copying external prompt galleries.
-compatibility: Requires Codex built-in image generation and local image viewing for generate or edit mode. Brief and audit modes can run read-only.
 metadata:
+  compatibility: Requires Codex built-in image generation and local image viewing for generate or edit mode. Brief and audit modes can run read-only.
   version: "1.0.0"
   updated_at: "2026-08-23"
 ---
 ```
+
+#### Platform-Compatibility Erratum (2026-08-23 final implementation)
+
+The initial Plan placed `compatibility` at top level. The installed
+`quick_validate.py` accepts supported compatibility metadata only under
+`metadata.compatibility`. Keep the identical non-empty statement there, update
+the evaluator to require it, and keep version `1.0.0`: the correction changes
+packaging placement, not the runtime contract.
 
 Use these exact body headings:
 

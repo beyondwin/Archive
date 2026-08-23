@@ -91,6 +91,73 @@ class EvaluatorTests(unittest.TestCase):
             evaluate_candidate(case),
         )
 
+    def test_executable_edit_requires_exactly_one_edit_target_on_both_sides(self):
+        case = self.valid_case(
+            id="edit-target-required",
+            category="authorization",
+            candidate_mode="edit",
+            expected_mode="edit",
+            candidate_route="raster_edit",
+            expected_route="raster_edit",
+            candidate_tool_action="builtin_imagegen",
+            expected_tool_action="builtin_imagegen",
+        )
+        self.assertIn(
+            "edit-target-required: candidate_input_roles requires exactly one edit_target for executable edit",
+            validate_case(case),
+        )
+        case["candidate_input_roles"] = [{"input": "asset", "role": "edit_target"}]
+        self.assertIn(
+            "edit-target-required: required_input_roles requires exactly one edit_target for executable edit",
+            validate_case(case),
+        )
+
+    def test_non_edit_rejects_edit_target_on_candidate_and_expected_sides(self):
+        case = self.valid_case(
+            id="edit-target-leak",
+            candidate_input_roles=[{"input": "asset", "role": "edit_target"}],
+        )
+        self.assertIn(
+            "edit-target-leak: candidate_input_roles cannot include edit_target outside edit mode",
+            validate_case(case),
+        )
+        case["candidate_input_roles"] = []
+        case["required_input_roles"] = [{"input": "asset", "role": "edit_target"}]
+        self.assertIn(
+            "edit-target-leak: required_input_roles cannot include edit_target outside edit mode",
+            validate_case(case),
+        )
+
+    def test_core_scope_requires_nested_compatibility_metadata(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            self.copy_core_tree(root)
+            skill = root / "SKILL.md"
+            skill.write_text(
+                skill.read_text(encoding="utf-8").replace(
+                    "compatibility: Requires Codex built-in image generation and local image viewing for generate or edit mode. Brief and audit modes can run read-only.\n",
+                    "",
+                ),
+                encoding="utf-8",
+            )
+            errors = validate_skill_tree(root, "core")
+        self.assertIn("SKILL.md: metadata.compatibility must be a non-empty string", errors)
+
+    def test_full_scope_rejects_source_row_empty_cell_wrong_section_and_pin(self):
+        source_mutations = (
+            ("| not applicable | 2026-08-23 | bundled capability boundary |", "|  | 2026-08-23 | bundled capability boundary |", "source row has empty cell"),
+            ("## Primary OpenAI Sources", "## Wrong Sources", "missing source section 'Primary OpenAI Sources'"),
+            ("| `3a9c63baa03e6bbe2f28c89a2654cf9845466646` |", "| `deadbeef` |", "source awesome-gpt-image-2 has unexpected revision"),
+        )
+        for old, new, expected in source_mutations:
+            with self.subTest(expected=expected), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory) / "skills" / "kws-image-workbench"
+                self.copy_full_tree(root)
+                sources = root / "references" / "sources.md"
+                sources.write_text(sources.read_text(encoding="utf-8").replace(old, new, 1), encoding="utf-8")
+                errors = validate_skill_tree(root, "full")
+            self.assertTrue(any(expected in error for error in errors), errors)
+
     def test_replace_requires_authority(self):
         case = self.valid_case(
             id="save-project-sibling",
@@ -108,6 +175,10 @@ class EvaluatorTests(unittest.TestCase):
             "save-project-sibling: replace_existing requires replacement_authorized",
             evaluate_candidate(case),
         )
+
+    def test_cases_argument_runs_the_explicit_fixture_file(self):
+        cases_path = pathlib.Path(__file__).with_name("cases.json")
+        self.assertEqual(main(["--cases", str(cases_path)]), 0)
 
     def test_full_scope_requires_readme(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -518,6 +589,45 @@ ALLOWED_DESTINATION_ACTIONS = {
     "none",
 }
 ALLOWED_STATUSES = {"verified", "partially_verified", "not_measured", "blocked"}
+SOURCE_TABLE_COLUMNS = (
+    "Source",
+    "Revision",
+    "License",
+    "Checked",
+    "Used for",
+    "Rejected boundary",
+    "Refresh trigger",
+)
+REQUIRED_SOURCE_ROWS = {
+    "Primary OpenAI Sources": {
+        "Image generation guide": "live official page",
+        "GPT Image prompting guide": "live official page",
+        "Content provenance": "live official page",
+        "Build skills": "live official page",
+    },
+    "Related Projects": {
+        "awesome-gpt-image-2": "3a9c63baa03e6bbe2f28c89a2654cf9845466646",
+        "GPT-Image2-Skill": "068dd9e24aadc8731e46f38548ca4dcd94515d35",
+        "ComfyUI": "82f839f5e737d8bfce480872ba05e5a430f2526f",
+        "InvokeAI": "e431d249e09290b241c45ad340addebc1bfc7737",
+        "Diffusers": "58eb52c0803ea9af3abec60841c2a093bdf1f951",
+        "image-prompt-library": "c9e8d3547a9556bcba4dbbfab17e24680f0747db",
+        "promptfoo": "679e7ecb64a2e09042b009b549b81dc0d0b983bb",
+        "c2pa-rs": "24d17555beafb70c15e1e1e4054ac3c06fbba1c0",
+    },
+    "Provider Boundaries": {
+        "Google Gemini image generation": "live official page",
+        "Adobe Firefly image generation": "live official page",
+        "Ideogram prompt-based editing": "live official page",
+        "Midjourney community and automation guidelines": "live official page",
+    },
+    "Evaluation References": {
+        "GenEval": "arXiv:2310.11513",
+        "T2I-CompBench": "arXiv:2307.06350",
+        "DPG-Bench": "arXiv:2403.05135",
+        "ImgEdit-Bench": "arXiv:2505.20275",
+    },
+}
 EXPECTED_CATEGORY_COUNTS = {
     "routing": 8,
     "authorization": 5,
@@ -607,6 +717,40 @@ def _validate_input_roles(case_id: str, field: str, value: object) -> list[str]:
     return errors
 
 
+def _edit_target_count(value: object) -> int:
+    if not isinstance(value, list):
+        return 0
+    return sum(
+        1
+        for entry in value
+        if isinstance(entry, dict) and entry.get("role") == "edit_target"
+    )
+
+
+def _validate_edit_target_semantics(case: dict[str, object], case_id: str) -> list[str]:
+    errors: list[str] = []
+    sides = (
+        ("candidate", "candidate_mode", "candidate_route", "candidate_tool_action", "candidate_input_roles"),
+        ("required", "expected_mode", "expected_route", "expected_tool_action", "required_input_roles"),
+    )
+    for side, mode_field, route_field, tool_field, roles_field in sides:
+        mode = case.get(mode_field)
+        route = case.get(route_field)
+        tool = case.get(tool_field)
+        count = _edit_target_count(case.get(roles_field))
+        executable_edit = mode == "edit" and route == "raster_edit" and tool == "builtin_imagegen"
+        edit_hold = mode == "edit" and route == "hold"
+        if executable_edit and count != 1:
+            errors.append(
+                f"{case_id}: {roles_field} requires exactly one edit_target for executable edit"
+            )
+        elif not executable_edit and not edit_hold and count:
+            errors.append(
+                f"{case_id}: {roles_field} cannot include edit_target outside edit mode"
+            )
+    return errors
+
+
 def _validate_statuses(case_id: str, field: str, value: object) -> list[str]:
     if not isinstance(value, dict):
         return [f"{case_id}: {field} must be an object"]
@@ -689,6 +833,7 @@ def validate_case(case: dict[str, object]) -> list[str]:
     for field in ("candidate_statuses", "required_statuses"):
         if field in case:
             errors.extend(_validate_statuses(prefix, field, case.get(field)))
+    errors.extend(_validate_edit_target_semantics(case, prefix))
     return errors
 
 
@@ -756,6 +901,70 @@ def evaluate_candidate(case: dict[str, object]) -> list[str]:
     return errors
 
 
+def _parse_markdown_table_rows(text: str, heading: str) -> tuple[list[list[str]], list[str]]:
+    heading_line = f"## {heading}"
+    lines = text.splitlines()
+    try:
+        start = lines.index(heading_line)
+    except ValueError:
+        return [], [f"references/sources.md: missing source section {heading!r}"]
+    section = []
+    for line in lines[start + 1:]:
+        if line.startswith("## "):
+            break
+        section.append(line)
+    table_lines = [line for line in section if line.startswith("|")]
+    if len(table_lines) < 2:
+        return [], [f"references/sources.md: missing source table in section {heading!r}"]
+    header = [cell.strip() for cell in table_lines[0].strip().split("|")[1:-1]]
+    errors: list[str] = []
+    if tuple(header) != SOURCE_TABLE_COLUMNS:
+        errors.append(f"references/sources.md: invalid source columns in section {heading!r}")
+    rows: list[list[str]] = []
+    for line in table_lines[2:]:
+        cells = [cell.strip() for cell in line.strip().split("|")[1:-1]]
+        if len(cells) != len(SOURCE_TABLE_COLUMNS):
+            errors.append(f"references/sources.md: source row has wrong cell count in section {heading!r}")
+            continue
+        if any(not cell for cell in cells):
+            errors.append(f"references/sources.md: source row has empty cell in section {heading!r}")
+            continue
+        rows.append(cells)
+    return rows, errors
+
+
+def _source_label(cell: str) -> str | None:
+    match = re.fullmatch(r"\[([^\]]+)\]\([^)]*\)", cell)
+    return match.group(1) if match else None
+
+
+def _validate_source_register(text: str) -> list[str]:
+    errors: list[str] = []
+    for section, expected_rows in REQUIRED_SOURCE_ROWS.items():
+        rows, table_errors = _parse_markdown_table_rows(text, section)
+        errors.extend(table_errors)
+        actual: dict[str, list[str]] = {}
+        for row in rows:
+            label = _source_label(row[0])
+            if label is None:
+                errors.append(f"references/sources.md: invalid source locator in section {section!r}")
+                continue
+            if label in actual:
+                errors.append(f"references/sources.md: duplicate source {label!r} in section {section!r}")
+            actual[label] = row
+        for source, revision in expected_rows.items():
+            row = actual.get(source)
+            if row is None:
+                errors.append(f"references/sources.md: missing source {source!r} in section {section!r}")
+                continue
+            actual_revision = row[1].strip("`")
+            if actual_revision != revision:
+                errors.append(
+                    f"references/sources.md: source {source} has unexpected revision {actual_revision!r}"
+                )
+    return errors
+
+
 def validate_skill_tree(skill_root: pathlib.Path, scope: str) -> list[str]:
     if scope not in {"fixtures", "core", "full"}:
         return [f"skill tree: invalid scope {scope!r}"]
@@ -805,6 +1014,8 @@ def validate_skill_tree(skill_root: pathlib.Path, scope: str) -> list[str]:
                 r'''(?m)^  version:\s*["'][^"']+["']\s*$''', metadata
             ):
                 errors.append("SKILL.md: metadata.version must be a string")
+            if not re.search(r"(?m)^  compatibility:\s*\S.*$", metadata):
+                errors.append("SKILL.md: metadata.compatibility must be a non-empty string")
 
         required_headings = {
             "SKILL.md": (
@@ -906,42 +1117,7 @@ def validate_skill_tree(skill_root: pathlib.Path, scope: str) -> list[str]:
                 )
 
             sources_text = documents["references/sources.md"]
-            required_source_fields = (
-                "Source",
-                "Revision",
-                "License",
-                "Checked",
-                "Used for",
-                "Rejected boundary",
-                "Refresh trigger",
-            )
-            for field in required_source_fields:
-                if field not in sources_text:
-                    errors.append(f"references/sources.md: missing source field {field!r}")
-            for source in (
-                "Image generation guide",
-                "GPT Image prompting guide",
-                "Content provenance",
-                "Build skills",
-                "awesome-gpt-image-2",
-                "GPT-Image2-Skill",
-                "ComfyUI",
-                "InvokeAI",
-                "Diffusers",
-                "image-prompt-library",
-                "promptfoo",
-                "c2pa-rs",
-                "Google Gemini image generation",
-                "Adobe Firefly image generation",
-                "Ideogram prompt-based editing",
-                "Midjourney community and automation guidelines",
-                "GenEval",
-                "T2I-CompBench",
-                "DPG-Bench",
-                "ImgEdit-Bench",
-            ):
-                if source not in sources_text:
-                    errors.append(f"references/sources.md: missing source {source!r}")
+            errors.extend(_validate_source_register(sources_text))
 
             required_commands = (
                 'python3 "${CODEX_HOME:-$HOME/.codex}/skills/.system/skill-creator/scripts/quick_validate.py" skills/kws-image-workbench',
@@ -1197,14 +1373,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--self-test", action="store_true")
     parser.add_argument("--scope", choices=("fixtures", "core", "full"))
+    parser.add_argument("--cases", type=pathlib.Path)
     args = parser.parse_args(argv)
     if args.self_test:
         return 0 if run_self_tests().wasSuccessful() else 1
 
-    if args.scope is None:
-        parser.error("one of --self-test or --scope is required")
+    if args.cases is not None and args.scope is not None:
+        parser.error("--cases and --scope are mutually exclusive")
+    if args.scope is None and args.cases is None:
+        parser.error("one of --self-test, --scope, or --cases is required")
     skill_root = pathlib.Path(__file__).resolve().parents[1]
-    fixture_errors, _cases, counts = _validate_fixtures(skill_root / "evals" / "cases.json")
+    cases_path = args.cases or skill_root / "evals" / "cases.json"
+    fixture_errors, _cases, counts = _validate_fixtures(cases_path)
     errors = list(fixture_errors)
     if args.scope in {"core", "full"}:
         errors.extend(validate_skill_tree(skill_root, args.scope))
