@@ -90,6 +90,7 @@ GLOBAL_CALL_CEILING = 160
 RAW_DIRECTORY_NAME = "raw"
 NORMALIZED_DIRECTORY_NAME = "normalized"
 RECEIPT_DIRECTORY_NAME = "receipts"
+REPORT_STATE_FILENAME = "report-state.json"
 COMPLETE_RECEIPT_STATUSES = frozenset(
     {"verified", "partially_verified", "failed", "blocked", "not_measured"}
 )
@@ -357,6 +358,22 @@ class CliInfo:
 
 
 @dataclass(frozen=True)
+class ReportState:
+    """Ignored ownership receipt for the one tracked report a run may update."""
+
+    identity: RunIdentity
+    relative_target: str
+    sha256: str
+
+    def as_json(self) -> dict[str, Any]:
+        return {
+            "identity": identity_json(self.identity),
+            "relative_target": self.relative_target,
+            "sha256": self.sha256,
+        }
+
+
+@dataclass(frozen=True)
 class PreflightResult:
     identity: RunIdentity
     repository_root: pathlib.Path
@@ -368,6 +385,9 @@ class PreflightResult:
     model_availability: dict[str, bool]
     discovery_sha256: str | None
     discovery_diagnostic: str | None
+    report_path: pathlib.Path | None = None
+    report_state: ReportState | None = None
+    git_facts: GitReportFacts | None = None
 
 
 def build_prompt(case: LiveCase, host: str) -> str:
@@ -782,7 +802,12 @@ def _git_value(repository_root: pathlib.Path, *arguments: str) -> str:
         raise LiveMatrixError("git preflight output is not UTF-8") from exc
 
 
-def _git_status_is_clean(repository_root: pathlib.Path) -> bool:
+def _git_status_is_clean(
+    repository_root: pathlib.Path,
+    *,
+    allowed_report: pathlib.Path | None = None,
+    report_state: ReportState | None = None,
+) -> bool:
     capture = run_command(
         ("git", "status", "--porcelain=v1", "-z", "--untracked-files=all"),
         cwd=repository_root,
@@ -790,7 +815,19 @@ def _git_status_is_clean(repository_root: pathlib.Path) -> bool:
     )
     if capture.returncode != 0:
         raise LiveMatrixError("git status preflight failed")
-    return capture.stdout == b""
+    if capture.stdout == b"":
+        return True
+    if allowed_report is None or report_state is None:
+        return False
+    try:
+        relative = allowed_report.relative_to(repository_root).as_posix().encode("utf-8")
+    except ValueError:
+        return False
+    entries = tuple(item for item in capture.stdout.split(b"\0") if item)
+    if len(entries) != 1 or len(entries[0]) < 4:
+        return False
+    status, path = entries[0][:2], entries[0][3:]
+    return status in {b"??", b" M", b"M ", b"MM"} and path == relative
 
 
 def _cli_info(command: str, repository_root: pathlib.Path) -> CliInfo:
@@ -922,6 +959,7 @@ def validate_preflight(
     evidence_root: pathlib.Path | None = None,
     resume: bool = False,
     reuse_preflight: bool = False,
+    report_path: pathlib.Path | None = None,
 ) -> PreflightResult:
     """Validate immutable paid-run inputs before any provider prompt dispatch."""
     job_error = validate_jobs(jobs)
@@ -949,10 +987,12 @@ def validate_preflight(
     git_root = pathlib.Path(_git_value(repo_root, "rev-parse", "--show-toplevel"))
     if git_root != repo_root:
         raise LiveMatrixError("repository root must be the Git root")
-    if not _git_status_is_clean(repo_root):
-        raise LiveMatrixError("relevant checkout is not clean")
+    report_target = (
+        _validated_operations_report_path(report_path, repo_root) if report_path is not None else None
+    )
     branch = _git_value(repo_root, "branch", "--show-current")
     head = _git_value(repo_root, "rev-parse", "HEAD")
+    git_facts = _git_report_facts(repo_root, branch, head)
     live_cases = source_root / "evals" / "live_cases.json"
     if live_cases.is_symlink() or not live_cases.is_file():
         raise LiveMatrixError("live case manifest is not a regular file")
@@ -979,6 +1019,7 @@ def validate_preflight(
         model: _model_is_listed(discovery, model) for model in requested_models
     }
     run_root = None
+    report_state = None
     if evidence_root is not None:
         run_root = _run_root(
             evidence_root,
@@ -1009,6 +1050,14 @@ def validate_preflight(
             _write_exclusive_json(preflight_path, preflight_payload)
         else:
             raise LiveMatrixError("preflight receipt is required before execution")
+        if report_target is not None and resume:
+            report_state = _report_state_for_target(run_root, repo_root, report_target, identity)
+        elif report_target is not None and report_target.exists():
+            raise LiveMatrixError("operations report already exists without matching run state")
+    if not _git_status_is_clean(
+        repo_root, allowed_report=report_target if report_state is not None else None, report_state=report_state
+    ):
+        raise LiveMatrixError("relevant checkout is not clean")
     return PreflightResult(
         identity=identity,
         repository_root=repo_root,
@@ -1020,6 +1069,9 @@ def validate_preflight(
         model_availability=availability,
         discovery_sha256=hashlib.sha256(discovery).hexdigest() if discovery is not None else None,
         discovery_diagnostic=discovery_diagnostic,
+        report_path=report_target,
+        report_state=report_state,
+        git_facts=git_facts,
     )
 
 
@@ -1284,6 +1336,81 @@ def _read_evidence_file(run_root: pathlib.Path, relative_path: str) -> bytes:
     if len(payload) > MAX_STREAM_BYTES:
         raise LiveMatrixError("normalized evidence exceeds limit")
     return payload
+
+
+def _identity_from_json(payload: Any, *, label: str) -> RunIdentity:
+    if not isinstance(payload, dict):
+        raise LiveMatrixError(f"malformed {label} identity")
+    try:
+        producer_ids = payload["producer_ids"]
+        requested_models = payload["requested_models"]
+        if not all(isinstance(item, str) for item in producer_ids) or not all(
+            isinstance(item, str) for item in requested_models
+        ):
+            raise TypeError
+        return RunIdentity(
+            run_id=payload["run_id"],
+            runner_version=payload["runner_version"],
+            repository_head=payload["repository_head"],
+            skill_hash=payload["skill_hash"],
+            installed_skill_hash=payload["installed_skill_hash"],
+            live_cases_hash=payload["live_cases_hash"],
+            producer_ids=tuple(producer_ids),
+            requested_models=tuple(requested_models),
+            scope=payload["scope"],
+        )
+    except (KeyError, TypeError) as exc:
+        raise LiveMatrixError(f"malformed {label} identity") from exc
+
+
+def _report_state_path(run_root: pathlib.Path) -> pathlib.Path:
+    return run_root / REPORT_STATE_FILENAME
+
+
+def _load_report_state(run_root: pathlib.Path) -> ReportState | None:
+    path = _report_state_path(run_root)
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(_read_evidence_file(run_root, REPORT_STATE_FILENAME).decode("utf-8"))
+        if not isinstance(payload, dict) or not isinstance(payload.get("relative_target"), str):
+            raise ValueError
+        sha256 = payload.get("sha256")
+        if not isinstance(sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", sha256):
+            raise ValueError
+        target = pathlib.PurePosixPath(payload["relative_target"])
+        if target.is_absolute() or any(part in {"", ".", ".."} for part in target.parts):
+            raise ValueError
+        return ReportState(
+            _identity_from_json(payload.get("identity"), label="report state"),
+            target.as_posix(),
+            sha256,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        raise LiveMatrixError("malformed report state") from exc
+
+
+def _report_state_for_target(
+    run_root: pathlib.Path, repository_root: pathlib.Path, target: pathlib.Path, identity: RunIdentity
+) -> ReportState:
+    state = _load_report_state(run_root)
+    if state is None:
+        raise LiveMatrixError("report state is required for report-bearing resume")
+    try:
+        relative = target.relative_to(repository_root).as_posix()
+    except ValueError as exc:
+        raise LiveMatrixError("report target escapes repository") from exc
+    if state.identity != identity or state.relative_target != relative:
+        raise LiveMatrixError("report state identity or target drift")
+    try:
+        target_stat = target.lstat()
+    except OSError as exc:
+        raise LiveMatrixError("owned operations report is unavailable") from exc
+    if stat.S_ISLNK(target_stat.st_mode) or not stat.S_ISREG(target_stat.st_mode):
+        raise LiveMatrixError("owned operations report is unsafe")
+    if _sha256_file(target) != state.sha256:
+        raise LiveMatrixError("owned operations report hash drift")
+    return state
 
 
 def load_normalized_responses(
@@ -1598,7 +1725,20 @@ def _dispatch_one(
 
 def validate_dispatch_identity(preflight: PreflightResult) -> None:
     """Fail closed if the checked checkout or manifests drift before dispatch."""
-    if not _git_status_is_clean(preflight.repository_root):
+    report_state = preflight.report_state
+    if preflight.report_path is not None:
+        report_target = _validated_operations_report_path(preflight.report_path, preflight.repository_root)
+        if report_state is not None:
+            if preflight.run_root is None:
+                raise LiveMatrixError("report state requires an evidence run root")
+            _report_state_for_target(
+                preflight.run_root, preflight.repository_root, report_target, preflight.identity
+            )
+    if not _git_status_is_clean(
+        preflight.repository_root,
+        allowed_report=preflight.report_path if report_state is not None else None,
+        report_state=report_state,
+    ):
         raise LiveMatrixError("dispatch identity drift: relevant checkout is not clean")
     if _git_value(preflight.repository_root, "rev-parse", "HEAD") != preflight.identity.repository_head:
         raise LiveMatrixError("dispatch identity drift: repository HEAD changed")
@@ -1731,7 +1871,9 @@ REVIEW_IDENTITY_RE = re.compile(
     r"\b(?:codex-direct|cursor-[A-Za-z0-9.-]+|claude-[A-Za-z0-9.-]+|"
     r"gemini-[A-Za-z0-9.-]+|grok-[A-Za-z0-9.-]+|kimi-[A-Za-z0-9.-]+|glm-[A-Za-z0-9.-]+)\b"
 )
-ABSOLUTE_LOCAL_PATH_RE = re.compile(r"/(?:Users|home)/[^\s`'\"]+")
+POSIX_ABSOLUTE_PATH_RE = re.compile(r"(?<![A-Za-z0-9_.])/(?:[^\s|`'\"]+)")
+WINDOWS_DRIVE_PATH_RE = re.compile(r"(?i)(?<![A-Za-z0-9_.-])[A-Z]:[\\/](?:[^\s|`'\"]+)")
+WINDOWS_UNC_PATH_RE = re.compile(r"\\\\(?:[^\\/\s|`'\"]+)[\\/](?:[^\s|`'\"]+)")
 RAW_EVIDENCE_PATH_RE = re.compile(r"\b(?:raw|normalized)/[^\s`'\"]+")
 OPERATIONS_REPORT_RE = re.compile(
     r"^\d{4}-\d{2}-\d{2}-kws-korean-writing-editor-cross-model-evaluation\.md$"
@@ -1849,6 +1991,18 @@ class ReportInput:
             raise TypeError(f"unknown ReportInput test override: {sorted(unknown)[0]}")
         values.update(overrides)
         return cls(**values)
+
+
+@dataclass(frozen=True)
+class GitReportFacts:
+    """Read-only local Git facts, explicitly not a remote fetch or publication check."""
+
+    merge_base: str
+    ahead: int
+    behind: int
+    changed_files: tuple[str, ...]
+    local_state: str
+    remote_state: str
 
 
 def _bounded_utf8(value: str) -> str:
@@ -2324,8 +2478,12 @@ def _safe_report_text(value: str | None) -> str:
     redacted = normalize_response(value)
     for pattern in SECRET_PATTERNS:
         redacted = pattern.sub("[REDACTED]", redacted)
-    redacted = ABSOLUTE_LOCAL_PATH_RE.sub("[REDACTED_PATH]", redacted)
+    redacted = POSIX_ABSOLUTE_PATH_RE.sub("[REDACTED_PATH]", redacted)
+    redacted = WINDOWS_DRIVE_PATH_RE.sub("[REDACTED_PATH]", redacted)
+    redacted = WINDOWS_UNC_PATH_RE.sub("[REDACTED_PATH]", redacted)
     redacted = RAW_EVIDENCE_PATH_RE.sub("[REDACTED_PATH]", redacted)
+    redacted = re.sub(r"[\x00-\x1f\x7f]+", " ", redacted)
+    redacted = redacted.replace("|", "[PIPE]").replace("#", "[HASH]").strip()
     return _bounded_utf8(redacted)
 
 
@@ -2402,17 +2560,45 @@ def render_operations_report(report_input: ReportInput) -> str:
     if not report_input.review_responses:
         lines.append("- No reviewer opinion recorded; reviewer evidence is not model truth.")
     else:
+        candidate_assessments: dict[str, list[ReviewAssessment]] = {}
         for index, response in enumerate(report_input.review_responses, start=1):
             concerns = sum(assessment.assessment == "concern" for assessment in response.samples)
             details = "; ".join(
                 f"{_safe_report_text(assessment.candidate_id)}={assessment.assessment}:"
-                f"{','.join(issue.axis for issue in assessment.issues) or 'no issues'}"
+                f"{','.join(_safe_report_text(issue.axis) for issue in assessment.issues) or 'no issues'}"
                 for assessment in response.samples
             )
             lines.append(f"- Reviewer packet {index}: concerns={concerns}; {details}.")
-        lines.append("- Disagreement is retained as diagnostic evidence and is not an aggregate quality score.")
+            for assessment in response.samples:
+                candidate_assessments.setdefault(assessment.candidate_id, []).append(assessment)
+            if response.packet_limitations:
+                lines.append(
+                    "- Reviewer packet " + str(index) + " limitations: " + "; ".join(
+                        _safe_report_text(limitation) for limitation in response.packet_limitations
+                    ) + "."
+                )
+        for candidate_id, assessments in sorted(candidate_assessments.items()):
+            labels = {assessment.assessment for assessment in assessments}
+            verdict = "agreement" if len(labels) == 1 and len(assessments) > 1 else "disagreement"
+            issue_details = "; ".join(
+                ", ".join(
+                    f"{_safe_report_text(issue.axis)}/{_safe_report_text(issue.severity)}/{_safe_report_text(issue.reason)}"
+                    for issue in assessment.issues
+                ) or "no issues"
+                for assessment in assessments
+            )
+            coverage = f"{len(assessments)}/{len(REVIEWER_MODELS)}"
+            coverage_label = "partial reviewer coverage" if len(assessments) < len(REVIEWER_MODELS) else "reviewer coverage"
+            lines.append(
+                f"- {_safe_report_text(candidate_id)}: {verdict}; {coverage_label}={coverage}; "
+                f"assessments={','.join(assessment.assessment for assessment in assessments)}; details={issue_details}."
+            )
+        lines.append("- Agreement and disagreement are retained as diagnostic evidence and are not aggregate quality scores.")
     for receipt in report_input.reviewer_receipts:
-        blocked = "; ".join(_safe_report_text(finding.code) for finding in receipt.findings)
+        blocked = "; ".join(
+            f"{_safe_report_text(finding.code)}: {_safe_report_text(finding.message)}"
+            for finding in receipt.findings
+        )
         lines.append(
             f"- Reviewer receipt: requested={_safe_report_text(receipt.requested_model)}; "
             f"reported={_safe_report_text(receipt.reported_model)}; status={_render_status(receipt.status)}; "
@@ -2466,20 +2652,50 @@ def _skill_version(skill_root: pathlib.Path) -> str:
     return match.group(1)
 
 
-def _changed_files(repository_root: pathlib.Path) -> tuple[str, ...]:
-    try:
-        capture = run_command(("git", "diff", "--name-only", "HEAD~1", "HEAD"), cwd=repository_root, timeout=30)
-    except (LiveMatrixError, OSError):
-        return ()
+def _git_report_facts(repository_root: pathlib.Path, branch: str, head: str) -> GitReportFacts:
+    """Collect reportable Git facts from current local refs without network access."""
+    merge_base = _git_value(repository_root, "merge-base", "main", head)
+    divergence = _git_value(repository_root, "rev-list", "--left-right", "--count", f"main...{head}")
+    fields = divergence.split()
+    if len(fields) != 2 or not all(field.isdigit() for field in fields):
+        raise LiveMatrixError("git divergence output is malformed")
+    behind, ahead = (int(field) for field in fields)
+    capture = run_command(
+        ("git", "diff", "--name-only", f"{merge_base}..{head}"), cwd=repository_root, timeout=30
+    )
     if capture.returncode != 0:
-        return ()
+        raise LiveMatrixError("git changed-file report command failed")
     try:
-        files = tuple(line for line in capture.stdout.decode("utf-8").splitlines() if line)
+        files = tuple(sorted(line for line in capture.stdout.decode("utf-8").splitlines() if line))
     except UnicodeDecodeError as exc:
         raise LiveMatrixError("changed file list is not UTF-8") from exc
     if any(pathlib.PurePosixPath(path).is_absolute() or ".." in pathlib.PurePosixPath(path).parts for path in files):
         raise LiveMatrixError("changed file list is unsafe")
-    return files
+    containing = _git_value(
+        repository_root,
+        "for-each-ref",
+        "--format=%(refname:short)",
+        "--contains",
+        head,
+        "refs/remotes",
+    )
+    refs = tuple(line for line in containing.splitlines() if line)
+    remote_state = (
+        "current local refs: remote-tracking refs containing HEAD: " + ", ".join(refs)
+        if refs
+        else "current local remote-tracking refs contain no HEAD; no fetch or publication was performed"
+    )
+    return GitReportFacts(
+        merge_base=merge_base,
+        ahead=ahead,
+        behind=behind,
+        changed_files=files,
+        local_state=(
+            f"current local refs: branch={branch}; base=main; merge_base={merge_base}; "
+            f"divergence main...HEAD behind={behind} ahead={ahead}"
+        ),
+        remote_state=remote_state,
+    )
 
 
 def _latest_by_logical_id(receipts: Sequence[CallReceipt]) -> dict[str, CallReceipt]:
@@ -2520,6 +2736,9 @@ def build_report_input(
     case_counts: dict[str, int] = {"total": len(cases), "repeats": sum(case.repeats for case in cases)}
     case_counts.update({band: sum(case.band == band for case in cases) for band in REVIEW_CONTROL_BANDS})
     cli_versions = {name: info.version for name, info in preflight.cli_info.items()}
+    git_facts = preflight.git_facts or _git_report_facts(
+        preflight.repository_root, preflight.repository_branch, preflight.identity.repository_head
+    )
     return ReportInput(
         identity=preflight.identity,
         producer_receipts=tuple(producer_receipts),
@@ -2547,29 +2766,118 @@ def build_report_input(
         cli_versions=cli_versions,
         skill_version=_skill_version(preflight.source_skill_root),
         case_counts=case_counts,
-        changed_files=_changed_files(preflight.repository_root),
-        local_state=(
-            f"branch={preflight.repository_branch}; HEAD={preflight.identity.repository_head}; "
-            "divergence=not measured locally"
-        ),
-        remote_state="not published; remote unchanged by this evaluator",
+        changed_files=git_facts.changed_files,
+        local_state=git_facts.local_state,
+        remote_state=git_facts.remote_state,
     )
 
 
 def _validated_operations_report_path(path: pathlib.Path, repository_root: pathlib.Path) -> pathlib.Path:
-    target = path if path.is_absolute() else repository_root / path
-    expected_parent = repository_root / "docs" / "operations"
+    """Validate the fixed report location and every existing ancestor without mutation."""
+    lexical_root = repository_root.absolute()
+    raw_target = path if path.is_absolute() else lexical_root / path
+    lexical_parent = raw_target.parent
+    if raw_target.name == "" or not OPERATIONS_REPORT_RE.fullmatch(raw_target.name):
+        raise LiveMatrixError("report path must use the dated operations-report name")
+    if lexical_parent.name != "operations" or lexical_parent.parent.name != "docs":
+        raise LiveMatrixError("report path must be below docs/operations")
+    try:
+        lexical_repository = lexical_parent.parent.parent
+        canonical_repository = repository_root.resolve(strict=True)
+        if lexical_repository.resolve(strict=True) != canonical_repository:
+            raise LiveMatrixError("report path must be below docs/operations")
+    except OSError as exc:
+        raise LiveMatrixError("cannot resolve report repository root") from exc
+    ancestor = lexical_repository
+    for component in ("docs", "operations"):
+        ancestor = ancestor / component
+        try:
+            ancestor_stat = ancestor.lstat()
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise LiveMatrixError("cannot inspect report parent") from exc
+        if stat.S_ISLNK(ancestor_stat.st_mode) or not stat.S_ISDIR(ancestor_stat.st_mode):
+            raise LiveMatrixError("report parent is unsafe")
+    try:
+        target = raw_target.resolve(strict=False)
+        expected_parent = canonical_repository / "docs" / "operations"
+    except OSError as exc:
+        raise LiveMatrixError("cannot resolve operations report path") from exc
     try:
         target.relative_to(expected_parent)
     except ValueError as exc:
         raise LiveMatrixError("report path must be below docs/operations") from exc
     if target.parent != expected_parent or not OPERATIONS_REPORT_RE.fullmatch(target.name):
         raise LiveMatrixError("report path must use the dated operations-report name")
+    try:
+        target_stat = target.lstat()
+    except FileNotFoundError:
+        return target
+    except OSError as exc:
+        raise LiveMatrixError("cannot inspect operations report") from exc
+    if stat.S_ISLNK(target_stat.st_mode) or not stat.S_ISREG(target_stat.st_mode):
+        raise LiveMatrixError("operations report target is unsafe")
     return target
 
 
-def write_operations_report(path: pathlib.Path, report: str, repository_root: pathlib.Path) -> None:
-    """Safely publish one tracked report without accepting arbitrary output paths."""
+def _atomic_replace_file(path: pathlib.Path, payload: bytes, *, mode: int) -> None:
+    temporary = path.parent / f".{path.name}.{secrets.token_hex(16)}.partial"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(temporary, flags, mode)
+    except OSError as exc:
+        raise LiveMatrixError("cannot create report staging file") from exc
+    published = False
+    try:
+        os.fchmod(descriptor, mode)
+        offset = 0
+        while offset < len(payload):
+            written = os.write(descriptor, payload[offset:])
+            if written <= 0:
+                raise LiveMatrixError("incomplete operations report write")
+            offset += written
+        os.fsync(descriptor)
+        os.replace(temporary, path)
+        published = True
+        directory_descriptor = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_descriptor)
+        finally:
+            os.close(directory_descriptor)
+    finally:
+        os.close(descriptor)
+        if not published:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+
+
+def _write_report_state(run_root: pathlib.Path, state: ReportState, *, replace_existing: bool) -> None:
+    path = _report_state_path(run_root)
+    if not replace_existing:
+        _write_exclusive_json(path, state.as_json())
+        return
+    _atomic_replace_file(path, _canonical_json_bytes(state.as_json()), mode=0o600)
+
+
+def write_operations_report(
+    path: pathlib.Path,
+    report: str,
+    repository_root: pathlib.Path,
+    *,
+    run_root: pathlib.Path | None = None,
+    identity: RunIdentity | None = None,
+    report_state: ReportState | None = None,
+) -> None:
+    """Safely publish or atomically update only the report owned by this run."""
+    try:
+        repository_root = repository_root.resolve(strict=True)
+    except OSError as exc:
+        raise LiveMatrixError("cannot resolve repository root for report") from exc
     target = _validated_operations_report_path(path, repository_root)
     parent = target.parent
     ancestor = repository_root
@@ -2585,26 +2893,44 @@ def write_operations_report(path: pathlib.Path, report: str, repository_root: pa
             raise LiveMatrixError("cannot create report parent") from exc
     if parent.is_symlink() or not parent.is_dir():
         raise LiveMatrixError("report parent is unsafe")
-    if target.exists() or target.is_symlink():
-        raise LiveMatrixError("operations report already exists")
     payload = report.encode("utf-8")
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-    try:
-        descriptor = os.open(target, flags, 0o644)
-    except OSError as exc:
-        raise LiveMatrixError("cannot create operations report") from exc
-    try:
-        offset = 0
-        while offset < len(payload):
-            written = os.write(descriptor, payload[offset:])
-            if written <= 0:
-                raise LiveMatrixError("incomplete operations report write")
-            offset += written
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+    if report_state is not None:
+        if run_root is None or identity is None:
+            raise LiveMatrixError("report state update requires run identity")
+        _report_state_for_target(run_root, repository_root, target, identity)
+        _atomic_replace_file(target, payload, mode=0o644)
+    else:
+        if target.exists() or target.is_symlink():
+            raise LiveMatrixError("operations report already exists")
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        try:
+            descriptor = os.open(target, flags, 0o644)
+        except OSError as exc:
+            raise LiveMatrixError("cannot create operations report") from exc
+        try:
+            offset = 0
+            while offset < len(payload):
+                written = os.write(descriptor, payload[offset:])
+                if written <= 0:
+                    raise LiveMatrixError("incomplete operations report write")
+                offset += written
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+    if run_root is not None or identity is not None:
+        if run_root is None or identity is None:
+            raise LiveMatrixError("report state requires run identity")
+        try:
+            relative = target.relative_to(repository_root).as_posix()
+        except ValueError as exc:
+            raise LiveMatrixError("report target escapes repository") from exc
+        _write_report_state(
+            run_root,
+            ReportState(identity, relative, hashlib.sha256(payload).hexdigest()),
+            replace_existing=report_state is not None,
+        )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -2692,6 +3018,7 @@ def main(argv: list[str] | None = None) -> int:
             evidence_root=evidence_root,
             resume=args.resume,
             reuse_preflight=args.execute,
+            report_path=args.report,
         )
         if args.execute:
             report_path = (
@@ -2755,7 +3082,14 @@ def main(argv: list[str] | None = None) -> int:
                     producer_attempted_calls=producer_attempted_calls,
                     reviewer_attempted_calls=reviewer_attempted_calls,
                 )
-                write_operations_report(report_path, render_operations_report(report_input), preflight.repository_root)
+                write_operations_report(
+                    report_path,
+                    render_operations_report(report_input),
+                    preflight.repository_root,
+                    run_root=preflight.run_root,
+                    identity=preflight.identity,
+                    report_state=preflight.report_state,
+                )
             payload = {
                 "producer_attempted_calls": producer_attempted_calls,
                 "reviewer_attempted_calls": reviewer_attempted_calls,
