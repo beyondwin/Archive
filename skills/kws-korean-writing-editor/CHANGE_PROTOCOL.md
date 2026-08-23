@@ -83,6 +83,14 @@ crash-only reservation remains charged and resumable, but it cannot support a
 successful packet or report until that logical call has a durable terminal
 receipt. Remediation dispatches producers only and has no reviewer plan.
 
+Dispatcher returns are completion claims only: every returned receipt must
+match the exact canonical bytes of one reloaded durable receipt, and the return
+value never contributes evidence. Each normalized producer or reviewer body
+must be owned by the receipt's exact positive call path and match its
+`response_sha256`. A reviewer receipt is reusable only when its `prompt_sha256`
+matches the current review packet; stale, missing, deleted, or mutable evidence
+fails closed before packet or report success.
+
 One `ReportLease` holds one `O_RDWR` and `O_NOFOLLOW` target file FD plus one
 open `docs/operations` directory FD from pending report reservation through
 every producer and reviewer call and final publication. Report state persists

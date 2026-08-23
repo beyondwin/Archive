@@ -4,6 +4,7 @@ import contextlib
 import concurrent.futures
 import dataclasses
 import fcntl
+import hashlib
 import io
 import json
 import os
@@ -116,6 +117,89 @@ def single_codex_dispatch_fixture(
     return call, case, preflight, producer, capture
 
 
+def run_mocked_remediation_main(
+    root: pathlib.Path,
+    run_root: pathlib.Path,
+    identity: live_matrix.RunIdentity,
+    case: live_matrix.LiveCase,
+    call: live_matrix.PlannedCall,
+    dispatch_side_effect: object,
+) -> tuple[int, str, str, mock.Mock, mock.Mock]:
+    """Run real durable reload/report assembly around one mocked provider boundary."""
+    report = (
+        root
+        / "docs"
+        / "operations"
+        / "2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md"
+    )
+    preflight = live_matrix.PreflightResult(
+        identity=identity,
+        repository_root=root,
+        repository_branch="topic",
+        source_skill_root=HERE.parent,
+        installed_skill_root=HERE.parent,
+        run_root=run_root,
+        cli_info={},
+        model_availability={},
+        discovery_sha256=None,
+        discovery_diagnostic=None,
+        report_path=report,
+    )
+    lease = mock.Mock()
+    report_writer = mock.Mock()
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    with contextlib.ExitStack() as stack:
+        stack.enter_context(
+            mock.patch("live_matrix.validate_preflight", return_value=preflight)
+        )
+        stack.enter_context(mock.patch("live_matrix.load_live_cases", return_value=(case,)))
+        stack.enter_context(
+            mock.patch("live_matrix.build_producer_plan", return_value=(call,))
+        )
+        stack.enter_context(
+            mock.patch("live_matrix.dispatch_calls", side_effect=dispatch_side_effect)
+        )
+        stack.enter_context(
+            mock.patch(
+                "live_matrix._validated_operations_report_path", return_value=report
+            )
+        )
+        stack.enter_context(mock.patch("live_matrix.open_report_lease", return_value=lease))
+        stack.enter_context(
+            mock.patch(
+                "live_matrix.reserve_operations_report",
+                return_value=mock.sentinel.report_state,
+            )
+        )
+        stack.enter_context(
+            mock.patch("live_matrix.write_operations_report", report_writer)
+        )
+        stack.enter_context(
+            mock.patch(
+                "live_matrix._git_report_facts",
+                return_value=live_matrix.GitReportFacts(
+                    "base", 0, 0, (), "local", "remote"
+                ),
+            )
+        )
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            status = live_matrix.main(
+                [
+                    "--execute",
+                    "--scope",
+                    "remediation",
+                    "--run-id",
+                    identity.run_id,
+                    "--remediation-call",
+                    call.call_id,
+                    "--report",
+                    str(report),
+                ]
+            )
+    return status, stdout.getvalue(), stderr.getvalue(), report_writer, lease
+
+
 def owned_report_state(
     run_root: pathlib.Path,
     repository_root: pathlib.Path,
@@ -203,6 +287,15 @@ GUIDE_DURABLE_EVIDENCE_PARAGRAPH = (
     "successful packet or report until that logical call has a durable terminal "
     "receipt. Remediation dispatches producers only and has no reviewer plan."
 )
+GUIDE_BODY_INTEGRITY_PARAGRAPH = (
+    "Dispatcher returns are completion claims only: every returned receipt must "
+    "match the exact canonical bytes of one reloaded durable receipt, and the "
+    "return value never contributes evidence. Each normalized producer or reviewer "
+    "body must be owned by the receipt's exact positive call path and match its "
+    "`response_sha256`. A reviewer receipt is reusable only when its "
+    "`prompt_sha256` matches the current review packet; stale, missing, deleted, "
+    "or mutable evidence fails closed before packet or report success."
+)
 GUIDE_PRIVACY_PARAGRAPH = (
     "Use synthetic prompts only. Do not place private manuscripts, credentials, "
     "secrets, personal data, or full provider transcripts in `live_cases.json`, "
@@ -285,6 +378,7 @@ GUIDE_EXPECTED_SECTIONS = (
             "The approved baseline is 119 producer calls plus 3 independent review calls, with a 122-call ceiling. A separately authorized remediation run may use at most 38 calls, for one approved-cycle ceiling of 160. Starting multiple cycles does not turn them into one approved 160-call result.",
             GUIDE_RESERVATION_PARAGRAPH,
             GUIDE_DURABLE_EVIDENCE_PARAGRAPH,
+            GUIDE_BODY_INTEGRITY_PARAGRAPH,
             "A missing executable or another pre-invocation prerequisite stops before reservation and consumes zero calls; the run remains blocked. A requested Cursor model known to be unavailable emits an honest zero-provider `not_measured` receipt and consumes zero calls.",
         ),
     ),
@@ -412,6 +506,7 @@ def assert_live_guide_contract(markdown: str) -> None:
     for paragraph in (
         GUIDE_RESERVATION_PARAGRAPH,
         GUIDE_DURABLE_EVIDENCE_PARAGRAPH,
+        GUIDE_BODY_INTEGRITY_PARAGRAPH,
         GUIDE_PRIVACY_PARAGRAPH,
         GUIDE_OFFLINE_PARAGRAPH,
         GUIDE_ARTIFACT_PARAGRAPH,
@@ -420,6 +515,53 @@ def assert_live_guide_contract(markdown: str) -> None:
         GUIDE_ACTIVATION_PARAGRAPH,
     ):
         assert normalized_markdown_paragraphs(markdown).count(paragraph) == 1
+
+
+CHANGE_PROTOCOL_HEADINGS = (
+    ("#", "Change Protocol"),
+    ("##", "Contract Changes"),
+    ("##", "Evidence Changes"),
+    ("##", "Fixture Changes"),
+    ("##", "Live Harness Invariants"),
+    ("##", "Versioning"),
+    ("##", "Required Verification"),
+)
+CHANGE_PROTOCOL_VERIFICATION_FENCE = (
+    "python3 skills/kws-korean-writing-editor/evals/run.py --scope full\n"
+    "bun run agent:verify\n"
+    "git diff --check"
+)
+
+
+def assert_change_protocol_contract(markdown: str) -> None:
+    first_section = markdown.find("\n## ")
+    assert first_section > 0
+    assert markdown[:first_section].strip().startswith("# Change Protocol\n\n")
+    headings = tuple(
+        re.findall(r"^(#{1,2}) (.+)$", markdown, flags=re.MULTILINE)
+    )
+    assert headings == CHANGE_PROTOCOL_HEADINGS
+    sections = normalized_guide_sections(markdown)
+    assert tuple(heading for heading, _ in sections) == tuple(
+        heading for _, heading in CHANGE_PROTOCOL_HEADINGS[1:]
+    )
+    live_sections = tuple(
+        body for heading, body in sections if heading == "Live Harness Invariants"
+    )
+    assert live_sections == (
+        (
+            GUIDE_RESERVATION_PARAGRAPH,
+            GUIDE_DURABLE_EVIDENCE_PARAGRAPH,
+            GUIDE_BODY_INTEGRITY_PARAGRAPH,
+            GUIDE_LEASE_PARAGRAPH,
+        ),
+    )
+    assert re.findall(
+        r"```bash\n(.*?)\n```", markdown, flags=re.DOTALL
+    ) == [CHANGE_PROTOCOL_VERIFICATION_FENCE]
+    assert markdown.count(
+        "A live-harness or dated-report-only change does not bump the skill version."
+    ) == 1
 
 
 class LiveDocumentationTests(unittest.TestCase):
@@ -537,6 +679,7 @@ class LiveDocumentationTests(unittest.TestCase):
 
     def test_change_protocol_has_live_sync_rules(self) -> None:
         text = (HERE.parent / "CHANGE_PROTOCOL.md").read_text(encoding="utf-8")
+        assert_change_protocol_contract(text)
         for phrase in (
             "live_cases.json",
             "live_matrix.py",
@@ -548,22 +691,69 @@ class LiveDocumentationTests(unittest.TestCase):
         paragraphs = normalized_markdown_paragraphs(text)
         self.assertEqual(paragraphs.count(GUIDE_RESERVATION_PARAGRAPH), 1)
         self.assertEqual(paragraphs.count(GUIDE_DURABLE_EVIDENCE_PARAGRAPH), 1)
+        self.assertEqual(paragraphs.count(GUIDE_BODY_INTEGRITY_PARAGRAPH), 1)
         self.assertEqual(paragraphs.count(GUIDE_LEASE_PARAGRAPH), 1)
-        live_invariants = dict(normalized_guide_sections(text))["Live Harness Invariants"]
-        self.assertEqual(
-            live_invariants,
-            (
-                GUIDE_RESERVATION_PARAGRAPH,
-                GUIDE_DURABLE_EVIDENCE_PARAGRAPH,
-                GUIDE_LEASE_PARAGRAPH,
-            ),
+
+    def test_change_protocol_rejects_duplicate_negated_reordered_and_unexpected_invariants(self) -> None:
+        text = (HERE.parent / "CHANGE_PROTOCOL.md").read_text(encoding="utf-8")
+        negated = GUIDE_DURABLE_EVIDENCE_PARAGRAPH.replace(
+            "never in-memory dispatch return values",
+            "including in-memory dispatch return values",
         )
-        self.assertEqual(
-            text.count(
-                "A live-harness or dated-report-only change does not bump the skill version."
-            ),
-            1,
+        pattern = re.escape(GUIDE_DURABLE_EVIDENCE_PARAGRAPH).replace(
+            r"\ ", r"\s+"
         )
+        contradictory, replacements = re.subn(pattern, negated, text, count=1)
+        self.assertEqual(replacements, 1)
+        contradictory += (
+            "\n## Live Harness Invariants\n\n"
+            f"{GUIDE_RESERVATION_PARAGRAPH}\n\n"
+            f"{GUIDE_DURABLE_EVIDENCE_PARAGRAPH}\n\n"
+            f"{GUIDE_BODY_INTEGRITY_PARAGRAPH}\n\n"
+            f"{GUIDE_LEASE_PARAGRAPH}\n"
+        )
+        with self.assertRaises(AssertionError):
+            assert_change_protocol_contract(contradictory)
+
+        durable_pattern = re.escape(GUIDE_DURABLE_EVIDENCE_PARAGRAPH).replace(
+            r"\ ", r"\s+"
+        )
+        body_pattern = re.escape(GUIDE_BODY_INTEGRITY_PARAGRAPH).replace(
+            r"\ ", r"\s+"
+        )
+        reordered, replacements = re.subn(
+            durable_pattern, "__DURABLE_BLOCK__", text, count=1
+        )
+        self.assertEqual(replacements, 1)
+        reordered, replacements = re.subn(
+            body_pattern,
+            GUIDE_DURABLE_EVIDENCE_PARAGRAPH,
+            reordered,
+            count=1,
+        )
+        self.assertEqual(replacements, 1)
+        reordered = reordered.replace(
+            "__DURABLE_BLOCK__", GUIDE_BODY_INTEGRITY_PARAGRAPH, 1
+        )
+        with self.assertRaises(AssertionError):
+            assert_change_protocol_contract(reordered)
+
+        lease_pattern = re.escape(GUIDE_LEASE_PARAGRAPH).replace(
+            r"\ ", r"\s+"
+        )
+        unexpected, replacements = re.subn(
+            lease_pattern,
+            "Unexpected normative live block.\n\n" + GUIDE_LEASE_PARAGRAPH,
+            text,
+            count=1,
+        )
+        self.assertEqual(replacements, 1)
+        with self.assertRaises(AssertionError):
+            assert_change_protocol_contract(unexpected)
+
+        extra_fence = text + "\n```bash\ntrue\n```\n"
+        with self.assertRaises(AssertionError):
+            assert_change_protocol_contract(extra_fence)
 
     def test_eval_guide_advertises_safe_commands(self) -> None:
         text = (HERE / "README.md").read_text(encoding="utf-8")
@@ -1591,7 +1781,7 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
                             "live_matrix._reload_durable_evidence", return_value=((), {})
                         ):
                             with mock.patch("live_matrix.load_normalized_responses", return_value={}):
-                                with mock.patch("live_matrix.dispatch_reviewer_calls", return_value=((), ())):
+                                with mock.patch("live_matrix.dispatch_reviewer_calls", return_value=()):
                                     with mock.patch("live_matrix.load_review_responses", return_value=()):
                                         with contextlib.redirect_stdout(io.StringIO()):
                                             status = live_matrix.main(
@@ -1693,6 +1883,65 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
             live_matrix.write_receipt(receipt_root / "unmeasured.json", unmeasured)
             latest = live_matrix._load_receipts(run_root)
         self.assertEqual(latest, {"producer:case:1": unmeasured})
+
+    def test_receipt_union_rejects_duplicate_actual_attempt_ordinal(self) -> None:
+        identity = live_matrix.RunIdentity.for_test()
+        producer = live_matrix.Producer("producer", "cursor", "model")
+        call = live_matrix.PlannedCall(
+            "producer:case:1", "producer", "producer", "case", 1
+        )
+        receipt = live_matrix._not_measured_receipt(
+            call, producer, identity, "model unavailable"
+        )
+        with self.assertRaisesRegex(
+            live_matrix.LiveMatrixError, "duplicate actual call attempt"
+        ):
+            live_matrix._validate_receipt_reservations(
+                (receipt, receipt), (), identity
+            )
+
+    def test_final_durable_reload_rejects_reviewer_for_stale_packet(self) -> None:
+        identity = live_matrix.RunIdentity.for_test(
+            run_id="baseline-1", selected_call_ids=()
+        )
+        reviewer = live_matrix.ReviewerCall(
+            "reviewer-claude", "claude-sonnet-5-thinking-high", "current packet"
+        )
+        logical_id = f"{reviewer.reviewer_id}:packet:1"
+        call, producer = live_matrix._reviewer_call(reviewer, logical_id)
+        receipt = live_matrix.CallReceipt.for_test(
+            logical_id,
+            identity=identity,
+            kind="reviewer",
+            host=producer.host,
+            requested_model=producer.requested_model,
+            case_id=call.case_id,
+            band=None,
+            prompt_sha256=hashlib.sha256(b"old packet").hexdigest(),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            run_root = pathlib.Path(directory)
+            live_matrix.reserve_attempt(
+                run_root,
+                identity,
+                call,
+                producer,
+                kind="reviewer",
+                call_number=1,
+            )
+            live_matrix._write_call_receipt(run_root, receipt)
+            with self.assertRaisesRegex(
+                live_matrix.LiveMatrixError, "reviewer.*prompt"
+            ):
+                live_matrix._reload_durable_evidence(
+                    run_root,
+                    identity,
+                    ((call, producer, None),),
+                    allowed_logical_ids=(logical_id,),
+                    expected_reviewer_prompt_sha256=live_matrix._reviewer_prompt_hashes(
+                        (reviewer,)
+                    ),
+                )
 
     def test_duplicate_reserved_call_number_is_corrupt(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -2018,7 +2267,7 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
                                 side_effect=preflight_plan_then_empty,
                             ):
                                 with mock.patch("live_matrix.build_reviewer_plan", return_value=()):
-                                    with mock.patch("live_matrix.dispatch_reviewer_calls", return_value=((), ())):
+                                    with mock.patch("live_matrix.dispatch_reviewer_calls", return_value=()):
                                         with mock.patch(
                                             "live_matrix._reload_durable_evidence",
                                             return_value=((), {}),
@@ -2384,6 +2633,125 @@ class ReviewAndReportTests(unittest.TestCase):
         with self.assertRaisesRegex(live_matrix.LiveMatrixError, "review response"):
             live_matrix.parse_review_response("```json\n{}\n```", samples)
 
+    def test_normalized_producer_body_is_bound_to_receipt_hash_and_call_path(self) -> None:
+        identity = live_matrix.RunIdentity.for_test()
+        body = "정확한 응답".encode()
+        receipt = live_matrix.CallReceipt.for_test(
+            "producer:case:1",
+            identity=identity,
+            call_number=7,
+            response_sha256=hashlib.sha256(body).hexdigest(),
+            raw_paths=("normalized/0007.response.txt",),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            run_root = pathlib.Path(directory)
+            live_matrix._write_raw_file(
+                run_root, "normalized/0007.response.txt", body
+            )
+            self.assertEqual(
+                live_matrix.load_normalized_responses(run_root, (receipt,)),
+                {receipt.call_id: body.decode()},
+            )
+            (run_root / "normalized/0007.response.txt").write_bytes(
+                "변조된 응답\n".encode()
+            )
+            with self.assertRaisesRegex(
+                live_matrix.LiveMatrixError, "response.*hash"
+            ):
+                live_matrix.load_normalized_responses(run_root, (receipt,))
+            wrong_path = dataclasses.replace(
+                receipt, raw_paths=("normalized/0008.response.txt",)
+            )
+            live_matrix._write_raw_file(
+                run_root, "normalized/0008.response.txt", body
+            )
+            with self.assertRaisesRegex(
+                live_matrix.LiveMatrixError, "response.*path"
+            ):
+                live_matrix.load_normalized_responses(run_root, (wrong_path,))
+            (run_root / "normalized/0007.response.txt").unlink()
+            with self.assertRaisesRegex(
+                live_matrix.LiveMatrixError, "normalized evidence is unavailable"
+            ):
+                live_matrix.load_normalized_responses(run_root, (receipt,))
+
+    def test_normalized_reviewer_body_is_bound_to_body_hash_path_and_current_prompt(self) -> None:
+        samples = live_matrix.select_review_samples(
+            synthetic_receipts_for_test(1, 4)
+        )
+        reviewer = live_matrix.ReviewerCall(
+            "reviewer-claude", "claude-sonnet-5-thinking-high", "current packet"
+        )
+        body = json.dumps(
+            {
+                "samples": [
+                    {
+                        "candidate_id": sample.candidate_id,
+                        "issues": [],
+                        "assessment": "pass",
+                    }
+                    for sample in samples
+                ],
+                "packet_limitations": [],
+            }
+        ).encode()
+        receipt = live_matrix.CallReceipt.for_test(
+            "reviewer-claude:packet:1",
+            call_number=4,
+            kind="reviewer",
+            prompt_sha256=hashlib.sha256(reviewer.prompt.encode()).hexdigest(),
+            response_sha256=hashlib.sha256(body).hexdigest(),
+            raw_paths=("normalized/0004.review.json",),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            run_root = pathlib.Path(directory)
+            live_matrix._write_raw_file(
+                run_root, "normalized/0004.review.json", body
+            )
+            loaded = live_matrix.load_review_responses(
+                run_root, (receipt,), samples, (reviewer,)
+            )
+            self.assertEqual(loaded[0].samples[0].candidate_id, "candidate-001")
+            tampered = body.replace(b'"pass"', b'"concern"', 1)
+            (run_root / "normalized/0004.review.json").write_bytes(tampered)
+            with self.assertRaisesRegex(
+                live_matrix.LiveMatrixError, "reviewer response.*hash"
+            ):
+                live_matrix.load_review_responses(
+                    run_root, (receipt,), samples, (reviewer,)
+                )
+            (run_root / "normalized/0004.review.json").write_bytes(body)
+            with self.assertRaisesRegex(
+                live_matrix.LiveMatrixError, "reviewer.*prompt"
+            ):
+                live_matrix.load_review_responses(
+                    run_root,
+                    (dataclasses.replace(receipt, prompt_sha256="0" * 64),),
+                    samples,
+                    (reviewer,),
+                )
+            with self.assertRaisesRegex(
+                live_matrix.LiveMatrixError, "reviewer response.*path"
+            ):
+                live_matrix.load_review_responses(
+                    run_root,
+                    (
+                        dataclasses.replace(
+                            receipt,
+                            raw_paths=("normalized/0005.review.json",),
+                        ),
+                    ),
+                    samples,
+                    (reviewer,),
+                )
+            (run_root / "normalized/0004.review.json").unlink()
+            with self.assertRaisesRegex(
+                live_matrix.LiveMatrixError, "normalized evidence is unavailable"
+            ):
+                live_matrix.load_review_responses(
+                    run_root, (receipt,), samples, (reviewer,)
+                )
+
     def test_invalid_review_json_creates_one_blocked_receipt_and_reviewer_plan_is_fixed(self) -> None:
         samples = live_matrix.select_review_samples(synthetic_receipts_for_test(1, 4))
         plan = live_matrix.build_reviewer_plan(samples)
@@ -2417,12 +2785,9 @@ class ReviewAndReportTests(unittest.TestCase):
         self.assertEqual(result[("producer-b", "valid-mode")], "blocked")
         self.assertEqual(result[("producer-c", "valid-mode")], "not_measured")
 
-    def test_report_has_required_sections_hashes_and_no_response_body(self) -> None:
+    def test_report_has_required_sections_and_hashes(self) -> None:
         receipts = synthetic_receipts_for_test(1, 4)
-        report_input = live_matrix.ReportInput.for_test(
-            receipts=receipts,
-            responses={"failure-0": "PRIVATE FULL RESPONSE BODY sk-secret-token"},
-        )
+        report_input = live_matrix.ReportInput.for_test(receipts=receipts)
         report = live_matrix.render_operations_report(report_input)
         for heading in (
             "# KWS Korean Writing Editor Cross-Model Evaluation",
@@ -2440,8 +2805,6 @@ class ReviewAndReportTests(unittest.TestCase):
         self.assertIn("partially verified", report)
         self.assertIn("Branch: `test-branch`", report)
         self.assertIn(receipts[0].response_sha256, report)
-        self.assertNotIn("PRIVATE FULL RESPONSE BODY", report)
-        self.assertNotIn("sk-secret-token", report)
         self.assertNotIn("/Users/", report)
         self.assertIn("pending adjudication", report)
 
@@ -2957,6 +3320,177 @@ class ReviewAndReportTests(unittest.TestCase):
 
 
 class ReviewExecutionWiringTests(unittest.TestCase):
+    def test_returned_zero_provider_retry_is_proven_durable_and_supersedes_blocked(self) -> None:
+        case = case_by_id("correct-obligation")
+        call = live_matrix.PlannedCall(
+            "codex-direct:correct-obligation:1",
+            "producer",
+            "codex-direct",
+            case.id,
+            1,
+        )
+        identity = live_matrix.RunIdentity.for_test(
+            run_id="remediation-1",
+            scope="remediation",
+            selected_call_ids=(call.call_id,),
+        )
+        producer = live_matrix.Producer("codex-direct", "codex", None)
+        retry = dataclasses.replace(call, call_id=f"{call.call_id}:attempt-2")
+        blocked = live_matrix.CallReceipt.for_test(
+            call.call_id,
+            identity=identity,
+            call_number=1,
+            status="blocked",
+            host=producer.host,
+            requested_model=producer.requested_model,
+            case_id=case.id,
+            band=case.band,
+        )
+        unmeasured = live_matrix._not_measured_receipt(
+            retry, producer, identity, "model unavailable on retry", case.band
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            run_root = root / "run"
+            run_root.mkdir()
+            live_matrix.reserve_attempt(
+                run_root,
+                identity,
+                call,
+                producer,
+                kind="producer",
+                call_number=1,
+            )
+            live_matrix._write_call_receipt(run_root, blocked)
+
+            def persist_zero(*args: object, **kwargs: object) -> tuple[live_matrix.CallReceipt, ...]:
+                live_matrix._write_call_receipt(run_root, unmeasured)
+                return (unmeasured,)
+
+            status, output, _, report_writer, lease = run_mocked_remediation_main(
+                root, run_root, identity, case, call, persist_zero
+            )
+            latest = live_matrix._load_receipts(run_root)
+        self.assertEqual(status, 0)
+        self.assertEqual(json.loads(output)["not_measured"], 1)
+        self.assertEqual(latest[call.call_id], unmeasured)
+        report_writer.assert_called_once()
+        lease.close.assert_called_once_with()
+
+    def test_deleted_returned_zero_provider_retry_cannot_fall_back_to_blocked(self) -> None:
+        case = case_by_id("correct-obligation")
+        call = live_matrix.PlannedCall(
+            "codex-direct:correct-obligation:1",
+            "producer",
+            "codex-direct",
+            case.id,
+            1,
+        )
+        identity = live_matrix.RunIdentity.for_test(
+            run_id="remediation-1",
+            scope="remediation",
+            selected_call_ids=(call.call_id,),
+        )
+        producer = live_matrix.Producer("codex-direct", "codex", None)
+        retry = dataclasses.replace(call, call_id=f"{call.call_id}:attempt-2")
+        blocked = live_matrix.CallReceipt.for_test(
+            call.call_id,
+            identity=identity,
+            call_number=1,
+            status="blocked",
+            host=producer.host,
+            requested_model=producer.requested_model,
+            case_id=case.id,
+            band=case.band,
+        )
+        unmeasured = live_matrix._not_measured_receipt(
+            retry, producer, identity, "model unavailable on retry", case.band
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            run_root = root / "run"
+            run_root.mkdir()
+            live_matrix.reserve_attempt(
+                run_root,
+                identity,
+                call,
+                producer,
+                kind="producer",
+                call_number=1,
+            )
+            live_matrix._write_call_receipt(run_root, blocked)
+
+            def persist_then_delete_zero(
+                *args: object, **kwargs: object
+            ) -> tuple[live_matrix.CallReceipt, ...]:
+                live_matrix._write_call_receipt(run_root, unmeasured)
+                receipt_path = (
+                    run_root
+                    / live_matrix.RECEIPT_DIRECTORY_NAME
+                    / live_matrix._receipt_filename(unmeasured.call_id, 0)
+                )
+                receipt_path.unlink()
+                return (unmeasured,)
+
+            status, _, error, report_writer, lease = run_mocked_remediation_main(
+                root, run_root, identity, case, call, persist_then_delete_zero
+            )
+        self.assertEqual(status, 1)
+        self.assertIn("dispatch return", error)
+        report_writer.assert_not_called()
+        lease.close.assert_called_once_with()
+
+    def test_changed_durable_receipt_cannot_satisfy_dispatch_return_claim(self) -> None:
+        case = case_by_id("correct-obligation")
+        call = live_matrix.PlannedCall(
+            "codex-direct:correct-obligation:1",
+            "producer",
+            "codex-direct",
+            case.id,
+            1,
+        )
+        identity = live_matrix.RunIdentity.for_test(
+            run_id="remediation-1",
+            scope="remediation",
+            selected_call_ids=(call.call_id,),
+        )
+        producer = live_matrix.Producer("codex-direct", "codex", None)
+        durable = live_matrix.CallReceipt.for_test(
+            call.call_id,
+            identity=identity,
+            call_number=1,
+            status="blocked",
+            host=producer.host,
+            requested_model=producer.requested_model,
+            case_id=case.id,
+            band=case.band,
+        )
+        returned = dataclasses.replace(durable, status="verified")
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            run_root = root / "run"
+            run_root.mkdir()
+
+            def persist_changed(*args: object, **kwargs: object) -> tuple[live_matrix.CallReceipt, ...]:
+                live_matrix.reserve_attempt(
+                    run_root,
+                    identity,
+                    call,
+                    producer,
+                    kind="producer",
+                    call_number=1,
+                )
+                live_matrix._write_call_receipt(run_root, durable)
+                return (returned,)
+
+            status, _, error, report_writer, lease = run_mocked_remediation_main(
+                root, run_root, identity, case, call, persist_changed
+            )
+        self.assertEqual(status, 1)
+        self.assertIn("dispatch return", error)
+        report_writer.assert_not_called()
+        lease.close.assert_called_once_with()
+
     def test_report_lease_binds_directory_target_inode_hash_and_state(self) -> None:
         identity = live_matrix.RunIdentity.for_test()
         with tempfile.TemporaryDirectory() as directory:
@@ -3614,7 +4148,7 @@ class ReviewExecutionWiringTests(unittest.TestCase):
                         with mock.patch("live_matrix.dispatch_calls", return_value=(producer_receipt, producer_retry)) as producers:
                             with mock.patch(
                                 "live_matrix.dispatch_reviewer_calls",
-                                return_value=((reviewer_receipt,), ()),
+                                return_value=(reviewer_receipt,),
                             ) as reviewers:
                                 with mock.patch(
                                     "live_matrix._reload_durable_evidence",
@@ -3623,30 +4157,45 @@ class ReviewExecutionWiringTests(unittest.TestCase):
                                         (reservations, durable_all),
                                     ),
                                 ):
-                                    with mock.patch("live_matrix.write_operations_report") as report_writer:
-                                        with mock.patch(
-                                            "live_matrix._validated_operations_report_path", return_value=pathlib.Path("/report")
-                                        ):
-                                            with mock.patch(
-                                                "live_matrix.open_report_lease",
-                                                return_value=lease,
-                                            ):
-                                                with mock.patch(
-                                                    "live_matrix.reserve_operations_report",
-                                                    return_value=state,
-                                                ):
-                                                    with mock.patch(
-                                                        "live_matrix._git_report_facts",
-                                                        return_value=live_matrix.GitReportFacts("base", 0, 0, (), "local", "remote"),
-                                                    ):
-                                                        output = io.StringIO()
-                                                        with contextlib.redirect_stdout(output):
-                                                            status = live_matrix.main(
-                                                                [
-                                                                    "--execute", "--scope", "baseline", "--run-id", "baseline-1",
-                                                                    "--max-calls", "122", "--report", "docs/operations/2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md",
-                                                                ]
-                                                            )
+                                    with (
+                                        mock.patch(
+                                            "live_matrix.load_normalized_responses",
+                                            return_value={},
+                                        ),
+                                        mock.patch(
+                                            "live_matrix.load_review_responses",
+                                            return_value=(),
+                                        ),
+                                        mock.patch(
+                                            "live_matrix.write_operations_report"
+                                        ) as report_writer,
+                                        mock.patch(
+                                            "live_matrix._validated_operations_report_path",
+                                            return_value=pathlib.Path("/report"),
+                                        ),
+                                        mock.patch(
+                                            "live_matrix.open_report_lease",
+                                            return_value=lease,
+                                        ),
+                                        mock.patch(
+                                            "live_matrix.reserve_operations_report",
+                                            return_value=state,
+                                        ),
+                                        mock.patch(
+                                            "live_matrix._git_report_facts",
+                                            return_value=live_matrix.GitReportFacts(
+                                                "base", 0, 0, (), "local", "remote"
+                                            ),
+                                        ),
+                                    ):
+                                        output = io.StringIO()
+                                        with contextlib.redirect_stdout(output):
+                                            status = live_matrix.main(
+                                                [
+                                                    "--execute", "--scope", "baseline", "--run-id", "baseline-1",
+                                                    "--max-calls", "122", "--report", "docs/operations/2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md",
+                                                ]
+                                            )
         self.assertEqual(status, 0)
         producers.assert_called_once()
         reviewers.assert_called_once()
@@ -3750,7 +4299,7 @@ class ReviewExecutionWiringTests(unittest.TestCase):
                             side_effect=reserve_retry_without_receipt,
                         ):
                             with mock.patch(
-                                "live_matrix.dispatch_reviewer_calls", return_value=((), ())
+                                "live_matrix.dispatch_reviewer_calls", return_value=()
                             ) as reviewers:
                                 with mock.patch(
                                     "live_matrix._validated_operations_report_path",
@@ -3789,7 +4338,7 @@ class ReviewExecutionWiringTests(unittest.TestCase):
                                                         )
             durable = live_matrix._load_receipt_attempts(run_root)
         self.assertEqual(status, 1)
-        self.assertIn("completed dispatch reservation", stderr.getvalue())
+        self.assertIn("dispatch return", stderr.getvalue())
         self.assertEqual([receipt.status for receipt in durable], ["blocked"])
         reviewers.assert_not_called()
         report_writer.assert_not_called()
@@ -3845,6 +4394,11 @@ class ReviewExecutionWiringTests(unittest.TestCase):
                     kind="producer",
                     call_number=1,
                 )
+                response = "정확한 응답"
+                normalized_path = "normalized/0001.response.txt"
+                live_matrix._write_raw_file(
+                    run_root, normalized_path, response.encode()
+                )
                 receipt = live_matrix.CallReceipt.for_test(
                     producer_call.call_id,
                     identity=identity,
@@ -3853,13 +4407,15 @@ class ReviewExecutionWiringTests(unittest.TestCase):
                     requested_model=producer.requested_model,
                     case_id=case.id,
                     band=case.band,
+                    response_sha256=hashlib.sha256(response.encode()).hexdigest(),
+                    raw_paths=(normalized_path,),
                 )
                 live_matrix._write_call_receipt(run_root, receipt)
                 return (receipt,)
 
             def persist_then_delete_reviewer(
                 *args: object, **kwargs: object
-            ) -> tuple[tuple[live_matrix.CallReceipt, ...], tuple[live_matrix.ReviewResponse, ...]]:
+            ) -> tuple[live_matrix.CallReceipt, ...]:
                 reviewer_call, producer = live_matrix._reviewer_call(
                     reviewer, reviewer_logical_id
                 )
@@ -3886,8 +4442,7 @@ class ReviewExecutionWiringTests(unittest.TestCase):
                     payload = json.loads(path.read_text(encoding="utf-8"))
                     if payload["kind"] == "reviewer":
                         path.unlink()
-                in_memory = live_matrix.ReviewResponse((), ("returned only",))
-                return (receipt,), (in_memory,)
+                return (receipt,)
 
             lease = mock.Mock()
             with mock.patch("live_matrix.validate_preflight", return_value=preflight):
@@ -3940,6 +4495,184 @@ class ReviewExecutionWiringTests(unittest.TestCase):
         report_writer.assert_not_called()
         lease.close.assert_called_once_with()
 
+    def test_producer_retry_changes_packet_and_stale_reviewer_cannot_survive_budget_exhaustion(self) -> None:
+        case = case_by_id("correct-obligation")
+        producer_call = live_matrix.PlannedCall(
+            "codex-direct:correct-obligation:1",
+            "producer",
+            "codex-direct",
+            case.id,
+            1,
+        )
+        producer = live_matrix.Producer("codex-direct", "codex", None)
+        reviewer_model = "claude-sonnet-5-thinking-high"
+        identity = live_matrix.RunIdentity.for_test(
+            run_id="baseline-1", selected_call_ids=(producer_call.call_id,)
+        )
+        old_body = "이전 후보"
+        old_receipt = live_matrix.CallReceipt.for_test(
+            producer_call.call_id,
+            identity=identity,
+            call_number=1,
+            status="failed",
+            finding_code="ordinary",
+            host=producer.host,
+            requested_model=producer.requested_model,
+            case_id=case.id,
+            band=case.band,
+            response_sha256=hashlib.sha256(old_body.encode()).hexdigest(),
+            raw_paths=("normalized/0001.response.txt",),
+        )
+        old_samples = live_matrix.select_review_samples(
+            (old_receipt,),
+            responses={old_receipt.call_id: old_body},
+            cases={case.id: case},
+        )
+        old_reviewer = live_matrix.ReviewerCall(
+            "reviewer-claude",
+            reviewer_model,
+            live_matrix.build_review_prompt(old_samples),
+        )
+        reviewer_logical_id = "reviewer-claude:packet:1"
+        reviewer_call, reviewer_producer = live_matrix._reviewer_call(
+            old_reviewer, reviewer_logical_id
+        )
+        stale_review = live_matrix.CallReceipt.for_test(
+            reviewer_logical_id,
+            identity=identity,
+            call_number=2,
+            kind="reviewer",
+            host=reviewer_producer.host,
+            requested_model=reviewer_producer.requested_model,
+            case_id=reviewer_call.case_id,
+            prompt_sha256=hashlib.sha256(
+                old_reviewer.prompt.encode()
+            ).hexdigest(),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            run_root = root / "run"
+            run_root.mkdir()
+            report = (
+                root
+                / "docs"
+                / "operations"
+                / "2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md"
+            )
+            live_matrix.reserve_attempt(
+                run_root,
+                identity,
+                producer_call,
+                producer,
+                kind="producer",
+                call_number=1,
+            )
+            live_matrix._write_raw_file(
+                run_root, "normalized/0001.response.txt", old_body.encode()
+            )
+            live_matrix._write_call_receipt(run_root, old_receipt)
+            live_matrix.reserve_attempt(
+                run_root,
+                identity,
+                reviewer_call,
+                reviewer_producer,
+                kind="reviewer",
+                call_number=2,
+            )
+            live_matrix._write_call_receipt(run_root, stale_review)
+            preflight = live_matrix.PreflightResult(
+                identity=identity,
+                repository_root=root,
+                repository_branch="topic",
+                source_skill_root=HERE.parent,
+                installed_skill_root=HERE.parent,
+                run_root=run_root,
+                cli_info={
+                    "cursor-agent": live_matrix.CliInfo("cursor-agent", "v", None)
+                },
+                model_availability={reviewer_model: True},
+                discovery_sha256=None,
+                discovery_diagnostic=None,
+            )
+            new_body = "현재 후보"
+            retry_call = dataclasses.replace(
+                producer_call,
+                call_id=f"{producer_call.call_id}:attempt-2",
+            )
+            new_receipt = dataclasses.replace(
+                old_receipt,
+                call_id=retry_call.call_id,
+                call_number=3,
+                response_sha256=hashlib.sha256(new_body.encode()).hexdigest(),
+                raw_paths=("normalized/0003.response.txt",),
+            )
+
+            def persist_changed_producer(
+                *args: object, **kwargs: object
+            ) -> tuple[live_matrix.CallReceipt, ...]:
+                live_matrix.reserve_attempt(
+                    run_root,
+                    identity,
+                    retry_call,
+                    producer,
+                    kind="producer",
+                    call_number=3,
+                )
+                live_matrix._write_raw_file(
+                    run_root, "normalized/0003.response.txt", new_body.encode()
+                )
+                live_matrix._write_call_receipt(run_root, new_receipt)
+                return (new_receipt,)
+
+            lease = mock.Mock()
+            stderr = io.StringIO()
+            with (
+                mock.patch("live_matrix.validate_preflight", return_value=preflight),
+                mock.patch("live_matrix.validate_dispatch_identity"),
+                mock.patch("live_matrix.load_live_cases", return_value=(case,)),
+                mock.patch(
+                    "live_matrix.build_producer_plan", return_value=(producer_call,)
+                ),
+                mock.patch(
+                    "live_matrix.REVIEWER_MODELS",
+                    (("reviewer-claude", reviewer_model),),
+                ),
+                mock.patch(
+                    "live_matrix.dispatch_calls",
+                    side_effect=persist_changed_producer,
+                ),
+                mock.patch("live_matrix.run_command") as provider,
+                mock.patch(
+                    "live_matrix._validated_operations_report_path",
+                    return_value=report,
+                ),
+                mock.patch("live_matrix.open_report_lease", return_value=lease),
+                mock.patch(
+                    "live_matrix.reserve_operations_report",
+                    return_value=mock.sentinel.report_state,
+                ),
+                mock.patch("live_matrix.write_operations_report") as report_writer,
+                contextlib.redirect_stderr(stderr),
+            ):
+                status = live_matrix.main(
+                    [
+                        "--execute",
+                        "--scope",
+                        "baseline",
+                        "--run-id",
+                        "baseline-1",
+                        "--max-calls",
+                        "3",
+                        "--report",
+                        str(report),
+                    ]
+                )
+        self.assertEqual(status, 1)
+        self.assertIn("budget exhausted", stderr.getvalue())
+        provider.assert_not_called()
+        report_writer.assert_not_called()
+        lease.close.assert_called_once_with()
+
     def test_reviewer_dispatch_reserves_remaining_budget_and_blocks_invalid_json_once(self) -> None:
         samples = live_matrix.select_review_samples(synthetic_receipts_for_test(1, 4))
         identity = live_matrix.RunIdentity.for_test(run_id="baseline-1")
@@ -3983,7 +4716,7 @@ class ReviewExecutionWiringTests(unittest.TestCase):
             ))
             with mock.patch("live_matrix.validate_dispatch_identity"):
                 with mock.patch("live_matrix.run_command", side_effect=lambda *args, **kwargs: next(captures)) as run:
-                    receipts, responses = live_matrix.dispatch_reviewer_calls(preflight, samples, max_calls=4)
+                    receipts = live_matrix.dispatch_reviewer_calls(preflight, samples, max_calls=4)
             with mock.patch("live_matrix.validate_dispatch_identity"):
                 with mock.patch("live_matrix.run_command") as resumed_run:
                     with self.assertRaisesRegex(live_matrix.LiveMatrixError, "budget exhausted"):
@@ -3991,9 +4724,199 @@ class ReviewExecutionWiringTests(unittest.TestCase):
         self.assertEqual([receipt.call_number for receipt in receipts], [2, 3, 4])
         self.assertEqual([receipt.status for receipt in receipts], ["verified", "blocked", "verified"])
         self.assertEqual(receipts[1].findings[0].code, "review_json_invalid")
-        self.assertEqual(len(responses), 2)
         self.assertEqual(run.call_count, 3)
         resumed_run.assert_not_called()
+
+    def test_reviewer_prompt_mismatch_requires_a_fresh_durable_attempt(self) -> None:
+        samples = live_matrix.select_review_samples(
+            synthetic_receipts_for_test(1, 4)
+        )
+        reviewer = live_matrix.ReviewerCall(
+            "reviewer-claude", "claude-sonnet-5-thinking-high", "current packet"
+        )
+        identity = live_matrix.RunIdentity.for_test(run_id="baseline-1")
+        logical_id = f"{reviewer.reviewer_id}:packet:1"
+        call, producer = live_matrix._reviewer_call(reviewer, logical_id)
+        old = live_matrix.CallReceipt.for_test(
+            logical_id,
+            identity=identity,
+            call_number=1,
+            kind="reviewer",
+            host=producer.host,
+            requested_model=producer.requested_model,
+            case_id=call.case_id,
+            prompt_sha256=hashlib.sha256(b"old packet").hexdigest(),
+        )
+        response = json.dumps(
+            {
+                "samples": [
+                    {
+                        "candidate_id": sample.candidate_id,
+                        "issues": [],
+                        "assessment": "pass",
+                    }
+                    for sample in samples
+                ],
+                "packet_limitations": [],
+            }
+        )
+        capture = live_matrix.CommandCapture(
+            0,
+            json.dumps({"result": response, "model": "reviewer-model"}).encode(),
+            b"",
+            1,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            run_root = pathlib.Path(directory)
+            live_matrix.reserve_attempt(
+                run_root,
+                identity,
+                call,
+                producer,
+                kind="reviewer",
+                call_number=1,
+            )
+            live_matrix._write_call_receipt(run_root, old)
+            preflight = live_matrix.PreflightResult(
+                identity=identity,
+                repository_root=run_root,
+                repository_branch="test",
+                source_skill_root=HERE.parent,
+                installed_skill_root=HERE.parent,
+                run_root=run_root,
+                cli_info={
+                    "cursor-agent": live_matrix.CliInfo("cursor-agent", "v", None)
+                },
+                model_availability={reviewer.requested_model: True},
+                discovery_sha256=None,
+                discovery_diagnostic=None,
+            )
+            with mock.patch("live_matrix.validate_dispatch_identity"):
+                with mock.patch(
+                    "live_matrix.run_command", return_value=capture
+                ) as provider:
+                    receipts = live_matrix.dispatch_reviewer_calls(
+                        preflight, samples, max_calls=2, reviewers=(reviewer,)
+                    )
+        self.assertEqual(provider.call_count, 1)
+        self.assertEqual(receipts[0].call_id, f"{logical_id}:attempt-2")
+        self.assertEqual(receipts[0].call_number, 2)
+        self.assertEqual(
+            receipts[0].prompt_sha256,
+            hashlib.sha256(reviewer.prompt.encode()).hexdigest(),
+        )
+
+    def test_reviewer_prompt_mismatch_cannot_reuse_stale_receipt_when_budget_is_exhausted(self) -> None:
+        samples = live_matrix.select_review_samples(
+            synthetic_receipts_for_test(1, 4)
+        )
+        reviewer = live_matrix.ReviewerCall(
+            "reviewer-claude", "claude-sonnet-5-thinking-high", "current packet"
+        )
+        identity = live_matrix.RunIdentity.for_test(run_id="baseline-1")
+        logical_id = f"{reviewer.reviewer_id}:packet:1"
+        call, producer = live_matrix._reviewer_call(reviewer, logical_id)
+        old = live_matrix.CallReceipt.for_test(
+            logical_id,
+            identity=identity,
+            call_number=1,
+            kind="reviewer",
+            host=producer.host,
+            requested_model=producer.requested_model,
+            case_id=call.case_id,
+            prompt_sha256=hashlib.sha256(b"old packet").hexdigest(),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            run_root = pathlib.Path(directory)
+            live_matrix.reserve_attempt(
+                run_root,
+                identity,
+                call,
+                producer,
+                kind="reviewer",
+                call_number=1,
+            )
+            live_matrix._write_call_receipt(run_root, old)
+            preflight = live_matrix.PreflightResult(
+                identity=identity,
+                repository_root=run_root,
+                repository_branch="test",
+                source_skill_root=HERE.parent,
+                installed_skill_root=HERE.parent,
+                run_root=run_root,
+                cli_info={
+                    "cursor-agent": live_matrix.CliInfo("cursor-agent", "v", None)
+                },
+                model_availability={reviewer.requested_model: True},
+                discovery_sha256=None,
+                discovery_diagnostic=None,
+            )
+            with mock.patch("live_matrix.validate_dispatch_identity"):
+                with mock.patch("live_matrix.run_command") as provider:
+                    with self.assertRaisesRegex(
+                        live_matrix.LiveMatrixError, "budget exhausted"
+                    ):
+                        live_matrix.dispatch_reviewer_calls(
+                            preflight, samples, max_calls=1, reviewers=(reviewer,)
+                        )
+        provider.assert_not_called()
+
+    def test_unavailable_reviewer_retry_binds_not_measured_to_current_packet(self) -> None:
+        samples = live_matrix.select_review_samples(
+            synthetic_receipts_for_test(1, 4)
+        )
+        reviewer = live_matrix.ReviewerCall(
+            "reviewer-claude", "claude-sonnet-5-thinking-high", "current packet"
+        )
+        identity = live_matrix.RunIdentity.for_test(run_id="baseline-1")
+        logical_id = f"{reviewer.reviewer_id}:packet:1"
+        call, producer = live_matrix._reviewer_call(reviewer, logical_id)
+        old = live_matrix.CallReceipt.for_test(
+            logical_id,
+            identity=identity,
+            call_number=1,
+            kind="reviewer",
+            host=producer.host,
+            requested_model=producer.requested_model,
+            case_id=call.case_id,
+            prompt_sha256=hashlib.sha256(b"old packet").hexdigest(),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            run_root = pathlib.Path(directory)
+            live_matrix.reserve_attempt(
+                run_root,
+                identity,
+                call,
+                producer,
+                kind="reviewer",
+                call_number=1,
+            )
+            live_matrix._write_call_receipt(run_root, old)
+            preflight = live_matrix.PreflightResult(
+                identity=identity,
+                repository_root=run_root,
+                repository_branch="test",
+                source_skill_root=HERE.parent,
+                installed_skill_root=HERE.parent,
+                run_root=run_root,
+                cli_info={
+                    "cursor-agent": live_matrix.CliInfo("cursor-agent", "v", None)
+                },
+                model_availability={reviewer.requested_model: False},
+                discovery_sha256=None,
+                discovery_diagnostic=None,
+            )
+            with mock.patch("live_matrix.validate_dispatch_identity"):
+                receipts = live_matrix.dispatch_reviewer_calls(
+                    preflight, samples, max_calls=1, reviewers=(reviewer,)
+                )
+        self.assertEqual(receipts[0].call_id, f"{logical_id}:attempt-2")
+        self.assertEqual(receipts[0].call_number, 0)
+        self.assertEqual(receipts[0].status, "not_measured")
+        self.assertEqual(
+            receipts[0].prompt_sha256,
+            hashlib.sha256(reviewer.prompt.encode()).hexdigest(),
+        )
 
     def test_reviewer_crash_only_reservation_uses_attempt_two_with_spare_budget(self) -> None:
         samples = live_matrix.select_review_samples(synthetic_receipts_for_test(1, 4))
@@ -4050,7 +4973,7 @@ class ReviewExecutionWiringTests(unittest.TestCase):
                                 live_matrix.dispatch_reviewer_calls(
                                     preflight, samples, max_calls=2
                                 )
-                        receipts, _ = live_matrix.dispatch_reviewer_calls(
+                        receipts = live_matrix.dispatch_reviewer_calls(
                             preflight, samples, max_calls=2
                         )
             reservations = live_matrix._load_attempt_reservations(run_root, identity)
@@ -4235,18 +5158,24 @@ class ReviewExecutionWiringTests(unittest.TestCase):
                             with mock.patch("live_matrix.dispatch_calls", return_value=()):
                                 with mock.patch(
                                     "live_matrix.dispatch_reviewer_calls",
-                                    side_effect=(((blocked,), ()), ((retried,), ())),
+                                    side_effect=((blocked,), (retried,)),
                                 ) as reviewers:
-                                    with mock.patch(
-                                        "live_matrix._reload_durable_evidence",
-                                        side_effect=(
-                                            ((), {}),
-                                            ((first_reservation,), durable_blocked),
-                                            ((first_reservation,), durable_blocked),
-                                            (
-                                                (first_reservation, retry_reservation),
-                                                durable_retried,
+                                    with (
+                                        mock.patch(
+                                            "live_matrix._reload_durable_evidence",
+                                            side_effect=(
+                                                ((), {}),
+                                                ((first_reservation,), durable_blocked),
+                                                ((first_reservation,), durable_blocked),
+                                                (
+                                                    (first_reservation, retry_reservation),
+                                                    durable_retried,
+                                                ),
                                             ),
+                                        ),
+                                        mock.patch(
+                                            "live_matrix.load_review_responses",
+                                            return_value=(),
                                         ),
                                     ):
                                         with mock.patch(

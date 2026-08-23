@@ -81,7 +81,7 @@ ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 MAX_STREAM_BYTES = 131_072
 COMMAND_TIMEOUT_SECONDS = 300
 DIAGNOSTIC_TAIL_BYTES = 256
-RUNNER_VERSION = "4"
+RUNNER_VERSION = "5"
 RUN_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 MIN_JOBS = 1
 MAX_JOBS = 4
@@ -1586,20 +1586,35 @@ def _validate_report_state_target(
 def load_normalized_responses(
     run_root: pathlib.Path | None, receipts: Sequence[CallReceipt]
 ) -> dict[str, str]:
-    """Read only exact, ignored normalized producer responses for local packet assembly."""
+    """Read receipt-bound normalized producer bodies for local packet assembly."""
     if run_root is None:
         return {}
     responses: dict[str, str] = {}
     for receipt in receipts:
-        for path in receipt.raw_paths:
-            if not path.startswith(f"{NORMALIZED_DIRECTORY_NAME}/") or not path.endswith(".response.txt"):
-                continue
-            try:
-                responses[receipt.call_id] = normalize_response(
-                    _read_evidence_file(run_root, path).decode("utf-8")
-                )
-            except UnicodeDecodeError as exc:
-                raise LiveMatrixError("normalized response is not UTF-8") from exc
+        normalized_paths = tuple(
+            path
+            for path in receipt.raw_paths
+            if path.startswith(f"{NORMALIZED_DIRECTORY_NAME}/")
+        )
+        if receipt.response_sha256 is None:
+            if normalized_paths:
+                raise LiveMatrixError("normalized response path has no receipt body hash")
+            continue
+        expected_path = (
+            f"{NORMALIZED_DIRECTORY_NAME}/{receipt.call_number:04d}.response.txt"
+        )
+        if receipt.call_number <= 0 or normalized_paths != (expected_path,):
+            raise LiveMatrixError("normalized response path does not match receipt call")
+        payload = _read_evidence_file(run_root, expected_path)
+        if hashlib.sha256(payload).hexdigest() != receipt.response_sha256:
+            raise LiveMatrixError("normalized response hash does not match receipt")
+        try:
+            response = payload.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise LiveMatrixError("normalized response is not UTF-8") from exc
+        if normalize_response(response).encode("utf-8") != payload:
+            raise LiveMatrixError("normalized response body is not normalized")
+        responses[receipt.call_id] = response
     return responses
 
 
@@ -1622,7 +1637,11 @@ def _validate_receipt_provider_shape(receipt: CallReceipt) -> None:
         receipt.call_number != 0
         or receipt.status != "not_measured"
         or receipt.reported_model is not None
-        or receipt.prompt_sha256 != empty_prompt_hash
+        or not re.fullmatch(r"[0-9a-f]{64}", receipt.prompt_sha256)
+        or (
+            receipt.kind == "producer"
+            and receipt.prompt_sha256 != empty_prompt_hash
+        )
         or receipt.started_at != receipt.finished_at
         or receipt.duration_ms != 0
         or receipt.exit_code is not None
@@ -1936,12 +1955,20 @@ def _validate_receipt_reservations(
                 reservation.call_id, reservation.logical_call_id
             )
         )
+    receipt_attempts: set[tuple[str, int]] = set()
     for receipt in receipts:
         if receipt.identity != identity:
             raise LiveMatrixError("receipt identity drift requires a new run ID")
         if receipt.logical_call_id != _logical_call_id(receipt.call_id):
             raise LiveMatrixError("receipt does not match attempt reservation")
         _validate_receipt_provider_shape(receipt)
+        receipt_attempt = (
+            receipt.logical_call_id,
+            _actual_attempt_index(receipt.call_id, receipt.logical_call_id),
+        )
+        if receipt_attempt in receipt_attempts:
+            raise LiveMatrixError("duplicate actual call attempt receipt")
+        receipt_attempts.add(receipt_attempt)
         if receipt.call_number == 0:
             if any(reservation.call_id == receipt.call_id for reservation in reservations):
                 raise LiveMatrixError(
@@ -1989,6 +2016,8 @@ def _not_measured_receipt(
     identity: RunIdentity,
     reason: str,
     band: str | None = None,
+    *,
+    prompt_sha256: str | None = None,
 ) -> CallReceipt:
     timestamp = _utc_now()
     return CallReceipt(
@@ -2003,7 +2032,11 @@ def _not_measured_receipt(
         case_id=call.case_id,
         band=band,
         repeat_index=call.repeat_index,
-        prompt_sha256=hashlib.sha256(b"").hexdigest(),
+        prompt_sha256=(
+            prompt_sha256
+            if prompt_sha256 is not None
+            else hashlib.sha256(b"").hexdigest()
+        ),
         started_at=timestamp,
         finished_at=timestamp,
         duration_ms=0,
@@ -2438,7 +2471,6 @@ class ReportInput:
     git_state: str
     installation_state: str
     producer_ids: tuple[str, ...]
-    responses: Mapping[str, str]
     cases: Mapping[str, LiveCase]
     review_responses: tuple[ReviewResponse, ...]
     report_date: str
@@ -2469,7 +2501,6 @@ class ReportInput:
             "git_state": "clean synthetic checkout",
             "installation_state": "not installed (synthetic)",
             "producer_ids": ("test-producer",),
-            "responses": {},
             "cases": {},
             "review_responses": (),
             "report_date": "2026-08-23",
@@ -2692,6 +2723,20 @@ def build_reviewer_plan(samples: Sequence[ReviewSample]) -> tuple[ReviewerCall, 
     return tuple(ReviewerCall(reviewer_id, requested_model, prompt) for reviewer_id, requested_model in REVIEWER_MODELS)
 
 
+def _reviewer_prompt_hashes(
+    reviewers: Sequence[ReviewerCall],
+) -> dict[str, str]:
+    hashes: dict[str, str] = {}
+    for reviewer in reviewers:
+        logical_id = f"{reviewer.reviewer_id}:packet:1"
+        if logical_id in hashes:
+            raise LiveMatrixError("reviewer plan contains duplicate logical call IDs")
+        hashes[logical_id] = hashlib.sha256(
+            reviewer.prompt.encode("utf-8")
+        ).hexdigest()
+    return hashes
+
+
 def _reviewer_call(reviewer: ReviewerCall, call_id: str) -> tuple[PlannedCall, Producer]:
     return (
         PlannedCall(call_id, "reviewer", reviewer.reviewer_id, "review-packet", 1),
@@ -2746,8 +2791,8 @@ def dispatch_reviewer_calls(
     *,
     max_calls: int,
     reviewers: Sequence[ReviewerCall] | None = None,
-) -> tuple[tuple[CallReceipt, ...], tuple[ReviewResponse, ...]]:
-    """Dispatch each approved reviewer once, sharing the durable run call budget."""
+) -> tuple[CallReceipt, ...]:
+    """Dispatch reviewers and return only claims to prove exact receipt persistence."""
     if preflight.run_root is None:
         raise LiveMatrixError("reviewer dispatch requires an evidence run root")
     validate_dispatch_identity(preflight)
@@ -2757,12 +2802,18 @@ def dispatch_reviewer_calls(
     latest = _load_receipts(preflight.run_root)
     reserved_count = len(reservations)
     result: list[CallReceipt] = []
-    responses: list[ReviewResponse] = []
     reviewer_plan = tuple(reviewers) if reviewers is not None else build_reviewer_plan(samples)
     for reviewer in reviewer_plan:
         logical_id = f"{reviewer.reviewer_id}:packet:1"
+        prompt_sha256 = hashlib.sha256(
+            reviewer.prompt.encode("utf-8")
+        ).hexdigest()
         existing = latest.get(logical_id)
-        if existing is not None and existing.status in RESUME_SKIP_STATUSES:
+        if (
+            existing is not None
+            and existing.status in RESUME_SKIP_STATUSES
+            and existing.prompt_sha256 == prompt_sha256
+        ):
             result.append(existing)
             continue
         call_id = _next_actual_call_id(logical_id, reservations, attempts)
@@ -2773,6 +2824,7 @@ def dispatch_reviewer_calls(
                 producer,
                 preflight.identity,
                 "requested Cursor reviewer model is unavailable",
+                prompt_sha256=prompt_sha256,
             )
             _write_call_receipt(preflight.run_root, receipt)
             attempts = (*attempts, receipt)
@@ -2803,7 +2855,6 @@ def dispatch_reviewer_calls(
         reservations = (*reservations, reservation)
         reserved_count = call_number
         started_at = _utc_now()
-        prompt_sha256 = hashlib.sha256(reviewer.prompt.encode("utf-8")).hexdigest()
         try:
             capture = run_command(argv, cwd=preflight.repository_root)
         except LiveMatrixError as exc:
@@ -2877,27 +2928,58 @@ def dispatch_reviewer_calls(
             normalized_path = f"{NORMALIZED_DIRECTORY_NAME}/{call_number:04d}.review.json"
             _write_raw_file(preflight.run_root, normalized_path, response.encode("utf-8"))
             receipt = replace(receipt, raw_paths=receipt.raw_paths + (normalized_path,))
-            responses.append(parsed)
         _write_call_receipt(preflight.run_root, receipt)
         attempts = (*attempts, receipt)
         result.append(receipt)
-    return tuple(result), tuple(responses)
+    return tuple(result)
 
 
 def load_review_responses(
-    run_root: pathlib.Path | None, receipts: Sequence[CallReceipt], samples: Sequence[ReviewSample]
+    run_root: pathlib.Path | None,
+    receipts: Sequence[CallReceipt],
+    samples: Sequence[ReviewSample],
+    reviewers: Sequence[ReviewerCall],
 ) -> tuple[ReviewResponse, ...]:
     if run_root is None:
         return ()
+    prompt_hashes = _reviewer_prompt_hashes(reviewers)
     responses: list[ReviewResponse] = []
     for receipt in receipts:
-        for path in receipt.raw_paths:
-            if path.startswith(f"{NORMALIZED_DIRECTORY_NAME}/") and path.endswith(".review.json"):
-                try:
-                    payload = _read_evidence_file(run_root, path).decode("utf-8")
-                except UnicodeDecodeError as exc:
-                    raise LiveMatrixError("normalized reviewer response is not UTF-8") from exc
-                responses.append(parse_review_response(payload, samples))
+        expected_prompt = prompt_hashes.get(receipt.logical_call_id)
+        if expected_prompt is None or receipt.prompt_sha256 != expected_prompt:
+            raise LiveMatrixError("reviewer receipt prompt does not match current packet")
+        normalized_paths = tuple(
+            path
+            for path in receipt.raw_paths
+            if path.startswith(f"{NORMALIZED_DIRECTORY_NAME}/")
+        )
+        if receipt.status != "verified":
+            if normalized_paths:
+                raise LiveMatrixError(
+                    "normalized reviewer response path belongs to non-verified receipt"
+                )
+            continue
+        expected_path = (
+            f"{NORMALIZED_DIRECTORY_NAME}/{receipt.call_number:04d}.review.json"
+        )
+        if (
+            receipt.call_number <= 0
+            or receipt.response_sha256 is None
+            or normalized_paths != (expected_path,)
+        ):
+            raise LiveMatrixError(
+                "normalized reviewer response path does not match receipt call"
+            )
+        payload_bytes = _read_evidence_file(run_root, expected_path)
+        if hashlib.sha256(payload_bytes).hexdigest() != receipt.response_sha256:
+            raise LiveMatrixError(
+                "normalized reviewer response hash does not match receipt"
+            )
+        try:
+            payload = payload_bytes.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise LiveMatrixError("normalized reviewer response is not UTF-8") from exc
+        responses.append(parse_review_response(payload, samples))
     return tuple(responses)
 
 
@@ -3272,15 +3354,36 @@ def _latest_by_logical_id(receipts: Sequence[CallReceipt]) -> dict[str, CallRece
     for receipt in receipts:
         logical_id = receipt.logical_call_id
         previous = latest.get(logical_id)
-        if previous is None or (
-            _actual_attempt_index(receipt.call_id, logical_id),
-            receipt.call_number,
-        ) >= (
-            _actual_attempt_index(previous.call_id, logical_id),
-            previous.call_number,
-        ):
+        if previous is None or _actual_attempt_index(
+            receipt.call_id, logical_id
+        ) > _actual_attempt_index(previous.call_id, logical_id):
             latest[logical_id] = receipt
     return latest
+
+
+def _assert_dispatch_completion_claims_are_durable(
+    claims: Sequence[CallReceipt], durable_attempts: Sequence[CallReceipt]
+) -> None:
+    """Use dispatcher returns only to prove their exact receipt bytes reached disk."""
+    durable_by_attempt = {
+        (receipt.call_id, receipt.call_number): receipt
+        for receipt in durable_attempts
+    }
+    seen: set[tuple[str, int]] = set()
+    for claim in claims:
+        if not isinstance(claim, CallReceipt):
+            raise LiveMatrixError("dispatch return is not a receipt")
+        key = (claim.call_id, claim.call_number)
+        if key in seen:
+            raise LiveMatrixError("dispatch return contains a duplicate receipt")
+        seen.add(key)
+        durable = durable_by_attempt.get(key)
+        if durable is None or _canonical_json_bytes(
+            durable.as_json()
+        ) != _canonical_json_bytes(claim.as_json()):
+            raise LiveMatrixError(
+                f"dispatch return is not exactly durable: {claim.call_id}"
+            )
 
 
 def _reload_durable_evidence(
@@ -3290,11 +3393,16 @@ def _reload_durable_evidence(
     *,
     allowed_logical_ids: Sequence[str],
     preexisting_reservation_numbers: Sequence[int] | None = None,
+    dispatch_completion_claims: Sequence[CallReceipt] = (),
+    expected_reviewer_prompt_sha256: Mapping[str, str] | None = None,
 ) -> tuple[tuple[AttemptReservation, ...], dict[str, CallReceipt]]:
     """Reload, validate, and scope the only evidence allowed into packets/reports."""
     reservations = _load_attempt_reservations(run_root, identity)
     attempts = _load_receipt_attempts(run_root)
     _validate_receipt_reservations(attempts, reservations, identity)
+    _assert_dispatch_completion_claims_are_durable(
+        dispatch_completion_claims, attempts
+    )
     if preexisting_reservation_numbers is not None:
         preexisting = tuple(preexisting_reservation_numbers)
         preexisting_set = set(preexisting)
@@ -3338,6 +3446,13 @@ def _reload_durable_evidence(
             f"durable evidence is outside the run plan: {unexpected[0]}"
         )
     required_ids: set[str] = set()
+    required_reviewer_ids = {
+        call.call_id for call, _, _ in required_calls if call.kind == "reviewer"
+    }
+    if expected_reviewer_prompt_sha256 is not None and set(
+        expected_reviewer_prompt_sha256
+    ) != required_reviewer_ids:
+        raise LiveMatrixError("durable reviewer prompt plan does not match reviewer calls")
     for call, producer, expected_band in required_calls:
         logical_id = call.call_id
         if _logical_call_id(logical_id) != logical_id or logical_id in required_ids:
@@ -3358,6 +3473,15 @@ def _reload_durable_evidence(
         ):
             raise LiveMatrixError(
                 f"durable terminal receipt does not match planned {call.kind} call: {logical_id}"
+            )
+        if (
+            call.kind == "reviewer"
+            and expected_reviewer_prompt_sha256 is not None
+            and receipt.prompt_sha256
+            != expected_reviewer_prompt_sha256[logical_id]
+        ):
+            raise LiveMatrixError(
+                f"durable reviewer receipt prompt does not match current packet: {logical_id}"
             )
     return reservations, latest
 
@@ -3403,7 +3527,6 @@ def build_report_input(
         git_state="local execution evidence only",
         installation_state="retained source/install manifest equality required",
         producer_ids=preflight.identity.producer_ids,
-        responses={},
         cases={case.id: case for case in cases},
         review_responses=tuple(review_responses),
         report_date=report_date,
@@ -3968,7 +4091,7 @@ def main(argv: list[str] | None = None) -> int:
                     preflight.run_root, preflight.identity
                 )
             )
-            dispatch_calls(
+            producer_completion_claims = dispatch_calls(
                 preflight,
                 execution_plan,
                 cases,
@@ -3981,6 +4104,7 @@ def main(argv: list[str] | None = None) -> int:
                 expected_producers,
                 allowed_logical_ids=allowed_logical_ids,
                 preexisting_reservation_numbers=producer_reservation_numbers,
+                dispatch_completion_claims=producer_completion_claims,
             )
             producer_receipts = tuple(
                 durable_receipts[call.call_id] for call in execution_plan
@@ -3992,7 +4116,8 @@ def main(argv: list[str] | None = None) -> int:
                     cases=cases_by_id,
                 )
                 reviewer_plan = build_reviewer_plan(samples)
-                dispatch_reviewer_calls(
+                reviewer_prompt_hashes = _reviewer_prompt_hashes(reviewer_plan)
+                reviewer_completion_claims = dispatch_reviewer_calls(
                     preflight,
                     samples,
                     max_calls=max_calls,
@@ -4010,6 +4135,8 @@ def main(argv: list[str] | None = None) -> int:
                     preexisting_reservation_numbers=tuple(
                         reservation.call_number for reservation in reservations
                     ),
+                    dispatch_completion_claims=reviewer_completion_claims,
+                    expected_reviewer_prompt_sha256=reviewer_prompt_hashes,
                 )
                 producer_receipts = tuple(
                     durable_receipts[call.call_id] for call in execution_plan
@@ -4019,7 +4146,10 @@ def main(argv: list[str] | None = None) -> int:
                     for reviewer in reviewer_plan
                 )
                 review_responses = load_review_responses(
-                    preflight.run_root, reviewer_receipts, samples
+                    preflight.run_root,
+                    reviewer_receipts,
+                    samples,
+                    reviewer_plan,
                 )
             else:
                 samples = ()
