@@ -59,6 +59,16 @@ Keep the thirty property cases and mutation checks honest in
   reviewer calls unless a separately approved reviewer mechanism is designed.
   Reserve a report target and its matching state before any paid dispatch; do
   not treat a final report write as the first ownership claim.
+- Every Codex or Cursor provider attempt needs an ignored immutable reservation
+  before provider invocation. Bind the complete run identity, logical and
+  actual call IDs, unique positive global number, kind, host, model, and case.
+  Recover the budget and report attempted totals from reservations, not only
+  completed receipts; a crash after provider return may consume a reservation.
+  A positive receipt must exactly match one reservation or resume fails closed.
+- Report reservation, owned-state hash verification, and final replacement must
+  traverse `docs/operations` with directory FDs and no-follow checks. Hold that
+  directory inode through each operation; a pathname replacement after opening
+  may not redirect a report write.
 
 ## Versioning
 
