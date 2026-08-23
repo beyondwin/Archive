@@ -30,6 +30,7 @@ generation. Only a clear `generate` or `edit` request authorizes an image call.
 Route SVG, vector marks, icons, native UI, data visuals, and exact layouts to
 their native workflow. Route exact text, labels, logos, and charts to a
 deterministic or hybrid construction path rather than full raster generation.
+Route project diagrams to SVG, Mermaid, HTML, canvas, or another deterministic/native workflow.
 
 ## Inspect Project Context
 
@@ -60,10 +61,7 @@ Mechanical facts never replace visual inspection; apply the
 
 ## Iterate And Stop
 
-Make at most one clearly justified correction at a time. Repeat the ImageSpec
-invariants and candidate inspection after each correction. Hold when a critical
-condition cannot be verified instead of treating an aesthetic preference as a
-reason to keep generating.
+Produce one useful first candidate by default. One tool call per explicitly requested distinct asset or variant. Ordinary requests never become unrequested batches. Make at most one clearly justified correction at a time. Repeat the ImageSpec invariants and candidate inspection after each correction. Hold when a critical condition cannot be verified instead of treating an aesthetic preference as a reason to keep generating.
 
 ## Save And Integrate
 

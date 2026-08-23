@@ -5,8 +5,8 @@
 Use exactly four evidence statuses:
 
 - `verified`: directly observed in the current run.
-- `partially verified`: a stated subset was observed and the missing portion is named.
-- `not measured`: no current evidence was collected.
+- `partially_verified`: a stated subset was observed and the missing portion is named.
+- `not_measured`: no current evidence was collected.
 - `blocked`: a required check could not run and its blocker is named.
 
 ## Visual Criteria

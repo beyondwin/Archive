@@ -15,6 +15,20 @@ from collections import Counter
 
 
 class EvaluatorTests(unittest.TestCase):
+    def copy_core_tree(self, root: pathlib.Path) -> None:
+        source_root = pathlib.Path(__file__).resolve().parents[1]
+        for relative in (
+            "SKILL.md",
+            "references/image-spec.md",
+            "references/quality-rubric.md",
+        ):
+            destination = root / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_text(
+                (source_root / relative).read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+
     def valid_case(self, **overrides: object) -> dict[str, object]:
         case: dict[str, object] = {
             "id": "auth-brief-no-tool",
@@ -114,6 +128,123 @@ class EvaluatorTests(unittest.TestCase):
             )
             errors = validate_skill_tree(root, "core")
         self.assertIn("skill tree: forbidden scope expansion: prompt gallery", errors)
+
+    def test_core_scope_rejects_spaced_evidence_status_values(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            self.copy_core_tree(root)
+            rubric = root / "references" / "quality-rubric.md"
+            marker = chr(96)
+            rubric.write_text(
+                rubric.read_text(encoding="utf-8")
+                .replace(
+                    f"{marker}partially_verified{marker}",
+                    f"{marker}partially verified{marker}",
+                )
+                .replace(
+                    f"{marker}not_measured{marker}",
+                    f"{marker}not measured{marker}",
+                ),
+                encoding="utf-8",
+            )
+            errors = validate_skill_tree(root, "core")
+        self.assertIn(
+            "references/quality-rubric.md: invalid evidence status spelling "
+            "'partially verified'",
+            errors,
+        )
+        self.assertIn(
+            "references/quality-rubric.md: invalid evidence status spelling "
+            "'not measured'",
+            errors,
+        )
+
+    def test_core_scope_rejects_missing_default_candidate_limit(self):
+        requirements = (
+            (
+                "Produce one useful first candidate by default.",
+                "SKILL.md: missing default-candidate limit",
+            ),
+            (
+                "One tool call per explicitly requested distinct asset or variant.",
+                "SKILL.md: missing distinct-asset tool-call limit",
+            ),
+            (
+                "Ordinary requests never become unrequested batches.",
+                "SKILL.md: missing no-unrequested-batches wording",
+            ),
+        )
+        for phrase, expected_error in requirements:
+            with self.subTest(phrase=phrase), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                self.copy_core_tree(root)
+                skill = root / "SKILL.md"
+                skill.write_text(
+                    skill.read_text(encoding="utf-8").replace(phrase, ""),
+                    encoding="utf-8",
+                )
+                errors = validate_skill_tree(root, "core")
+            self.assertIn(expected_error, errors)
+
+    def test_core_scope_rejects_missing_diagram_native_route(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            self.copy_core_tree(root)
+            skill = root / "SKILL.md"
+            skill.write_text(
+                skill.read_text(encoding="utf-8").replace(
+                    "Route project diagrams to SVG, Mermaid, HTML, canvas, or "
+                    "another deterministic/native workflow.",
+                    "",
+                ),
+                encoding="utf-8",
+            )
+            errors = validate_skill_tree(root, "core")
+        self.assertIn("SKILL.md: missing diagram native-routing wording", errors)
+
+    def test_core_scope_rejects_direct_runtime_scope_expansion(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            self.copy_core_tree(root)
+            skill = root / "SKILL.md"
+            skill.write_text(
+                skill.read_text(encoding="utf-8")
+                + "\nThis skill implements a direct API client.\n"
+                + "This skill includes a CLI implementation.\n"
+                + "This skill adds a third-party provider client.\n"
+                + "This skill depends on an external engine.\n"
+                + "This skill adds an OCR dependency.\n"
+                + "This skill includes a prompt gallery.\n"
+                + "This skill claims cross-runtime support.\n",
+                encoding="utf-8",
+            )
+            errors = validate_skill_tree(root, "core")
+        for expansion in (
+            "direct API client",
+            "CLI implementation",
+            "provider client",
+            "external engine",
+            "OCR dependency",
+            "prompt gallery",
+            "cross-runtime support",
+        ):
+            self.assertIn(f"skill tree: forbidden scope expansion: {expansion}", errors)
+
+    def test_core_scope_allows_explicit_forbidden_scope_statements(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            self.copy_core_tree(root)
+            skill = root / "SKILL.md"
+            skill.write_text(
+                skill.read_text(encoding="utf-8")
+                + "\nDo not add a direct API client or CLI implementation; "
+                + "provider clients, external engine dependencies, OCR "
+                + "dependencies, prompt galleries, and cross-runtime support "
+                + "are not supported.\n",
+                encoding="utf-8",
+            )
+            errors = validate_skill_tree(root, "core")
+        self.assertEqual([], errors)
 
 
 REQUIRED_CASE_FIELDS = (
@@ -536,31 +667,70 @@ def validate_skill_tree(skill_root: pathlib.Path, scope: str) -> list[str]:
         ):
             if f"`{role}`" not in image_spec_text:
                 errors.append(f"references/image-spec.md: missing input role {role!r}")
-        for status in ("verified", "partially verified", "not measured", "blocked"):
+        for status in ("verified", "partially_verified", "not_measured", "blocked"):
             if f"`{status}`" not in rubric_text:
                 errors.append(
                     f"references/quality-rubric.md: missing evidence status {status!r}"
                 )
+        for spelling in ("partially verified", "not measured"):
+            if spelling in rubric_text:
+                errors.append(
+                    "references/quality-rubric.md: invalid evidence status spelling "
+                    f"{spelling!r}"
+                )
         for phrase, error in (
             ("built-in image generation only", "SKILL.md: missing built-in-only execution wording"),
             ("never a silent provider/CLI switch", "SKILL.md: missing no-silent-fallback wording"),
+            ("Produce one useful first candidate by default.", "SKILL.md: missing default-candidate limit"),
+            (
+                "One tool call per explicitly requested distinct asset or variant.",
+                "SKILL.md: missing distinct-asset tool-call limit",
+            ),
+            (
+                "Ordinary requests never become unrequested batches.",
+                "SKILL.md: missing no-unrequested-batches wording",
+            ),
+            (
+                "Route project diagrams to SVG, Mermaid, HTML, canvas, or another deterministic/native workflow.",
+                "SKILL.md: missing diagram native-routing wording",
+            ),
             ("deterministic", "references/image-spec.md: missing deterministic routing wording"),
             ("hybrid", "references/image-spec.md: missing hybrid routing wording"),
         ):
-            text = image_spec_text if "routing" in error else skill_text
+            text = image_spec_text if "references/" in error else skill_text
             if phrase not in re.sub(r"\s+", " ", text):
                 errors.append(error)
 
-        all_core_text = "\n".join(documents.values()).lower()
-        for phrase in (
-            "provider client",
-            "external engine dependenc",
-            "prompt gallery",
-            "ocr dependenc",
-            "cross-runtime support",
-        ):
-            if phrase in all_core_text:
-                errors.append(f"skill tree: forbidden scope expansion: {phrase}")
+        forbidden_expansions = (
+            ("direct API client", r"\b(?:direct\s+)?api\s+client\b"),
+            (
+                "CLI implementation",
+                r"\b(?:cli\s+(?:implementation|client|runtime)|"
+                r"implement(?:s|ed|ing)?\s+(?:a\s+)?cli)\b",
+            ),
+            (
+                "provider client",
+                r"\b(?:third[- ]party\s+)?provider\s+(?:api\s+)?client\b",
+            ),
+            ("external engine", r"\bexternal\s+(?:image\s+)?engine\b"),
+            ("OCR dependency", r"\bocr\s+(?:package|dependency|gate)\b"),
+            ("prompt gallery", r"\bprompt\s+galler(?:y|ies)\b"),
+            ("cross-runtime support", r"\bcross[- ]runtime\s+support\b"),
+        )
+        for sentence in re.split(r"(?<=[.!?])\s+", "\n".join(documents.values())):
+            normalized_sentence = sentence.lower()
+            rejects_expansion = bool(
+                re.search(
+                    r"\b(?:do not|does not|not supported|forbidden|never|"
+                    r"without|exclude(?:d)?|no)\b",
+                    normalized_sentence,
+                )
+            )
+            if rejects_expansion:
+                continue
+            for label, pattern in forbidden_expansions:
+                if re.search(pattern, normalized_sentence):
+                    errors.append(f"skill tree: forbidden scope expansion: {label}")
     if scope == "full":
         index_path = skill_root.parent / "README.md"
         if not index_path.is_file():
