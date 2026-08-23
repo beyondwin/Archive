@@ -1,8 +1,8 @@
 ---
 name: kws-image-workbench
 description: Use when the user asks to plan, generate, edit, compare, or production-check a raster image asset that must fit a local project, preserve input constraints, or be saved and integrated. Inspect project context, compile a compact ImageSpec, use Codex image generation only for a clear generation or edit request, validate the result, and save non-destructively. Do not use for casual one-off image requests, SVG or code-native assets, actual frontend implementation, or copying external prompt galleries.
-compatibility: Requires Codex built-in image generation and local image viewing for generate or edit mode. Brief and audit modes can run read-only.
 metadata:
+  compatibility: Requires Codex built-in image generation and local image viewing for generate or edit mode. Brief and audit modes can run read-only.
   version: "1.0.0"
   updated_at: "2026-08-23"
 ---

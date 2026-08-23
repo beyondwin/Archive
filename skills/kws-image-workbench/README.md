@@ -102,6 +102,7 @@ canary는 opt-in이고 별도 보고합니다.
 
 ```bash
 python3 skills/kws-image-workbench/evals/run.py --self-test
+python3 skills/kws-image-workbench/evals/run.py --cases skills/kws-image-workbench/evals/cases.json
 python3 skills/kws-image-workbench/evals/run.py --scope fixtures
 python3 skills/kws-image-workbench/evals/run.py --scope core
 python3 skills/kws-image-workbench/evals/run.py --scope full

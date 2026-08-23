@@ -10,6 +10,7 @@ import struct
 import sys
 import tempfile
 import unittest
+import zlib
 
 
 @dataclasses.dataclass(frozen=True)
@@ -31,13 +32,17 @@ class StringSink:
 
 
 def make_png(width, height, color_type, trns=False, trns_payload=None, before_trns=(), after_trns=()):
+    def chunk(kind, payload):
+        body = kind + payload
+        return struct.pack(">I", len(payload)) + body + struct.pack(">I", zlib.crc32(body) & 0xFFFFFFFF)
+
     ihdr = struct.pack(">IIBBBBB", width, height, 8, color_type, 0, 0, 0)
-    chunks = [struct.pack(">I", len(ihdr)) + b"IHDR" + ihdr + b"\0\0\0\0"]
-    chunks.extend(struct.pack(">I", len(payload)) + kind + payload + b"\0\0\0\0" for kind, payload in before_trns)
+    chunks = [chunk(b"IHDR", ihdr)]
+    chunks.extend(chunk(kind, payload) for kind, payload in before_trns)
     if trns:
         transparency = trns_payload if trns_payload is not None else (b"\0\0\0\0\0\0" if color_type == 2 else b"\0\0")
-        chunks.append(struct.pack(">I", len(transparency)) + b"tRNS" + transparency + b"\0\0\0\0")
-    chunks.extend(struct.pack(">I", len(payload)) + kind + payload + b"\0\0\0\0" for kind, payload in after_trns)
+        chunks.append(chunk(b"tRNS", transparency))
+    chunks.extend(chunk(kind, payload) for kind, payload in after_trns)
     channels = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}.get(color_type, 1)
     raw_scanlines = b"".join(b"\0" + b"\0" * (width * channels) for _ in range(height))
     adler_s1 = 1
@@ -52,14 +57,15 @@ def make_png(width, height, color_type, trns=False, trns_payload=None, before_tr
         + raw_scanlines
         + struct.pack(">I", (adler_s2 << 16) | adler_s1)
     )
-    chunks.append(struct.pack(">I", len(compressed)) + b"IDAT" + compressed + b"\0\0\0\0")
-    chunks.append(b"\0\0\0\0IEND\0\0\0\0")
+    chunks.append(chunk(b"IDAT", compressed))
+    chunks.append(chunk(b"IEND", b""))
     return b"\x89PNG\r\n\x1a\n" + b"".join(chunks)
 
 
 def make_jpeg(width, height):
-    sof = bytes([8]) + struct.pack(">HH", height, width) + b"\x01\x01\x11\0"
-    return b"\xff\xd8\xff\xc0" + struct.pack(">H", len(sof) + 2) + sof + b"\xff\xd9"
+    if (width, height) != (1, 1):
+        raise ValueError("self-test JPEG fixture is fixed at 1x1")
+    return bytes.fromhex("ffd8ffe000104a46494600010100000100010000ffdb0043000302020302020303030304030304050805050404050a070706080c0a0c0c0b0a0b0b0d0e12100d0e110e0b0b1016101113141515150c0f171816141812141514ffdb00430103040405040509050509140d0b0d1414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414ffc00011080001000103012200021101031101ffc4001500010100000000000000000000000000000008ffc40014100100000000000000000000000000000000ffc4001501010100000000000000000000000000000709ffc40014110100000000000000000000000000000000ffda000c03010002110311003f009d00062a9bffd9")
 
 
 def make_webp_vp8x(width, height, alpha, extra_payload=b""):
@@ -71,19 +77,38 @@ def make_webp_vp8x(width, height, alpha, extra_payload=b""):
 
 
 def make_webp_vp8(width, height):
-    payload = b"\x00\x00\x00\x9d\x01\x2a" + struct.pack("<HH", width, height)
-    body = b"WEBPVP8 " + struct.pack("<I", len(payload)) + payload
-    return b"RIFF" + struct.pack("<I", len(body)) + body
+    if (width, height) != (1, 1):
+        raise ValueError("self-test VP8 fixture is fixed at 1x1")
+    return bytes.fromhex("524946463c000000574542505650382030000000d001009d012a0100010002003425a00274ba01f80003b000fef0c40bff20b96175c8d7ff203fe407fc80fff8f2000000")
 
 
 def make_webp_vp8l(width, height):
-    packed = (width - 1) | ((height - 1) << 14)
-    payload = b"\x2f" + packed.to_bytes(4, "little")
-    body = b"WEBPVP8L" + struct.pack("<I", len(payload)) + payload + b"\0"
+    if (width, height) != (1, 1):
+        raise ValueError("self-test VP8L fixture is fixed at 1x1")
+    return bytes.fromhex("524946461e000000574542505650384c110000002f0000000007d0fffef7bfff8188e87f0000")
+
+
+def make_webp_extended_vp8(width, height, alpha):
+    if (width, height) != (1, 1):
+        raise ValueError("self-test extended WebP fixture is fixed at 1x1")
+    vp8l_chunk = make_webp_vp8l(1, 1)[12:]
+    vp8x_payload = bytes([0x10 if alpha else 0, 0, 0, 0]) + b"\0\0\0\0\0\0"
+    vp8x_chunk = b"VP8X" + struct.pack("<I", len(vp8x_payload)) + vp8x_payload
+    body = b"WEBP" + vp8x_chunk + vp8l_chunk
     return b"RIFF" + struct.pack("<I", len(body)) + body
 
 
 class AssetInspectorTests(unittest.TestCase):
+    def test_png_fixture_has_valid_chunk_crcs(self):
+        data = make_png(width=3, height=2, color_type=6)
+        offset = 8
+        while offset < len(data):
+            length = struct.unpack(">I", data[offset:offset + 4])[0]
+            chunk = data[offset + 4:offset + 8 + length]
+            actual = struct.unpack(">I", data[offset + 8 + length:offset + 12 + length])[0]
+            self.assertEqual(actual, zlib.crc32(chunk) & 0xFFFFFFFF)
+            offset += 12 + length
+
     def test_png_reports_dimensions_and_alpha(self):
         data = make_png(width=3, height=2, color_type=6)
         self.assertIn(b"IDAT", data)
@@ -108,21 +133,38 @@ class AssetInspectorTests(unittest.TestCase):
             parse_png(make_png(3, 2, color_type=3, trns=True, trns_payload=b"\0", before_trns=[(b"PLTE", b"\0\0\0\xff")]))
 
     def test_jpeg_reports_dimensions_without_alpha(self):
-        data = make_jpeg(width=5, height=4)
-        self.assertEqual(parse_jpeg(data), (5, 4, False))
+        data = make_jpeg(width=1, height=1)
+        self.assertEqual(parse_jpeg(data), (1, 1, False))
+
+    def test_jpeg_requires_scan_and_eoi_after_sof(self):
+        data = make_jpeg(width=1, height=1)
+        self.assertEqual(parse_jpeg(data), (1, 1, False))
+        with self.assertRaisesRegex(ValueError, "JPEG scan"):
+            parse_jpeg(data[:-2])
 
     def test_webp_vp8x_reports_dimensions_and_alpha_flag(self):
-        data = make_webp_vp8x(width=7, height=6, alpha=True)
-        self.assertEqual(parse_webp(data), (7, 6, True))
+        data = make_webp_extended_vp8(width=1, height=1, alpha=True)
+        self.assertEqual(parse_webp(data), (1, 1, True))
 
     def test_webp_vp8x_without_alpha_is_false(self):
-        self.assertEqual(parse_webp(make_webp_vp8x(7, 6, alpha=False)), (7, 6, False))
+        self.assertEqual(parse_webp(make_webp_extended_vp8(1, 1, alpha=False)), (1, 1, False))
+
+    def test_webp_vp8x_requires_image_data_and_precedes_it(self):
+        with self.assertRaisesRegex(ValueError, "image data"):
+            parse_webp(make_webp_vp8x(1, 1, alpha=False))
+        valid = make_webp_extended_vp8(1, 1, alpha=False)
+        vp8x = valid[12:30]
+        vp8 = valid[30:]
+        reordered_body = b"WEBP" + vp8 + vp8x
+        reordered = b"RIFF" + struct.pack("<I", len(reordered_body)) + reordered_body
+        with self.assertRaisesRegex(ValueError, "VP8X"):
+            parse_webp(reordered)
 
     def test_webp_vp8_reports_dimensions_without_alpha(self):
-        self.assertEqual(parse_webp(make_webp_vp8(8, 9)), (8, 9, False))
+        self.assertEqual(parse_webp(make_webp_vp8(1, 1)), (1, 1, False))
 
     def test_webp_vp8l_reports_dimensions_with_unknown_alpha(self):
-        self.assertEqual(parse_webp(make_webp_vp8l(10, 11)), (10, 11, None))
+        self.assertEqual(parse_webp(make_webp_vp8l(1, 1)), (1, 1, None))
 
     def test_unsupported_input_is_an_explicit_error(self):
         with self.assertRaisesRegex(ValueError, "unsupported image format"):
@@ -143,14 +185,10 @@ class AssetInspectorTests(unittest.TestCase):
             parse_png(valid[:-12])
 
     def test_png_without_idat_is_rejected(self):
-        ihdr = struct.pack(">IIBBBBB", 3, 2, 8, 6, 0, 0, 0)
-        missing_idat = (
-            b"\x89PNG\r\n\x1a\n"
-            + struct.pack(">I", len(ihdr))
-            + b"IHDR"
-            + ihdr
-            + b"\0\0\0\0\0\0\0\0IEND\0\0\0\0"
-        )
+        valid = make_png(3, 2, color_type=6)
+        idat_offset = valid.index(b"IDAT") - 4
+        idat_length = struct.unpack(">I", valid[idat_offset:idat_offset + 4])[0]
+        missing_idat = valid[:idat_offset] + valid[idat_offset + 12 + idat_length:]
         with self.assertRaisesRegex(ValueError, "missing PNG IDAT"):
             parse_png(missing_idat)
 
@@ -183,13 +221,29 @@ class AssetInspectorTests(unittest.TestCase):
     def test_missing_file_cli_exits_one_with_error_json(self):
         with tempfile.TemporaryDirectory() as directory:
             missing = Path(directory) / "missing.png"
-            sink = StringSink()
-            result = main([str(missing)], output_stream=sink)
+            stdout = StringSink()
+            stderr = StringSink()
+            result = main([str(missing)], output_stream=stdout, error_stream=stderr)
         self.assertEqual(result, 1)
+        self.assertEqual(stdout.value, "")
         self.assertEqual(
-            sink.value,
+            stderr.value,
             json.dumps({"error": "No such file or directory", "path": str(missing)}, sort_keys=True) + "\n",
         )
+
+    def test_malformed_and_unsupported_cli_errors_use_stderr_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            malformed = Path(directory) / "broken.png"
+            unsupported = Path(directory) / "note.txt"
+            malformed.write_bytes(b"\x89PNG\r\n\x1a\n")
+            unsupported.write_bytes(b"not-an-image")
+            for path in (malformed, unsupported):
+                with self.subTest(path=path):
+                    stdout = StringSink()
+                    stderr = StringSink()
+                    self.assertEqual(main([str(path)], output_stream=stdout, error_stream=stderr), 1)
+                    self.assertEqual(stdout.value, "")
+                    self.assertIn('"error"', stderr.value)
 
     def test_output_file_equals_sorted_success_json(self):
         data = make_png(3, 2, color_type=6)
@@ -215,11 +269,13 @@ class AssetInspectorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             input_path = Path(directory) / "asset.png"
             input_path.write_bytes(make_png(3, 2, color_type=6))
-            sink = StringSink()
-            result = main([str(input_path), "--output", directory], output_stream=sink)
+            stdout = StringSink()
+            stderr = StringSink()
+            result = main([str(input_path), "--output", directory], output_stream=stdout, error_stream=stderr)
         self.assertEqual(result, 1)
+        self.assertEqual(stdout.value, "")
         self.assertEqual(
-            sink.value,
+            stderr.value,
             json.dumps({"error": "Is a directory", "path": str(input_path)}, sort_keys=True) + "\n",
         )
 
@@ -263,6 +319,7 @@ def parse_png(data):
     seen_trns = False
     seen_iend = False
     palette_entries = None
+    image_data: list[bytes] = []
     offset = chunk_end + 4
     while offset < len(data):
         if offset + 8 > len(data):
@@ -273,8 +330,14 @@ def parse_png(data):
         payload_end = payload_start + chunk_length
         if payload_end + 4 > len(data):
             raise ValueError("truncated PNG chunk")
+        chunk_payload = data[payload_start:payload_end]
+        actual_crc = struct.unpack(">I", data[payload_end:payload_end + 4])[0]
+        expected_crc = zlib.crc32(chunk_type + chunk_payload) & 0xFFFFFFFF
+        if actual_crc != expected_crc:
+            raise ValueError("invalid PNG chunk CRC")
         if chunk_type == b"IDAT":
             seen_image_data = True
+            image_data.append(chunk_payload)
         elif chunk_type == b"PLTE" and color_type == 3:
             if seen_image_data or seen_trns or palette_entries is not None or chunk_length == 0 or chunk_length > 768 or chunk_length % 3:
                 raise ValueError("invalid PNG PLTE chunk")
@@ -299,6 +362,12 @@ def parse_png(data):
         offset = payload_end + 4
     if not seen_iend:
         raise ValueError("missing PNG IEND")
+    try:
+        decoded = zlib.decompress(b"".join(image_data))
+    except zlib.error as error:
+        raise ValueError("invalid PNG image data") from error
+    if not decoded:
+        raise ValueError("invalid PNG image data")
     return width, height, alpha
 
 
@@ -308,6 +377,7 @@ def parse_jpeg(data):
     offset = 2
     sof_markers = set(range(0xC0, 0xC4)) | set(range(0xC5, 0xC8)) | set(range(0xC9, 0xCC)) | set(range(0xCD, 0xD0))
     standalone_markers = {0x01, 0xD8, 0xD9} | set(range(0xD0, 0xD8))
+    dimensions = None
     while offset < len(data):
         if data[offset] != 0xFF:
             raise ValueError("invalid JPEG marker")
@@ -321,7 +391,7 @@ def parse_jpeg(data):
             raise ValueError("invalid JPEG marker")
         if marker in standalone_markers:
             if marker == 0xD9:
-                break
+                raise ValueError("missing JPEG scan or EOI")
             continue
         if offset + 2 > len(data):
             raise ValueError("truncated JPEG segment")
@@ -336,8 +406,20 @@ def parse_jpeg(data):
             if components == 0 or segment_length < 8 + 3 * components:
                 raise ValueError("invalid JPEG SOF")
             _require_dimensions(width, height)
-            return width, height, False
+            dimensions = (width, height, False)
+        if marker == 0xDA:
+            if dimensions is None:
+                raise ValueError("JPEG SOS before SOF")
+            scan_start = offset + segment_length
+            if scan_start >= len(data) - 2 or data[-2:] != b"\xff\xd9":
+                raise ValueError("missing JPEG scan or EOI")
+            scan = data[scan_start:-2]
+            if not scan:
+                raise ValueError("missing JPEG scan or EOI")
+            return dimensions
         offset += segment_length
+    if dimensions is not None:
+        raise ValueError("missing JPEG scan or EOI")
     raise ValueError("JPEG SOF marker not found")
 
 
@@ -346,11 +428,13 @@ def parse_webp(data):
         raise ValueError("invalid WebP RIFF header")
     declared_size = struct.unpack("<I", data[4:8])[0]
     riff_end = declared_size + 8
-    if declared_size < 4 or riff_end > len(data):
+    if declared_size < 4 or riff_end != len(data):
         raise ValueError("truncated WebP RIFF")
 
     offset = 12
-    primary = None
+    vp8x = None
+    image = None
+    previous_rank = 0
     while offset < riff_end:
         if offset + 8 > riff_end:
             raise ValueError("truncated WebP chunk")
@@ -361,38 +445,61 @@ def parse_webp(data):
         padded_end = payload_end + (chunk_length % 2)
         if padded_end > riff_end:
             raise ValueError("truncated WebP chunk")
-        if chunk_type in (b"VP8X", b"VP8 ", b"VP8L"):
-            if primary is not None:
-                raise ValueError("multiple WebP primary chunks")
-            primary = (chunk_type, data[payload_start:payload_end])
+        if chunk_length % 2 and data[payload_end] != 0:
+            raise ValueError("invalid WebP chunk padding")
+        payload = data[payload_start:payload_end]
+        if chunk_type == b"VP8X":
+            if vp8x is not None or image is not None or offset != 12:
+                raise ValueError("invalid WebP VP8X ordering")
+            if len(payload) != 10 or payload[1:4] != b"\0\0\0" or payload[0] & 0xC1:
+                raise ValueError("invalid WebP VP8X header")
+            vp8x = payload
+        elif chunk_type in (b"VP8 ", b"VP8L"):
+            if image is not None:
+                raise ValueError("multiple WebP image chunks")
+            if vp8x is not None and previous_rank > 3:
+                raise ValueError("invalid WebP image ordering")
+            image = (chunk_type, payload)
+            previous_rank = 3
+        elif vp8x is not None:
+            ranks = {b"ICCP": 1, b"ALPH": 2, b"EXIF": 4, b"XMP ": 5}
+            rank = ranks.get(chunk_type)
+            if rank is not None:
+                if rank < previous_rank:
+                    raise ValueError("invalid WebP extended chunk ordering")
+                previous_rank = rank
         offset = padded_end
     if offset != riff_end:
         raise ValueError("invalid WebP chunk layout")
-    if primary is None:
+    if image is None and vp8x is not None:
+        raise ValueError("missing WebP image data")
+    if image is None:
         raise ValueError("unsupported WebP primary chunk")
 
-    chunk_type, payload = primary
-    if chunk_type == b"VP8X":
-        if len(payload) != 10:
-            raise ValueError("invalid WebP VP8X length")
-        width = int.from_bytes(payload[4:7], "little") + 1
-        height = int.from_bytes(payload[7:10], "little") + 1
-        _require_dimensions(width, height)
-        return width, height, bool(payload[0] & 0x10)
+    chunk_type, payload = image
     if chunk_type == b"VP8 ":
-        if len(payload) < 10 or payload[3:6] != b"\x9d\x01\x2a":
+        if len(payload) <= 10 or payload[3:6] != b"\x9d\x01\x2a":
             raise ValueError("invalid WebP VP8 header")
         width = struct.unpack("<H", payload[6:8])[0] & 0x3FFF
         height = struct.unpack("<H", payload[8:10])[0] & 0x3FFF
         _require_dimensions(width, height)
-        return width, height, False
-    if len(payload) < 5 or payload[0] != 0x2F:
+        alpha = False
+    elif len(payload) <= 5 or payload[0] != 0x2F:
         raise ValueError("invalid WebP VP8L header")
-    packed = int.from_bytes(payload[1:5], "little")
-    width = (packed & 0x3FFF) + 1
-    height = ((packed >> 14) & 0x3FFF) + 1
-    _require_dimensions(width, height)
-    return width, height, None
+    else:
+        packed = int.from_bytes(payload[1:5], "little")
+        width = (packed & 0x3FFF) + 1
+        height = ((packed >> 14) & 0x3FFF) + 1
+        _require_dimensions(width, height)
+        alpha = None
+    if vp8x is None:
+        return width, height, alpha
+    canvas_width = int.from_bytes(vp8x[4:7], "little") + 1
+    canvas_height = int.from_bytes(vp8x[7:10], "little") + 1
+    _require_dimensions(canvas_width, canvas_height)
+    if (canvas_width, canvas_height) != (width, height):
+        raise ValueError("WebP VP8X canvas does not match image data")
+    return canvas_width, canvas_height, bool(vp8x[0] & 0x10)
 
 
 def inspect_bytes(data):
@@ -425,7 +532,7 @@ def _write_json(value, output_stream):
     output_stream.write(json.dumps(value, sort_keys=True) + "\n")
 
 
-def main(argv=None, output_stream=None):
+def main(argv=None, output_stream=None, error_stream=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("path", nargs="?")
     parser.add_argument("--output")
@@ -436,11 +543,12 @@ def main(argv=None, output_stream=None):
     if not args.path:
         parser.error("path is required unless --self-test is used")
     output_stream = output_stream or sys.stdout
+    error_stream = error_stream or sys.stderr
     try:
         facts = inspect_file(args.path)
     except (OSError, ValueError) as error:
         message = error.strerror if isinstance(error, OSError) and error.strerror else str(error)
-        _write_json({"error": message, "path": args.path}, output_stream)
+        _write_json({"error": message, "path": args.path}, error_stream)
         return 1
     rendered = json.dumps(dataclasses.asdict(facts), sort_keys=True) + "\n"
     if args.output:
@@ -448,7 +556,7 @@ def main(argv=None, output_stream=None):
             Path(args.output).write_text(rendered)
         except OSError as error:
             message = error.strerror if error.strerror else str(error)
-            _write_json({"error": message, "path": args.path}, output_stream)
+            _write_json({"error": message, "path": args.path}, error_stream)
             return 1
     else:
         output_stream.write(rendered)

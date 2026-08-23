@@ -519,9 +519,18 @@ authorization boundary, deterministic/hybrid decision, iteration stop rules,
 failure behavior, and final handoff contract. It stays concise and routes to a
 reference only when the current request needs that detail.
 
-The frontmatter uses `name`, `description`, `compatibility`, and version
-metadata. It does not hard-code provider models, prices, dimensions, hidden
+The frontmatter uses `name`, `description`, and version metadata with a
+non-empty `metadata.compatibility` statement. It does not hard-code provider models, prices, dimensions, hidden
 permissions, or an explicit-only invocation policy.
+
+### Platform-Compatibility Erratum (2026-08-23 final implementation)
+
+The approved draft placed the compatibility statement at top level. The
+installed `quick_validate.py` accepts only the supported `metadata` mapping
+for this field. Before the initial `1.0.0` merge, preserve the same statement
+as non-empty `metadata.compatibility`; this is packaging placement only, not a
+runtime-contract or SemVer change. The evaluator must reject a missing or
+empty nested value.
 
 ### `README.md`
 
