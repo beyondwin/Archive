@@ -558,6 +558,124 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
                     live_matrix.write_receipt(path, receipt)
             self.assertFalse(path.exists())
 
+    def test_report_state_allows_only_exact_owned_report_on_resume(self) -> None:
+        identity = live_matrix.RunIdentity.for_test(run_id="baseline-1")
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            run_root = root / "ignored-run"
+            target = root / "docs" / "operations" / "2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md"
+            run_root.mkdir()
+            target.parent.mkdir(parents=True)
+            target.write_text("first report\n", encoding="utf-8")
+            relative = target.relative_to(root).as_posix()
+            state = live_matrix.ReportState(identity, relative, live_matrix._sha256_file(target))
+            live_matrix._write_report_state(run_root, state, replace_existing=False)
+            loaded = live_matrix._report_state_for_target(run_root, root, target, identity)
+            status = live_matrix.CommandCapture(0, f"?? {relative}\0".encode(), b"", 1)
+            with mock.patch("live_matrix.run_command", return_value=status):
+                self.assertTrue(
+                    live_matrix._git_status_is_clean(root, allowed_report=target, report_state=loaded)
+                )
+            target.write_text("user edit\n", encoding="utf-8")
+            with self.assertRaisesRegex(live_matrix.LiveMatrixError, "hash drift"):
+                live_matrix._report_state_for_target(run_root, root, target, identity)
+            target.write_text("first report\n", encoding="utf-8")
+            extra = live_matrix.CommandCapture(
+                0, f"?? {relative}\0?? notes.txt\0".encode(), b"", 1
+            )
+            with mock.patch("live_matrix.run_command", return_value=extra):
+                self.assertFalse(
+                    live_matrix._git_status_is_clean(root, allowed_report=target, report_state=loaded)
+                )
+
+    def test_owned_report_is_atomically_replaced_and_state_hash_updates(self) -> None:
+        identity = live_matrix.RunIdentity.for_test(run_id="baseline-1")
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            run_root = root / "ignored-run"
+            target = root / "docs" / "operations" / "2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md"
+            run_root.mkdir()
+            live_matrix.write_operations_report(
+                target, "first report\n", root, run_root=run_root, identity=identity
+            )
+            first = live_matrix._load_report_state(run_root)
+            self.assertIsNotNone(first)
+            live_matrix.write_operations_report(
+                target,
+                "resumed report\n",
+                root,
+                run_root=run_root,
+                identity=identity,
+                report_state=first,
+            )
+            self.assertEqual(target.read_text(encoding="utf-8"), "resumed report\n")
+            self.assertEqual(live_matrix._load_report_state(run_root).sha256, live_matrix._sha256_file(target))
+
+    def test_actual_preflight_resume_permits_only_matching_report_state_before_dispatch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory) / "repo"
+            root.mkdir()
+            (root / ".gitignore").write_text(".superpowers/\n", encoding="utf-8")
+            (root / "README.md").write_text("fixture\n", encoding="utf-8")
+            for argv in (("init", "-b", "main"), ("add", "."), ("-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "fixture")):
+                subprocess.run(("git", *argv), cwd=root, check=True, capture_output=True)
+            evidence_root = root / ".superpowers" / "kws-korean-writing-editor" / "live"
+            target = root / "docs" / "operations" / "2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md"
+            cli = lambda command, _: live_matrix.CliInfo(command, "fixture", None)
+            with mock.patch("live_matrix._cli_info", side_effect=cli):
+                with mock.patch("live_matrix._discover_models", return_value=(b"", None)):
+                    with mock.patch("live_matrix._run_offline_checks"):
+                        first = live_matrix.validate_preflight(
+                            source_skill_root=HERE.parent,
+                            installed_skill_root=HERE.parent,
+                            repository_root=root,
+                            run_id="baseline-1",
+                            scope="baseline",
+                            jobs=1,
+                            max_calls=122,
+                            evidence_root=evidence_root,
+                            report_path=target,
+                        )
+                        live_matrix.write_operations_report(
+                            target,
+                            "runner-owned report\n",
+                            root,
+                            run_root=first.run_root,
+                            identity=first.identity,
+                        )
+                        resumed = live_matrix.validate_preflight(
+                            source_skill_root=HERE.parent,
+                            installed_skill_root=HERE.parent,
+                            repository_root=root,
+                            run_id="baseline-1",
+                            scope="baseline",
+                            jobs=1,
+                            max_calls=122,
+                            evidence_root=evidence_root,
+                            resume=True,
+                            reuse_preflight=True,
+                            report_path=target,
+                        )
+            self.assertEqual(resumed.report_state.relative_target, target.relative_to(root).as_posix())
+            target.write_text("user edit\n", encoding="utf-8")
+            with mock.patch("live_matrix._cli_info", side_effect=cli):
+                with mock.patch("live_matrix._discover_models", return_value=(b"", None)):
+                    with mock.patch("live_matrix._run_offline_checks"):
+                        with self.assertRaisesRegex(live_matrix.LiveMatrixError, "hash drift"):
+                            live_matrix.validate_preflight(
+                                source_skill_root=HERE.parent,
+                                installed_skill_root=HERE.parent,
+                                repository_root=root,
+                                run_id="baseline-1",
+                                scope="baseline",
+                                jobs=1,
+                                max_calls=122,
+                                evidence_root=evidence_root,
+                                resume=True,
+                                reuse_preflight=True,
+                                report_path=target,
+                            )
+
 
 def synthetic_receipts_for_test(failure_classes: int, passing_bands: int):
     failures = tuple(
@@ -797,6 +915,94 @@ class ReviewAndReportTests(unittest.TestCase):
         for token in ("gpt-5.6-secret", "gpt-reviewer", "review_json_invalid", "b" * 64, "not published"):
             self.assertIn(token, report)
 
+    def test_report_computes_candidate_agreement_and_retains_blocked_details(self) -> None:
+        samples = live_matrix.select_review_samples(synthetic_receipts_for_test(1, 4))
+        concern = live_matrix.ReviewResponse(
+            samples=(
+                live_matrix.ReviewAssessment(
+                    samples[0].candidate_id,
+                    (live_matrix.ReviewIssue("meaning", "material", "omits obligation"),),
+                    "concern",
+                ),
+            ),
+            packet_limitations=("bounded packet",),
+        )
+        pass_response = live_matrix.ReviewResponse(
+            samples=(live_matrix.ReviewAssessment(samples[0].candidate_id, (), "pass"),),
+            packet_limitations=("one candidate only",),
+        )
+        reviewer = live_matrix.CallReceipt.for_test(
+            "reviewer-grok:packet:1",
+            status="blocked",
+            requested_model="cursor-grok-4.6-high",
+            reported_model="gpt-reviewer",
+            response_sha256="b" * 64,
+            findings=(live_matrix.Finding("review_json_invalid", "bad JSON at /tmp/alice/raw/01"),),
+        )
+        report = live_matrix.render_operations_report(
+            live_matrix.ReportInput.for_test(
+                receipts=synthetic_receipts_for_test(1, 4),
+                reviewer_receipts=(reviewer,),
+                review_responses=(concern, pass_response),
+            )
+        )
+        self.assertIn(f"{samples[0].candidate_id}: disagreement", report)
+        self.assertIn("partial reviewer coverage=2/3", report)
+        self.assertIn("meaning/material/omits obligation", report)
+        self.assertIn("bounded packet", report)
+        self.assertIn("one candidate only", report)
+        self.assertIn("review_json_invalid: bad JSON at [REDACTED_PATH]", report)
+        self.assertIn("status=blocked", report)
+        self.assertIn("requested=cursor-grok-4.6-high", report)
+        self.assertIn("reported=gpt-reviewer", report)
+        self.assertIn("b" * 64, report)
+
+    def test_report_fact_sanitizer_blocks_paths_controls_and_markdown_injection(self) -> None:
+        hostile = (
+            "/tmp/alice/evidence\n## injected | /var/db /private/secret /Users/name /home/name "
+            r"C:\\Users\\name\\secret \\server\\share\\secret bearer token-value sk-secret-token raw/0001"
+        )
+        report = live_matrix.render_operations_report(
+            live_matrix.ReportInput.for_test(
+                receipts=(),
+                changed_files=(hostile,),
+                local_state=hostile,
+                remote_state=hostile,
+                verification_results=(("python3 evals/run.py --scope full", hostile),),
+            )
+        )
+        for token in (
+            "/tmp/alice", "/var/db", "/private/secret", "/Users/name", "/home/name",
+            r"C:\\Users", r"\\server\\share", "token-value", "sk-secret-token", "raw/0001", "## injected",
+        ):
+            self.assertNotIn(token, report)
+        self.assertIn("python3 evals/run.py --scope full", report)
+        self.assertNotIn("\n## injected", report)
+
+    def test_git_report_facts_use_main_merge_base_and_local_remote_refs(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            calls: list[tuple[str, ...]] = []
+            outputs = iter((
+                b"base-sha\n",
+                b"2\t3\n",
+                b"skills/kws-korean-writing-editor/SKILL.md\nevals/live_matrix.py\n",
+                b"refs/remotes/origin/evaluation\n",
+            ))
+            def git_capture(argv: tuple[str, ...], **_: object) -> live_matrix.CommandCapture:
+                calls.append(argv)
+                return live_matrix.CommandCapture(0, next(outputs), b"", 1)
+            with mock.patch("live_matrix.run_command", side_effect=git_capture):
+                facts = live_matrix._git_report_facts(root, "topic", "head-sha")
+        self.assertEqual(facts.merge_base, "base-sha")
+        self.assertEqual(facts.ahead, 3)
+        self.assertEqual(facts.behind, 2)
+        self.assertEqual(facts.changed_files, ("evals/live_matrix.py", "skills/kws-korean-writing-editor/SKILL.md"))
+        self.assertIn("current local refs", facts.remote_state)
+        self.assertIn("origin/evaluation", facts.remote_state)
+        self.assertTrue(any(call[1:] == ("merge-base", "main", "head-sha") for call in calls))
+        self.assertFalse(any("HEAD~1" in call for call in calls))
+
 
 class ReviewExecutionWiringTests(unittest.TestCase):
     def test_execute_path_dispatches_reviewers_and_writes_report_with_shared_summary(self) -> None:
@@ -825,14 +1031,21 @@ class ReviewExecutionWiringTests(unittest.TestCase):
                         return_value=((reviewer_receipt,), ()),
                     ) as reviewers:
                         with mock.patch("live_matrix.write_operations_report") as report_writer:
-                            output = io.StringIO()
-                            with contextlib.redirect_stdout(output):
-                                status = live_matrix.main(
-                                    [
-                                        "--execute", "--scope", "baseline", "--run-id", "baseline-1",
-                                        "--max-calls", "122", "--report", "docs/operations/2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md",
-                                    ]
-                                )
+                            with mock.patch(
+                                "live_matrix._validated_operations_report_path", return_value=pathlib.Path("/report")
+                            ):
+                                with mock.patch(
+                                    "live_matrix._git_report_facts",
+                                    return_value=live_matrix.GitReportFacts("base", 0, 0, (), "local", "remote"),
+                                ):
+                                    output = io.StringIO()
+                                    with contextlib.redirect_stdout(output):
+                                        status = live_matrix.main(
+                                            [
+                                                "--execute", "--scope", "baseline", "--run-id", "baseline-1",
+                                                "--max-calls", "122", "--report", "docs/operations/2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md",
+                                            ]
+                                        )
         self.assertEqual(status, 0)
         producers.assert_called_once()
         reviewers.assert_called_once()
@@ -923,3 +1136,107 @@ class ReviewExecutionWiringTests(unittest.TestCase):
                         )
         self.assertEqual(status, 1)
         dispatch.assert_not_called()
+
+    def test_execute_rejects_symlinked_report_ancestor_before_provider_dispatch(self) -> None:
+        identity = live_matrix.RunIdentity.for_test(run_id="baseline-1")
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory) / "repo"
+            outside = pathlib.Path(directory) / "outside"
+            root.mkdir()
+            outside.mkdir()
+            (root / "docs").symlink_to(outside, target_is_directory=True)
+            preflight = live_matrix.PreflightResult(
+                identity=identity,
+                repository_root=root,
+                repository_branch="test",
+                source_skill_root=HERE.parent,
+                installed_skill_root=HERE.parent,
+                run_root=root,
+                cli_info={},
+                model_availability={},
+                discovery_sha256=None,
+                discovery_diagnostic=None,
+            )
+            with mock.patch("live_matrix.validate_preflight", return_value=preflight):
+                with mock.patch("live_matrix.dispatch_calls") as dispatch:
+                    with contextlib.redirect_stderr(io.StringIO()):
+                        status = live_matrix.main(
+                            [
+                                "--execute", "--scope", "baseline", "--run-id", "baseline-1",
+                                "--report", "docs/operations/2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md",
+                            ]
+                        )
+            self.assertEqual(tuple(outside.iterdir()), ())
+        self.assertEqual(status, 1)
+        dispatch.assert_not_called()
+
+    def test_report_bearing_baseline_resume_updates_only_owned_report_with_spare_retry_budget(self) -> None:
+        identity = live_matrix.RunIdentity.for_test(run_id="baseline-1")
+        cases = (case_by_id("correct-obligation"),)
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            run_root = root / "ignored-run"
+            run_root.mkdir()
+            report = root / "docs" / "operations" / "2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md"
+            first = live_matrix.PreflightResult(
+                identity=identity,
+                repository_root=root,
+                repository_branch="topic",
+                source_skill_root=HERE.parent,
+                installed_skill_root=HERE.parent,
+                run_root=run_root,
+                cli_info={"codex": live_matrix.CliInfo(None, "v", None)},
+                model_availability={},
+                discovery_sha256=None,
+                discovery_diagnostic=None,
+                report_path=report,
+            )
+            blocked = live_matrix.CallReceipt.for_test(
+                "reviewer-claude:packet:1",
+                call_number=120,
+                status="blocked",
+                findings=(live_matrix.Finding("review_json_invalid", "retryable invalid JSON"),),
+            )
+            retried = live_matrix.CallReceipt.for_test("reviewer-claude:packet:1:attempt-2", call_number=121)
+            def preflight_side_effect(**kwargs: object) -> live_matrix.PreflightResult:
+                if kwargs["resume"]:
+                    return live_matrix.PreflightResult(
+                        **{**first.__dict__, "report_state": live_matrix._load_report_state(run_root)}
+                    )
+                return first
+            with mock.patch("live_matrix.validate_preflight", side_effect=preflight_side_effect) as preflight:
+                with mock.patch("live_matrix.load_live_cases", return_value=cases):
+                    with mock.patch("live_matrix.dispatch_calls", return_value=()):
+                        with mock.patch(
+                            "live_matrix.dispatch_reviewer_calls",
+                            side_effect=(((blocked,), ()), ((retried,), ())),
+                        ) as reviewers:
+                            with mock.patch(
+                                "live_matrix._git_report_facts",
+                                return_value=live_matrix.GitReportFacts("base", 1, 2, (), "local", "remote"),
+                            ):
+                                with contextlib.redirect_stdout(io.StringIO()):
+                                    self.assertEqual(
+                                        live_matrix.main(
+                                            [
+                                                "--execute", "--scope", "baseline", "--run-id", "baseline-1",
+                                                "--max-calls", "122", "--report", str(report),
+                                            ]
+                                        ),
+                                        0,
+                                    )
+                                first_state = live_matrix._load_report_state(run_root)
+                                with contextlib.redirect_stdout(io.StringIO()):
+                                    self.assertEqual(
+                                        live_matrix.main(
+                                            [
+                                                "--execute", "--resume", "--scope", "baseline", "--run-id", "baseline-1",
+                                                "--max-calls", "122", "--report", str(report),
+                                            ]
+                                        ),
+                                        0,
+                                    )
+            self.assertEqual(preflight.call_count, 2)
+            self.assertTrue(preflight.call_args_list[1].kwargs["resume"])
+            self.assertEqual(reviewers.call_count, 2)
+            self.assertNotEqual(first_state.sha256, live_matrix._load_report_state(run_root).sha256)
