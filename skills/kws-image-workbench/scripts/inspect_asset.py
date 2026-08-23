@@ -63,13 +63,17 @@ def make_png(width, height, color_type, trns=False, trns_payload=None, before_tr
 
 
 def make_png_with_idat(width, height, color_type, compressed):
+    return make_png_with_idat_chunks(width, height, color_type, (compressed,))
+
+
+def make_png_with_idat_chunks(width, height, color_type, compressed_chunks):
     def chunk(kind, payload):
         body = kind + payload
         return struct.pack(">I", len(payload)) + body + struct.pack(">I", zlib.crc32(body) & 0xFFFFFFFF)
 
     ihdr = struct.pack(">IIBBBBB", width, height, 8, color_type, 0, 0, 0)
     return b"\x89PNG\r\n\x1a\n" + b"".join(
-        (chunk(b"IHDR", ihdr), chunk(b"IDAT", compressed), chunk(b"IEND", b""))
+        (chunk(b"IHDR", ihdr), *(chunk(b"IDAT", payload) for payload in compressed_chunks), chunk(b"IEND", b""))
     )
 
 
@@ -214,6 +218,15 @@ class AssetInspectorTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "PNG image data size mismatch"):
             parse_png(mismatched)
 
+    def test_png_accepts_empty_trailing_idat_after_zlib_eof_only(self):
+        compressed = zlib.compress(b"\0" * 5)
+        self.assertEqual(
+            parse_png(make_png_with_idat_chunks(1, 1, 6, (compressed, b""))),
+            (1, 1, True),
+        )
+        with self.assertRaisesRegex(ValueError, "invalid PNG image data"):
+            parse_png(make_png_with_idat_chunks(1, 1, 6, (compressed, b"\0")))
+
     def test_truncated_or_malformed_jpeg_is_rejected(self):
         with self.assertRaises(ValueError):
             parse_jpeg(b"\xff\xd8\xff\xc0\x00")
@@ -355,7 +368,9 @@ def _decode_png_idat(image_data, expected_size):
     decoded_size = 0
     for chunk in image_data:
         if decompressor.eof:
-            raise ValueError("invalid PNG image data")
+            if chunk:
+                raise ValueError("invalid PNG image data")
+            continue
         try:
             decoded = decompressor.decompress(chunk, expected_size - decoded_size + 1)
         except zlib.error as error:
@@ -400,6 +415,7 @@ def parse_png(data):
     seen_image_data = False
     seen_trns = False
     seen_iend = False
+    idat_sequence_closed = False
     palette_entries = None
     image_data: list[bytes] = []
     offset = chunk_end + 4
@@ -418,9 +434,14 @@ def parse_png(data):
         if actual_crc != expected_crc:
             raise ValueError("invalid PNG chunk CRC")
         if chunk_type == b"IDAT":
+            if idat_sequence_closed:
+                raise ValueError("invalid PNG IDAT ordering")
             seen_image_data = True
             image_data.append(chunk_payload)
-        elif chunk_type == b"PLTE" and color_type == 3:
+        else:
+            if seen_image_data:
+                idat_sequence_closed = True
+        if chunk_type == b"PLTE" and color_type == 3:
             if seen_image_data or seen_trns or palette_entries is not None or chunk_length == 0 or chunk_length > 768 or chunk_length % 3:
                 raise ValueError("invalid PNG PLTE chunk")
             palette_entries = chunk_length // 3
