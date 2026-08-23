@@ -93,6 +93,89 @@ class EvaluatorTests(unittest.TestCase):
             errors = validate_skill_tree(pathlib.Path(directory), "full")
         self.assertIn("skill tree: missing README.md", errors)
 
+    def test_full_scope_requires_quick_start_heading(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory) / "skills" / "kws-image-workbench"
+            self.copy_core_tree(root)
+            (root / "scripts").mkdir()
+            (root / "scripts" / "inspect_asset.py").write_text(
+                "#!/usr/bin/env python3\n", encoding="utf-8"
+            )
+            (root / "README.md").write_text("# kws-image-workbench\n", encoding="utf-8")
+            (root / "CHANGE_PROTOCOL.md").write_text(
+                "# Change Protocol\n", encoding="utf-8"
+            )
+            (root / "references" / "sources.md").write_text(
+                "# Evidence And Source Register\n", encoding="utf-8"
+            )
+            (root.parent / "README.md").write_text(
+                "kws-image-workbench\n", encoding="utf-8"
+            )
+            errors = validate_skill_tree(root, "full")
+        self.assertIn("README.md: missing heading '## 1분 시작'", errors)
+
+    def test_full_scope_rejects_hash_rights_overclaim(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory) / "skills" / "kws-image-workbench"
+            self.copy_core_tree(root)
+            (root / "scripts").mkdir()
+            (root / "scripts" / "inspect_asset.py").write_text(
+                "#!/usr/bin/env python3\n", encoding="utf-8"
+            )
+            (root / "README.md").write_text(
+                "\n".join(
+                    (
+                        "# kws-image-workbench",
+                        "## 1분 시작",
+                        "## 언제 사용하나",
+                        "## 네 가지 모드",
+                        "## 참조 이미지 역할",
+                        "## 하이브리드 경계",
+                        "## 저장과 결과 보고",
+                        "## 설치",
+                        "## 업데이트와 제거",
+                        "## 개인정보 권리 출처",
+                        "## 검증과 한계",
+                        "Hashes prove rights.",
+                    )
+                ),
+                encoding="utf-8",
+            )
+            (root / "CHANGE_PROTOCOL.md").write_text(
+                "\n".join(
+                    (
+                        "# Change Protocol",
+                        "## Contract Changes",
+                        "## ImageSpec And Rubric Changes",
+                        "## Evidence Changes",
+                        "## Fixture And Inspector Changes",
+                        "## Versioning",
+                        "## Required Verification",
+                    )
+                ),
+                encoding="utf-8",
+            )
+            (root / "references" / "sources.md").write_text(
+                "\n".join(
+                    (
+                        "# Evidence And Source Register",
+                        "## Source Classes",
+                        "## Primary OpenAI Sources",
+                        "## Related Projects",
+                        "## Provider Boundaries",
+                        "## Evaluation References",
+                        "## Refresh Triggers",
+                        "## Reuse And Rights Boundary",
+                    )
+                ),
+                encoding="utf-8",
+            )
+            (root.parent / "README.md").write_text(
+                "kws-image-workbench\n", encoding="utf-8"
+            )
+            errors = validate_skill_tree(root, "full")
+        self.assertIn("README.md: unsupported claim: hashes prove rights", errors)
+
     def test_core_scope_rejects_mismatched_frontmatter_name(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
@@ -626,7 +709,7 @@ def validate_skill_tree(skill_root: pathlib.Path, scope: str) -> list[str]:
     if scope in {"core", "full"} and not errors:
         documents = {
             relative: (skill_root / relative).read_text(encoding="utf-8")
-            for relative in required_files[:3]
+            for relative in required_files
         }
         skill_text = documents["SKILL.md"]
         image_spec_text = documents["references/image-spec.md"]
@@ -688,6 +771,125 @@ def validate_skill_tree(skill_root: pathlib.Path, scope: str) -> list[str]:
             for heading in headings:
                 if heading not in text:
                     errors.append(f"{relative}: missing heading {heading!r}")
+
+        if scope == "full":
+            full_headings = {
+                "README.md": (
+                    "# kws-image-workbench",
+                    "## 1분 시작",
+                    "## 언제 사용하나",
+                    "## 네 가지 모드",
+                    "## 참조 이미지 역할",
+                    "## 하이브리드 경계",
+                    "## 저장과 결과 보고",
+                    "## 설치",
+                    "## 업데이트와 제거",
+                    "## 개인정보 권리 출처",
+                    "## 검증과 한계",
+                ),
+                "CHANGE_PROTOCOL.md": (
+                    "# Change Protocol",
+                    "## Contract Changes",
+                    "## ImageSpec And Rubric Changes",
+                    "## Evidence Changes",
+                    "## Fixture And Inspector Changes",
+                    "## Versioning",
+                    "## Required Verification",
+                ),
+                "references/sources.md": (
+                    "# Evidence And Source Register",
+                    "## Source Classes",
+                    "## Primary OpenAI Sources",
+                    "## Related Projects",
+                    "## Provider Boundaries",
+                    "## Evaluation References",
+                    "## Refresh Triggers",
+                    "## Reuse And Rights Boundary",
+                ),
+            }
+            for relative, headings in full_headings.items():
+                for heading in headings:
+                    if heading not in documents[relative]:
+                        errors.append(f"{relative}: missing heading {heading!r}")
+
+            sources_text = documents["references/sources.md"]
+            required_source_fields = (
+                "Source",
+                "Revision",
+                "License",
+                "Checked",
+                "Used for",
+                "Rejected boundary",
+                "Refresh trigger",
+            )
+            for field in required_source_fields:
+                if field not in sources_text:
+                    errors.append(f"references/sources.md: missing source field {field!r}")
+            for source in (
+                "Image generation guide",
+                "GPT Image prompting guide",
+                "Content provenance",
+                "Build skills",
+                "awesome-gpt-image-2",
+                "GPT-Image2-Skill",
+                "ComfyUI",
+                "InvokeAI",
+                "Diffusers",
+                "image-prompt-library",
+                "promptfoo",
+                "c2pa-rs",
+                "Google Gemini image generation",
+                "Adobe Firefly image generation",
+                "Ideogram prompt-based editing",
+                "Midjourney community and automation guidelines",
+                "GenEval",
+                "T2I-CompBench",
+                "DPG-Bench",
+                "ImgEdit-Bench",
+            ):
+                if source not in sources_text:
+                    errors.append(f"references/sources.md: missing source {source!r}")
+
+            required_commands = (
+                "python3 skills/kws-image-workbench/evals/run.py --self-test",
+                "python3 skills/kws-image-workbench/evals/run.py --scope fixtures",
+                "python3 skills/kws-image-workbench/evals/run.py --scope core",
+                "python3 skills/kws-image-workbench/evals/run.py --scope full",
+                "python3 skills/kws-image-workbench/scripts/inspect_asset.py --self-test",
+                "bun run agent:verify",
+                "git diff --check",
+            )
+            documentation_text = "\n".join(documents.values())
+            for command in required_commands:
+                if command not in documentation_text:
+                    errors.append(f"skill tree: missing advertised command {command!r}")
+
+            for relative, text in documents.items():
+                for target in re.findall(r"\[[^\]]*\]\(([^)\s]+)", text):
+                    if target.startswith(("#", "http://", "https://", "mailto:")):
+                        continue
+                    path_target = target.split("#", 1)[0]
+                    if not path_target or not (skill_root / relative).parent.joinpath(
+                        path_target
+                    ).is_file():
+                        errors.append(f"{relative}: unresolved local link {target!r}")
+
+            if skill_root.name != "kws-image-workbench" or skill_root.parent.name != "skills":
+                errors.append(
+                    "skill tree: canonical directory must be skills/kws-image-workbench"
+                )
+
+            for label, pattern in (
+                ("hashes prove rights", r"\bhash(?:es)?\s+prove?s?\s+rights\b"),
+                ("provenance proves truth", r"\bprovenance\s+prove?s?\s+truth\b"),
+                (
+                    "offline fixtures prove image quality",
+                    r"\boffline\s+fixtures\s+prove?s?\s+image\s+quality\b",
+                ),
+                ("v1 supports another runtime", r"\bv1\s+supports?\s+another\s+runtime\b"),
+            ):
+                if re.search(pattern, documentation_text, re.IGNORECASE):
+                    errors.append(f"README.md: unsupported claim: {label}")
 
         for mode in ("brief", "generate", "edit", "audit"):
             if f"`{mode}`" not in skill_text:
