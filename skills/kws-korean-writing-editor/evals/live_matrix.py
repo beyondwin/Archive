@@ -67,6 +67,7 @@ EXPECTED_REPEAT_IDS = {
     "near-detector-author",
 }
 APPROVED_CASES_SHA256 = "0084ebaa2a7ba19d827778e1c4d2edbf928e8566ea724049a21e0c58b75cb7db"
+ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
 @dataclass(frozen=True)
@@ -104,6 +105,60 @@ class PlannedCall:
     producer_id: str
     case_id: str
     repeat_index: int
+
+
+@dataclass(frozen=True)
+class Finding:
+    code: str
+    message: str
+    literal: str | None = None
+
+
+def normalize_response(text: str) -> str:
+    value = ANSI_RE.sub("", text).replace("\r\n", "\n").replace("\r", "\n")
+    return value[:-1] if value.endswith("\n") else value
+
+
+def evaluate_response(case: LiveCase, response: str) -> tuple[Finding, ...]:
+    candidate = normalize_response(response)
+    findings: list[Finding] = []
+
+    if case.exact_output is not None and candidate != case.exact_output:
+        findings.append(
+            Finding("exact_output_mismatch", "response does not match exact output")
+        )
+    for output in case.forbidden_exact_outputs:
+        if candidate == output:
+            findings.append(
+                Finding("forbidden_exact_output", "response matches forbidden exact output", output)
+            )
+    for substring in case.required_substrings:
+        if substring not in candidate:
+            findings.append(
+                Finding("missing_required_substring", "response is missing required substring", substring)
+            )
+    for substring in case.forbidden_substrings:
+        if substring in candidate:
+            findings.append(
+                Finding("forbidden_substring", "response contains forbidden substring", substring)
+            )
+    for literal in case.preserve_counts:
+        if case.source.count(literal) != candidate.count(literal):
+            findings.append(
+                Finding("occurrence_count_changed", "literal occurrence count changed", literal)
+            )
+    for sentinel in case.structural_sentinels:
+        if sentinel not in candidate:
+            findings.append(
+                Finding("missing_structural_sentinel", "response is missing structural sentinel", sentinel)
+            )
+    return tuple(findings)
+
+
+def case_status(case: LiveCase, findings: tuple[Finding, ...]) -> str:
+    if findings:
+        return "failed"
+    return "verified" if case.observable_activation else "partially_verified"
 
 
 def _string_list(value: Any, field: str, prefix: str, errors: list[str]) -> tuple[str, ...]:
