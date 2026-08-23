@@ -553,3 +553,150 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
                 with self.assertRaisesRegex(live_matrix.LiveMatrixError, "incomplete"):
                     live_matrix.write_receipt(path, receipt)
             self.assertFalse(path.exists())
+
+
+def synthetic_receipts_for_test(failure_classes: int, passing_bands: int):
+    failures = tuple(
+        live_matrix.CallReceipt.for_test(
+            f"failure-{index}",
+            status="failed",
+            finding_code=f"failure-class-{index}",
+            case_id=f"failure-case-{index}",
+            response_sha256=f"{index + 1:064x}",
+        )
+        for index in range(failure_classes)
+    )
+    bands = ("valid-mode", "preservation", "noop-hold", "near-miss")
+    controls = tuple(
+        live_matrix.CallReceipt.for_test(
+            f"control-{index}",
+            status="verified",
+            band=bands[index],
+            case_id=f"control-case-{index}",
+            response_sha256=f"{index + 20:064x}",
+        )
+        for index in range(passing_bands)
+    )
+    return failures + controls
+
+
+class ReviewAndReportTests(unittest.TestCase):
+    def test_packet_caps_one_representative_per_failure_class_and_has_four_controls(self) -> None:
+        receipts = synthetic_receipts_for_test(failure_classes=10, passing_bands=4)
+        samples = live_matrix.select_review_samples(receipts)
+        failures = [sample for sample in samples if sample.is_failure]
+        controls = [sample for sample in samples if not sample.is_failure]
+        self.assertEqual(len(failures), 8)
+        self.assertEqual(len(controls), 4)
+        self.assertEqual(len(samples), 12)
+        self.assertEqual([sample.candidate_id for sample in samples], [f"candidate-{index:03d}" for index in range(1, 13)])
+
+    def test_packet_orders_material_failure_classes_and_keeps_missing_controls_explicit(self) -> None:
+        receipts = (
+            live_matrix.CallReceipt.for_test("ordinary", status="failed", finding_code="ordinary"),
+            live_matrix.CallReceipt.for_test("embedded", status="failed", finding_code="embedded_instruction_changed"),
+            live_matrix.CallReceipt.for_test("literal", status="failed", finding_code="literal_changed"),
+            live_matrix.CallReceipt.for_test("negation", status="failed", finding_code="negation_changed"),
+            live_matrix.CallReceipt.for_test("attribution", status="failed", finding_code="attribution_changed"),
+            live_matrix.CallReceipt.for_test("control", status="verified", band="valid-mode"),
+        )
+        samples = live_matrix.select_review_samples(receipts)
+        self.assertEqual(
+            [sample.hard_findings[0] for sample in samples if sample.is_failure],
+            ["literal_changed", "negation_changed", "attribution_changed", "embedded_instruction_changed", "ordinary"],
+        )
+        missing = [sample for sample in samples if not sample.is_failure and sample.missing_control]
+        self.assertEqual([sample.band for sample in missing], ["preservation", "noop-hold", "near-miss"])
+
+    def test_packet_removes_producer_identity_and_bounds_redacted_excerpt(self) -> None:
+        receipts = synthetic_receipts_for_test(1, 4)
+        response = "codex-direct claude-sonnet gemini-3.7 sk-secret-token " + "가" * 200
+        samples = live_matrix.select_review_samples(receipts, responses={"failure-0": response})
+        prompt = live_matrix.build_review_prompt(samples)
+        self.assertNotIn("codex-direct", prompt)
+        self.assertNotIn("claude-sonnet", prompt)
+        self.assertNotIn("gemini-", prompt)
+        self.assertIn("candidate-001", prompt)
+        self.assertIn("[REDACTED]", prompt)
+        self.assertLessEqual(len(samples[0].candidate.encode("utf-8")), 240)
+
+    def test_review_response_requires_exact_json_contract_without_repair(self) -> None:
+        samples = live_matrix.select_review_samples(synthetic_receipts_for_test(1, 4))
+        response = json.dumps(
+            {
+                "samples": [
+                    {
+                        "candidate_id": sample.candidate_id,
+                        "issues": [],
+                        "assessment": "pass",
+                    }
+                    for sample in samples
+                ],
+                "packet_limitations": ["synthetic evidence only"],
+            }
+        )
+        parsed = live_matrix.parse_review_response(response, samples)
+        self.assertEqual(parsed.samples[0].candidate_id, "candidate-001")
+        with self.assertRaisesRegex(live_matrix.LiveMatrixError, "review response"):
+            live_matrix.parse_review_response("```json\n{}\n```", samples)
+
+    def test_invalid_review_json_creates_one_blocked_receipt_and_reviewer_plan_is_fixed(self) -> None:
+        samples = live_matrix.select_review_samples(synthetic_receipts_for_test(1, 4))
+        plan = live_matrix.build_reviewer_plan(samples)
+        self.assertEqual(
+            [(call.reviewer_id, call.requested_model) for call in plan],
+            [
+                ("reviewer-claude", "claude-sonnet-5-thinking-high"),
+                ("reviewer-gemini", "gemini-3.7-flash-high"),
+                ("reviewer-grok", "cursor-grok-4.6-high"),
+            ],
+        )
+        original = live_matrix.CallReceipt.for_test("reviewer-claude:packet:1", status="verified")
+        parsed, blocked = live_matrix.parse_reviewer_response_or_block(original, "not json", samples)
+        self.assertIsNone(parsed)
+        self.assertEqual(blocked.status, "blocked")
+        self.assertEqual(len(blocked.findings), 1)
+        self.assertEqual(blocked.findings[0].code, "review_json_invalid")
+
+    def test_aggregate_statuses_keeps_failures_and_blocked_distinct_and_marks_absent(self) -> None:
+        receipts = (
+            live_matrix.CallReceipt.for_test("producer-a:case:1", status="verified", band="valid-mode"),
+            live_matrix.CallReceipt.for_test("producer-a:case:2", status="failed", band="valid-mode"),
+            live_matrix.CallReceipt.for_test("producer-b:case:1", status="blocked", band="valid-mode"),
+        )
+        result = live_matrix.aggregate_statuses(
+            receipts,
+            producer_ids=("producer-a", "producer-b", "producer-c"),
+            bands=("valid-mode",),
+        )
+        self.assertEqual(result[("producer-a", "valid-mode")], "failed")
+        self.assertEqual(result[("producer-b", "valid-mode")], "blocked")
+        self.assertEqual(result[("producer-c", "valid-mode")], "not_measured")
+
+    def test_report_has_required_sections_hashes_and_no_response_body(self) -> None:
+        receipts = synthetic_receipts_for_test(1, 4)
+        report_input = live_matrix.ReportInput.for_test(
+            receipts=receipts,
+            responses={"failure-0": "PRIVATE FULL RESPONSE BODY sk-secret-token"},
+        )
+        report = live_matrix.render_operations_report(report_input)
+        for heading in (
+            "# KWS Korean Writing Editor Cross-Model Evaluation",
+            "## Fixed Evidence",
+            "## Model Matrix",
+            "## Results By Band",
+            "## Defect Register",
+            "## Review Findings",
+            "## Adopted And Rejected Improvements",
+            "## Verification",
+            "## Limitations And Residual Risks",
+            "## Git And Installation State",
+        ):
+            self.assertIn(heading, report)
+        self.assertIn("partially verified", report)
+        self.assertIn("Branch: test-branch", report)
+        self.assertIn(receipts[0].response_sha256, report)
+        self.assertNotIn("PRIVATE FULL RESPONSE BODY", report)
+        self.assertNotIn("sk-secret-token", report)
+        self.assertNotIn("/Users/", report)
+        self.assertIn("pending adjudication", report)
