@@ -62,6 +62,17 @@ def make_png(width, height, color_type, trns=False, trns_payload=None, before_tr
     return b"\x89PNG\r\n\x1a\n" + b"".join(chunks)
 
 
+def make_png_with_idat(width, height, color_type, compressed):
+    def chunk(kind, payload):
+        body = kind + payload
+        return struct.pack(">I", len(payload)) + body + struct.pack(">I", zlib.crc32(body) & 0xFFFFFFFF)
+
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, color_type, 0, 0, 0)
+    return b"\x89PNG\r\n\x1a\n" + b"".join(
+        (chunk(b"IHDR", ihdr), chunk(b"IDAT", compressed), chunk(b"IEND", b""))
+    )
+
+
 def make_jpeg(width, height):
     if (width, height) != (1, 1):
         raise ValueError("self-test JPEG fixture is fixed at 1x1")
@@ -192,6 +203,17 @@ class AssetInspectorTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "missing PNG IDAT"):
             parse_png(missing_idat)
 
+    def test_png_rejects_oversized_or_dimension_mismatched_decoded_data(self):
+        oversized = make_png_with_idat(1, 1, 6, zlib.compress(b"\0" * 10_000_000))
+        with self.assertRaisesRegex(ValueError, "PNG image data size mismatch"):
+            parse_png(oversized)
+        declared_too_large = make_png_with_idat(10_000, 10_000, 6, zlib.compress(b""))
+        with self.assertRaisesRegex(ValueError, "PNG image data exceeds"):
+            parse_png(declared_too_large)
+        mismatched = make_png_with_idat(1, 1, 6, zlib.compress(b"\0" * 6))
+        with self.assertRaisesRegex(ValueError, "PNG image data size mismatch"):
+            parse_png(mismatched)
+
     def test_truncated_or_malformed_jpeg_is_rejected(self):
         with self.assertRaises(ValueError):
             parse_jpeg(b"\xff\xd8\xff\xc0\x00")
@@ -292,6 +314,63 @@ def _require_dimensions(width, height):
     return width, height
 
 
+MAX_PNG_DECODED_BYTES = 64 * 1024 * 1024
+PNG_BIT_DEPTHS = {
+    0: {1, 2, 4, 8, 16},
+    2: {8, 16},
+    3: {1, 2, 4, 8},
+    4: {8, 16},
+    6: {8, 16},
+}
+PNG_CHANNELS = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}
+ADAM7_PASSES = (
+    (0, 0, 8, 8),
+    (4, 0, 8, 8),
+    (0, 4, 4, 8),
+    (2, 0, 4, 4),
+    (0, 2, 2, 4),
+    (1, 0, 2, 2),
+    (0, 1, 1, 2),
+)
+
+
+def _png_row_bytes(width, bit_depth, color_type):
+    return (width * PNG_CHANNELS[color_type] * bit_depth + 7) // 8
+
+
+def _png_decoded_byte_count(width, height, bit_depth, color_type, interlace):
+    if interlace == 0:
+        return height * (1 + _png_row_bytes(width, bit_depth, color_type))
+    total = 0
+    for start_x, start_y, step_x, step_y in ADAM7_PASSES:
+        pass_width = max(0, (width - start_x + step_x - 1) // step_x)
+        pass_height = max(0, (height - start_y + step_y - 1) // step_y)
+        if pass_width and pass_height:
+            total += pass_height * (1 + _png_row_bytes(pass_width, bit_depth, color_type))
+    return total
+
+
+def _decode_png_idat(image_data, expected_size):
+    decompressor = zlib.decompressobj()
+    decoded_size = 0
+    for chunk in image_data:
+        if decompressor.eof:
+            raise ValueError("invalid PNG image data")
+        try:
+            decoded = decompressor.decompress(chunk, expected_size - decoded_size + 1)
+        except zlib.error as error:
+            raise ValueError("invalid PNG image data") from error
+        decoded_size += len(decoded)
+        if decoded_size > expected_size or decompressor.unconsumed_tail:
+            raise ValueError("PNG image data size mismatch")
+        if decompressor.unused_data:
+            raise ValueError("invalid PNG image data")
+    if not decompressor.eof:
+        raise ValueError("invalid PNG image data")
+    if decoded_size != expected_size:
+        raise ValueError("PNG image data size mismatch")
+
+
 def parse_png(data):
     if not data.startswith(b"\x89PNG\r\n\x1a\n"):
         raise ValueError("invalid PNG signature")
@@ -309,10 +388,13 @@ def parse_png(data):
         ">IIBBBBB", data[16:29]
     )
     _require_dimensions(width, height)
-    if color_type not in (0, 2, 3, 4, 6) or compression != 0 or filtering != 0 or interlace not in (0, 1):
+    if color_type not in PNG_BIT_DEPTHS or compression != 0 or filtering != 0 or interlace not in (0, 1):
         raise ValueError("invalid PNG IHDR")
-    if bit_depth == 0:
+    if bit_depth not in PNG_BIT_DEPTHS[color_type]:
         raise ValueError("invalid PNG bit depth")
+    expected_decoded_size = _png_decoded_byte_count(width, height, bit_depth, color_type, interlace)
+    if expected_decoded_size > MAX_PNG_DECODED_BYTES:
+        raise ValueError("PNG image data exceeds 64 MiB limit")
 
     alpha = color_type in (4, 6)
     seen_image_data = False
@@ -362,12 +444,7 @@ def parse_png(data):
         offset = payload_end + 4
     if not seen_iend:
         raise ValueError("missing PNG IEND")
-    try:
-        decoded = zlib.decompress(b"".join(image_data))
-    except zlib.error as error:
-        raise ValueError("invalid PNG image data") from error
-    if not decoded:
-        raise ValueError("invalid PNG image data")
+    _decode_png_idat(image_data, expected_decoded_size)
     return width, height, alpha
 
 

@@ -143,6 +143,34 @@ class EvaluatorTests(unittest.TestCase):
             errors = validate_skill_tree(root, "core")
         self.assertIn("SKILL.md: metadata.compatibility must be a non-empty string", errors)
 
+    def test_core_scope_rejects_empty_metadata_compatibility_values(self):
+        source_line = "  compatibility: Requires Codex built-in image generation and local image viewing for generate or edit mode. Brief and audit modes can run read-only."
+        for replacement in (None, "  compatibility:", "  compatibility:   ", '  compatibility: ""', "  compatibility: ''"):
+            with self.subTest(replacement=replacement), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                self.copy_core_tree(root)
+                skill = root / "SKILL.md"
+                content = skill.read_text(encoding="utf-8")
+                content = content.replace(source_line + "\n", "" if replacement is None else replacement + "\n")
+                skill.write_text(content, encoding="utf-8")
+                errors = validate_skill_tree(root, "core")
+            self.assertIn("SKILL.md: metadata.compatibility must be a non-empty string", errors)
+
+    def test_core_scope_accepts_nonempty_quoted_metadata_compatibility(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            self.copy_core_tree(root)
+            skill = root / "SKILL.md"
+            skill.write_text(
+                skill.read_text(encoding="utf-8").replace(
+                    "  compatibility: Requires Codex built-in image generation and local image viewing for generate or edit mode. Brief and audit modes can run read-only.",
+                    '  compatibility: "Codex built-in image generation required"',
+                ),
+                encoding="utf-8",
+            )
+            errors = validate_skill_tree(root, "core")
+        self.assertNotIn("SKILL.md: metadata.compatibility must be a non-empty string", errors)
+
     def test_full_scope_rejects_source_row_empty_cell_wrong_section_and_pin(self):
         source_mutations = (
             ("| not applicable | 2026-08-23 | bundled capability boundary |", "|  | 2026-08-23 | bundled capability boundary |", "source row has empty cell"),
@@ -965,6 +993,26 @@ def _validate_source_register(text: str) -> list[str]:
     return errors
 
 
+def _has_nonempty_metadata_string(frontmatter: str, key: str) -> bool:
+    in_metadata = False
+    for line in frontmatter.splitlines():
+        if line == "metadata:":
+            in_metadata = True
+            continue
+        if in_metadata and line and not line.startswith(" "):
+            break
+        if not in_metadata:
+            continue
+        match = re.fullmatch(rf"  {re.escape(key)}:(.*)", line)
+        if match is None:
+            continue
+        value = match.group(1).strip()
+        if len(value) >= 2 and value[0] in {"'", '"'} and value[-1] == value[0]:
+            value = value[1:-1].strip()
+        return bool(value)
+    return False
+
+
 def validate_skill_tree(skill_root: pathlib.Path, scope: str) -> list[str]:
     if scope not in {"fixtures", "core", "full"}:
         return [f"skill tree: invalid scope {scope!r}"]
@@ -1014,7 +1062,7 @@ def validate_skill_tree(skill_root: pathlib.Path, scope: str) -> list[str]:
                 r'''(?m)^  version:\s*["'][^"']+["']\s*$''', metadata
             ):
                 errors.append("SKILL.md: metadata.version must be a string")
-            if not re.search(r"(?m)^  compatibility:\s*\S.*$", metadata):
+            if not _has_nonempty_metadata_string(metadata, "compatibility"):
                 errors.append("SKILL.md: metadata.compatibility must be a non-empty string")
 
         required_headings = {
