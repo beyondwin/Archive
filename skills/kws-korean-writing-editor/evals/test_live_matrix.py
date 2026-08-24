@@ -143,6 +143,63 @@ def json_shape(value: object) -> object:
     return type(value).__name__
 
 
+def strict_receipt_payload() -> dict[str, object]:
+    """Return one fully captured legacy-v10 producer receipt for mutation tests."""
+    empty_sha256 = hashlib.sha256(b"").hexdigest()
+    return {
+        "band": "valid-mode",
+        "call_id": "test-producer:test-case:1",
+        "call_number": 1,
+        "case_id": "test-case",
+        "duration_ms": 0,
+        "exit_code": 0,
+        "findings": [],
+        "finished_at": "2026-08-23T01:02:03.004Z",
+        "host": "test-host",
+        "identity": {
+            "installed_skill_hash": "1" * 64,
+            "live_cases_hash": "3" * 64,
+            "producer_ids": ["test-producer"],
+            "repository_head": "0" * 40,
+            "requested_models": ["test-model"],
+            "run_id": "test-run",
+            "runner_version": "10",
+            "scope": "baseline",
+            "selected_call_ids": ["test-producer:test-case:1"],
+            "skill_hash": "1" * 64,
+        },
+        "kind": "producer",
+        "logical_call_id": "test-producer:test-case:1",
+        "prompt_sha256": "4" * 64,
+        "raw_paths": [
+            "raw/0001.stdout.bin",
+            "raw/0001.stderr.bin",
+            "normalized/0001.response.txt",
+        ],
+        "reported_model": "test-model",
+        "repeat_index": 1,
+        "requested_model": "test-model",
+        "response_sha256": "5" * 64,
+        "started_at": "2026-08-23T01:02:03.004Z",
+        "status": "verified",
+        "stderr_bytes": 0,
+        "stderr_sha256": empty_sha256,
+        "stdout_bytes": 0,
+        "stdout_sha256": empty_sha256,
+    }
+
+
+def mutated_json_path(
+    payload: dict[str, object], path: tuple[object, ...], value: object
+) -> dict[str, object]:
+    candidate = copy.deepcopy(payload)
+    target: object = candidate
+    for part in path[:-1]:
+        target = target[part]  # type: ignore[index]
+    target[path[-1]] = value  # type: ignore[index]
+    return candidate
+
+
 def rewrite_install_bootstrap_state(
     run_root: pathlib.Path,
     *,
@@ -177,7 +234,7 @@ def single_codex_dispatch_fixture(
     )
     identity = live_matrix.RunIdentity.for_test(
         selected_call_ids=(call.call_id,),
-        installed_skill_hash="test-skill",
+        installed_skill_hash="1" * 64,
         producer_ids=("codex-direct",),
         requested_models=(),
     )
@@ -388,10 +445,22 @@ GUIDE_BODY_INTEGRITY_PARAGRAPH = (
 )
 GUIDE_RECEIPT_SCHEMA_PARAGRAPH = (
     "Receipt JSON uses an exact top-level key schema; unknown or omitted keys "
-    "fail closed. The only legacy compatibility is an omitted per-finding "
-    "`certainty`, which reads as `hard`. A positive call number can never claim "
-    "`not_measured`, including on resume, so a forged terminal receipt cannot "
-    "hide a charged call from the remaining-work or budget ledger."
+    "fail closed. Explicit runner-version-10 compatibility permits its omitted "
+    "per-finding `certainty`, which reads as `hard`, and its original empty-finding "
+    "`partially_verified` shape. A positive call number can never claim "
+    "`not_measured`, including on resume, so a forged terminal receipt cannot hide a "
+    "charged call from the remaining-work or budget ledger."
+)
+GUIDE_V15_RECEIPT_PARAGRAPH = (
+    "Runner version 15 validates the exact receipt and nested identity/finding "
+    "schemas at load, publication, resume budgeting, report assembly, and review "
+    "sampling. Integers reject booleans and out-of-range values; timestamps, hashes, "
+    "stream byte/hash pairs, terminal statuses, evidence paths, call identity, and "
+    "reservation relationships must be coherent before a receipt can authorize any "
+    "later step. Immutable runner-version-10 evidence remains readable with only its "
+    "original omitted finding certainty and empty-finding `partially_verified` "
+    "shape treated as explicit legacy compatibility; it is not reusable as a "
+    "runner-version-15 execution identity."
 )
 GUIDE_PRIVACY_PARAGRAPH = (
     "Use synthetic prompts only. Do not place private manuscripts, credentials, "
@@ -500,8 +569,12 @@ GUIDE_REVIEW_PACKET_PARAGRAPH = (
     "representatives, prioritizing diagnostic and structural semantic families. "
     "Each sample has an explicit `sample_kind`; hard findings and not-deterministically "
     "measured signals remain separate, and representative case IDs and response "
-    "hashes stay bound to the durable receipt. Selection is stable under input "
-    "ordering, deduplicated, identity-redacted, and never expands the 8+4 cap."
+    "hashes stay bound to the durable receipt and are emitted into the canonical "
+    "review prompt. A missing control uses an explicit `not_measured` response-hash "
+    "sentinel. Changing either the validated case ID or response hash changes the "
+    "reviewer prompt hash, so a stale assessment cannot be reused for different "
+    "evidence. Selection is stable under input ordering, deduplicated, "
+    "identity-redacted, and never expands the 8+4 cap."
 )
 
 GUIDE_STATUS_DEFINITIONS = (
@@ -574,6 +647,7 @@ GUIDE_EXPECTED_SECTIONS = (
             "When matching preflight state exists but both report target and report state are absent, execute exclusively creates bounded pending content and persists its exact state before any producer or reviewer dispatch. A target without state, state without its exact target, an unsafe target, ownership drift, or extra relevant checkout dirt fails before dispatch.",
             GUIDE_LEASE_PARAGRAPH,
             "Completed `verified`, `partially_verified`, `failed`, and `not_measured` receipts remain complete. A `blocked` logical call may receive a new actual `:attempt-N` ID only when spare budget remains.",
+            GUIDE_V15_RECEIPT_PARAGRAPH,
         ),
     ),
     (
@@ -1016,6 +1090,18 @@ class LiveDocumentationTests(unittest.TestCase):
             "do not prove that the host activated the skill internally",
             re.sub(r"\s+", " ", text),
         )
+
+    def test_eval_guide_documents_v15_receipt_and_review_identity_boundaries(self) -> None:
+        text = re.sub(
+            r"\s+", " ", (HERE / "README.md").read_text(encoding="utf-8")
+        )
+        for required in (
+            "Runner version 15 validates the exact receipt and nested identity/finding schemas",
+            "runner-version-10 evidence remains readable",
+            "emitted into the canonical review prompt",
+            "Changing either the validated case ID or response hash changes the reviewer prompt hash",
+        ):
+            self.assertIn(required, text)
 
 
 class LiveCaseManifestTests(unittest.TestCase):
@@ -1695,7 +1781,9 @@ class ReceiptAndBudgetTests(unittest.TestCase):
                 live_matrix.write_receipt(path, receipt)
 
     def test_matching_complete_receipt_is_skipped_but_drift_fails(self) -> None:
-        identity = live_matrix.RunIdentity.for_test(skill_hash="same")
+        identity = live_matrix.RunIdentity.for_test(
+            skill_hash="a" * 64, installed_skill_hash="a" * 64
+        )
         plan = (live_matrix.PlannedCall("c", "producer", "p", "x", 1),)
         receipt = live_matrix.CallReceipt.for_test("c", identity=identity, status="verified")
         self.assertEqual(live_matrix.remaining_calls(plan, {"c": receipt}, identity), ())
@@ -1703,7 +1791,9 @@ class ReceiptAndBudgetTests(unittest.TestCase):
             live_matrix.remaining_calls(
                 plan,
                 {"c": receipt},
-                live_matrix.RunIdentity.for_test(skill_hash="different"),
+                live_matrix.RunIdentity.for_test(
+                    skill_hash="b" * 64, installed_skill_hash="b" * 64
+                ),
             )
 
     def test_resume_rejects_positive_not_measured_but_skips_true_zero_provider(self) -> None:
@@ -1729,6 +1819,7 @@ class ReceiptAndBudgetTests(unittest.TestCase):
             live_matrix.Producer("producer", "cursor", "missing-model"),
             identity,
             "requested model is unavailable",
+            "valid-mode",
         )
         self.assertEqual(
             live_matrix.remaining_calls((call,), {call.call_id: zero}, identity),
@@ -1771,7 +1862,9 @@ class ReceiptAndBudgetTests(unittest.TestCase):
                 ("repeat_index", 2),
             ):
                 with self.subTest(field=field):
-                    with self.assertRaisesRegex(live_matrix.LiveMatrixError, "reservation"):
+                    with self.assertRaisesRegex(
+                        live_matrix.LiveMatrixError, "receipt|reservation"
+                    ):
                         live_matrix._validate_receipt_reservations(
                             (dataclasses.replace(receipt, **{field: value}),),
                             (reservation,),
@@ -1783,7 +1876,7 @@ class ReceiptAndBudgetTests(unittest.TestCase):
         call = live_matrix.PlannedCall("producer:case:1", "producer", "producer", "case", 1)
         producer = live_matrix.Producer("producer", "cursor", "missing-model")
         zero = live_matrix._not_measured_receipt(
-            call, producer, identity, "requested model is unavailable"
+            call, producer, identity, "requested model is unavailable", "valid-mode"
         )
         live_matrix._validate_receipt_reservations((zero,), (), identity)
         with self.assertRaisesRegex(live_matrix.LiveMatrixError, "retry IDs"):
@@ -1832,7 +1925,7 @@ class ReceiptAndBudgetTests(unittest.TestCase):
                 run_root, identity, call, producer, kind="producer", call_number=1
             )
             zero = live_matrix._not_measured_receipt(
-                call, producer, identity, "requested model is unavailable"
+                call, producer, identity, "requested model is unavailable", "valid-mode"
             )
             with self.assertRaisesRegex(live_matrix.LiveMatrixError, "zero-provider"):
                 live_matrix._validate_receipt_reservations((zero,), (reservation,), identity)
@@ -2144,7 +2237,7 @@ class ReceiptAndBudgetTests(unittest.TestCase):
             )
             identity = live_matrix.RunIdentity.for_test(
                 selected_call_ids=tuple(call.call_id for call in calls),
-                installed_skill_hash="test-skill",
+                installed_skill_hash="1" * 64,
                 producer_ids=("codex-direct",),
                 requested_models=(),
             )
@@ -3982,6 +4075,246 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
                 ):
                     live_matrix._receipt_from_json(candidate)
 
+    def test_receipt_rejects_every_malformed_scalar_and_terminal_shape(self) -> None:
+        payload = strict_receipt_payload()
+        mutations = (
+            ("logical-call-type", ("logical_call_id",), 7),
+            ("logical-call-mismatch", ("logical_call_id",), "other:case:1"),
+            ("call-id-type", ("call_id",), 7),
+            ("call-id-empty", ("call_id",), ""),
+            ("call-number-bool", ("call_number",), True),
+            ("call-number-negative", ("call_number",), -1),
+            ("call-number-over-budget", ("call_number",), 161),
+            ("kind-type", ("kind",), 7),
+            ("kind-enum", ("kind",), "observer"),
+            ("host-type", ("host",), 7),
+            ("host-empty", ("host",), ""),
+            ("host-unbounded", ("host",), "h" * 257),
+            ("requested-model-type", ("requested_model",), 7),
+            ("requested-model-empty", ("requested_model",), ""),
+            ("reported-model-type", ("reported_model",), 7),
+            ("reported-model-empty", ("reported_model",), ""),
+            ("case-id-type", ("case_id",), 7),
+            ("case-id-empty", ("case_id",), ""),
+            ("case-id-syntax", ("case_id",), "Test Case"),
+            ("band-type", ("band",), 7),
+            ("band-enum", ("band",), "unknown"),
+            ("producer-band-null", ("band",), None),
+            ("repeat-bool", ("repeat_index",), True),
+            ("repeat-zero", ("repeat_index",), 0),
+            ("repeat-unbounded", ("repeat_index",), 1_001),
+            ("prompt-hash-type", ("prompt_sha256",), 7),
+            ("prompt-hash-uppercase", ("prompt_sha256",), "A" * 64),
+            ("started-type", ("started_at",), 7),
+            ("started-noncanonical", ("started_at",), "2026-08-23T01:02:03Z"),
+            ("finished-type", ("finished_at",), 7),
+            ("finished-before-start", ("finished_at",), "2026-08-23T01:02:03.003Z"),
+            ("duration-bool", ("duration_ms",), True),
+            ("duration-negative", ("duration_ms",), -1),
+            (
+                "duration-unbounded",
+                ("duration_ms",),
+                live_matrix.COMMAND_TIMEOUT_SECONDS * 1_000 + 1_001,
+            ),
+            ("exit-code-bool", ("exit_code",), True),
+            ("exit-code-unbounded", ("exit_code",), 256),
+            ("verified-exit-null", ("exit_code",), None),
+            ("verified-exit-nonzero", ("exit_code",), 1),
+            ("stdout-bytes-bool", ("stdout_bytes",), True),
+            ("stdout-bytes-negative", ("stdout_bytes",), -1),
+            ("stdout-bytes-unbounded", ("stdout_bytes",), live_matrix.MAX_STREAM_BYTES + 1),
+            ("stdout-hash-type", ("stdout_sha256",), 7),
+            ("stdout-hash-uppercase", ("stdout_sha256",), "A" * 64),
+            ("stdout-hash-null-after-capture", ("stdout_sha256",), None),
+            ("stdout-empty-hash-wrong", ("stdout_sha256",), "6" * 64),
+            ("stdout-positive-empty-hash", ("stdout_bytes",), 1),
+            ("stderr-bytes-bool", ("stderr_bytes",), True),
+            ("stderr-bytes-negative", ("stderr_bytes",), -1),
+            ("stderr-bytes-unbounded", ("stderr_bytes",), live_matrix.MAX_STREAM_BYTES + 1),
+            ("stderr-hash-type", ("stderr_sha256",), 7),
+            ("stderr-hash-uppercase", ("stderr_sha256",), "A" * 64),
+            ("stderr-hash-null-after-capture", ("stderr_sha256",), None),
+            ("stderr-empty-hash-wrong", ("stderr_sha256",), "7" * 64),
+            ("stderr-positive-empty-hash", ("stderr_bytes",), 1),
+            ("response-hash-type", ("response_sha256",), 7),
+            ("response-hash-uppercase", ("response_sha256",), "A" * 64),
+            ("verified-response-hash-null", ("response_sha256",), None),
+            ("status-type", ("status",), 7),
+            ("status-enum", ("status",), "complete"),
+            ("positive-not-measured", ("status",), "not_measured"),
+            ("findings-type", ("findings",), {}),
+            ("raw-paths-type", ("raw_paths",), "raw/0001.stdout.bin"),
+            ("raw-path-type", ("raw_paths", 0), 7),
+            ("raw-path-escape", ("raw_paths", 0), "../raw/0001.stdout.bin"),
+            ("raw-path-call-number", ("raw_paths", 0), "raw/0002.stdout.bin"),
+            ("raw-path-missing", ("raw_paths",), payload["raw_paths"][:2]),
+            ("raw-path-extra", ("raw_paths",), payload["raw_paths"] + ["extra"]),
+            ("raw-path-unbounded", ("raw_paths", 0), "r" * 129),
+        )
+        for label, path, value in mutations:
+            with self.subTest(label=label):
+                with self.assertRaises(live_matrix.LiveMatrixError):
+                    live_matrix._receipt_from_json(
+                        mutated_json_path(payload, path, value)
+                    )
+
+    def test_receipt_rejects_every_malformed_identity_field_and_nested_shape(self) -> None:
+        payload = strict_receipt_payload()
+        identity = payload["identity"]
+        mutations = (
+            ("run-id-type", ("identity", "run_id"), 7),
+            ("run-id-empty", ("identity", "run_id"), ""),
+            ("run-id-syntax", ("identity", "run_id"), "Test Run"),
+            ("runner-version-type", ("identity", "runner_version"), 7),
+            ("runner-version-empty", ("identity", "runner_version"), ""),
+            ("runner-version-unsupported", ("identity", "runner_version"), "999"),
+            ("repository-head-type", ("identity", "repository_head"), 7),
+            ("repository-head-length", ("identity", "repository_head"), "0" * 39),
+            ("repository-head-uppercase", ("identity", "repository_head"), "A" * 40),
+            ("skill-hash-type", ("identity", "skill_hash"), 7),
+            ("skill-hash-invalid", ("identity", "skill_hash"), "1" * 63),
+            ("skill-install-mismatch", ("identity", "skill_hash"), "4" * 64),
+            ("installed-hash-type", ("identity", "installed_skill_hash"), 7),
+            ("installed-hash-invalid", ("identity", "installed_skill_hash"), "2" * 63),
+            ("cases-hash-type", ("identity", "live_cases_hash"), 7),
+            ("cases-hash-invalid", ("identity", "live_cases_hash"), "3" * 63),
+            ("producer-ids-type", ("identity", "producer_ids"), "test-producer"),
+            ("producer-ids-empty", ("identity", "producer_ids"), []),
+            ("producer-id-type", ("identity", "producer_ids"), [7]),
+            ("producer-id-empty", ("identity", "producer_ids"), [""]),
+            ("producer-id-duplicate", ("identity", "producer_ids"), ["p", "p"]),
+            ("requested-models-type", ("identity", "requested_models"), "test-model"),
+            ("requested-model-type", ("identity", "requested_models"), [7]),
+            ("requested-model-empty", ("identity", "requested_models"), [""]),
+            ("requested-model-duplicate", ("identity", "requested_models"), ["m", "m"]),
+            ("scope-type", ("identity", "scope"), 7),
+            ("scope-enum", ("identity", "scope"), "full"),
+            ("selected-calls-type", ("identity", "selected_call_ids"), "call"),
+            ("selected-call-type", ("identity", "selected_call_ids"), [7]),
+            ("selected-call-empty", ("identity", "selected_call_ids"), [""]),
+            (
+                "selected-call-duplicate",
+                ("identity", "selected_call_ids"),
+                ["test-producer:test-case:1", "test-producer:test-case:1"],
+            ),
+        )
+        self.assertIsInstance(identity, dict)
+        for label, path, value in mutations:
+            with self.subTest(label=label):
+                with self.assertRaises(live_matrix.LiveMatrixError):
+                    live_matrix._receipt_from_json(
+                        mutated_json_path(payload, path, value)
+                    )
+
+        for label, candidate in (
+            ("unknown", {**identity, "unknown": "field"}),
+            (
+                "missing",
+                {key: value for key, value in identity.items() if key != "scope"},
+            ),
+        ):
+            with self.subTest(label=f"identity-{label}"):
+                with self.assertRaises(live_matrix.LiveMatrixError):
+                    live_matrix._receipt_from_json(
+                        mutated_json_path(payload, ("identity",), candidate)
+                    )
+
+    def test_receipt_rejects_evidence_claims_without_provider_capture(self) -> None:
+        blocked = live_matrix.CallReceipt.for_test(
+            "test-producer:test-case:1",
+            status="blocked",
+            exit_code=None,
+            stdout_sha256=None,
+            stderr_sha256=None,
+            response_sha256=None,
+            reported_model=None,
+            raw_paths=(),
+        )
+        live_matrix._validate_receipt_provider_shape(blocked)
+        for label, malformed in (
+            (
+                "response-hash",
+                dataclasses.replace(blocked, response_sha256="a" * 64),
+            ),
+            (
+                "reported-model",
+                dataclasses.replace(blocked, reported_model="test-model"),
+            ),
+        ):
+            with self.subTest(label=label):
+                with self.assertRaisesRegex(
+                    live_matrix.LiveMatrixError, "provider capture"
+                ):
+                    live_matrix._validate_receipt_provider_shape(malformed)
+
+    def test_receipt_rejects_malformed_findings_and_preserves_legacy_certainty(self) -> None:
+        payload = strict_receipt_payload()
+        payload["status"] = "failed"
+        legacy = {
+            "code": "literal_changed",
+            "message": "literal changed",
+            "literal": "30일",
+        }
+        payload["findings"] = [legacy]
+        loaded = live_matrix._receipt_from_json(payload)
+        self.assertEqual(loaded.findings, (live_matrix.Finding("literal_changed", "literal changed", "30일"),))
+
+        current = {**legacy, "certainty": "hard"}
+        mutations = (
+            ("code-type", {**current, "code": 7}),
+            ("code-empty", {**current, "code": ""}),
+            ("code-syntax", {**current, "code": "Literal Changed"}),
+            ("message-type", {**current, "message": 7}),
+            ("message-empty", {**current, "message": ""}),
+            ("literal-type", {**current, "literal": 7}),
+            ("literal-empty", {**current, "literal": ""}),
+            ("certainty-type", {**current, "certainty": 7}),
+            ("certainty-enum", {**current, "certainty": "maybe"}),
+            ("unknown", {**current, "unknown": "field"}),
+            ("missing", {key: value for key, value in current.items() if key != "message"}),
+        )
+        for label, finding in mutations:
+            with self.subTest(label=label):
+                with self.assertRaises(live_matrix.LiveMatrixError):
+                    live_matrix._receipt_from_json(
+                        mutated_json_path(payload, ("findings",), [finding])
+                    )
+
+    def test_receipt_publication_and_reload_fail_closed_on_invalid_scalar(self) -> None:
+        malformed = live_matrix.CallReceipt.for_test(
+            "test-producer:test-case:1", duration_ms=True
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            receipt_root = pathlib.Path(directory) / live_matrix.RECEIPT_DIRECTORY_NAME
+            receipt_root.mkdir()
+            path = receipt_root / "0001.json"
+            with self.assertRaises(live_matrix.LiveMatrixError):
+                live_matrix.write_receipt(path, malformed)
+            self.assertFalse(path.exists())
+
+            payload = strict_receipt_payload()
+            payload["duration_ms"] = True
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            with mock.patch("live_matrix.run_command") as provider:
+                with self.assertRaises(live_matrix.LiveMatrixError):
+                    live_matrix._load_receipt_attempts(pathlib.Path(directory))
+            provider.assert_not_called()
+            plan = (
+                live_matrix.PlannedCall(
+                    malformed.call_id,
+                    "producer",
+                    "test-producer",
+                    malformed.case_id,
+                    malformed.repeat_index,
+                ),
+            )
+            with self.assertRaises(live_matrix.LiveMatrixError):
+                live_matrix.remaining_calls(
+                    plan,
+                    {malformed.call_id: malformed},
+                    malformed.identity,
+                )
+
     def test_positive_call_number_cannot_claim_not_measured_status(self) -> None:
         receipt = live_matrix.CallReceipt.for_test(
             "call-1", status="not_measured", call_number=1
@@ -4009,12 +4342,25 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
 
         legacy = live_matrix.CallReceipt.for_test(
             "legacy-call",
+            identity=live_matrix.RunIdentity.for_test(runner_version="10"),
             status="failed",
             findings=(live_matrix.Finding("literal_changed", "literal changed"),),
         ).as_json()
         del legacy["findings"][0]["certainty"]
         loaded = live_matrix._receipt_from_json(legacy)
         self.assertEqual(loaded.findings[0].certainty, "hard")
+
+        nonlegacy_omission = receipt.as_json()
+        del nonlegacy_omission["findings"][0]["certainty"]
+        with self.assertRaisesRegex(live_matrix.LiveMatrixError, "legacy v10"):
+            live_matrix._receipt_from_json(nonlegacy_omission)
+
+        legacy_partial = strict_receipt_payload()
+        legacy_partial["status"] = "partially_verified"
+        self.assertEqual(
+            live_matrix._receipt_from_json(legacy_partial).findings,
+            (),
+        )
 
     def test_receipt_rejects_malformed_finding_certainty_and_shape(self) -> None:
         payload = live_matrix.CallReceipt.for_test("call-1").as_json()
@@ -4110,6 +4456,7 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
                 producer,
                 identity,
                 "model unavailable on resume",
+                "valid-mode",
             )
             live_matrix.write_receipt(receipt_root / "blocked.json", blocked)
             live_matrix.write_receipt(receipt_root / "unmeasured.json", unmeasured)
@@ -4123,7 +4470,7 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
             "producer:case:1", "producer", "producer", "case", 1
         )
         receipt = live_matrix._not_measured_receipt(
-            call, producer, identity, "model unavailable"
+            call, producer, identity, "model unavailable", "valid-mode"
         )
         with self.assertRaisesRegex(
             live_matrix.LiveMatrixError, "duplicate actual call attempt"
@@ -4218,7 +4565,9 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
             self.assertEqual(tuple(outside.iterdir()), before)
 
     def test_dispatch_identity_rejects_head_and_case_drift(self) -> None:
-        identity = live_matrix.RunIdentity.for_test(repository_head="old", live_cases_hash="old-cases")
+        identity = live_matrix.RunIdentity.for_test(
+            repository_head="0" * 40, live_cases_hash="3" * 64
+        )
         preflight = live_matrix.PreflightResult(
             identity=identity,
             repository_root=pathlib.Path("/repo"),
@@ -4232,13 +4581,16 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
             discovery_diagnostic=None,
         )
         with mock.patch("live_matrix._git_status_is_clean", return_value=True):
-            with mock.patch("live_matrix._git_value", return_value="new"):
+            with mock.patch("live_matrix._git_value", return_value="f" * 40):
                 with self.assertRaisesRegex(live_matrix.LiveMatrixError, "identity drift"):
                     live_matrix.validate_dispatch_identity(preflight)
 
     def test_dispatch_identity_rejects_case_drift(self) -> None:
         identity = live_matrix.RunIdentity.for_test(
-            repository_head="same", skill_hash="same", installed_skill_hash="same", live_cases_hash="old-cases"
+            repository_head="0" * 40,
+            skill_hash="a" * 64,
+            installed_skill_hash="a" * 64,
+            live_cases_hash="b" * 64,
         )
         preflight = live_matrix.PreflightResult(
             identity=identity,
@@ -4253,9 +4605,9 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
             discovery_diagnostic=None,
         )
         with mock.patch("live_matrix._git_status_is_clean", return_value=True):
-            with mock.patch("live_matrix._git_value", return_value="same"):
-                with mock.patch("live_matrix.recursive_manifest_hash", return_value="same"):
-                    with mock.patch("live_matrix._sha256_file", return_value="new-cases"):
+            with mock.patch("live_matrix._git_value", return_value="0" * 40):
+                with mock.patch("live_matrix.recursive_manifest_hash", return_value="a" * 64):
+                    with mock.patch("live_matrix._sha256_file", return_value="c" * 64):
                         with mock.patch.object(pathlib.Path, "is_symlink", return_value=False):
                             with mock.patch.object(pathlib.Path, "is_file", return_value=True):
                                 with self.assertRaisesRegex(live_matrix.LiveMatrixError, "live cases changed"):
@@ -5036,6 +5388,97 @@ class ReviewAndReportTests(unittest.TestCase):
         )
         for secret in ("private-producer", "secret-model", "sk-private-12345678"):
             self.assertNotIn(secret, packet_text)
+
+    def test_review_prompt_binds_validated_case_and_response_evidence_identity(self) -> None:
+        sample = live_matrix.ReviewSample(
+            candidate_id="candidate-001",
+            sample_kind="semantic_not_measured",
+            is_failure=False,
+            missing_control=False,
+            case_id="diagnose-case",
+            band="valid-mode",
+            request="요청",
+            source="원문",
+            candidate="후보",
+            hard_findings=(),
+            not_measured_signals=("diagnostic_semantics_not_measured",),
+            axes=("meaning",),
+            response_sha256="a" * 64,
+        )
+        prompt = live_matrix.build_review_prompt((sample,))
+        packet = json.loads(prompt.split("Review packet:\n", 1)[1])
+        self.assertEqual(packet["samples"][0]["case_id"], "diagnose-case")
+        self.assertEqual(packet["samples"][0]["response_sha256"], "a" * 64)
+
+        original_sha256 = hashlib.sha256(prompt.encode()).hexdigest()
+        for label, changed in (
+            ("case", dataclasses.replace(sample, case_id="different-case")),
+            ("response", dataclasses.replace(sample, response_sha256="b" * 64)),
+        ):
+            with self.subTest(label=label):
+                changed_sha256 = hashlib.sha256(
+                    live_matrix.build_review_prompt((changed,)).encode()
+                ).hexdigest()
+                self.assertNotEqual(changed_sha256, original_sha256)
+
+    def test_review_prompt_rejects_malformed_case_or_response_identity(self) -> None:
+        sample = live_matrix.ReviewSample(
+            candidate_id="candidate-001",
+            sample_kind="control",
+            is_failure=False,
+            missing_control=False,
+            case_id="control-case",
+            band="valid-mode",
+            request="요청",
+            source="원문",
+            candidate="후보",
+            hard_findings=(),
+            not_measured_signals=(),
+            axes=("meaning",),
+            response_sha256="a" * 64,
+        )
+        malformed = (
+            dataclasses.replace(sample, case_id=""),
+            dataclasses.replace(sample, case_id="Invalid Case"),
+            dataclasses.replace(sample, case_id=7),
+            dataclasses.replace(sample, response_sha256=None),
+            dataclasses.replace(sample, response_sha256="A" * 64),
+            dataclasses.replace(sample, response_sha256="a" * 63),
+            dataclasses.replace(sample, response_sha256=7),
+        )
+        for candidate in malformed:
+            with self.subTest(case_id=candidate.case_id, sha=candidate.response_sha256):
+                with self.assertRaises(live_matrix.LiveMatrixError):
+                    live_matrix.build_review_prompt((candidate,))
+
+    def test_review_prompt_uses_explicit_missing_control_hash_sentinel(self) -> None:
+        sample = live_matrix.ReviewSample(
+            candidate_id="candidate-001",
+            sample_kind="control",
+            is_failure=False,
+            missing_control=True,
+            case_id="not-measured",
+            band="noop-hold",
+            request="[not measured control]",
+            source="[not measured control]",
+            candidate="[not measured control]",
+            hard_findings=(),
+            not_measured_signals=("control_not_measured",),
+            axes=(),
+            response_sha256=None,
+        )
+        packet = json.loads(
+            live_matrix.build_review_prompt((sample,)).split("Review packet:\n", 1)[1]
+        )
+        self.assertEqual(packet["samples"][0]["case_id"], "not-measured")
+        self.assertEqual(packet["samples"][0]["response_sha256"], "not_measured")
+
+    def test_review_selection_rejects_invalid_receipt_before_sampling(self) -> None:
+        receipt = live_matrix.CallReceipt.for_test(
+            "test-producer:test-case:1", host=""
+        )
+        with self.assertRaises(live_matrix.LiveMatrixError):
+            live_matrix.select_review_samples((receipt,))
 
     def test_packet_removes_producer_identity_and_bounds_redacted_excerpt(self) -> None:
         receipts = synthetic_receipts_for_test(1, 4)
@@ -6299,7 +6742,7 @@ class ReviewExecutionWiringTests(unittest.TestCase):
             )
             identity = live_matrix.RunIdentity.for_test(
                 selected_call_ids=tuple(call.call_id for call in calls),
-                installed_skill_hash="test-skill",
+                installed_skill_hash="1" * 64,
                 producer_ids=("codex-direct",),
                 requested_models=(),
             )
@@ -6892,7 +7335,11 @@ class ReviewExecutionWiringTests(unittest.TestCase):
                     case_id=case.id,
                     band=case.band,
                     response_sha256=hashlib.sha256(response.encode()).hexdigest(),
-                    raw_paths=(normalized_path,),
+                    raw_paths=(
+                        "raw/0001.stdout.bin",
+                        "raw/0001.stderr.bin",
+                        normalized_path,
+                    ),
                 )
                 live_matrix._write_call_receipt(run_root, receipt)
                 return (receipt,)
@@ -7005,7 +7452,11 @@ class ReviewExecutionWiringTests(unittest.TestCase):
             case_id=case.id,
             band=case.band,
             response_sha256=hashlib.sha256(old_body.encode()).hexdigest(),
-            raw_paths=("normalized/0001.response.txt",),
+            raw_paths=(
+                "raw/0001.stdout.bin",
+                "raw/0001.stderr.bin",
+                "normalized/0001.response.txt",
+            ),
         )
         old_samples = live_matrix.select_review_samples(
             (old_receipt,),
@@ -7088,7 +7539,11 @@ class ReviewExecutionWiringTests(unittest.TestCase):
                 call_id=retry_call.call_id,
                 call_number=3,
                 response_sha256=hashlib.sha256(new_body.encode()).hexdigest(),
-                raw_paths=("normalized/0003.response.txt",),
+                raw_paths=(
+                    "raw/0003.stdout.bin",
+                    "raw/0003.stderr.bin",
+                    "normalized/0003.response.txt",
+                ),
             )
 
             def persist_changed_producer(
