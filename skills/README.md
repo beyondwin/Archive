@@ -14,6 +14,7 @@
 | [`kws-claude-multi-agent-executor`](./kws-claude-multi-agent-executor/) | Opus orchestrator와 Sonnet sub-agent 역할 분리를 사용하는 전문화된 multi-agent executor. 순차 Claude runner와 독립적으로 설치·사용합니다. |
 | [`waygent`](./waygent/) | 활성 제품 런타임 스킬. 자연어 실행, 상태, 이벤트, 검사, 설명, 재개, 적용 요청을 Waygent CLI로 변환합니다. KWS executor 스킬은 별도 비제품 executor 계약으로 유지됩니다. |
 | [`kws-korean-writing-editor`](./kws-korean-writing-editor/) | 이미 있는 한국어 글을 뜻과 말투를 유지하며 좁게 교정·윤문합니다. runner/executor가 아닙니다. |
+| [`kws-image-workbench`](./kws-image-workbench/) | Codex 전용 project-aware raster workbench. 실행은 bundled imagegen에 위임하며 Waygent runner/provider client가 아닙니다. |
 
 각 스킬 디렉터리의 `SKILL.md`가 정식 진입점입니다. 자세한 사용법은 먼저
 실제로 존재하는 `README.md`를 확인하고, 해당 스킬이 제공하는 추가 파일을
@@ -28,6 +29,11 @@ Code는 `~/.claude/skills/kws-korean-writing-editor`에 그 설치를 복사하�
 링크합니다. 명령과 덮어쓰기 금지 규칙은
 [kws-korean-writing-editor README](./kws-korean-writing-editor/README.md)를
 따릅니다.
+
+`kws-image-workbench`는 Codex 전용 project-aware raster workbench입니다.
+설치와 덮어쓰기 금지 규칙은 [kws-image-workbench README](./kws-image-workbench/README.md)를
+따르며, 명시적 대상은 `/Users/kws/.agents/skills/kws-image-workbench`입니다.
+다른 runtime은 `not_measured`입니다.
 
 ## 버전과 릴리스 상태
 
