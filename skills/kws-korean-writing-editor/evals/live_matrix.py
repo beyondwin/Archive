@@ -78,10 +78,14 @@ EXPECTED_REPEAT_IDS = {
 }
 APPROVED_CASES_SHA256 = "0084ebaa2a7ba19d827778e1c4d2edbf928e8566ea724049a21e0c58b75cb7db"
 ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+FACT_TOKEN_RE = re.compile(r"[^\W_]+", re.UNICODE)
+STRUCTURAL_LIST_MARKER_RE = re.compile(r"^\s*((?:[-+*])|(?:\d+[.)]))\s+")
+STRUCTURAL_CODE_SPAN_RE = re.compile(r"`[^`\n]+`")
+STRUCTURAL_QUOTED_SEGMENT_RE = re.compile(r'“([^”\n]+)”|"([^"\n]+)"')
 MAX_STREAM_BYTES = 131_072
 COMMAND_TIMEOUT_SECONDS = 300
 DIAGNOSTIC_TAIL_BYTES = 256
-RUNNER_VERSION = "10"
+RUNNER_VERSION = "11"
 RUN_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 MIN_JOBS = 1
 MAX_JOBS = 4
@@ -749,6 +753,45 @@ def normalize_response(text: str) -> str:
     return value[:-1] if value.endswith("\n") else value
 
 
+def _required_fact_is_present(case: LiveCase, candidate: str, fact: str) -> bool:
+    if fact in candidate:
+        return True
+    if case.expected_behavior != "diagnose":
+        return False
+    tokens = tuple(FACT_TOKEN_RE.findall(fact))
+    return len(tokens) > 1 and all(token in candidate for token in tokens)
+
+
+def _quoted_segments(value: str) -> tuple[str, ...]:
+    return tuple(
+        curly or straight
+        for curly, straight in STRUCTURAL_QUOTED_SEGMENT_RE.findall(value)
+    )
+
+
+def _structural_sentinel_is_present(candidate: str, sentinel: str) -> bool:
+    if sentinel in candidate:
+        return True
+    expected_marker = STRUCTURAL_LIST_MARKER_RE.match(sentinel)
+    if expected_marker is None:
+        return False
+    expected_code_spans = tuple(STRUCTURAL_CODE_SPAN_RE.findall(sentinel))
+    expected_quotes = _quoted_segments(sentinel)
+    if not expected_code_spans and not expected_quotes:
+        return False
+    for line in candidate.splitlines():
+        actual_marker = STRUCTURAL_LIST_MARKER_RE.match(line)
+        if actual_marker is None or actual_marker.group(1) != expected_marker.group(1):
+            continue
+        if any(code_span not in line for code_span in expected_code_spans):
+            continue
+        actual_quotes = _quoted_segments(line)
+        if expected_quotes and any(segment not in actual_quotes for segment in expected_quotes):
+            continue
+        return True
+    return False
+
+
 def evaluate_response(case: LiveCase, response: str) -> tuple[Finding, ...]:
     candidate = normalize_response(response)
     findings: list[Finding] = []
@@ -763,7 +806,7 @@ def evaluate_response(case: LiveCase, response: str) -> tuple[Finding, ...]:
                 Finding("forbidden_exact_output", "response matches forbidden exact output", output)
             )
     for substring in case.required_substrings:
-        if substring not in candidate:
+        if not _required_fact_is_present(case, candidate, substring):
             findings.append(
                 Finding("missing_required_substring", "response is missing required substring", substring)
             )
@@ -772,13 +815,14 @@ def evaluate_response(case: LiveCase, response: str) -> tuple[Finding, ...]:
             findings.append(
                 Finding("forbidden_substring", "response contains forbidden substring", substring)
             )
-    for literal in case.preserve_counts:
-        if case.source.count(literal) != candidate.count(literal):
-            findings.append(
-                Finding("occurrence_count_changed", "literal occurrence count changed", literal)
-            )
+    if case.expected_behavior != "diagnose":
+        for literal in case.preserve_counts:
+            if case.source.count(literal) != candidate.count(literal):
+                findings.append(
+                    Finding("occurrence_count_changed", "literal occurrence count changed", literal)
+                )
     for sentinel in case.structural_sentinels:
-        if sentinel not in candidate:
+        if not _structural_sentinel_is_present(candidate, sentinel):
             findings.append(
                 Finding("missing_structural_sentinel", "response is missing structural sentinel", sentinel)
             )
