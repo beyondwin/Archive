@@ -10,6 +10,7 @@ import io
 import json
 import os
 import pathlib
+import py_compile
 import re
 import shutil
 import stat
@@ -451,8 +452,8 @@ GUIDE_RECEIPT_SCHEMA_PARAGRAPH = (
     "`not_measured`, including on resume, so a forged terminal receipt cannot hide a "
     "charged call from the remaining-work or budget ledger."
 )
-GUIDE_V16_RECEIPT_PARAGRAPH = (
-    "Runner version 16 validates the exact receipt and nested identity/finding "
+GUIDE_V17_RECEIPT_PARAGRAPH = (
+    "Runner version 17 validates the exact receipt and nested identity/finding "
     "schemas at load, publication, resume budgeting, report assembly, and review "
     "sampling. Integers reject booleans and out-of-range values; timestamps, hashes, "
     "stream byte/hash pairs, terminal statuses, evidence paths, call identity, and "
@@ -461,7 +462,7 @@ GUIDE_V16_RECEIPT_PARAGRAPH = (
     "typed `not_measured` finding. Immutable runner-version-10 evidence remains "
     "readable with only its original omitted finding certainty and empty-finding "
     "`partially_verified` shape treated as explicit legacy compatibility; it is not "
-    "reusable as a runner-version-16 execution identity."
+    "reusable as a runner-version-17 execution identity."
 )
 GUIDE_PRIVACY_PARAGRAPH = (
     "Use synthetic prompts only. Do not place private manuscripts, credentials, "
@@ -494,6 +495,17 @@ GUIDE_BOOTSTRAP_PARAGRAPH = (
     "hashes, and current source/install hashes must match, while the complete "
     "previous tree is bounded and hashed recursively through its held directory "
     "FD with no symlinks or special files."
+)
+GUIDE_MANIFEST_CACHE_PARAGRAPH = (
+    "Package manifests omit only validated runtime Python cache directories. "
+    "Each omitted `__pycache__` must be a real directory containing only bounded "
+    "regular ASCII-named `*.pyc` or `*.pyo` files; held no-follow descriptors "
+    "prove every file and directory name remains bound to the validated inode. "
+    "Symlinks, special files, nested directories, unexpected names, races, and "
+    "limit violations fail closed. Cache bytes, timestamps, and presence do not "
+    "change the reviewed package hash, while every non-cache entry still does. "
+    "The path-based source/install hash and FD-relative previous-tree hash apply "
+    "this identical policy."
 )
 GUIDE_PREFLIGHT_COMMIT_PARAGRAPH = (
     "Preflight holds the same run-directory FD, rechecks the exact install-state "
@@ -632,6 +644,7 @@ GUIDE_EXPECTED_SECTIONS = (
         (
             "Before execution, ensure that source and installed skill manifests match, the relevant checkout is clean, and the approved run ID has only the complete Task 7 install bootstrap described below and no preflight or provider evidence. Preflight writes the immutable identity to the ignored evidence root and makes no provider call.",
             GUIDE_BOOTSTRAP_PARAGRAPH,
+            GUIDE_MANIFEST_CACHE_PARAGRAPH,
             GUIDE_PREFLIGHT_COMMIT_PARAGRAPH,
             GUIDE_ARTIFACT_PARAGRAPH,
             "`--jobs` accepts 1 through 4. The report path must be the exact dated filename under `docs/operations` shown above.",
@@ -652,7 +665,7 @@ GUIDE_EXPECTED_SECTIONS = (
             "When matching preflight state exists but both report target and report state are absent, execute exclusively creates bounded pending content and persists its exact state before any producer or reviewer dispatch. A target without state, state without its exact target, an unsafe target, ownership drift, or extra relevant checkout dirt fails before dispatch.",
             GUIDE_LEASE_PARAGRAPH,
             "Completed `verified`, `partially_verified`, `failed`, and `not_measured` receipts remain complete. A `blocked` logical call may receive a new actual `:attempt-N` ID only when spare budget remains.",
-            GUIDE_V16_RECEIPT_PARAGRAPH,
+            GUIDE_V17_RECEIPT_PARAGRAPH,
         ),
     ),
     (
@@ -753,6 +766,7 @@ def assert_live_guide_contract(markdown: str) -> None:
         GUIDE_PRIVACY_PARAGRAPH,
         GUIDE_OFFLINE_PARAGRAPH,
         GUIDE_PREFLIGHT_COMMIT_PARAGRAPH,
+        GUIDE_MANIFEST_CACHE_PARAGRAPH,
         GUIDE_ARTIFACT_PARAGRAPH,
         GUIDE_IDENTITY_PARAGRAPH,
         GUIDE_LEASE_PARAGRAPH,
@@ -1096,12 +1110,12 @@ class LiveDocumentationTests(unittest.TestCase):
             re.sub(r"\s+", " ", text),
         )
 
-    def test_eval_guide_documents_v16_receipt_and_review_identity_boundaries(self) -> None:
+    def test_eval_guide_documents_v17_receipt_and_review_identity_boundaries(self) -> None:
         text = re.sub(
             r"\s+", " ", (HERE / "README.md").read_text(encoding="utf-8")
         )
         for required in (
-            "Runner version 16 validates the exact receipt and nested identity/finding schemas",
+            "Runner version 17 validates the exact receipt and nested identity/finding schemas",
             "Every current `partially_verified` receipt carries at least one typed `not_measured` finding",
             "runner-version-10 evidence remains readable",
             "emitted into the canonical review prompt",
@@ -1792,6 +1806,144 @@ class ReceiptAndBudgetTests(unittest.TestCase):
             (root / "link.txt").symlink_to(root / "target.txt")
             with self.assertRaisesRegex(live_matrix.LiveMatrixError, "symlink"):
                 live_matrix.recursive_manifest_hash(root)
+
+    def test_manifest_ignores_only_validated_regenerated_python_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base = pathlib.Path(directory)
+            source = base / "source"
+            source_evals = source / "evals"
+            source_evals.mkdir(parents=True)
+            (source / "SKILL.md").write_text("reviewed\n", encoding="utf-8")
+            (source_evals / "runner.py").write_text(
+                "VALUE = 1\n", encoding="utf-8"
+            )
+            stage = base / "stage"
+            installed = base / "installed"
+            shutil.copytree(source, stage)
+            shutil.copytree(source, installed)
+
+            cache_paths = []
+            for index, root in enumerate((source, stage, installed), start=1):
+                cache_path = pathlib.Path(
+                    py_compile.compile(
+                        str(root / "evals" / "runner.py"), doraise=True
+                    )
+                )
+                cache_path.write_bytes(cache_path.read_bytes() + bytes((index,)))
+                os.utime(cache_path, ns=(index * 1_000_000, index * 2_000_000))
+                cache_paths.append(cache_path)
+            (installed / "evals" / "__pycache__" / "legacy.cpython-314.pyo").write_bytes(
+                b"runtime-only"
+            )
+            self.assertEqual(len({path.read_bytes() for path in cache_paths}), 3)
+
+            hashes = {
+                live_matrix.recursive_manifest_hash(root)
+                for root in (source, stage, installed)
+            }
+            self.assertEqual(len(hashes), 1)
+
+            flags = os.O_RDONLY
+            if hasattr(os, "O_DIRECTORY"):
+                flags |= os.O_DIRECTORY
+            if hasattr(os, "O_NOFOLLOW"):
+                flags |= os.O_NOFOLLOW
+            descriptor = os.open(source, flags)
+            try:
+                self.assertEqual(
+                    live_matrix.recursive_manifest_hash(source),
+                    live_matrix._recursive_manifest_hash_fd(descriptor),
+                )
+            finally:
+                os.close(descriptor)
+
+            (installed / "evals" / "reviewed-extra.txt").write_text(
+                "material package content\n", encoding="utf-8"
+            )
+            self.assertNotEqual(
+                live_matrix.recursive_manifest_hash(source),
+                live_matrix.recursive_manifest_hash(installed),
+            )
+
+    def test_manifest_rejects_every_unsafe_python_cache_shape(self) -> None:
+        def assert_both_reject(root: pathlib.Path) -> None:
+            with self.assertRaises(live_matrix.LiveMatrixError):
+                live_matrix.recursive_manifest_hash(root)
+            flags = os.O_RDONLY
+            if hasattr(os, "O_DIRECTORY"):
+                flags |= os.O_DIRECTORY
+            if hasattr(os, "O_NOFOLLOW"):
+                flags |= os.O_NOFOLLOW
+            descriptor = os.open(root, flags)
+            try:
+                with self.assertRaises(live_matrix.LiveMatrixError):
+                    live_matrix._recursive_manifest_hash_fd(descriptor)
+            finally:
+                os.close(descriptor)
+
+        for shape in (
+            "cache-symlink",
+            "file-symlink",
+            "nested-directory",
+            "special-fifo",
+            "unexpected-file",
+            "cache-regular-file",
+        ):
+            with self.subTest(shape=shape), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory) / "root"
+                root.mkdir()
+                (root / "reviewed.txt").write_text("reviewed\n", encoding="utf-8")
+                cache = root / "__pycache__"
+                if shape == "cache-symlink":
+                    outside = pathlib.Path(directory) / "outside"
+                    outside.mkdir()
+                    cache.symlink_to(outside, target_is_directory=True)
+                elif shape == "cache-regular-file":
+                    cache.write_bytes(b"not a directory")
+                else:
+                    cache.mkdir()
+                    if shape == "file-symlink":
+                        target = pathlib.Path(directory) / "target.pyc"
+                        target.write_bytes(b"cache")
+                        (cache / "runner.cpython-314.pyc").symlink_to(target)
+                    elif shape == "nested-directory":
+                        (cache / "nested").mkdir()
+                    elif shape == "special-fifo":
+                        os.mkfifo(cache / "runner.cpython-314.pyc", 0o600)
+                    else:
+                        (cache / "notes.txt").write_text(
+                            "not cache\n", encoding="utf-8"
+                        )
+                assert_both_reject(root)
+
+    def test_manifest_bounds_excluded_python_cache_files(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            cache = root / "__pycache__"
+            cache.mkdir()
+            (cache / "one.cpython-314.pyc").write_bytes(b"one")
+            (cache / "two.cpython-314.pyc").write_bytes(b"two")
+            flags = os.O_RDONLY
+            if hasattr(os, "O_DIRECTORY"):
+                flags |= os.O_DIRECTORY
+            if hasattr(os, "O_NOFOLLOW"):
+                flags |= os.O_NOFOLLOW
+            descriptor = os.open(root, flags)
+            try:
+                for attribute, limit in (
+                    ("MAX_PYTHON_CACHE_FILES", 1),
+                    ("MAX_PYTHON_CACHE_FILE_BYTES", 2),
+                    ("MAX_PYTHON_CACHE_TOTAL_BYTES", 5),
+                    ("MAX_PYTHON_CACHE_FILENAME_BYTES", 4),
+                ):
+                    with self.subTest(attribute=attribute):
+                        with mock.patch(f"live_matrix.{attribute}", limit):
+                            with self.assertRaises(live_matrix.LiveMatrixError):
+                                live_matrix.recursive_manifest_hash(root)
+                            with self.assertRaises(live_matrix.LiveMatrixError):
+                                live_matrix._recursive_manifest_hash_fd(descriptor)
+            finally:
+                os.close(descriptor)
 
     def test_fd_relative_manifest_matches_canonical_hash_and_rejects_specials(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
