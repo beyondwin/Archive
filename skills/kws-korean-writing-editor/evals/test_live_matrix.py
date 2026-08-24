@@ -11,6 +11,7 @@ import os
 import pathlib
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -390,9 +391,10 @@ GUIDE_OFFLINE_PARAGRAPH = (
 )
 GUIDE_ARTIFACT_PARAGRAPH = (
     "The approved Task 7 baseline run ID is "
-    "`kws-editor-20260823-baseline-01`, and the approved operations artifact date "
-    "is intentionally `2026-08-23`. Keep both values unchanged across the "
-    "2026-08-24 wall-date rollover; do not substitute the current date."
+    "`kws-editor-20260823-baseline-02` because run-01 is already consumed, while "
+    "the approved operations artifact date remains intentionally `2026-08-23`. "
+    "Keep run-02 and that report date unchanged; do not substitute the current "
+    "date."
 )
 GUIDE_BOOTSTRAP_PARAGRAPH = (
     "After Task 7's exact-target swap, the first non-resume preflight requires "
@@ -560,17 +562,17 @@ def assert_live_guide_contract(markdown: str) -> None:
     expected_bash_fences = [
         "python3 skills/kws-korean-writing-editor/evals/run.py --scope full",
         "python3 skills/kws-korean-writing-editor/evals/live_matrix.py --dry-run",
-        'RUN_ID="kws-editor-20260823-baseline-01"\n'
+        'RUN_ID="kws-editor-20260823-baseline-02"\n'
         "python3 skills/kws-korean-writing-editor/evals/live_matrix.py \\\n"
         '  --preflight --scope baseline --run-id "$RUN_ID" --jobs 3 --max-calls 122 \\\n'
         "  --evidence-root .superpowers/kws-korean-writing-editor/live \\\n"
         "  --report docs/operations/2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md",
-        'RUN_ID="kws-editor-20260823-baseline-01"\n'
+        'RUN_ID="kws-editor-20260823-baseline-02"\n'
         "python3 skills/kws-korean-writing-editor/evals/live_matrix.py \\\n"
         '  --execute --scope baseline --run-id "$RUN_ID" --jobs 3 --max-calls 122 \\\n'
         "  --evidence-root .superpowers/kws-korean-writing-editor/live \\\n"
         "  --report docs/operations/2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md",
-        'RUN_ID="kws-editor-20260823-baseline-01"\n'
+        'RUN_ID="kws-editor-20260823-baseline-02"\n'
         "python3 skills/kws-korean-writing-editor/evals/live_matrix.py \\\n"
         '  --execute --resume --scope baseline --run-id "$RUN_ID" --jobs 3 --max-calls 122 \\\n'
         "  --evidence-root .superpowers/kws-korean-writing-editor/live \\\n"
@@ -592,7 +594,8 @@ def assert_live_guide_contract(markdown: str) -> None:
     )
     assert statuses == GUIDE_STATUS_DEFINITIONS
     assert normalized_guide_sections(markdown) == GUIDE_EXPECTED_SECTIONS
-    assert markdown.count("kws-editor-20260823-baseline-01") == 4
+    assert "kws-editor-20260823-baseline-01" not in markdown
+    assert markdown.count("kws-editor-20260823-baseline-02") == 4
     for paragraph in (
         GUIDE_RESERVATION_PARAGRAPH,
         GUIDE_DURABLE_EVIDENCE_PARAGRAPH,
@@ -1893,6 +1896,35 @@ class LiveMatrixCliTests(unittest.TestCase):
 
 
 class LiveMatrixLifecycleTests(unittest.TestCase):
+    def validate_fixture_preflight(
+        self,
+        *,
+        root: pathlib.Path,
+        source: pathlib.Path,
+        installed: pathlib.Path,
+        evidence_root: pathlib.Path,
+        run_id: str,
+        **overrides: object,
+    ) -> live_matrix.PreflightResult:
+        arguments: dict[str, object] = {
+            "source_skill_root": source,
+            "installed_skill_root": installed,
+            "repository_root": root,
+            "run_id": run_id,
+            "scope": "baseline",
+            "jobs": 1,
+            "max_calls": 122,
+            "evidence_root": evidence_root,
+        }
+        arguments.update(overrides)
+        with mock.patch(
+            "live_matrix._cli_info",
+            return_value=live_matrix.CliInfo(None, None, "fixture"),
+        ):
+            with mock.patch("live_matrix._discover_models", return_value=(None, None)):
+                with mock.patch("live_matrix._run_offline_checks"):
+                    return live_matrix.validate_preflight(**arguments)
+
     def test_first_preflight_requires_an_existing_install_bootstrap_without_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root, source, installed, evidence_root = temporary_git_install_fixture(directory)
@@ -2004,7 +2036,7 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
             self.assertEqual(reused.identity, first.identity)
             self.assertEqual(reused.run_root, first.run_root)
 
-    def test_first_preflight_rejects_bootstrap_inode_swaps_before_publication(self) -> None:
+    def test_first_preflight_rejects_bootstrap_binding_changes_before_publication(self) -> None:
         def replace_root(run_root: pathlib.Path) -> tuple[pathlib.Path, ...]:
             validated = run_root.with_name(f".{run_root.name}-validated")
             run_root.rename(validated)
@@ -2028,10 +2060,31 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
             previous.symlink_to(moved, target_is_directory=True)
             return (run_root,)
 
+        def rewrite_state_in_place(run_root: pathlib.Path) -> tuple[pathlib.Path, ...]:
+            state = run_root / "task-7-install-state.json"
+            original = state.read_bytes()
+            changed = original.replace(
+                run_root.name.encode("utf-8"),
+                run_root.name.replace("swapped", "changed").encode("utf-8"),
+                1,
+            )
+            self.assertEqual(len(changed), len(original))
+            self.assertNotEqual(changed, original)
+            state.write_bytes(changed)
+            return (run_root,)
+
+        def chmod_previous_in_place(run_root: pathlib.Path) -> tuple[pathlib.Path, ...]:
+            previous = run_root / "install-previous"
+            original_mode = stat.S_IMODE(previous.stat().st_mode)
+            previous.chmod(0o700 if original_mode != 0o700 else 0o755)
+            return (run_root,)
+
         mutations = (
             ("run root rename and replacement", replace_root),
             ("install state rename and symlink", replace_state_with_symlink),
             ("previous install rename and symlink", replace_previous_with_symlink),
+            ("install state same-inode rewrite", rewrite_state_in_place),
+            ("previous install same-inode chmod", chmod_previous_in_place),
         )
         with tempfile.TemporaryDirectory() as directory:
             root, source, installed, evidence_root = temporary_git_install_fixture(directory)
@@ -2087,6 +2140,177 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
                             for candidate in publication_roots
                         )
                     )
+
+    def test_first_preflight_rechecks_bound_bytes_and_modes_after_publication(self) -> None:
+        def append_state_in_place(run_root: pathlib.Path) -> None:
+            state = run_root / "task-7-install-state.json"
+            with state.open("ab") as stream:
+                stream.write(b" ")
+
+        def chmod_previous_in_place(run_root: pathlib.Path) -> None:
+            previous = run_root / "install-previous"
+            original_mode = stat.S_IMODE(previous.stat().st_mode)
+            previous.chmod(0o700 if original_mode != 0o700 else 0o755)
+
+        def rewrite_preflight_in_place(run_root: pathlib.Path) -> None:
+            (run_root / "preflight.json").write_text("{}\n", encoding="utf-8")
+
+        def replace_preflight_with_symlink(run_root: pathlib.Path) -> None:
+            preflight = run_root / "preflight.json"
+            attacker = run_root.parent / f".{run_root.name}-attacker.json"
+            attacker.write_text("attacker-owned\n", encoding="utf-8")
+            preflight.unlink()
+            preflight.symlink_to(attacker)
+
+        def replace_preflight_with_regular_file(run_root: pathlib.Path) -> None:
+            preflight = run_root / "preflight.json"
+            preflight.unlink()
+            preflight.write_text("attacker-owned\n", encoding="utf-8")
+            preflight.chmod(0o600)
+
+        mutations = (
+            ("install state same-inode size change", append_state_in_place, False),
+            ("previous install same-inode chmod", chmod_previous_in_place, False),
+            ("preflight same-inode content rewrite", rewrite_preflight_in_place, False),
+            ("preflight symlink replacement", replace_preflight_with_symlink, True),
+            ("preflight regular-file replacement", replace_preflight_with_regular_file, True),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root, source, installed, evidence_root = temporary_git_install_fixture(directory)
+            original_validate = live_matrix._validate_install_bootstrap_directory_fd
+            for index, (label, mutate, attacker_owned) in enumerate(mutations, start=1):
+                with self.subTest(label=label):
+                    run_id = f"post-publication-change-{index}"
+                    run_root = write_complete_install_bootstrap(
+                        evidence_root, run_id, source, installed
+                    )
+                    mutated = False
+
+                    def mutate_at_postcheck(
+                        directory_descriptor: int,
+                        binding: live_matrix._InstallBootstrapBinding,
+                        *,
+                        preflight_published: bool,
+                    ) -> None:
+                        nonlocal mutated
+                        if preflight_published and not mutated:
+                            mutate(run_root)
+                            mutated = True
+                        original_validate(
+                            directory_descriptor,
+                            binding,
+                            preflight_published=preflight_published,
+                        )
+
+                    with mock.patch(
+                        "live_matrix._validate_install_bootstrap_directory_fd",
+                        side_effect=mutate_at_postcheck,
+                    ):
+                        with self.assertRaisesRegex(
+                            live_matrix.LiveMatrixError,
+                            "installation bootstrap is invalid",
+                        ):
+                            self.validate_fixture_preflight(
+                                root=root,
+                                source=source,
+                                installed=installed,
+                                evidence_root=evidence_root,
+                                run_id=run_id,
+                            )
+                    self.assertTrue(mutated)
+                    preflight = run_root / "preflight.json"
+                    if attacker_owned:
+                        self.assertTrue(preflight.exists() or preflight.is_symlink())
+                        if preflight.is_symlink():
+                            self.assertEqual(
+                                preflight.readlink().name,
+                                f".{run_id}-attacker.json",
+                            )
+                        else:
+                            self.assertEqual(
+                                preflight.read_text(encoding="utf-8"),
+                                "attacker-owned\n",
+                            )
+                    else:
+                        self.assertFalse(preflight.exists())
+
+    def test_first_preflight_rolls_back_exact_receipt_after_failed_postcheck(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root, source, installed, evidence_root = temporary_git_install_fixture(directory)
+            run_id = "failed-postcheck-1"
+            run_root = write_complete_install_bootstrap(
+                evidence_root, run_id, source, installed
+            )
+            with mock.patch("live_matrix._git_status_is_clean", return_value=False):
+                with self.assertRaisesRegex(
+                    live_matrix.LiveMatrixError, "relevant checkout is not clean"
+                ):
+                    self.validate_fixture_preflight(
+                        root=root,
+                        source=source,
+                        installed=installed,
+                        evidence_root=evidence_root,
+                        run_id=run_id,
+                    )
+            self.assertFalse((run_root / "preflight.json").exists())
+            with self.assertRaisesRegex(
+                live_matrix.LiveMatrixError,
+                "preflight receipt is required before execution",
+            ):
+                self.validate_fixture_preflight(
+                    root=root,
+                    source=source,
+                    installed=installed,
+                    evidence_root=evidence_root,
+                    run_id=run_id,
+                    reuse_preflight=True,
+                )
+
+    def test_reuse_rejects_symlink_unsafe_mode_and_oversized_preflight(self) -> None:
+        def replace_with_symlink(preflight: pathlib.Path) -> None:
+            attacker = preflight.parent.parent / f".{preflight.parent.name}-valid.json"
+            shutil.copy2(preflight, attacker)
+            preflight.unlink()
+            preflight.symlink_to(attacker)
+
+        def chmod_unsafe(preflight: pathlib.Path) -> None:
+            preflight.chmod(0o644)
+
+        def append_beyond_bound(preflight: pathlib.Path) -> None:
+            padding = b" " * (live_matrix.MAX_STREAM_BYTES - preflight.stat().st_size + 1)
+            with preflight.open("ab") as stream:
+                stream.write(padding)
+
+        mutations = (
+            ("symlink", replace_with_symlink),
+            ("unsafe mode", chmod_unsafe),
+            ("oversized", append_beyond_bound),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root, source, installed, evidence_root = temporary_git_install_fixture(directory)
+            for index, (label, mutate) in enumerate(mutations, start=1):
+                with self.subTest(label=label):
+                    run_id = f"tampered-reuse-{index}"
+                    run_root = write_complete_install_bootstrap(
+                        evidence_root, run_id, source, installed
+                    )
+                    self.validate_fixture_preflight(
+                        root=root,
+                        source=source,
+                        installed=installed,
+                        evidence_root=evidence_root,
+                        run_id=run_id,
+                    )
+                    mutate(run_root / "preflight.json")
+                    with self.assertRaises(live_matrix.LiveMatrixError):
+                        self.validate_fixture_preflight(
+                            root=root,
+                            source=source,
+                            installed=installed,
+                            evidence_root=evidence_root,
+                            run_id=run_id,
+                            reuse_preflight=True,
+                        )
 
     def test_first_preflight_rejects_every_incomplete_or_unsafe_install_bootstrap(self) -> None:
         def remove_previous(run_root: pathlib.Path) -> None:

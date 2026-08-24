@@ -81,7 +81,7 @@ ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 MAX_STREAM_BYTES = 131_072
 COMMAND_TIMEOUT_SECONDS = 300
 DIAGNOSTIC_TAIL_BYTES = 256
-RUNNER_VERSION = "7"
+RUNNER_VERSION = "8"
 RUN_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 MIN_JOBS = 1
 MAX_JOBS = 4
@@ -267,8 +267,20 @@ class _InstallBootstrapBinding:
     run_inode: int
     state_device: int
     state_inode: int
+    state_size: int
+    state_sha256: str
     previous_device: int
     previous_inode: int
+    previous_mode: int
+
+
+@dataclass(frozen=True)
+class _PublishedPreflightBinding:
+    device: int
+    inode: int
+    mode: int
+    size: int
+    sha256: str
 
 
 @dataclass(frozen=True)
@@ -1036,57 +1048,129 @@ def validate_evidence_root(
     return expected
 
 
+def _read_bounded_regular_file_at(
+    directory_descriptor: int,
+    filename: str,
+    *,
+    expected_mode: int,
+    expected_device: int | None = None,
+    expected_inode: int | None = None,
+    expected_size: int | None = None,
+    expected_sha256: str | None = None,
+) -> tuple[bytes, os.stat_result]:
+    """Read one stable regular file through a held directory without following links."""
+    if pathlib.PurePath(filename).name != filename:
+        raise ValueError("invalid bounded filename")
+    descriptor: int | None = None
+    try:
+        flags = os.O_RDONLY
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        if hasattr(os, "O_NONBLOCK"):
+            flags |= os.O_NONBLOCK
+        descriptor = os.open(filename, flags, dir_fd=directory_descriptor)
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or stat.S_IMODE(opened.st_mode) != expected_mode
+            or opened.st_size > MAX_STREAM_BYTES
+            or (expected_device is not None and opened.st_dev != expected_device)
+            or (expected_inode is not None and opened.st_ino != expected_inode)
+            or (expected_size is not None and opened.st_size != expected_size)
+        ):
+            raise ValueError("unsafe bounded file")
+        chunks: list[bytes] = []
+        remaining = MAX_STREAM_BYTES + 1
+        while remaining > 0:
+            chunk = os.read(descriptor, min(65_536, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        content = b"".join(chunks)
+        if len(content) > MAX_STREAM_BYTES:
+            raise ValueError("bounded file exceeds limit")
+        after_read = os.fstat(descriptor)
+        named = os.stat(filename, dir_fd=directory_descriptor, follow_symlinks=False)
+        opened_identity = (opened.st_dev, opened.st_ino, opened.st_mode, opened.st_size)
+        if (
+            (after_read.st_dev, after_read.st_ino, after_read.st_mode, after_read.st_size)
+            != opened_identity
+            or (named.st_dev, named.st_ino, named.st_mode, named.st_size)
+            != opened_identity
+            or len(content) != opened.st_size
+        ):
+            raise ValueError("bounded file changed while reading")
+        digest = hashlib.sha256(content).hexdigest()
+        if expected_sha256 is not None and digest != expected_sha256:
+            raise ValueError("bounded file digest changed")
+        return content, opened
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
 def _validate_install_bootstrap(
     run_root: pathlib.Path,
     run_id: str,
     expectation: _InstallBootstrapExpectation,
 ) -> _InstallBootstrapBinding:
     """Accept only the complete recoverable install state created by Task 7 step 2."""
-    state_descriptor: int | None = None
+    directory_descriptor: int | None = None
+    previous_descriptor: int | None = None
     try:
-        run_stat = run_root.lstat()
+        path_run = run_root.lstat()
         if (
-            stat.S_ISLNK(run_stat.st_mode)
-            or not stat.S_ISDIR(run_stat.st_mode)
-            or stat.S_IMODE(run_stat.st_mode) != 0o700
+            stat.S_ISLNK(path_run.st_mode)
+            or not stat.S_ISDIR(path_run.st_mode)
+            or stat.S_IMODE(path_run.st_mode) != 0o700
         ):
             raise ValueError("unsafe run root")
-        entries = tuple(run_root.iterdir())
+        directory_flags = os.O_RDONLY
+        if hasattr(os, "O_DIRECTORY"):
+            directory_flags |= os.O_DIRECTORY
+        if hasattr(os, "O_NOFOLLOW"):
+            directory_flags |= os.O_NOFOLLOW
+        directory_descriptor = os.open(run_root, directory_flags)
+        opened_run = os.fstat(directory_descriptor)
         if (
-            len(entries) != len(INSTALL_BOOTSTRAP_ENTRIES)
-            or {entry.name for entry in entries} != INSTALL_BOOTSTRAP_ENTRIES
+            not stat.S_ISDIR(opened_run.st_mode)
+            or stat.S_IMODE(opened_run.st_mode) != 0o700
+            or (opened_run.st_dev, opened_run.st_ino)
+            != (path_run.st_dev, path_run.st_ino)
+            or set(os.listdir(directory_descriptor)) != INSTALL_BOOTSTRAP_ENTRIES
         ):
-            raise ValueError("unexpected bootstrap entries")
+            raise ValueError("unsafe opened run root")
 
-        previous = run_root / INSTALL_PREVIOUS_DIRECTORY_NAME
-        previous_stat = previous.lstat()
-        if stat.S_ISLNK(previous_stat.st_mode) or not stat.S_ISDIR(previous_stat.st_mode):
+        previous_flags = os.O_RDONLY
+        if hasattr(os, "O_DIRECTORY"):
+            previous_flags |= os.O_DIRECTORY
+        if hasattr(os, "O_NOFOLLOW"):
+            previous_flags |= os.O_NOFOLLOW
+        previous_descriptor = os.open(
+            INSTALL_PREVIOUS_DIRECTORY_NAME,
+            previous_flags,
+            dir_fd=directory_descriptor,
+        )
+        previous_stat = os.fstat(previous_descriptor)
+        named_previous = os.stat(
+            INSTALL_PREVIOUS_DIRECTORY_NAME,
+            dir_fd=directory_descriptor,
+            follow_symlinks=False,
+        )
+        if (
+            not stat.S_ISDIR(previous_stat.st_mode)
+            or (named_previous.st_dev, named_previous.st_ino, named_previous.st_mode)
+            != (previous_stat.st_dev, previous_stat.st_ino, previous_stat.st_mode)
+        ):
             raise ValueError("unsafe previous install")
 
-        state_path = run_root / INSTALL_STATE_FILENAME
-        state_stat = state_path.lstat()
-        if (
-            stat.S_ISLNK(state_stat.st_mode)
-            or not stat.S_ISREG(state_stat.st_mode)
-            or stat.S_IMODE(state_stat.st_mode) != 0o600
-            or state_stat.st_size > MAX_STREAM_BYTES
-        ):
-            raise ValueError("unsafe install state")
-        flags = os.O_RDONLY
-        if hasattr(os, "O_NOFOLLOW"):
-            flags |= os.O_NOFOLLOW
-        state_descriptor = os.open(state_path, flags)
-        opened_state = os.fstat(state_descriptor)
-        if (
-            not stat.S_ISREG(opened_state.st_mode)
-            or (opened_state.st_dev, opened_state.st_ino)
-            != (state_stat.st_dev, state_stat.st_ino)
-            or stat.S_IMODE(opened_state.st_mode) != 0o600
-        ):
-            raise ValueError("install state changed while opening")
-        state_bytes = os.read(state_descriptor, MAX_STREAM_BYTES + 1)
-        if len(state_bytes) > MAX_STREAM_BYTES:
-            raise ValueError("install state exceeds bound")
+        state_bytes, opened_state = _read_bounded_regular_file_at(
+            directory_descriptor,
+            INSTALL_STATE_FILENAME,
+            expected_mode=0o600,
+        )
+        state_sha256 = hashlib.sha256(state_bytes).hexdigest()
         state = json.loads(state_bytes.decode("utf-8"))
         if not isinstance(state, dict) or frozenset(state) != INSTALL_STATE_FIELDS:
             raise ValueError("install state schema mismatch")
@@ -1110,6 +1194,7 @@ def _validate_install_bootstrap(
             pass
         else:
             raise ValueError("install stage still exists")
+        previous = run_root / INSTALL_PREVIOUS_DIRECTORY_NAME
         previous_hash = recursive_manifest_hash(previous)
         expected_state: dict[str, Any] = {
             "install_state": FINAL_INSTALL_STATE,
@@ -1127,34 +1212,32 @@ def _validate_install_bootstrap(
         }
         if state != expected_state:
             raise ValueError("install state values mismatch")
-        current_run = run_root.lstat()
-        current_state = state_path.lstat()
-        current_previous = previous.lstat()
-        if (
-            (current_run.st_dev, current_run.st_ino) != (run_stat.st_dev, run_stat.st_ino)
-            or (current_state.st_dev, current_state.st_ino)
-            != (opened_state.st_dev, opened_state.st_ino)
-            or (current_previous.st_dev, current_previous.st_ino)
-            != (previous_stat.st_dev, previous_stat.st_ino)
-            or stat.S_ISLNK(current_run.st_mode)
-            or not stat.S_ISDIR(current_run.st_mode)
-            or stat.S_IMODE(current_run.st_mode) != 0o700
-            or stat.S_ISLNK(current_state.st_mode)
-            or not stat.S_ISREG(current_state.st_mode)
-            or stat.S_IMODE(current_state.st_mode) != 0o600
-            or stat.S_ISLNK(current_previous.st_mode)
-            or not stat.S_ISDIR(current_previous.st_mode)
-            or {entry.name for entry in run_root.iterdir()} != INSTALL_BOOTSTRAP_ENTRIES
-        ):
-            raise ValueError("install bootstrap changed during validation")
-        return _InstallBootstrapBinding(
-            run_device=run_stat.st_dev,
-            run_inode=run_stat.st_ino,
+        binding = _InstallBootstrapBinding(
+            run_device=opened_run.st_dev,
+            run_inode=opened_run.st_ino,
             state_device=opened_state.st_dev,
             state_inode=opened_state.st_ino,
+            state_size=len(state_bytes),
+            state_sha256=state_sha256,
             previous_device=previous_stat.st_dev,
             previous_inode=previous_stat.st_ino,
+            previous_mode=stat.S_IMODE(previous_stat.st_mode),
         )
+        _validate_install_bootstrap_directory_fd(
+            directory_descriptor,
+            binding,
+            preflight_published=False,
+        )
+        current_run = run_root.lstat()
+        if (
+            stat.S_ISLNK(current_run.st_mode)
+            or not stat.S_ISDIR(current_run.st_mode)
+            or stat.S_IMODE(current_run.st_mode) != 0o700
+            or (current_run.st_dev, current_run.st_ino)
+            != (binding.run_device, binding.run_inode)
+        ):
+            raise ValueError("install bootstrap root path changed")
+        return binding
     except (
         LiveMatrixError,
         OSError,
@@ -1165,8 +1248,10 @@ def _validate_install_bootstrap(
     ) as exc:
         raise LiveMatrixError("installation bootstrap is invalid") from exc
     finally:
-        if state_descriptor is not None:
-            os.close(state_descriptor)
+        if previous_descriptor is not None:
+            os.close(previous_descriptor)
+        if directory_descriptor is not None:
+            os.close(directory_descriptor)
 
 
 def _validate_install_bootstrap_directory_fd(
@@ -1175,36 +1260,66 @@ def _validate_install_bootstrap_directory_fd(
     *,
     preflight_published: bool,
 ) -> None:
-    run_stat = os.fstat(directory_descriptor)
-    expected_entries = set(INSTALL_BOOTSTRAP_ENTRIES)
-    if preflight_published:
-        expected_entries.add("preflight.json")
-    entries = set(os.listdir(directory_descriptor))
-    state_stat = os.stat(
-        INSTALL_STATE_FILENAME,
-        dir_fd=directory_descriptor,
-        follow_symlinks=False,
-    )
-    previous_stat = os.stat(
-        INSTALL_PREVIOUS_DIRECTORY_NAME,
-        dir_fd=directory_descriptor,
-        follow_symlinks=False,
-    )
-    if (
-        not stat.S_ISDIR(run_stat.st_mode)
-        or stat.S_IMODE(run_stat.st_mode) != 0o700
-        or (run_stat.st_dev, run_stat.st_ino)
-        != (binding.run_device, binding.run_inode)
-        or entries != expected_entries
-        or not stat.S_ISREG(state_stat.st_mode)
-        or stat.S_IMODE(state_stat.st_mode) != 0o600
-        or (state_stat.st_dev, state_stat.st_ino)
-        != (binding.state_device, binding.state_inode)
-        or not stat.S_ISDIR(previous_stat.st_mode)
-        or (previous_stat.st_dev, previous_stat.st_ino)
-        != (binding.previous_device, binding.previous_inode)
-    ):
-        raise ValueError("install bootstrap binding changed")
+    previous_descriptor: int | None = None
+    try:
+        run_stat = os.fstat(directory_descriptor)
+        expected_entries = set(INSTALL_BOOTSTRAP_ENTRIES)
+        if preflight_published:
+            expected_entries.add("preflight.json")
+        if (
+            not stat.S_ISDIR(run_stat.st_mode)
+            or stat.S_IMODE(run_stat.st_mode) != 0o700
+            or (run_stat.st_dev, run_stat.st_ino)
+            != (binding.run_device, binding.run_inode)
+            or set(os.listdir(directory_descriptor)) != expected_entries
+        ):
+            raise ValueError("install bootstrap root binding changed")
+        _read_bounded_regular_file_at(
+            directory_descriptor,
+            INSTALL_STATE_FILENAME,
+            expected_mode=0o600,
+            expected_device=binding.state_device,
+            expected_inode=binding.state_inode,
+            expected_size=binding.state_size,
+            expected_sha256=binding.state_sha256,
+        )
+        previous_flags = os.O_RDONLY
+        if hasattr(os, "O_DIRECTORY"):
+            previous_flags |= os.O_DIRECTORY
+        if hasattr(os, "O_NOFOLLOW"):
+            previous_flags |= os.O_NOFOLLOW
+        previous_descriptor = os.open(
+            INSTALL_PREVIOUS_DIRECTORY_NAME,
+            previous_flags,
+            dir_fd=directory_descriptor,
+        )
+        previous_stat = os.fstat(previous_descriptor)
+        named_previous = os.stat(
+            INSTALL_PREVIOUS_DIRECTORY_NAME,
+            dir_fd=directory_descriptor,
+            follow_symlinks=False,
+        )
+        expected_previous = (
+            binding.previous_device,
+            binding.previous_inode,
+            binding.previous_mode,
+        )
+        if (
+            not stat.S_ISDIR(previous_stat.st_mode)
+            or (previous_stat.st_dev, previous_stat.st_ino, stat.S_IMODE(previous_stat.st_mode))
+            != expected_previous
+            or (
+                named_previous.st_dev,
+                named_previous.st_ino,
+                stat.S_IMODE(named_previous.st_mode),
+            )
+            != expected_previous
+            or not stat.S_ISDIR(named_previous.st_mode)
+        ):
+            raise ValueError("install bootstrap previous binding changed")
+    finally:
+        if previous_descriptor is not None:
+            os.close(previous_descriptor)
 
 
 def _open_install_bootstrap_directory(
@@ -1237,11 +1352,37 @@ def _open_install_bootstrap_directory(
         raise LiveMatrixError("installation bootstrap is invalid") from exc
 
 
+def _rollback_exact_published_file_at(
+    directory_descriptor: int,
+    filename: str,
+    binding: _PublishedPreflightBinding,
+) -> bool:
+    """Remove only the exact inode created by this publication attempt."""
+    if pathlib.PurePath(filename).name != filename:
+        raise ValueError("invalid rollback filename")
+    try:
+        current = os.stat(
+            filename,
+            dir_fd=directory_descriptor,
+            follow_symlinks=False,
+        )
+    except FileNotFoundError:
+        return True
+    if (
+        not stat.S_ISREG(current.st_mode)
+        or (current.st_dev, current.st_ino) != (binding.device, binding.inode)
+    ):
+        return False
+    os.unlink(filename, dir_fd=directory_descriptor)
+    os.fsync(directory_descriptor)
+    return True
+
+
 def _write_exclusive_json_at(
     directory_descriptor: int,
     filename: str,
     payload: dict[str, Any],
-) -> None:
+) -> _PublishedPreflightBinding:
     if pathlib.PurePath(filename).name != filename:
         raise LiveMatrixError("invalid receipt filename")
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
@@ -1249,8 +1390,11 @@ def _write_exclusive_json_at(
         flags |= os.O_NOFOLLOW
     temporary = f".{filename}.{secrets.token_hex(16)}.partial"
     descriptor: int | None = None
+    temporary_exists = False
+    published: _PublishedPreflightBinding | None = None
     try:
         descriptor = os.open(temporary, flags, 0o600, dir_fd=directory_descriptor)
+        temporary_exists = True
         os.fchmod(descriptor, 0o600)
         encoded = _canonical_json_bytes(payload)
         offset = 0
@@ -1260,6 +1404,20 @@ def _write_exclusive_json_at(
                 raise LiveMatrixError("incomplete receipt write")
             offset += written
         os.fsync(descriptor)
+        created = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(created.st_mode)
+            or stat.S_IMODE(created.st_mode) != 0o600
+            or created.st_size != len(encoded)
+        ):
+            raise LiveMatrixError("invalid receipt inode")
+        published = _PublishedPreflightBinding(
+            device=created.st_dev,
+            inode=created.st_ino,
+            mode=stat.S_IMODE(created.st_mode),
+            size=len(encoded),
+            sha256=hashlib.sha256(encoded).hexdigest(),
+        )
         try:
             os.link(
                 temporary,
@@ -1271,28 +1429,75 @@ def _write_exclusive_json_at(
         except FileExistsError as exc:
             raise LiveMatrixError("receipt already exists") from exc
         os.fsync(directory_descriptor)
+        os.unlink(temporary, dir_fd=directory_descriptor)
+        temporary_exists = False
+        os.fsync(directory_descriptor)
+        if published is None:
+            raise LiveMatrixError("receipt publication binding is missing")
+        return published
+    except LiveMatrixError:
+        if published is not None:
+            try:
+                _rollback_exact_published_file_at(
+                    directory_descriptor, filename, published
+                )
+            except OSError:
+                pass
+        raise
     except OSError as exc:
+        if published is not None:
+            try:
+                _rollback_exact_published_file_at(
+                    directory_descriptor, filename, published
+                )
+            except OSError:
+                pass
         raise LiveMatrixError("cannot publish receipt") from exc
     finally:
         if descriptor is not None:
             os.close(descriptor)
-        try:
-            os.unlink(temporary, dir_fd=directory_descriptor)
-        except FileNotFoundError:
-            pass
+        if temporary_exists:
+            try:
+                os.unlink(temporary, dir_fd=directory_descriptor)
+                os.fsync(directory_descriptor)
+            except OSError:
+                pass
+
+
+def _validate_published_preflight_at(
+    directory_descriptor: int,
+    binding: _PublishedPreflightBinding,
+    payload: dict[str, Any],
+) -> None:
+    expected = _canonical_json_bytes(payload)
+    content, _ = _read_bounded_regular_file_at(
+        directory_descriptor,
+        "preflight.json",
+        expected_mode=binding.mode,
+        expected_device=binding.device,
+        expected_inode=binding.inode,
+        expected_size=binding.size,
+        expected_sha256=binding.sha256,
+    )
+    if content != expected:
+        raise ValueError("published preflight content changed")
 
 
 def _publish_install_bootstrap_preflight(
     run_root: pathlib.Path,
     binding: _InstallBootstrapBinding,
     payload: dict[str, Any],
-) -> None:
+) -> _PublishedPreflightBinding:
     directory_descriptor = _open_install_bootstrap_directory(run_root, binding)
+    published: _PublishedPreflightBinding | None = None
     try:
-        _write_exclusive_json_at(directory_descriptor, "preflight.json", payload)
+        published = _write_exclusive_json_at(
+            directory_descriptor, "preflight.json", payload
+        )
         _validate_install_bootstrap_directory_fd(
             directory_descriptor, binding, preflight_published=True
         )
+        _validate_published_preflight_at(directory_descriptor, published, payload)
         current_root = run_root.lstat()
         if (
             stat.S_ISLNK(current_root.st_mode)
@@ -1301,10 +1506,66 @@ def _publish_install_bootstrap_preflight(
             != (binding.run_device, binding.run_inode)
         ):
             raise ValueError("install bootstrap root path changed")
+        return published
     except (LiveMatrixError, OSError, ValueError) as exc:
+        if published is not None:
+            try:
+                _rollback_exact_published_file_at(
+                    directory_descriptor, "preflight.json", published
+                )
+            except OSError:
+                pass
         raise LiveMatrixError("installation bootstrap is invalid") from exc
     finally:
         os.close(directory_descriptor)
+
+
+def _read_reusable_preflight(run_root: pathlib.Path) -> Any:
+    directory_descriptor: int | None = None
+    try:
+        path_run = run_root.lstat()
+        if (
+            stat.S_ISLNK(path_run.st_mode)
+            or not stat.S_ISDIR(path_run.st_mode)
+            or stat.S_IMODE(path_run.st_mode) != 0o700
+        ):
+            raise ValueError("unsafe preflight run root")
+        flags = os.O_RDONLY
+        if hasattr(os, "O_DIRECTORY"):
+            flags |= os.O_DIRECTORY
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        directory_descriptor = os.open(run_root, flags)
+        opened_run = os.fstat(directory_descriptor)
+        if (
+            not stat.S_ISDIR(opened_run.st_mode)
+            or stat.S_IMODE(opened_run.st_mode) != 0o700
+            or (opened_run.st_dev, opened_run.st_ino)
+            != (path_run.st_dev, path_run.st_ino)
+        ):
+            raise ValueError("preflight run root changed while opening")
+        content, _ = _read_bounded_regular_file_at(
+            directory_descriptor,
+            "preflight.json",
+            expected_mode=0o600,
+        )
+        current_run = run_root.lstat()
+        if (
+            stat.S_ISLNK(current_run.st_mode)
+            or not stat.S_ISDIR(current_run.st_mode)
+            or stat.S_IMODE(current_run.st_mode) != 0o700
+            or (current_run.st_dev, current_run.st_ino)
+            != (opened_run.st_dev, opened_run.st_ino)
+        ):
+            raise ValueError("preflight run root changed while reading")
+        return json.loads(content.decode("utf-8"))
+    except FileNotFoundError as exc:
+        raise LiveMatrixError("preflight receipt is required before execution") from exc
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        raise LiveMatrixError("malformed preflight receipt") from exc
+    finally:
+        if directory_descriptor is not None:
+            os.close(directory_descriptor)
 
 
 def _run_root(
@@ -1341,8 +1602,6 @@ def _run_root(
         raise LiveMatrixError("evidence root is not a real directory")
     if run_root.is_symlink() or not run_root.is_dir():
         raise LiveMatrixError("run root is not a real directory")
-    if bootstrap_binding is None:
-        os.chmod(run_root, 0o700)
     return run_root, bootstrap_binding
 
 
@@ -1433,6 +1692,11 @@ def validate_preflight(
     }
     run_root = None
     report_state = None
+    pending_bootstrap_publication: tuple[
+        pathlib.Path,
+        _InstallBootstrapBinding,
+        dict[str, Any],
+    ] | None = None
     if evidence_root is not None:
         first_preflight = not (reuse_preflight or resume)
         install_bootstrap = (
@@ -1463,21 +1727,17 @@ def validate_preflight(
             "model_discovery_sha256": hashlib.sha256(discovery).hexdigest() if discovery is not None else None,
             "model_discovery_diagnostic": discovery_diagnostic,
         }
-        preflight_path = run_root / "preflight.json"
         if resume or reuse_preflight:
-            if not preflight_path.exists():
-                raise LiveMatrixError("preflight receipt is required before execution")
-            try:
-                previous = json.loads(preflight_path.read_text(encoding="utf-8"))
-            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-                raise LiveMatrixError("malformed preflight receipt") from exc
+            previous = _read_reusable_preflight(run_root)
             if not isinstance(previous, dict) or previous.get("identity") != identity_json(identity):
                 raise LiveMatrixError("preflight identity drift requires a new run ID")
         else:
             if bootstrap_binding is None:
                 raise LiveMatrixError("installation bootstrap is invalid")
-            _publish_install_bootstrap_preflight(
-                run_root, bootstrap_binding, preflight_payload
+            pending_bootstrap_publication = (
+                run_root,
+                bootstrap_binding,
+                preflight_payload,
             )
         if report_target is not None and resume:
             existing_state = _load_report_state(run_root)
@@ -1495,6 +1755,8 @@ def validate_preflight(
         repo_root, allowed_report=report_target if report_state is not None else None, report_state=report_state
     ):
         raise LiveMatrixError("relevant checkout is not clean")
+    if pending_bootstrap_publication is not None:
+        _publish_install_bootstrap_preflight(*pending_bootstrap_publication)
     return PreflightResult(
         identity=identity,
         repository_root=repo_root,

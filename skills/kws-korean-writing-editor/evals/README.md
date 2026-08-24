@@ -95,12 +95,12 @@ source/install hashes, and current source/install/previous manifest hashes must
 all match the validated filesystem state.
 
 The approved Task 7 baseline run ID is
-`kws-editor-20260823-baseline-01`, and the approved operations artifact date is
-intentionally `2026-08-23`. Keep both values unchanged across the 2026-08-24
-wall-date rollover; do not substitute the current date.
+`kws-editor-20260823-baseline-02` because run-01 is already consumed, while the
+approved operations artifact date remains intentionally `2026-08-23`. Keep
+run-02 and that report date unchanged; do not substitute the current date.
 
 ```bash
-RUN_ID="kws-editor-20260823-baseline-01"
+RUN_ID="kws-editor-20260823-baseline-02"
 python3 skills/kws-korean-writing-editor/evals/live_matrix.py \
   --preflight --scope baseline --run-id "$RUN_ID" --jobs 3 --max-calls 122 \
   --evidence-root .superpowers/kws-korean-writing-editor/live \
@@ -116,7 +116,7 @@ After explicit authorization, execute the same preflighted identity. This is
 the operation that may be billable.
 
 ```bash
-RUN_ID="kws-editor-20260823-baseline-01"
+RUN_ID="kws-editor-20260823-baseline-02"
 python3 skills/kws-korean-writing-editor/evals/live_matrix.py \
   --execute --scope baseline --run-id "$RUN_ID" --jobs 3 --max-calls 122 \
   --evidence-root .superpowers/kws-korean-writing-editor/live \
@@ -160,7 +160,7 @@ persistent directory or target drift fails before another call or successful
 publication.
 
 ```bash
-RUN_ID="kws-editor-20260823-baseline-01"
+RUN_ID="kws-editor-20260823-baseline-02"
 python3 skills/kws-korean-writing-editor/evals/live_matrix.py \
   --execute --resume --scope baseline --run-id "$RUN_ID" --jobs 3 --max-calls 122 \
   --evidence-root .superpowers/kws-korean-writing-editor/live \
