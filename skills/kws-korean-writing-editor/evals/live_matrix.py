@@ -81,7 +81,7 @@ ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 MAX_STREAM_BYTES = 131_072
 COMMAND_TIMEOUT_SECONDS = 300
 DIAGNOSTIC_TAIL_BYTES = 256
-RUNNER_VERSION = "9"
+RUNNER_VERSION = "10"
 RUN_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 MIN_JOBS = 1
 MAX_JOBS = 4
@@ -524,6 +524,46 @@ class ReportLease:
             os.close(self.directory_fd)
 
 
+@dataclass
+class PreflightLease:
+    """Held evidence bindings that remain live through provider authorization."""
+
+    run_root: pathlib.Path
+    directory_fd: int
+    directory_device: int
+    directory_inode: int
+    bootstrap: _InstallBootstrapBinding
+    marker_fd: int
+    marker_binding: _PublishedPreflightBinding
+    marker_bytes: bytes
+    preflight_fd: int
+    preflight_binding: _PublishedPreflightBinding
+    preflight_bytes: bytes
+    closed: bool = False
+
+    def validate_for_dispatch(self) -> None:
+        _validate_preflight_lease(self)
+
+    def close(self) -> None:
+        if self.closed:
+            return
+        self.closed = True
+        try:
+            os.close(self.preflight_fd)
+        finally:
+            try:
+                os.close(self.marker_fd)
+            finally:
+                os.close(self.directory_fd)
+
+    def __del__(self) -> None:
+        if not self.closed:
+            try:
+                self.close()
+            except OSError:
+                pass
+
+
 @dataclass(frozen=True)
 class PreflightResult:
     identity: RunIdentity
@@ -539,6 +579,7 @@ class PreflightResult:
     report_path: pathlib.Path | None = None
     report_state: ReportState | None = None
     report_lease: ReportLease | None = None
+    preflight_lease: PreflightLease | None = None
     git_facts: GitReportFacts | None = None
 
 
@@ -1304,6 +1345,121 @@ def validate_evidence_root(
     return expected
 
 
+def _read_held_regular_file_at(
+    directory_descriptor: int,
+    filename: str,
+    descriptor: int,
+    *,
+    expected_mode: int,
+    expected_device: int | None = None,
+    expected_inode: int | None = None,
+    expected_size: int | None = None,
+    expected_sha256: str | None = None,
+    max_bytes: int = MAX_STREAM_BYTES,
+) -> tuple[bytes, os.stat_result]:
+    """Re-read one held file and prove its current name still binds that inode."""
+    if pathlib.PurePath(filename).name != filename:
+        raise ValueError("invalid bounded filename")
+    opened = os.fstat(descriptor)
+    if (
+        not stat.S_ISREG(opened.st_mode)
+        or stat.S_IMODE(opened.st_mode) != expected_mode
+        or opened.st_size > max_bytes
+        or (expected_device is not None and opened.st_dev != expected_device)
+        or (expected_inode is not None and opened.st_ino != expected_inode)
+        or (expected_size is not None and opened.st_size != expected_size)
+    ):
+        raise ValueError("unsafe bounded file")
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    chunks: list[bytes] = []
+    remaining = max_bytes + 1
+    while remaining > 0:
+        chunk = os.read(descriptor, min(65_536, remaining))
+        if not chunk:
+            break
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    content = b"".join(chunks)
+    if len(content) > max_bytes:
+        raise ValueError("bounded file exceeds limit")
+    after_read = os.fstat(descriptor)
+    named = os.stat(filename, dir_fd=directory_descriptor, follow_symlinks=False)
+    opened_identity = (
+        opened.st_dev,
+        opened.st_ino,
+        opened.st_mode,
+        opened.st_size,
+        opened.st_mtime_ns,
+        opened.st_ctime_ns,
+    )
+    if (
+        (
+            after_read.st_dev,
+            after_read.st_ino,
+            after_read.st_mode,
+            after_read.st_size,
+            after_read.st_mtime_ns,
+            after_read.st_ctime_ns,
+        )
+        != opened_identity
+        or (
+            named.st_dev,
+            named.st_ino,
+            named.st_mode,
+            named.st_size,
+            named.st_mtime_ns,
+            named.st_ctime_ns,
+        )
+        != opened_identity
+        or len(content) != opened.st_size
+    ):
+        raise ValueError("bounded file changed while reading")
+    digest = hashlib.sha256(content).hexdigest()
+    if expected_sha256 is not None and digest != expected_sha256:
+        raise ValueError("bounded file digest changed")
+    return content, opened
+
+
+def _open_bounded_regular_file_at(
+    directory_descriptor: int,
+    filename: str,
+    *,
+    expected_mode: int,
+    expected_device: int | None = None,
+    expected_inode: int | None = None,
+    expected_size: int | None = None,
+    expected_sha256: str | None = None,
+    max_bytes: int = MAX_STREAM_BYTES,
+) -> tuple[int, bytes, os.stat_result]:
+    """Open and initially validate one bounded no-follow regular-file lease."""
+    if pathlib.PurePath(filename).name != filename:
+        raise ValueError("invalid bounded filename")
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    if hasattr(os, "O_NONBLOCK"):
+        flags |= os.O_NONBLOCK
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    descriptor = os.open(filename, flags, dir_fd=directory_descriptor)
+    try:
+        content, opened = _read_held_regular_file_at(
+            directory_descriptor,
+            filename,
+            descriptor,
+            expected_mode=expected_mode,
+            expected_device=expected_device,
+            expected_inode=expected_inode,
+            expected_size=expected_size,
+            expected_sha256=expected_sha256,
+            max_bytes=max_bytes,
+        )
+        return descriptor, content, opened
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
 def _read_bounded_regular_file_at(
     directory_descriptor: int,
     filename: str,
@@ -1315,56 +1471,21 @@ def _read_bounded_regular_file_at(
     expected_sha256: str | None = None,
     max_bytes: int = MAX_STREAM_BYTES,
 ) -> tuple[bytes, os.stat_result]:
-    """Read one stable regular file through a held directory without following links."""
-    if pathlib.PurePath(filename).name != filename:
-        raise ValueError("invalid bounded filename")
-    descriptor: int | None = None
+    """Read one stable regular file and close its no-follow descriptor."""
+    descriptor, content, opened = _open_bounded_regular_file_at(
+        directory_descriptor,
+        filename,
+        expected_mode=expected_mode,
+        expected_device=expected_device,
+        expected_inode=expected_inode,
+        expected_size=expected_size,
+        expected_sha256=expected_sha256,
+        max_bytes=max_bytes,
+    )
     try:
-        flags = os.O_RDONLY
-        if hasattr(os, "O_NOFOLLOW"):
-            flags |= os.O_NOFOLLOW
-        if hasattr(os, "O_NONBLOCK"):
-            flags |= os.O_NONBLOCK
-        descriptor = os.open(filename, flags, dir_fd=directory_descriptor)
-        opened = os.fstat(descriptor)
-        if (
-            not stat.S_ISREG(opened.st_mode)
-            or stat.S_IMODE(opened.st_mode) != expected_mode
-            or opened.st_size > max_bytes
-            or (expected_device is not None and opened.st_dev != expected_device)
-            or (expected_inode is not None and opened.st_ino != expected_inode)
-            or (expected_size is not None and opened.st_size != expected_size)
-        ):
-            raise ValueError("unsafe bounded file")
-        chunks: list[bytes] = []
-        remaining = max_bytes + 1
-        while remaining > 0:
-            chunk = os.read(descriptor, min(65_536, remaining))
-            if not chunk:
-                break
-            chunks.append(chunk)
-            remaining -= len(chunk)
-        content = b"".join(chunks)
-        if len(content) > max_bytes:
-            raise ValueError("bounded file exceeds limit")
-        after_read = os.fstat(descriptor)
-        named = os.stat(filename, dir_fd=directory_descriptor, follow_symlinks=False)
-        opened_identity = (opened.st_dev, opened.st_ino, opened.st_mode, opened.st_size)
-        if (
-            (after_read.st_dev, after_read.st_ino, after_read.st_mode, after_read.st_size)
-            != opened_identity
-            or (named.st_dev, named.st_ino, named.st_mode, named.st_size)
-            != opened_identity
-            or len(content) != opened.st_size
-        ):
-            raise ValueError("bounded file changed while reading")
-        digest = hashlib.sha256(content).hexdigest()
-        if expected_sha256 is not None and digest != expected_sha256:
-            raise ValueError("bounded file digest changed")
         return content, opened
     finally:
-        if descriptor is not None:
-            os.close(descriptor)
+        os.close(descriptor)
 
 
 def _validate_install_bootstrap(
@@ -1940,13 +2061,97 @@ def _strict_commit_integer(value: Any, label: str) -> int:
     return value
 
 
+def _validate_preflight_lease(lease: PreflightLease) -> None:
+    """Linearize one authorization against held evidence and its current names."""
+    if lease.closed:
+        raise LiveMatrixError("preflight evidence lease is closed")
+    try:
+        opened_run = os.fstat(lease.directory_fd)
+        current_run = lease.run_root.lstat()
+        if (
+            not stat.S_ISDIR(opened_run.st_mode)
+            or stat.S_IMODE(opened_run.st_mode) != 0o700
+            or (opened_run.st_dev, opened_run.st_ino)
+            != (lease.directory_device, lease.directory_inode)
+            or stat.S_ISLNK(current_run.st_mode)
+            or not stat.S_ISDIR(current_run.st_mode)
+            or stat.S_IMODE(current_run.st_mode) != 0o700
+            or (current_run.st_dev, current_run.st_ino)
+            != (lease.directory_device, lease.directory_inode)
+        ):
+            raise ValueError("preflight run root binding changed")
+
+        entries = set(os.listdir(lease.directory_fd))
+        if not INSTALL_COMMITTED_ENTRIES.issubset(entries) or not entries.issubset(
+            KNOWN_RUN_ENTRIES
+        ):
+            raise ValueError("committed run root entries are invalid")
+
+        _validate_install_bootstrap_bound_inputs_fd(
+            lease.directory_fd,
+            lease.bootstrap,
+        )
+        final_run = os.fstat(lease.directory_fd)
+        final_path = lease.run_root.lstat()
+        final_entries = set(os.listdir(lease.directory_fd))
+        if (
+            (final_run.st_dev, final_run.st_ino, stat.S_IMODE(final_run.st_mode))
+            != (lease.directory_device, lease.directory_inode, 0o700)
+            or stat.S_ISLNK(final_path.st_mode)
+            or not stat.S_ISDIR(final_path.st_mode)
+            or (
+                final_path.st_dev,
+                final_path.st_ino,
+                stat.S_IMODE(final_path.st_mode),
+            )
+            != (lease.directory_device, lease.directory_inode, 0o700)
+            or not INSTALL_COMMITTED_ENTRIES.issubset(final_entries)
+            or not final_entries.issubset(KNOWN_RUN_ENTRIES)
+        ):
+            raise ValueError("preflight final authorization boundary changed")
+
+        marker_content, _ = _read_held_regular_file_at(
+            lease.directory_fd,
+            PREFLIGHT_COMMIT_FILENAME,
+            lease.marker_fd,
+            expected_mode=lease.marker_binding.mode,
+            expected_device=lease.marker_binding.device,
+            expected_inode=lease.marker_binding.inode,
+            expected_size=lease.marker_binding.size,
+            expected_sha256=lease.marker_binding.sha256,
+            max_bytes=MAX_COMMIT_MARKER_BYTES,
+        )
+        preflight_content, _ = _read_held_regular_file_at(
+            lease.directory_fd,
+            PREFLIGHT_FILENAME,
+            lease.preflight_fd,
+            expected_mode=lease.preflight_binding.mode,
+            expected_device=lease.preflight_binding.device,
+            expected_inode=lease.preflight_binding.inode,
+            expected_size=lease.preflight_binding.size,
+            expected_sha256=lease.preflight_binding.sha256,
+        )
+        if (
+            marker_content != lease.marker_bytes
+            or preflight_content != lease.preflight_bytes
+        ):
+            raise ValueError("preflight evidence bytes changed")
+    except LiveMatrixError:
+        raise
+    except (OSError, RecursionError, ValueError) as exc:
+        raise LiveMatrixError("preflight evidence binding changed") from exc
+
+
 def _read_reusable_preflight(
     run_root: pathlib.Path,
     *,
     expected_payload: dict[str, Any],
     run_id: str,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], PreflightLease]:
     directory_descriptor: int | None = None
+    marker_descriptor: int | None = None
+    preflight_descriptor: int | None = None
+    lease: PreflightLease | None = None
     try:
         path_run = run_root.lstat()
         if (
@@ -1969,7 +2174,7 @@ def _read_reusable_preflight(
             != (path_run.st_dev, path_run.st_ino)
         ):
             raise ValueError("preflight run root changed while opening")
-        marker_bytes, opened_marker = _read_bounded_regular_file_at(
+        marker_descriptor, marker_bytes, opened_marker = _open_bounded_regular_file_at(
             directory_descriptor,
             PREFLIGHT_COMMIT_FILENAME,
             expected_mode=0o600,
@@ -2022,6 +2227,13 @@ def _read_reusable_preflight(
             stat.S_IMODE(opened_marker.st_mode),
         ):
             raise ValueError("commit marker inode mismatch")
+        marker_binding = _PublishedPreflightBinding(
+            device=opened_marker.st_dev,
+            inode=opened_marker.st_ino,
+            mode=stat.S_IMODE(opened_marker.st_mode),
+            size=len(marker_bytes),
+            sha256=hashlib.sha256(marker_bytes).hexdigest(),
+        )
 
         bootstrap = _strict_commit_object(
             marker_payload["bootstrap"],
@@ -2104,7 +2316,7 @@ def _read_reusable_preflight(
             or preflight_bytes != expected_bytes
         ):
             raise LiveMatrixError("preflight identity drift requires a new run ID")
-        content, _ = _read_bounded_regular_file_at(
+        preflight_descriptor, content, _ = _open_bounded_regular_file_at(
             directory_descriptor,
             PREFLIGHT_FILENAME,
             expected_mode=preflight_binding.mode,
@@ -2127,10 +2339,31 @@ def _read_reusable_preflight(
             != (opened_run.st_dev, opened_run.st_ino)
         ):
             raise ValueError("preflight run root changed while reading")
-        return parsed_preflight
+        lease = PreflightLease(
+            run_root=run_root,
+            directory_fd=directory_descriptor,
+            directory_device=opened_run.st_dev,
+            directory_inode=opened_run.st_ino,
+            bootstrap=binding,
+            marker_fd=marker_descriptor,
+            marker_binding=marker_binding,
+            marker_bytes=marker_bytes,
+            preflight_fd=preflight_descriptor,
+            preflight_binding=preflight_binding,
+            preflight_bytes=preflight_bytes,
+        )
+        directory_descriptor = None
+        marker_descriptor = None
+        preflight_descriptor = None
+        lease.validate_for_dispatch()
+        result = lease
+        lease = None
+        return parsed_preflight, result
     except FileNotFoundError as exc:
         raise LiveMatrixError("preflight receipt is required before execution") from exc
     except LiveMatrixError:
+        if lease is not None:
+            lease.close()
         raise
     except (
         OSError,
@@ -2141,6 +2374,16 @@ def _read_reusable_preflight(
     ) as exc:
         raise LiveMatrixError("malformed preflight receipt") from exc
     finally:
+        if preflight_descriptor is not None:
+            try:
+                os.close(preflight_descriptor)
+            except OSError:
+                pass
+        if marker_descriptor is not None:
+            try:
+                os.close(marker_descriptor)
+            except OSError:
+                pass
         if directory_descriptor is not None:
             try:
                 os.close(directory_descriptor)
@@ -2272,6 +2515,7 @@ def validate_preflight(
     }
     run_root = None
     report_state = None
+    preflight_lease = None
     pending_bootstrap_publication: tuple[
         pathlib.Path,
         _InstallBootstrapBinding,
@@ -2308,7 +2552,7 @@ def validate_preflight(
             "model_discovery_diagnostic": discovery_diagnostic,
         }
         if resume or reuse_preflight:
-            _read_reusable_preflight(
+            _, preflight_lease = _read_reusable_preflight(
                 run_root,
                 expected_payload=preflight_payload,
                 run_id=run_id,
@@ -2321,24 +2565,40 @@ def validate_preflight(
                 bootstrap_binding,
                 preflight_payload,
             )
-        if report_target is not None and resume:
-            existing_state = _load_report_state(run_root)
-            if existing_state is None:
-                if report_target.exists() or report_target.is_symlink():
-                    raise LiveMatrixError("operations report exists without matching run state")
-            else:
-                _validate_report_state_target(
-                    existing_state, repo_root, report_target, identity
+        try:
+            if report_target is not None and resume:
+                existing_state = _load_report_state(run_root)
+                if existing_state is None:
+                    if report_target.exists() or report_target.is_symlink():
+                        raise LiveMatrixError(
+                            "operations report exists without matching run state"
+                        )
+                else:
+                    _validate_report_state_target(
+                        existing_state, repo_root, report_target, identity
+                    )
+                    report_state = existing_state
+            elif report_target is not None and report_target.exists():
+                raise LiveMatrixError(
+                    "operations report already exists without matching run state"
                 )
-                report_state = existing_state
-        elif report_target is not None and report_target.exists():
-            raise LiveMatrixError("operations report already exists without matching run state")
-    if not _git_status_is_clean(
-        repo_root, allowed_report=report_target if report_state is not None else None, report_state=report_state
-    ):
-        raise LiveMatrixError("relevant checkout is not clean")
-    if pending_bootstrap_publication is not None:
-        _publish_install_bootstrap_preflight(*pending_bootstrap_publication)
+        except BaseException:
+            if preflight_lease is not None:
+                preflight_lease.close()
+            raise
+    try:
+        if not _git_status_is_clean(
+            repo_root,
+            allowed_report=report_target if report_state is not None else None,
+            report_state=report_state,
+        ):
+            raise LiveMatrixError("relevant checkout is not clean")
+        if pending_bootstrap_publication is not None:
+            _publish_install_bootstrap_preflight(*pending_bootstrap_publication)
+    except BaseException:
+        if preflight_lease is not None:
+            preflight_lease.close()
+        raise
     return PreflightResult(
         identity=identity,
         repository_root=repo_root,
@@ -2352,6 +2612,7 @@ def validate_preflight(
         discovery_diagnostic=discovery_diagnostic,
         report_path=report_target,
         report_state=report_state,
+        preflight_lease=preflight_lease,
         git_facts=git_facts,
     )
 
@@ -3456,6 +3717,13 @@ def validate_dispatch_identity(preflight: PreflightResult) -> None:
         raise LiveMatrixError("dispatch identity drift: live case manifest is unsafe")
     if _sha256_file(live_cases) != preflight.identity.live_cases_hash:
         raise LiveMatrixError("dispatch identity drift: live cases changed")
+    preflight_lease = preflight.preflight_lease
+    if preflight.identity.runner_version == RUNNER_VERSION:
+        if preflight_lease is None:
+            raise LiveMatrixError("dispatch requires one active preflight evidence lease")
+        preflight_lease.validate_for_dispatch()
+    elif preflight_lease is not None:
+        preflight_lease.validate_for_dispatch()
 
 
 def dispatch_calls(
@@ -5207,6 +5475,7 @@ def main(argv: list[str] | None = None) -> int:
         repository_root / ".superpowers" / "kws-korean-writing-editor" / "live"
     )
     report_lease: ReportLease | None = None
+    preflight_lease: PreflightLease | None = None
     try:
         preflight = validate_preflight(
             source_skill_root=source_root,
@@ -5222,6 +5491,8 @@ def main(argv: list[str] | None = None) -> int:
             report_path=args.report,
             remediation_call_ids=tuple(args.remediation_call),
         )
+        if isinstance(preflight, PreflightResult):
+            preflight_lease = preflight.preflight_lease
         if args.execute:
             report_path = (
                 _validated_operations_report_path(args.report, preflight.repository_root)
@@ -5379,6 +5650,8 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         if report_lease is not None:
             report_lease.close()
+        if preflight_lease is not None:
+            preflight_lease.close()
     print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
     return 0
 

@@ -429,7 +429,13 @@ GUIDE_PREFLIGHT_COMMIT_PARAGRAPH = (
     "inode, mode, size, SHA-256, canonical bytes, bootstrap state and previous-tree "
     "binding, runner version, and run ID. Reuse opens both files with bounded "
     "`O_NOFOLLOW` reads through the same held run-directory FD and compares every "
-    "current preflight payload field exactly."
+    "current preflight payload field exactly. It retains those three descriptors "
+    "through execution and, immediately before every provider attempt reservation, "
+    "rechecks their exact held bytes and metadata, both current evidence names, the "
+    "bootstrap inputs, and the exact known run-directory entry set. Completion of "
+    "that recheck is the authorization linearization point: a later swap can affect "
+    "at most the immediately reserved attempt, while persistent drift blocks every "
+    "later reservation."
 )
 GUIDE_IDENTITY_PARAGRAPH = (
     "Resume validates the complete current preflight payload: run ID, runner "
@@ -2720,6 +2726,351 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
                             run_id=run_id,
                             reuse_preflight=True,
                         )
+
+    def test_reuse_rechecks_evidence_names_after_intervening_validation(self) -> None:
+        def rewrite_same_inode(path: pathlib.Path) -> None:
+            original = path.read_bytes()
+            replacement = bytes([original[0] ^ 1]) + original[1:]
+            with path.open("r+b") as stream:
+                stream.write(replacement)
+                stream.flush()
+                os.fsync(stream.fileno())
+
+        def replace_with_regular(path: pathlib.Path) -> None:
+            publisher = path.parent.parent / f".{path.parent.name}-{path.name}-publisher"
+            path.rename(publisher)
+            path.write_bytes(b"attacker replacement\n")
+            path.chmod(0o600)
+
+        def replace_with_symlink(path: pathlib.Path) -> None:
+            publisher = path.parent.parent / f".{path.parent.name}-{path.name}-publisher"
+            path.rename(publisher)
+            path.symlink_to(publisher)
+
+        def chmod_unsafe(path: pathlib.Path) -> None:
+            path.chmod(0o644)
+
+        def replace_with_fifo(path: pathlib.Path) -> None:
+            publisher = path.parent.parent / f".{path.parent.name}-{path.name}-publisher"
+            path.rename(publisher)
+            os.mkfifo(path, 0o600)
+
+        mutations = (
+            ("same-inode byte rewrite", rewrite_same_inode),
+            ("different-inode regular replacement", replace_with_regular),
+            ("symlink replacement", replace_with_symlink),
+            ("unsafe mode", chmod_unsafe),
+            ("special replacement", replace_with_fifo),
+        )
+        evidence_files = (
+            live_matrix.PREFLIGHT_COMMIT_FILENAME,
+            live_matrix.PREFLIGHT_FILENAME,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root, source, installed, evidence_root = temporary_git_install_fixture(directory)
+            for target_name in evidence_files:
+                for index, (label, mutate) in enumerate(mutations, start=1):
+                    with self.subTest(target=target_name, mutation=label):
+                        target_tag = (
+                            "marker"
+                            if target_name == live_matrix.PREFLIGHT_COMMIT_FILENAME
+                            else "preflight"
+                        )
+                        run_id = f"reuse-binding-{target_tag}-{index}"
+                        run_root = write_complete_install_bootstrap(
+                            evidence_root, run_id, source, installed
+                        )
+                        self.validate_fixture_preflight(
+                            root=root,
+                            source=source,
+                            installed=installed,
+                            evidence_root=evidence_root,
+                            run_id=run_id,
+                        )
+                        target = run_root / target_name
+                        original_bytes = target.read_bytes()
+                        mutated = False
+                        reused: live_matrix.PreflightResult | None = None
+
+                        with contextlib.ExitStack() as stack:
+                            if target_name == live_matrix.PREFLIGHT_COMMIT_FILENAME:
+                                original_validate = (
+                                    live_matrix._validate_install_bootstrap_bound_inputs_fd
+                                )
+
+                                def mutate_during_bootstrap_validation(
+                                    directory_descriptor: int,
+                                    binding: live_matrix._InstallBootstrapBinding,
+                                ) -> None:
+                                    nonlocal mutated
+                                    original_validate(directory_descriptor, binding)
+                                    if not mutated:
+                                        mutate(target)
+                                        mutated = True
+
+                                stack.enter_context(
+                                    mock.patch(
+                                        "live_matrix._validate_install_bootstrap_bound_inputs_fd",
+                                        side_effect=mutate_during_bootstrap_validation,
+                                    )
+                                )
+                            else:
+                                original_loads = json.loads
+
+                                def mutate_while_parsing_preflight(
+                                    value: object,
+                                    *args: object,
+                                    **kwargs: object,
+                                ) -> object:
+                                    nonlocal mutated
+                                    parsed = original_loads(value, *args, **kwargs)
+                                    encoded_value = (
+                                        value.encode("utf-8")
+                                        if isinstance(value, str)
+                                        else value
+                                    )
+                                    if encoded_value == original_bytes and not mutated:
+                                        mutate(target)
+                                        mutated = True
+                                    return parsed
+
+                                stack.enter_context(
+                                    mock.patch(
+                                        "live_matrix.json.loads",
+                                        side_effect=mutate_while_parsing_preflight,
+                                    )
+                                )
+                            try:
+                                with self.assertRaises(live_matrix.LiveMatrixError):
+                                    reused = self.validate_fixture_preflight(
+                                        root=root,
+                                        source=source,
+                                        installed=installed,
+                                        evidence_root=evidence_root,
+                                        run_id=run_id,
+                                        reuse_preflight=True,
+                                    )
+                            finally:
+                                lease = getattr(reused, "preflight_lease", None)
+                                if lease is not None:
+                                    lease.close()
+
+                        self.assertTrue(mutated)
+                        if label == "same-inode byte rewrite":
+                            self.assertEqual(target.stat().st_size, len(original_bytes))
+                            self.assertNotEqual(target.read_bytes(), original_bytes)
+                        elif label == "different-inode regular replacement":
+                            self.assertEqual(target.read_bytes(), b"attacker replacement\n")
+                        elif label == "symlink replacement":
+                            self.assertTrue(target.is_symlink())
+                        elif label == "unsafe mode":
+                            self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o644)
+                        else:
+                            self.assertTrue(stat.S_ISFIFO(target.lstat().st_mode))
+
+    def test_dispatch_revalidates_leased_preflight_evidence_before_provider(self) -> None:
+        def replace_with_invalid_regular(path: pathlib.Path) -> None:
+            publisher = path.parent.parent / f".{path.parent.name}-{path.name}-publisher"
+            path.rename(publisher)
+            path.write_bytes(b"attacker replacement\n")
+            path.chmod(0o600)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root, source, installed, evidence_root = temporary_git_install_fixture(directory)
+            cases = live_matrix.load_live_cases(source / "evals" / "live_cases.json")
+            full_plan = live_matrix.build_producer_plan(cases, live_matrix.build_producers())
+            call = next(item for item in full_plan if item.producer_id == "codex-direct")
+            for target_name in (
+                live_matrix.PREFLIGHT_COMMIT_FILENAME,
+                live_matrix.PREFLIGHT_FILENAME,
+            ):
+                with self.subTest(target=target_name):
+                    target_tag = (
+                        "marker"
+                        if target_name == live_matrix.PREFLIGHT_COMMIT_FILENAME
+                        else "preflight"
+                    )
+                    run_id = f"dispatch-binding-{target_tag}"
+                    run_root = write_complete_install_bootstrap(
+                        evidence_root, run_id, source, installed
+                    )
+                    arguments = {
+                        "root": root,
+                        "source": source,
+                        "installed": installed,
+                        "evidence_root": evidence_root,
+                        "run_id": run_id,
+                        "scope": "remediation",
+                        "max_calls": 38,
+                        "remediation_call_ids": (call.call_id,),
+                    }
+                    self.validate_fixture_preflight(**arguments)
+                    reused = self.validate_fixture_preflight(
+                        **arguments,
+                        reuse_preflight=True,
+                    )
+                    reused = dataclasses.replace(
+                        reused,
+                        cli_info={
+                            **reused.cli_info,
+                            "codex": live_matrix.CliInfo("codex", "fixture", None),
+                        },
+                    )
+                    replace_with_invalid_regular(run_root / target_name)
+                    original_run_command = live_matrix.run_command
+                    provider_calls = 0
+
+                    def provider_boundary(
+                        argv: tuple[str, ...],
+                        cwd: pathlib.Path,
+                        timeout: int = live_matrix.COMMAND_TIMEOUT_SECONDS,
+                    ) -> live_matrix.CommandCapture:
+                        nonlocal provider_calls
+                        if argv[0] == "codex":
+                            provider_calls += 1
+                            return live_matrix.CommandCapture(
+                                0,
+                                b'{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}\n',
+                                b"",
+                                1,
+                            )
+                        return original_run_command(argv, cwd=cwd, timeout=timeout)
+
+                    try:
+                        with mock.patch(
+                            "live_matrix.run_command", side_effect=provider_boundary
+                        ):
+                            with self.assertRaises(live_matrix.LiveMatrixError):
+                                live_matrix.dispatch_calls(
+                                    reused,
+                                    (call,),
+                                    cases,
+                                    jobs=1,
+                                    max_calls=38,
+                                )
+                        self.assertEqual(provider_calls, 0)
+                        self.assertEqual(
+                            (run_root / target_name).read_bytes(),
+                            b"attacker replacement\n",
+                        )
+                    finally:
+                        lease = getattr(reused, "preflight_lease", None)
+                        if lease is not None:
+                            lease.close()
+
+    def test_held_evidence_read_rejects_same_size_rewrite_during_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            evidence = root / "evidence.json"
+            original = b'{"safe":"original"}\n'
+            replacement = b'{"safe":"attacker"}\n'
+            self.assertEqual(len(original), len(replacement))
+            evidence.write_bytes(original)
+            evidence.chmod(0o600)
+            directory_descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+            evidence_descriptor = os.open(
+                evidence.name,
+                os.O_RDONLY | os.O_NOFOLLOW,
+                dir_fd=directory_descriptor,
+            )
+            original_fstat = os.fstat
+            evidence_fstats = 0
+
+            def rewrite_before_stability_check(descriptor: int) -> os.stat_result:
+                nonlocal evidence_fstats
+                if descriptor == evidence_descriptor:
+                    evidence_fstats += 1
+                    if evidence_fstats == 2:
+                        evidence.write_bytes(replacement)
+                return original_fstat(descriptor)
+
+            try:
+                with mock.patch(
+                    "live_matrix.os.fstat", side_effect=rewrite_before_stability_check
+                ):
+                    with self.assertRaises(ValueError):
+                        live_matrix._read_held_regular_file_at(
+                            directory_descriptor,
+                            evidence.name,
+                            evidence_descriptor,
+                            expected_mode=0o600,
+                            expected_device=original_fstat(evidence_descriptor).st_dev,
+                            expected_inode=original_fstat(evidence_descriptor).st_ino,
+                            expected_size=len(original),
+                            expected_sha256=hashlib.sha256(original).hexdigest(),
+                        )
+                self.assertEqual(evidence_fstats, 2)
+                self.assertEqual(evidence.read_bytes(), replacement)
+            finally:
+                os.close(evidence_descriptor)
+                os.close(directory_descriptor)
+
+    def test_evidence_name_recheck_is_the_final_lease_authorization_step(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root, source, installed, evidence_root = temporary_git_install_fixture(directory)
+            for target_name in (
+                live_matrix.PREFLIGHT_COMMIT_FILENAME,
+                live_matrix.PREFLIGHT_FILENAME,
+            ):
+                with self.subTest(target=target_name):
+                    target_tag = (
+                        "marker"
+                        if target_name == live_matrix.PREFLIGHT_COMMIT_FILENAME
+                        else "preflight"
+                    )
+                    run_id = f"final-binding-{target_tag}"
+                    run_root = write_complete_install_bootstrap(
+                        evidence_root, run_id, source, installed
+                    )
+                    self.validate_fixture_preflight(
+                        root=root,
+                        source=source,
+                        installed=installed,
+                        evidence_root=evidence_root,
+                        run_id=run_id,
+                    )
+                    reused = self.validate_fixture_preflight(
+                        root=root,
+                        source=source,
+                        installed=installed,
+                        evidence_root=evidence_root,
+                        run_id=run_id,
+                        reuse_preflight=True,
+                    )
+                    lease = reused.preflight_lease
+                    self.assertIsNotNone(lease)
+                    assert lease is not None
+                    original_listdir = os.listdir
+                    root_listings = 0
+
+                    def replace_during_final_root_check(path: object) -> list[str]:
+                        nonlocal root_listings
+                        if path == lease.directory_fd:
+                            root_listings += 1
+                            if root_listings == 2:
+                                target = run_root / target_name
+                                publisher = run_root.parent / (
+                                    f".{run_root.name}-{target.name}.publisher"
+                                )
+                                target.rename(publisher)
+                                target.write_bytes(b"attacker replacement\n")
+                                target.chmod(0o600)
+                        return original_listdir(path)
+
+                    try:
+                        with mock.patch(
+                            "live_matrix.os.listdir",
+                            side_effect=replace_during_final_root_check,
+                        ):
+                            with self.assertRaises(live_matrix.LiveMatrixError):
+                                lease.validate_for_dispatch()
+                        self.assertEqual(root_listings, 2)
+                        self.assertEqual(
+                            (run_root / target_name).read_bytes(),
+                            b"attacker replacement\n",
+                        )
+                    finally:
+                        lease.close()
 
     def test_reuse_compares_every_preflight_field_to_current_expected_payload(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
