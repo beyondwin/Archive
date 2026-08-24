@@ -448,7 +448,9 @@ GUIDE_RECEIPT_SCHEMA_PARAGRAPH = (
     "Receipt JSON uses an exact top-level key schema; unknown or omitted keys "
     "fail closed. Explicit runner-version-10 compatibility permits its omitted "
     "per-finding `certainty`, which reads as `hard`, and its original empty-finding "
-    "`partially_verified` shape. A positive call number can never claim "
+    "`partially_verified` shape. It does not permit an omitted top-level `band`; "
+    "all 122 retained version-10 receipts contain that field. A positive call "
+    "number can never claim "
     "`not_measured`, including on resume, so a forged terminal receipt cannot hide a "
     "charged call from the remaining-work or budget ledger."
 )
@@ -1165,6 +1167,93 @@ class LiveCaseManifestTests(unittest.TestCase):
         self.assertEqual(len(plan), 119)
         self.assertEqual(len({call.call_id for call in plan}), 119)
 
+    def test_producer_identity_order_and_plan_are_exact_immutable_tuples(self) -> None:
+        producers = live_matrix.build_producers()
+        self.assertIsInstance(producers, tuple)
+        self.assertEqual(
+            tuple(
+                (producer.id, producer.host, producer.requested_model)
+                for producer in producers
+            ),
+            (
+                ("codex-direct", "codex", None),
+                ("cursor-auto", "cursor", "auto"),
+                ("cursor-claude", "cursor", "claude-sonnet-5-thinking-high"),
+                ("cursor-gemini", "cursor", "gemini-3.7-flash-high"),
+                ("cursor-grok", "cursor", "cursor-grok-4.6-high"),
+                ("cursor-kimi", "cursor", "kimi-k3-high"),
+                ("cursor-glm", "cursor", "glm-5.2-high"),
+            ),
+        )
+        self.assertIsNone(producers[0].requested_model)
+
+        cases = (
+            dataclasses.replace(self.cases[0], repeats=2),
+            dataclasses.replace(self.cases[1], repeats=1),
+        )
+        plan = live_matrix.build_producer_plan(cases, producers[:2])
+        self.assertIsInstance(plan, tuple)
+        self.assertEqual(
+            tuple(
+                (
+                    call.call_id,
+                    call.kind,
+                    call.producer_id,
+                    call.case_id,
+                    call.repeat_index,
+                )
+                for call in plan
+            ),
+            (
+                (
+                    "codex-direct:correct-obligation:1",
+                    "producer",
+                    "codex-direct",
+                    "correct-obligation",
+                    1,
+                ),
+                (
+                    "codex-direct:correct-obligation:2",
+                    "producer",
+                    "codex-direct",
+                    "correct-obligation",
+                    2,
+                ),
+                (
+                    "codex-direct:polish-local-flow:1",
+                    "producer",
+                    "codex-direct",
+                    "polish-local-flow",
+                    1,
+                ),
+                (
+                    "cursor-auto:correct-obligation:1",
+                    "producer",
+                    "cursor-auto",
+                    "correct-obligation",
+                    1,
+                ),
+                (
+                    "cursor-auto:correct-obligation:2",
+                    "producer",
+                    "cursor-auto",
+                    "correct-obligation",
+                    2,
+                ),
+                (
+                    "cursor-auto:polish-local-flow:1",
+                    "producer",
+                    "cursor-auto",
+                    "polish-local-flow",
+                    1,
+                ),
+            ),
+        )
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            producers[0].id = "changed"  # type: ignore[misc]
+        with self.assertRaises(TypeError):
+            plan[0] = plan[-1]  # type: ignore[index]
+
     def test_dry_run_has_no_subprocess(self) -> None:
         output = io.StringIO()
         with mock.patch("live_matrix.subprocess.run") as run:
@@ -1751,6 +1840,18 @@ class ProviderAdapterTests(unittest.TestCase):
             with self.assertRaisesRegex(live_matrix.LiveMatrixError, "timed out"):
                 live_matrix.run_command(("provider",), cwd=pathlib.Path("/repo"))
 
+    def test_run_command_rejects_scalar_argv_without_starting_subprocess(self) -> None:
+        for argv in ("provider --flag", b"provider --flag"):
+            with self.subTest(argv_type=type(argv).__name__):
+                with mock.patch("live_matrix.subprocess.run") as run:
+                    with self.assertRaisesRegex(
+                        live_matrix.LiveMatrixError, "invalid argv"
+                    ):
+                        live_matrix.run_command(  # type: ignore[arg-type]
+                            argv, cwd=pathlib.Path("/repo")
+                        )
+                run.assert_not_called()
+
     def test_run_command_rejects_each_oversized_stream(self) -> None:
         for stdout, stderr in (
             (b"x" * 131_073, b""),
@@ -1769,6 +1870,23 @@ class ProviderAdapterTests(unittest.TestCase):
         self.assertNotIn("bearer-secret", message)
         self.assertNotIn("sk-secret", message)
         self.assertIn("sha256=", message)
+
+    def test_diagnostic_redacts_long_secrets_before_tail_bounding(self) -> None:
+        for secret_prefix, fragment in (
+            ("api_key=", "unique-key-fragment-271828"),
+            ("Bearer ", "unique-bearer-fragment-314159"),
+            ("sk-", "unique-sk-fragment-161803"),
+        ):
+            with self.subTest(secret_prefix=secret_prefix):
+                secret = secret_prefix + ("x" * 400) + fragment
+                data = (("safe-prefix-" * 80) + secret).encode()
+
+                message = live_matrix.redacted_diagnostic("stderr", data)
+
+                self.assertNotIn(fragment, message)
+                self.assertNotIn(fragment[-12:], message)
+                self.assertIn("stderr_bytes=", message)
+                self.assertIn("stderr_sha256=", message)
 
 
 class ReceiptAndBudgetTests(unittest.TestCase):
@@ -4287,6 +4405,16 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
                     live_matrix.LiveMatrixError, "malformed receipt"
                 ):
                     live_matrix._receipt_from_json(candidate)
+
+    def test_v10_receipt_missing_band_is_not_a_legacy_exception(self) -> None:
+        payload = strict_receipt_payload()
+        identity = payload["identity"]
+        self.assertIsInstance(identity, dict)
+        self.assertEqual(identity["runner_version"], "10")
+        del payload["band"]
+
+        with self.assertRaisesRegex(live_matrix.LiveMatrixError, "malformed receipt"):
+            live_matrix._receipt_from_json(payload)
 
     def test_receipt_rejects_every_malformed_scalar_and_terminal_shape(self) -> None:
         payload = strict_receipt_payload()
