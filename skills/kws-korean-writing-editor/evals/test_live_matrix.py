@@ -386,6 +386,13 @@ GUIDE_BODY_INTEGRITY_PARAGRAPH = (
     "`prompt_sha256` matches the current review packet; stale, missing, deleted, "
     "or mutable evidence fails closed before packet or report success."
 )
+GUIDE_RECEIPT_SCHEMA_PARAGRAPH = (
+    "Receipt JSON uses an exact top-level key schema; unknown or omitted keys "
+    "fail closed. The only legacy compatibility is an omitted per-finding "
+    "`certainty`, which reads as `hard`. A positive call number can never claim "
+    "`not_measured`, including on resume, so a forged terminal receipt cannot "
+    "hide a charged call from the remaining-work or budget ledger."
+)
 GUIDE_PRIVACY_PARAGRAPH = (
     "Use synthetic prompts only. Do not place private manuscripts, credentials, "
     "secrets, personal data, or full provider transcripts in `live_cases.json`, "
@@ -486,6 +493,16 @@ GUIDE_JUDGE_PARAGRAPH = (
     "`hard`. Reviewer packets and reports keep not-measured signals separate from "
     "hard findings."
 )
+GUIDE_REVIEW_PACKET_PARAGRAPH = (
+    "The packet contains at most eight evidence samples plus exactly four band "
+    "controls. Within those existing eight evidence slots, up to two deterministic "
+    "`semantic_not_measured` representatives are selected before hard-failure "
+    "representatives, prioritizing diagnostic and structural semantic families. "
+    "Each sample has an explicit `sample_kind`; hard findings and not-deterministically "
+    "measured signals remain separate, and representative case IDs and response "
+    "hashes stay bound to the durable receipt. Selection is stable under input "
+    "ordering, deduplicated, identity-redacted, and never expands the 8+4 cap."
+)
 
 GUIDE_STATUS_DEFINITIONS = (
     (
@@ -520,6 +537,7 @@ GUIDE_EXPECTED_SECTIONS = (
             GUIDE_DURABLE_EVIDENCE_PARAGRAPH,
             GUIDE_BODY_INTEGRITY_PARAGRAPH,
             "A missing executable or another pre-invocation prerequisite stops before reservation and consumes zero calls; the run remains blocked. A requested Cursor model known to be unavailable emits an honest zero-provider `not_measured` receipt and consumes zero calls.",
+            GUIDE_RECEIPT_SCHEMA_PARAGRAPH,
         ),
     ),
     ("Safety And Privacy", (GUIDE_PRIVACY_PARAGRAPH,)),
@@ -562,6 +580,7 @@ GUIDE_EXPECTED_SECTIONS = (
         "Review Packet",
         (
             "The baseline reserves three reviewer calls after the producer matrix. Review packets contain bounded synthetic candidates rather than full transcripts. Reviewer opinions are diagnostic evidence, not an automatic release decision or a numeric truth score.",
+            GUIDE_REVIEW_PACKET_PARAGRAPH,
         ),
     ),
     (
@@ -651,6 +670,7 @@ def assert_live_guide_contract(markdown: str) -> None:
         GUIDE_RESERVATION_PARAGRAPH,
         GUIDE_DURABLE_EVIDENCE_PARAGRAPH,
         GUIDE_BODY_INTEGRITY_PARAGRAPH,
+        GUIDE_RECEIPT_SCHEMA_PARAGRAPH,
         GUIDE_PRIVACY_PARAGRAPH,
         GUIDE_OFFLINE_PARAGRAPH,
         GUIDE_PREFLIGHT_COMMIT_PARAGRAPH,
@@ -658,6 +678,7 @@ def assert_live_guide_contract(markdown: str) -> None:
         GUIDE_IDENTITY_PARAGRAPH,
         GUIDE_LEASE_PARAGRAPH,
         GUIDE_JUDGE_PARAGRAPH,
+        GUIDE_REVIEW_PACKET_PARAGRAPH,
         GUIDE_ACTIVATION_PARAGRAPH,
     ):
         assert normalized_markdown_paragraphs(markdown).count(paragraph) == 1
@@ -1157,6 +1178,32 @@ class DeterministicEvaluationTests(unittest.TestCase):
         case = case_by_id("diagnose-no-rewrite")
         findings = live_matrix.evaluate_response(case, "지금 상태에선 배포할 수 있다.")
         self.assertIn("forbidden_exact_output", {finding.code for finding in findings})
+
+    def test_diagnose_without_preserve_counts_never_verifies_unproven_semantics(self) -> None:
+        case = case_by_id("diagnose-no-rewrite")
+        responses = (
+            "배포할수라는 표현에는 아무 문제가 없습니다.",
+            "배포할수는 완벽하므로 바로 실행하면 됩니다.",
+        )
+
+        for response in responses:
+            with self.subTest(response=response):
+                self.assert_soft_partial(
+                    case, response, "diagnostic_semantics_not_measured"
+                )
+
+    def test_diagnose_exact_positive_canonical_form_can_verify(self) -> None:
+        case = dataclasses.replace(
+            case_by_id("diagnose-no-rewrite"),
+            exact_output="배포할수는 띄어쓰기 오류입니다.",
+        )
+        response = unicodedata.normalize(
+            "NFD", "배포할수는\u00a0띄어쓰기 오류입니다．"
+        )
+
+        findings = live_matrix.evaluate_response(case, response)
+        self.assertEqual(findings, ())
+        self.assertEqual(live_matrix.case_status(case, findings), "verified")
 
     def test_diagnose_required_phrase_allows_separated_fact_terms(self) -> None:
         case = case_by_id("hold-high-stakes")
@@ -1658,6 +1705,35 @@ class ReceiptAndBudgetTests(unittest.TestCase):
                 {"c": receipt},
                 live_matrix.RunIdentity.for_test(skill_hash="different"),
             )
+
+    def test_resume_rejects_positive_not_measured_but_skips_true_zero_provider(self) -> None:
+        identity = live_matrix.RunIdentity.for_test()
+        call = live_matrix.PlannedCall(
+            "producer:case:1", "producer", "producer", "case", 1
+        )
+        forged = live_matrix.CallReceipt.for_test(
+            call.call_id,
+            identity=identity,
+            status="not_measured",
+            call_number=1,
+            case_id=call.case_id,
+        )
+
+        with self.assertRaisesRegex(
+            live_matrix.LiveMatrixError, "positive.*not_measured"
+        ):
+            live_matrix.remaining_calls((call,), {call.call_id: forged}, identity)
+
+        zero = live_matrix._not_measured_receipt(
+            call,
+            live_matrix.Producer("producer", "cursor", "missing-model"),
+            identity,
+            "requested model is unavailable",
+        )
+        self.assertEqual(
+            live_matrix.remaining_calls((call,), {call.call_id: zero}, identity),
+            (),
+        )
 
     def test_jobs_above_four_fail(self) -> None:
         self.assertIn("jobs must be between 1 and 4", live_matrix.validate_jobs(5))
@@ -3864,6 +3940,58 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
         receipt = live_matrix.CallReceipt.for_test("call-1", repeat_index=2)
         self.assertEqual(live_matrix._receipt_from_json(receipt.as_json()), receipt)
 
+    def test_receipt_requires_exact_top_level_schema(self) -> None:
+        payload = live_matrix.CallReceipt.for_test("call-1").as_json()
+        required_fields = {
+            "band",
+            "call_id",
+            "call_number",
+            "case_id",
+            "duration_ms",
+            "exit_code",
+            "findings",
+            "finished_at",
+            "host",
+            "identity",
+            "kind",
+            "logical_call_id",
+            "prompt_sha256",
+            "raw_paths",
+            "reported_model",
+            "repeat_index",
+            "requested_model",
+            "response_sha256",
+            "started_at",
+            "status",
+            "stderr_bytes",
+            "stderr_sha256",
+            "stdout_bytes",
+            "stdout_sha256",
+        }
+        self.assertEqual(set(payload), required_fields)
+
+        malformed = ({**payload, "unknown": "field"},)
+        for field in sorted(required_fields):
+            candidate = copy.deepcopy(payload)
+            del candidate[field]
+            malformed += (candidate,)
+        for candidate in malformed:
+            with self.subTest(keys=sorted(candidate)):
+                with self.assertRaisesRegex(
+                    live_matrix.LiveMatrixError, "malformed receipt"
+                ):
+                    live_matrix._receipt_from_json(candidate)
+
+    def test_positive_call_number_cannot_claim_not_measured_status(self) -> None:
+        receipt = live_matrix.CallReceipt.for_test(
+            "call-1", status="not_measured", call_number=1
+        )
+
+        with self.assertRaisesRegex(
+            live_matrix.LiveMatrixError, "positive.*not_measured"
+        ):
+            live_matrix._receipt_from_json(receipt.as_json())
+
     def test_receipt_round_trips_soft_certainty_and_reads_legacy_hard_findings(self) -> None:
         soft = live_matrix.Finding(
             "diagnostic_semantics_not_measured",
@@ -4756,6 +4884,158 @@ class ReviewAndReportTests(unittest.TestCase):
             packet["samples"][0]["not_measured_signals"],
             ["structural_semantics_not_measured"],
         )
+
+    def test_packet_reserves_two_of_eight_evidence_slots_for_balanced_soft_samples(self) -> None:
+        soft_receipts = (
+            live_matrix.CallReceipt.for_test(
+                "soft-diagnostic-later",
+                status="partially_verified",
+                case_id="z-diagnose",
+                band="valid-mode",
+                response_sha256="d" * 64,
+                findings=(
+                    live_matrix.Finding(
+                        "diagnostic_semantics_not_measured",
+                        "diagnostic meaning is not deterministically measured",
+                        certainty="not_measured",
+                    ),
+                ),
+            ),
+            live_matrix.CallReceipt.for_test(
+                "soft-structural",
+                status="partially_verified",
+                case_id="a-structure",
+                band="preservation",
+                response_sha256="e" * 64,
+                findings=(
+                    live_matrix.Finding(
+                        "structural_semantics_not_measured",
+                        "structural meaning is not deterministically measured",
+                        certainty="not_measured",
+                    ),
+                ),
+            ),
+            live_matrix.CallReceipt.for_test(
+                "soft-structural-duplicate-candidate",
+                status="partially_verified",
+                case_id="a-diagnose",
+                band="valid-mode",
+                response_sha256="f" * 64,
+                findings=(
+                    live_matrix.Finding(
+                        "structural_semantics_not_measured",
+                        "the same candidate must not occupy a second evidence slot",
+                        certainty="not_measured",
+                    ),
+                ),
+            ),
+            live_matrix.CallReceipt.for_test(
+                "soft-diagnostic-first",
+                status="partially_verified",
+                case_id="a-diagnose",
+                band="valid-mode",
+                response_sha256="f" * 64,
+                findings=(
+                    live_matrix.Finding(
+                        "diagnostic_semantics_not_measured",
+                        "diagnostic meaning is not deterministically measured",
+                        certainty="not_measured",
+                    ),
+                ),
+            ),
+            live_matrix.CallReceipt.for_test(
+                "soft-extra",
+                status="partially_verified",
+                case_id="a-other",
+                band="near-miss",
+                response_sha256="a" * 64,
+                findings=(
+                    live_matrix.Finding(
+                        "other_semantics_not_measured",
+                        "other meaning is not deterministically measured",
+                        certainty="not_measured",
+                    ),
+                ),
+            ),
+        )
+        hard_and_controls = synthetic_receipts_for_test(10, 4)
+        receipts = soft_receipts + hard_and_controls
+
+        samples = live_matrix.select_review_samples(tuple(reversed(receipts)))
+        forward = live_matrix.select_review_samples(receipts)
+
+        self.assertEqual(samples, forward)
+        self.assertEqual(len(samples), 12)
+        evidence = [sample for sample in samples if sample.sample_kind != "control"]
+        controls = [sample for sample in samples if sample.sample_kind == "control"]
+        soft = [
+            sample
+            for sample in evidence
+            if sample.sample_kind == "semantic_not_measured"
+        ]
+        hard = [sample for sample in evidence if sample.sample_kind == "hard_failure"]
+        self.assertEqual(len(evidence), 8)
+        self.assertEqual(len(soft), 2)
+        self.assertEqual(len(hard), 6)
+        self.assertEqual(len(controls), 4)
+        self.assertEqual(
+            [(sample.case_id, sample.band, sample.not_measured_signals, sample.response_sha256) for sample in soft],
+            [
+                (
+                    "a-diagnose",
+                    "valid-mode",
+                    ("diagnostic_semantics_not_measured",),
+                    "f" * 64,
+                ),
+                (
+                    "a-structure",
+                    "preservation",
+                    ("structural_semantics_not_measured",),
+                    "e" * 64,
+                ),
+            ],
+        )
+        self.assertTrue(all(not sample.is_failure for sample in soft))
+        self.assertTrue(all(sample.hard_findings == () for sample in soft))
+
+    def test_soft_packet_serialization_is_typed_and_identity_free(self) -> None:
+        receipt = live_matrix.CallReceipt.for_test(
+            "private-producer:diagnose:1",
+            status="partially_verified",
+            case_id="diagnose-case",
+            band="valid-mode",
+            requested_model="secret-model",
+            reported_model="secret-model",
+            response_sha256="b" * 64,
+            findings=(
+                live_matrix.Finding(
+                    "diagnostic_semantics_not_measured",
+                    "diagnostic meaning is not deterministically measured",
+                    certainty="not_measured",
+                ),
+            ),
+            identity=live_matrix.RunIdentity.for_test(
+                producer_ids=("private-producer",)
+            ),
+        )
+        samples = live_matrix.select_review_samples(
+            (receipt,),
+            responses={
+                receipt.call_id: "private-producer secret-model sk-private-12345678"
+            },
+        )
+
+        packet_text = live_matrix.build_review_prompt(samples)
+        packet = json.loads(packet_text.split("Review packet:\n", 1)[1])
+        soft = packet["samples"][0]
+        self.assertEqual(soft["sample_kind"], "semantic_not_measured")
+        self.assertEqual(soft["hard_findings"], [])
+        self.assertEqual(
+            soft["not_measured_signals"],
+            ["diagnostic_semantics_not_measured"],
+        )
+        for secret in ("private-producer", "secret-model", "sk-private-12345678"):
+            self.assertNotIn(secret, packet_text)
 
     def test_packet_removes_producer_identity_and_bounds_redacted_excerpt(self) -> None:
         receipts = synthetic_receipts_for_test(1, 4)
