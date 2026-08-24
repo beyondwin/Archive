@@ -1,0 +1,37 @@
+{
+  "bootstrap": {
+    "previous": {
+      "device": 0,
+      "inode": 0,
+      "manifest_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "mode": 493
+    },
+    "run_root": {
+      "device": 0,
+      "inode": 0
+    },
+    "state": {
+      "device": 0,
+      "inode": 0,
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "size": 0
+    }
+  },
+  "commit_state": "validated_preflight_committed",
+  "marker": {
+    "device": 0,
+    "inode": 0,
+    "mode": 384
+  },
+  "preflight": {
+    "canonical_json": "{}\n",
+    "device": 0,
+    "inode": 0,
+    "mode": 384,
+    "sha256": "fcd393d2c13bad308661b62b34d9c3234a3ce840e22909b0a180e85f76b5d24d",
+    "size": 3
+  },
+  "run_id": "fixture-run",
+  "runner_version": "9",
+  "schema_version": 1
+}
