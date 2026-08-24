@@ -99,7 +99,7 @@ ORACLE_PUNCTUATION_TRANSLATION = str.maketrans(
 MAX_STREAM_BYTES = 131_072
 COMMAND_TIMEOUT_SECONDS = 300
 DIAGNOSTIC_TAIL_BYTES = 256
-RUNNER_VERSION = "16"
+RUNNER_VERSION = "17"
 RUN_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 MIN_JOBS = 1
 MAX_JOBS = 4
@@ -135,6 +135,13 @@ MAX_INSTALL_MANIFEST_DEPTH = 64
 MAX_INSTALL_MANIFEST_ENTRIES = 10_000
 MAX_INSTALL_MANIFEST_FILE_BYTES = 8 * 1024 * 1024
 MAX_INSTALL_MANIFEST_TOTAL_BYTES = 64 * 1024 * 1024
+MAX_PYTHON_CACHE_FILES = 1_024
+MAX_PYTHON_CACHE_FILE_BYTES = 8 * 1024 * 1024
+MAX_PYTHON_CACHE_TOTAL_BYTES = 64 * 1024 * 1024
+MAX_PYTHON_CACHE_FILENAME_BYTES = 255
+PYTHON_CACHE_FILENAME_RE = re.compile(
+    r"^[A-Za-z0-9_][A-Za-z0-9_.-]*\.(?:pyc|pyo)$"
+)
 INSTALL_STATE_FIELDS = frozenset(
     {
         "install_state",
@@ -220,7 +227,7 @@ GIT_OBJECT_ID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 SAFE_METADATA_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$")
 FINDING_CODE_RE = re.compile(r"^[a-z0-9]+(?:[_-][a-z0-9]+)*$")
 SUPPORTED_RECEIPT_RUNNER_VERSIONS = frozenset(
-    {"10", "11", "12", "13", "14", "15", RUNNER_VERSION}
+    {"10", "11", "12", "13", "14", "15", "16", RUNNER_VERSION}
 )
 RECEIPT_TIMESTAMP_RE = re.compile(
     r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$"
@@ -1113,12 +1120,163 @@ def _validate_skill_identity(root: pathlib.Path, label: str) -> None:
         raise LiveMatrixError(f"{label} is not the Korean editor skill")
 
 
+def _manifest_entry_identity(entry_stat: os.stat_result) -> tuple[int, ...]:
+    """Return the stable fields used to prove one held manifest entry."""
+    return (
+        entry_stat.st_dev,
+        entry_stat.st_ino,
+        entry_stat.st_mode,
+        entry_stat.st_size,
+        entry_stat.st_mtime_ns,
+        entry_stat.st_ctime_ns,
+    )
+
+
+def _validate_python_cache_directory_fd(
+    directory_descriptor: int,
+    expected_stat: os.stat_result,
+    *,
+    prior_file_count: int,
+    prior_total_bytes: int,
+) -> tuple[int, int]:
+    """Validate one ignored Python cache through a held, no-follow descriptor."""
+    try:
+        opened_directory = os.fstat(directory_descriptor)
+        expected_identity = (
+            expected_stat.st_dev,
+            expected_stat.st_ino,
+            expected_stat.st_mode,
+        )
+        if (
+            not stat.S_ISDIR(opened_directory.st_mode)
+            or (
+                opened_directory.st_dev,
+                opened_directory.st_ino,
+                opened_directory.st_mode,
+            )
+            != expected_identity
+        ):
+            raise LiveMatrixError("Python cache directory changed while opening")
+
+        def cache_names() -> tuple[tuple[bytes, str], ...]:
+            names: list[tuple[bytes, str]] = []
+            with os.scandir(directory_descriptor) as iterator:
+                for entry in iterator:
+                    name = entry.name
+                    if type(name) is not str or name in {".", ".."} or "/" in name:
+                        raise LiveMatrixError("Python cache contains an invalid name")
+                    encoded_name = name.encode("utf-8")
+                    if (
+                        len(encoded_name) > MAX_PYTHON_CACHE_FILENAME_BYTES
+                        or PYTHON_CACHE_FILENAME_RE.fullmatch(name) is None
+                    ):
+                        raise LiveMatrixError(
+                            "Python cache contains an unexpected entry"
+                        )
+                    if prior_file_count + len(names) >= MAX_PYTHON_CACHE_FILES:
+                        raise LiveMatrixError(
+                            "Python cache file count exceeds limit"
+                        )
+                    names.append((encoded_name, name))
+            names.sort(key=lambda item: item[0])
+            return tuple(names)
+
+        before_names = cache_names()
+        file_count = prior_file_count
+        total_bytes = prior_total_bytes
+        for _encoded_name, name in before_names:
+            named_before = os.stat(
+                name,
+                dir_fd=directory_descriptor,
+                follow_symlinks=False,
+            )
+            if stat.S_ISLNK(named_before.st_mode):
+                raise LiveMatrixError("Python cache contains symlink")
+            if not stat.S_ISREG(named_before.st_mode):
+                raise LiveMatrixError("Python cache contains unsupported entry type")
+            file_count += 1
+            if file_count > MAX_PYTHON_CACHE_FILES:
+                raise LiveMatrixError("Python cache file count exceeds limit")
+            if named_before.st_size > MAX_PYTHON_CACHE_FILE_BYTES:
+                raise LiveMatrixError("Python cache file exceeds limit")
+            if total_bytes + named_before.st_size > MAX_PYTHON_CACHE_TOTAL_BYTES:
+                raise LiveMatrixError("Python cache total bytes exceed limit")
+
+            flags = os.O_RDONLY
+            if hasattr(os, "O_NOFOLLOW"):
+                flags |= os.O_NOFOLLOW
+            if hasattr(os, "O_NONBLOCK"):
+                flags |= os.O_NONBLOCK
+            file_descriptor = os.open(
+                name,
+                flags,
+                dir_fd=directory_descriptor,
+            )
+            try:
+                opened_file = os.fstat(file_descriptor)
+                expected_file_identity = _manifest_entry_identity(named_before)
+                if (
+                    not stat.S_ISREG(opened_file.st_mode)
+                    or _manifest_entry_identity(opened_file)
+                    != expected_file_identity
+                ):
+                    raise LiveMatrixError("Python cache file changed while opening")
+                read_size = 0
+                while True:
+                    chunk = os.read(file_descriptor, 65_536)
+                    if not chunk:
+                        break
+                    read_size += len(chunk)
+                    if read_size > MAX_PYTHON_CACHE_FILE_BYTES:
+                        raise LiveMatrixError("Python cache file exceeds limit")
+                    if (
+                        total_bytes + read_size
+                        > MAX_PYTHON_CACHE_TOTAL_BYTES
+                    ):
+                        raise LiveMatrixError("Python cache total bytes exceed limit")
+                after_file = os.fstat(file_descriptor)
+                named_after = os.stat(
+                    name,
+                    dir_fd=directory_descriptor,
+                    follow_symlinks=False,
+                )
+                if (
+                    read_size != opened_file.st_size
+                    or _manifest_entry_identity(after_file)
+                    != expected_file_identity
+                    or _manifest_entry_identity(named_after)
+                    != expected_file_identity
+                ):
+                    raise LiveMatrixError("Python cache file changed during validation")
+                total_bytes += read_size
+            finally:
+                os.close(file_descriptor)
+
+        if cache_names() != before_names:
+            raise LiveMatrixError("Python cache directory changed during validation")
+        after_directory = os.fstat(directory_descriptor)
+        if (
+            after_directory.st_dev,
+            after_directory.st_ino,
+            after_directory.st_mode,
+        ) != expected_identity:
+            raise LiveMatrixError("Python cache directory changed during validation")
+        return file_count, total_bytes
+    except LiveMatrixError:
+        raise
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise LiveMatrixError("cannot validate Python cache safely") from exc
+
+
 def recursive_manifest_hash(root: pathlib.Path) -> str:
     """Hash an exact tree without following symlinks or accepting special files."""
     safe_root = _checked_directory(root, "manifest root")
     digest = hashlib.sha256()
+    cache_file_count = 0
+    cache_total_bytes = 0
 
     def add_entry(path: pathlib.Path) -> None:
+        nonlocal cache_file_count, cache_total_bytes
         try:
             path.relative_to(safe_root)
             entry_stat = path.lstat()
@@ -1126,6 +1284,49 @@ def recursive_manifest_hash(root: pathlib.Path) -> str:
             raise LiveMatrixError("manifest path escapes root") from exc
         relative = path.relative_to(safe_root).as_posix().encode("utf-8")
         mode = stat.S_IMODE(entry_stat.st_mode)
+        if path != safe_root and path.name == "__pycache__":
+            if stat.S_ISLNK(entry_stat.st_mode):
+                raise LiveMatrixError("Python cache directory must not be a symlink")
+            if not stat.S_ISDIR(entry_stat.st_mode):
+                raise LiveMatrixError("Python cache entry must be a directory")
+            flags = os.O_RDONLY
+            if hasattr(os, "O_DIRECTORY"):
+                flags |= os.O_DIRECTORY
+            if hasattr(os, "O_NOFOLLOW"):
+                flags |= os.O_NOFOLLOW
+            if hasattr(os, "O_NONBLOCK"):
+                flags |= os.O_NONBLOCK
+            try:
+                cache_descriptor = os.open(path, flags)
+            except OSError as exc:
+                raise LiveMatrixError("cannot open Python cache safely") from exc
+            try:
+                cache_file_count, cache_total_bytes = (
+                    _validate_python_cache_directory_fd(
+                        cache_descriptor,
+                        entry_stat,
+                        prior_file_count=cache_file_count,
+                        prior_total_bytes=cache_total_bytes,
+                    )
+                )
+                named_after = path.lstat()
+                if (
+                    named_after.st_dev,
+                    named_after.st_ino,
+                    named_after.st_mode,
+                ) != (
+                    entry_stat.st_dev,
+                    entry_stat.st_ino,
+                    entry_stat.st_mode,
+                ):
+                    raise LiveMatrixError(
+                        "Python cache directory changed during validation"
+                    )
+            except OSError as exc:
+                raise LiveMatrixError("cannot validate Python cache safely") from exc
+            finally:
+                os.close(cache_descriptor)
+            return
         if stat.S_ISLNK(entry_stat.st_mode):
             raise LiveMatrixError("manifest contains symlink")
         if stat.S_ISDIR(entry_stat.st_mode):
@@ -1172,6 +1373,8 @@ def _recursive_manifest_hash_fd(root_descriptor: int) -> str:
     digest = hashlib.sha256()
     entry_count = 0
     total_file_bytes = 0
+    cache_file_count = 0
+    cache_total_bytes = 0
     try:
         root_stat = os.fstat(root_descriptor)
         if not stat.S_ISDIR(root_stat.st_mode):
@@ -1205,7 +1408,7 @@ def _recursive_manifest_hash_fd(root_descriptor: int) -> str:
             expected_stat: os.stat_result,
             depth: int,
         ) -> None:
-            nonlocal total_file_bytes
+            nonlocal cache_file_count, cache_total_bytes, total_file_bytes
             if depth > MAX_INSTALL_MANIFEST_DEPTH:
                 raise LiveMatrixError("manifest depth exceeds limit")
             opened_directory = os.fstat(directory_descriptor)
@@ -1237,6 +1440,56 @@ def _recursive_manifest_hash_fd(root_descriptor: int) -> str:
                     if relative == b"."
                     else relative + b"/" + encoded_name
                 )
+                if name == "__pycache__":
+                    if stat.S_ISLNK(named_before.st_mode):
+                        raise LiveMatrixError(
+                            "Python cache directory must not be a symlink"
+                        )
+                    if not stat.S_ISDIR(named_before.st_mode):
+                        raise LiveMatrixError(
+                            "Python cache entry must be a directory"
+                        )
+                    flags = os.O_RDONLY
+                    if hasattr(os, "O_DIRECTORY"):
+                        flags |= os.O_DIRECTORY
+                    if hasattr(os, "O_NOFOLLOW"):
+                        flags |= os.O_NOFOLLOW
+                    if hasattr(os, "O_NONBLOCK"):
+                        flags |= os.O_NONBLOCK
+                    cache_descriptor = os.open(
+                        name,
+                        flags,
+                        dir_fd=directory_descriptor,
+                    )
+                    try:
+                        cache_file_count, cache_total_bytes = (
+                            _validate_python_cache_directory_fd(
+                                cache_descriptor,
+                                named_before,
+                                prior_file_count=cache_file_count,
+                                prior_total_bytes=cache_total_bytes,
+                            )
+                        )
+                        named_after = os.stat(
+                            name,
+                            dir_fd=directory_descriptor,
+                            follow_symlinks=False,
+                        )
+                        if (
+                            named_after.st_dev,
+                            named_after.st_ino,
+                            named_after.st_mode,
+                        ) != (
+                            named_before.st_dev,
+                            named_before.st_ino,
+                            named_before.st_mode,
+                        ):
+                            raise LiveMatrixError(
+                                "Python cache directory changed during validation"
+                            )
+                    finally:
+                        os.close(cache_descriptor)
+                    continue
                 if stat.S_ISLNK(named_before.st_mode):
                     raise LiveMatrixError("manifest contains symlink")
                 if stat.S_ISDIR(named_before.st_mode):

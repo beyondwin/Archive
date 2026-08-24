@@ -102,6 +102,16 @@ swap state, equal source/install hashes, and current source/install hashes must
 match, while the complete previous tree is bounded and hashed recursively
 through its held directory FD with no symlinks or special files.
 
+Package manifests omit only validated runtime Python cache directories. Each
+omitted `__pycache__` must be a real directory containing only bounded regular
+ASCII-named `*.pyc` or `*.pyo` files; held no-follow descriptors prove every
+file and directory name remains bound to the validated inode. Symlinks, special
+files, nested directories, unexpected names, races, and limit violations fail
+closed. Cache bytes, timestamps, and presence do not change the reviewed
+package hash, while every non-cache entry still does. The path-based
+source/install hash and FD-relative previous-tree hash apply this identical
+policy.
+
 Preflight holds the same run-directory FD, rechecks the exact install-state
 bytes and recursive previous-tree manifest before and after publishing pending
 mode-`0600` `preflight.json` and `preflight-commit.json` files, and never unlinks
@@ -199,7 +209,7 @@ Completed `verified`, `partially_verified`, `failed`, and `not_measured`
 receipts remain complete. A `blocked` logical call may receive a new actual
 `:attempt-N` ID only when spare budget remains.
 
-Runner version 16 validates the exact receipt and nested identity/finding
+Runner version 17 validates the exact receipt and nested identity/finding
 schemas at load, publication, resume budgeting, report assembly, and review
 sampling. Integers reject booleans and out-of-range values; timestamps, hashes,
 stream byte/hash pairs, terminal statuses, evidence paths, call identity, and
@@ -208,7 +218,7 @@ later step. Every current `partially_verified` receipt carries at least one
 typed `not_measured` finding. Immutable runner-version-10 evidence remains
 readable with only its original omitted finding certainty and empty-finding
 `partially_verified` shape treated as explicit legacy compatibility; it is not
-reusable as a runner-version-16 execution identity.
+reusable as a runner-version-17 execution identity.
 
 ## Review Packet
 
