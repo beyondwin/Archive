@@ -203,21 +203,25 @@ or a numeric truth score.
 
 The dated report uses exactly these executed-evidence definitions:
 
-- `verified`: the provider process executed and the returned body met every declared deterministic hard property.
-- `partially_verified`: the provider process executed and observed hard properties passed, but activation or another required dimension remained unproven.
+- `verified`: the provider process executed, the returned body met every declared deterministic hard property, and every required semantic dimension was proven by a positive canonical form.
+- `partially_verified`: the provider process executed and observed hard properties passed, but activation or a semantic dimension remained not deterministically measured.
 - `failed`: the provider process executed and returned output violated at least one declared deterministic hard property.
 - `blocked`: a positively reserved provider attempt could not produce usable evidence because execution or response processing failed.
 - `not_measured`: no provider process was invoked for that evidence item; this is the only status permitted to have call number zero and no reservation.
 
-The deterministic judge treats `diagnose` output as explanatory prose rather
-than an edited body: repeated fact mentions are allowed, but protected
-quantities and units must stay exact, and separated fact terms must remain
-connected by bounded diagnostic context without changing their scope or
-polarity. Structural sentinels bind the Markdown list marker, exact code spans,
-exact quoted instruction content, and a canonical surrounding semantic
-skeleton with its polarity. Bounded local prose, punctuation, and
-straight/curly quote-style variation remain allowed; an outside-quote claim
-that the protected instruction was executed is a hard failure.
+The deterministic judge is three-valued. It NFC-normalizes bounded horizontal
+whitespace, including NBSP, and canonicalizes safe quotation and Unicode
+punctuation variants only for positive structural forms. Definite exact-output,
+forbidden-output, numeric, literal-count, list-marker, code-span, and
+quoted-instruction loss is a hard finding and produces `failed`. Free-form diagnose or
+structural prose whose Korean scope, polarity, relation, or execution meaning
+cannot be proven from a positive canonical form emits
+`diagnostic_semantics_not_measured` or
+`structural_semantics_not_measured` and produces `partially_verified`, never an
+unsupported hard failure or `verified`. Finding certainty is serialized as
+`hard` or `not_measured`; legacy receipts without the field remain readable as
+`hard`. Reviewer packets and reports keep not-measured signals separate from
+hard findings.
 
 No aggregate average erases a severe failure. Every report states the level at
 which a status applies.

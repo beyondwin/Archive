@@ -78,56 +78,28 @@ EXPECTED_REPEAT_IDS = {
 }
 APPROVED_CASES_SHA256 = "ba7e1df65ce63e9d110cc4cecb4eb14d291295d376b06dfc0cb22b90e07bc951"
 ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
-FACT_TOKEN_RE = re.compile(r"[^\W_]+", re.UNICODE)
 STRUCTURAL_LIST_MARKER_RE = re.compile(r"^\s*((?:[-+*])|(?:\d+[.)]))\s+")
 STRUCTURAL_CODE_SPAN_RE = re.compile(r"`[^`\n]+`")
 STRUCTURAL_QUOTED_SEGMENT_RE = re.compile(r'“([^”\n]+)”|"([^"\n]+)"')
-SEMANTIC_UNIT_SPLIT_RE = re.compile(r"(?<=[.!?。！？])\s+|\n+")
-SEMANTIC_CONTRAST_SPLIT_RE = re.compile(r"지만|그러나|반면|않고|;")
-DIAGNOSTIC_CONTEXT_RE = re.compile(
-    r"모호|불명|불확정|위험|범위|조건|기준|기한|해석|확인|정의|특정|"
-    r"명시|포함|공제|요건|산정|대상|주체|의무|권리|보장|청구|지급|"
-    r"분쟁|리스크|결정"
+ORACLE_PUNCTUATION_TRANSLATION = str.maketrans(
+    {
+        "“": '"',
+        "”": '"',
+        "‘": "'",
+        "’": "'",
+        "．": ".",
+        "。": ".",
+        "，": ",",
+        "：": ":",
+        "；": ";",
+        "！": "!",
+        "？": "?",
+    }
 )
-SEMANTIC_NEGATION_RE = re.compile(r"아니|아닙|않|없|못|불가")
-PARTIAL_SCOPE_RE = re.compile(r"일부|부분")
-OUTSIDE_EXECUTION_ASSERTION_RE = re.compile(
-    r"(?:실행|수행|시행|처리|삭제|가동|구동|작동|돌리|돌려|마무리)"
-    r"[^\n.!?。！？]{0,24}"
-    r"(?:했|하였다|했다|됐|되었다|완료했|마쳤|끝냈|돌렸|마무리했)|"
-    r"(?:완료했|마쳤|끝냈|돌렸|마무리했|가동했|구동했|작동했)"
-)
-SEMANTIC_PARTICLES = frozenset({"은", "는", "이", "가", "을", "를", "와", "과", "의"})
-SEMANTIC_SUFFIXES = (
-    "이었습니다",
-    "였습니다",
-    "입니다",
-    "이었다",
-    "였다",
-    "이다",
-    "이며",
-    "이고",
-    "인",
-    "에서",
-    "에게",
-    "으로",
-    "로",
-    "은",
-    "는",
-    "이",
-    "가",
-    "을",
-    "를",
-    "와",
-    "과",
-    "의",
-)
-MAX_STRUCTURAL_PREFIX_TOKENS = 6
-MAX_STRUCTURAL_SEMANTIC_SPAN_TOKENS = 8
 MAX_STREAM_BYTES = 131_072
 COMMAND_TIMEOUT_SECONDS = 300
 DIAGNOSTIC_TAIL_BYTES = 256
-RUNNER_VERSION = "12"
+RUNNER_VERSION = "13"
 RUN_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 MIN_JOBS = 1
 MAX_JOBS = 4
@@ -200,6 +172,7 @@ MAX_OPERATIONS_REPORT_BYTES = 1_048_576
 COMPLETE_RECEIPT_STATUSES = frozenset(
     {"verified", "partially_verified", "failed", "blocked", "not_measured"}
 )
+FINDING_CERTAINTIES = frozenset({"hard", "not_measured"})
 RESUME_SKIP_STATUSES = frozenset(
     {"verified", "partially_verified", "failed", "not_measured"}
 )
@@ -263,6 +236,7 @@ class Finding:
     code: str
     message: str
     literal: str | None = None
+    certainty: str = "hard"
 
 
 @dataclass(frozen=True)
@@ -432,7 +406,12 @@ class CallReceipt:
             "duration_ms": self.duration_ms,
             "exit_code": self.exit_code,
             "findings": [
-                {"code": finding.code, "literal": finding.literal, "message": finding.message}
+                {
+                    "certainty": finding.certainty,
+                    "code": finding.code,
+                    "literal": finding.literal,
+                    "message": finding.message,
+                }
                 for finding in self.findings
             ],
             "finished_at": self.finished_at,
@@ -795,98 +774,47 @@ def normalize_response(text: str) -> str:
     return value[:-1] if value.endswith("\n") else value
 
 
-def _semantic_units(value: str) -> tuple[str, ...]:
-    return tuple(
-        unit.strip()
-        for unit in SEMANTIC_UNIT_SPLIT_RE.split(value)
-        if unit.strip()
-    )
+def _canonical_whitespace(value: str) -> str:
+    normalized = unicodedata.normalize("NFC", normalize_response(value))
+    lines: list[str] = []
+    for line in normalized.split("\n"):
+        safe_spaces = "".join(
+            " " if character == "\t" or unicodedata.category(character) == "Zs" else character
+            for character in line
+        )
+        lines.append(re.sub(r" +", " ", safe_spaces).strip())
+    return "\n".join(lines)
 
 
-def _terms_in_order(value: str, terms: tuple[str, ...]) -> bool:
-    offset = 0
-    for term in terms:
-        position = value.find(term, offset)
-        if position < 0:
-            return False
-        offset = position + len(term)
-    return True
+def _canonical_literal_text(value: str) -> str:
+    return _canonical_whitespace(value)
 
 
-def _term_suffix_conflicts(value: str, term: str) -> bool:
-    position = value.find(term)
-    if position < 0:
-        return False
-    suffix = value[position + len(term) :]
-    direct = re.match(
-        r"^[*_'”\"`\s]*(?:은|는|이|가|을|를)?\s*(?:아니|아닙|불가|없|못)",
-        suffix,
-    )
-    obligation = re.match(
-        r"^[*_'”\"`\s]*(?:은|는|이|가|을|를)?[^\n.!?。！？]{0,12}"
-        r"(?:의무|보장)[^\n.!?。！？]{0,8}(?:없|않|아니|아닙|불가)",
-        suffix,
-    )
-    return direct is not None or obligation is not None
+def _canonical_structural_text(value: str) -> str:
+    return _canonical_whitespace(value).translate(ORACLE_PUNCTUATION_TRANSLATION)
 
 
-def _joined_relation_conflicts(value: str, terms: tuple[str, ...]) -> bool:
-    first = value.find(terms[0])
-    second = value.find(terms[1], first + len(terms[0]))
-    if first < 0 or second < 0:
-        return False
-    between = value[first + len(terms[0]) : second]
-    if SEMANTIC_NEGATION_RE.search(between) or PARTIAL_SCOPE_RE.search(between):
-        return True
-    return _term_suffix_conflicts(value[second:], terms[1])
-
-
-def _diagnostic_relation_is_safe(candidate: str, terms: tuple[str, ...]) -> bool:
-    units = _semantic_units(candidate)
-    joined_units = tuple(unit for unit in units if all(term in unit for term in terms))
-    for unit in joined_units:
-        if _joined_relation_conflicts(unit, terms):
-            return False
-    if any(_terms_in_order(unit, terms) for unit in joined_units):
-        return True
-
-    for term in terms:
-        if not any(
-            term in unit
-            and DIAGNOSTIC_CONTEXT_RE.search(unit)
-            and not _term_suffix_conflicts(unit, term)
-            for unit in units
-        ):
-            return False
-    return True
-
-
-def _required_fact_is_present(case: LiveCase, candidate: str, fact: str) -> bool:
-    if case.expected_behavior != "diagnose":
-        return fact in candidate
-    tokens = tuple(FACT_TOKEN_RE.findall(fact))
-    if len(tokens) <= 1:
-        return fact in candidate
-    return _diagnostic_relation_is_safe(candidate, tokens)
-
-
-def _diagnostic_fact_drifts(case: LiveCase, candidate: str) -> tuple[str, ...]:
+def _diagnostic_hard_drifts(case: LiveCase, candidate: str) -> tuple[str, ...]:
     if case.expected_behavior != "diagnose":
         return ()
+    canonical_candidate = _canonical_literal_text(candidate)
     drifts: list[str] = []
     for fact in case.preserve_counts:
-        quantity = re.fullmatch(r"(\d[\d,.]*)\s*([^\W\d_]+)", fact)
-        if quantity is not None:
-            expected_number, unit = quantity.groups()
-            observed = re.findall(
-                rf"(?<![\d,.])(\d[\d,.]*)\s*{re.escape(unit)}",
-                candidate,
-            )
-            if not observed or any(number != expected_number for number in observed):
+        canonical_fact = _canonical_literal_text(fact)
+        quantity = re.fullmatch(r"(\d[\d,.]*)\s*([^\W\d_]+)", canonical_fact)
+        if quantity is None:
+            fact_tokens = tuple(re.findall(r"[^\W_]+", canonical_fact, re.UNICODE))
+            if fact_tokens and any(
+                token not in canonical_candidate for token in fact_tokens
+            ):
                 drifts.append(fact)
             continue
-        terms = tuple(FACT_TOKEN_RE.findall(fact))
-        if len(terms) > 1 and not _diagnostic_relation_is_safe(candidate, terms):
+        expected_number, unit = quantity.groups()
+        observed = re.findall(
+            rf"(?<![\d,.])(\d[\d,.]*)\s*{re.escape(unit)}",
+            canonical_candidate,
+        )
+        if not observed or any(number != expected_number for number in observed):
             drifts.append(fact)
     return tuple(drifts)
 
@@ -898,162 +826,132 @@ def _quoted_segments(value: str) -> tuple[str, ...]:
     )
 
 
-def _unprotected_structural_surface(value: str) -> str:
-    without_quotes = STRUCTURAL_QUOTED_SEGMENT_RE.sub(" ", value)
-    without_code = STRUCTURAL_CODE_SPAN_RE.sub(" ", without_quotes)
-    marker = STRUCTURAL_LIST_MARKER_RE.match(without_code)
-    return without_code[marker.end() :] if marker is not None else without_code
-
-
-def _canonical_semantic_tokens(value: str) -> tuple[str, ...]:
-    result: list[str] = []
-    for token in FACT_TOKEN_RE.findall(value):
-        if token in SEMANTIC_PARTICLES or SEMANTIC_NEGATION_RE.search(token):
-            continue
-        normalized = token
-        for suffix in SEMANTIC_SUFFIXES:
-            if normalized.endswith(suffix) and len(normalized) > len(suffix) + 1:
-                normalized = normalized[: -len(suffix)]
-                break
-        if normalized and normalized not in SEMANTIC_PARTICLES:
-            result.append(normalized)
-    return tuple(result)
-
-
-def _semantic_skeleton_positions(
-    actual: tuple[str, ...], expected: tuple[str, ...]
-) -> tuple[int, ...] | None:
-    positions: list[int] = []
-    offset = 0
-    for term in expected:
-        for index in range(offset, len(actual)):
-            if actual[index] == term or actual[index].startswith(term):
-                positions.append(index)
-                offset = index + 1
-                break
-        else:
-            return None
-    if not positions:
-        return ()
-    if positions[0] > MAX_STRUCTURAL_PREFIX_TOKENS:
-        return None
-    if positions[-1] - positions[0] + 1 > MAX_STRUCTURAL_SEMANTIC_SPAN_TOKENS:
-        return None
-    return tuple(positions)
-
-
 def _structural_sentinel_status(candidate: str, sentinel: str) -> str:
-    expected_marker = STRUCTURAL_LIST_MARKER_RE.match(sentinel)
+    canonical_sentinel = _canonical_structural_text(sentinel)
+    expected_marker = STRUCTURAL_LIST_MARKER_RE.match(canonical_sentinel)
     if expected_marker is None:
         return "missing"
-    expected_code_spans = tuple(STRUCTURAL_CODE_SPAN_RE.findall(sentinel))
-    expected_quotes = _quoted_segments(sentinel)
+    expected_code_spans = tuple(
+        unicodedata.normalize("NFC", item)
+        for item in STRUCTURAL_CODE_SPAN_RE.findall(sentinel)
+    )
+    expected_quotes = tuple(
+        _canonical_structural_text(item) for item in _quoted_segments(sentinel)
+    )
     if not expected_code_spans and not expected_quotes:
         return "missing"
-    expected_surface = _unprotected_structural_surface(sentinel)
-    expected_skeleton = _canonical_semantic_tokens(expected_surface)
-    expected_negative = SEMANTIC_NEGATION_RE.search(expected_surface) is not None
     base_match_found = False
     for line in candidate.splitlines():
-        actual_marker = STRUCTURAL_LIST_MARKER_RE.match(line)
+        canonical_line = _canonical_structural_text(line)
+        actual_marker = STRUCTURAL_LIST_MARKER_RE.match(canonical_line)
         if actual_marker is None or actual_marker.group(1) != expected_marker.group(1):
             continue
-        if any(code_span not in line for code_span in expected_code_spans):
+        actual_code_spans = tuple(
+            unicodedata.normalize("NFC", item)
+            for item in STRUCTURAL_CODE_SPAN_RE.findall(line)
+        )
+        if any(code_span not in actual_code_spans for code_span in expected_code_spans):
             continue
-        actual_quotes = _quoted_segments(line)
+        actual_quotes = tuple(
+            _canonical_structural_text(item) for item in _quoted_segments(line)
+        )
         if expected_quotes and any(segment not in actual_quotes for segment in expected_quotes):
             continue
         base_match_found = True
-        actual_surface = _unprotected_structural_surface(line)
-        actual_skeleton = _canonical_semantic_tokens(actual_surface)
-        positions = _semantic_skeleton_positions(actual_skeleton, expected_skeleton)
-        if positions is None:
-            continue
-        actual_negative = SEMANTIC_NEGATION_RE.search(actual_surface) is not None
-        if actual_negative != expected_negative:
-            continue
-        if positions and positions[-1] != len(actual_skeleton) - 1:
-            continue
-        return "present"
-    return "meaning_drift" if base_match_found else "missing"
-
-
-def _claims_execution_outside_quotes(candidate: str) -> bool:
-    outside = STRUCTURAL_CODE_SPAN_RE.sub(
-        " ", STRUCTURAL_QUOTED_SEGMENT_RE.sub(" ", candidate)
-    )
-    return any(
-        OUTSIDE_EXECUTION_ASSERTION_RE.search(fragment)
-        and not SEMANTIC_NEGATION_RE.search(fragment)
-        for unit in _semantic_units(outside)
-        for fragment in SEMANTIC_CONTRAST_SPLIT_RE.split(unit)
-    )
+        if canonical_line == canonical_sentinel:
+            return "canonical"
+    return "ambiguous" if base_match_found else "missing"
 
 
 def evaluate_response(case: LiveCase, response: str) -> tuple[Finding, ...]:
     candidate = normalize_response(response)
+    canonical_candidate = _canonical_literal_text(candidate)
     findings: list[Finding] = []
 
-    if case.exact_output is not None and candidate != case.exact_output:
+    if (
+        case.exact_output is not None
+        and _canonical_structural_text(candidate)
+        != _canonical_structural_text(case.exact_output)
+    ):
         findings.append(
             Finding("exact_output_mismatch", "response does not match exact output")
         )
     for output in case.forbidden_exact_outputs:
-        if candidate == output:
+        if _canonical_structural_text(candidate) == _canonical_structural_text(output):
             findings.append(
                 Finding("forbidden_exact_output", "response matches forbidden exact output", output)
             )
     for substring in case.required_substrings:
-        if not _required_fact_is_present(case, candidate, substring):
+        if case.expected_behavior == "diagnose" and substring in case.preserve_counts:
+            continue
+        if _canonical_literal_text(substring) not in canonical_candidate:
             findings.append(
                 Finding("missing_required_substring", "response is missing required substring", substring)
             )
     for substring in case.forbidden_substrings:
-        if substring in candidate:
+        if _canonical_literal_text(substring) in canonical_candidate:
             findings.append(
                 Finding("forbidden_substring", "response contains forbidden substring", substring)
             )
-    for fact in _diagnostic_fact_drifts(case, candidate):
+    for fact in _diagnostic_hard_drifts(case, candidate):
         findings.append(
             Finding(
                 "diagnostic_fact_drift",
-                "diagnose output changes or disconnects a protected source fact",
+                "diagnose output removes or changes a protected numeric fact",
                 fact,
+            )
+        )
+    if case.expected_behavior == "diagnose" and case.preserve_counts:
+        findings.append(
+            Finding(
+                "diagnostic_semantics_not_measured",
+                "free-form diagnose semantics are not deterministically measured",
+                certainty="not_measured",
             )
         )
     if case.expected_behavior != "diagnose":
         for literal in case.preserve_counts:
-            if case.source.count(literal) != candidate.count(literal):
+            canonical_literal = _canonical_literal_text(literal)
+            if _canonical_literal_text(case.source).count(
+                canonical_literal
+            ) != canonical_candidate.count(canonical_literal):
                 findings.append(
                     Finding("occurrence_count_changed", "literal occurrence count changed", literal)
                 )
+    structural_semantics_not_measured = False
     for sentinel in case.structural_sentinels:
         sentinel_status = _structural_sentinel_status(candidate, sentinel)
         if sentinel_status == "missing":
             findings.append(
                 Finding("missing_structural_sentinel", "response is missing structural sentinel", sentinel)
             )
-        elif sentinel_status == "meaning_drift":
-            findings.append(
-                Finding(
-                    "structural_meaning_drift",
-                    "response changes protected meaning around a structural sentinel",
-                    sentinel,
-                )
-            )
-    if case.structural_sentinels and _claims_execution_outside_quotes(candidate):
+        elif sentinel_status == "ambiguous":
+            structural_semantics_not_measured = True
+    if (
+        case.structural_sentinels
+        and _canonical_structural_text(candidate)
+        != _canonical_structural_text(case.source)
+    ):
+        structural_semantics_not_measured = True
+    if structural_semantics_not_measured:
         findings.append(
             Finding(
-                "structural_execution_claim",
-                "response claims execution outside protected quoted data",
+                "structural_semantics_not_measured",
+                "free-form structural semantics are not deterministically measured",
+                certainty="not_measured",
             )
         )
     return tuple(findings)
 
 
 def case_status(case: LiveCase, findings: tuple[Finding, ...]) -> str:
-    if findings:
+    certainties = {finding.certainty for finding in findings}
+    if not certainties <= FINDING_CERTAINTIES:
+        raise LiveMatrixError("finding has unsupported certainty")
+    if "hard" in certainties:
         return "failed"
+    if "not_measured" in certainties:
+        return "partially_verified"
     return "verified" if case.observable_activation else "partially_verified"
 
 
@@ -3345,6 +3243,15 @@ def _validate_receipt_provider_shape(receipt: CallReceipt) -> None:
     ):
         raise LiveMatrixError("receipt has invalid call number")
     if receipt.call_number > 0:
+        certainties = {finding.certainty for finding in receipt.findings}
+        if not certainties <= FINDING_CERTAINTIES:
+            raise LiveMatrixError("receipt has unsupported finding certainty")
+        if (
+            (receipt.status == "verified" and receipt.findings)
+            or (receipt.status == "partially_verified" and "hard" in certainties)
+            or (receipt.status == "failed" and "hard" not in certainties)
+        ):
+            raise LiveMatrixError("receipt finding certainty does not match status")
         return
     empty_prompt_hash = hashlib.sha256(b"").hexdigest()
     if (
@@ -3385,10 +3292,33 @@ def _receipt_from_json(payload: Any) -> CallReceipt:
         ):
             raise ValueError("unsafe raw path")
         identity = _identity_from_json(identity_data, label="receipt")
-        findings = tuple(
-            Finding(item["code"], item["message"], item.get("literal"))
-            for item in payload["findings"]
-        )
+        finding_values = payload["findings"]
+        if not isinstance(finding_values, list):
+            raise ValueError("findings must be an array")
+        findings: list[Finding] = []
+        legacy_finding_fields = {"code", "literal", "message"}
+        current_finding_fields = legacy_finding_fields | {"certainty"}
+        for item in finding_values:
+            if not isinstance(item, dict) or frozenset(item) not in {
+                frozenset(legacy_finding_fields),
+                frozenset(current_finding_fields),
+            }:
+                raise ValueError("invalid finding shape")
+            code = item["code"]
+            message = item["message"]
+            literal = item["literal"]
+            certainty = item.get("certainty", "hard")
+            if (
+                not isinstance(code, str)
+                or not code
+                or not isinstance(message, str)
+                or not message
+                or not isinstance(literal, (str, type(None)))
+                or not isinstance(certainty, str)
+                or certainty not in FINDING_CERTAINTIES
+            ):
+                raise ValueError("invalid finding fields")
+            findings.append(Finding(code, message, literal, certainty))
         receipt = CallReceipt(
             identity=identity,
             logical_call_id=payload["logical_call_id"],
@@ -3412,7 +3342,7 @@ def _receipt_from_json(payload: Any) -> CallReceipt:
             stderr_sha256=payload["stderr_sha256"],
             response_sha256=payload["response_sha256"],
             status=payload["status"],
-            findings=findings,
+            findings=tuple(findings),
             raw_paths=tuple(raw_path_values),
         )
         if (
@@ -4142,6 +4072,7 @@ class ReviewSample:
     source: str
     candidate: str
     hard_findings: tuple[str, ...]
+    not_measured_signals: tuple[str, ...]
     axes: tuple[str, ...]
     response_sha256: str | None
 
@@ -4332,7 +4263,8 @@ def _sample_from_receipt(
             request="[not measured control]",
             source="[not measured control]",
             candidate="[not measured control]",
-            hard_findings=("control_not_measured",),
+            hard_findings=(),
+            not_measured_signals=("control_not_measured",),
             axes=(),
             response_sha256=None,
         )
@@ -4340,7 +4272,16 @@ def _sample_from_receipt(
     hard_findings = (
         (finding_code,)
         if finding_code is not None
-        else tuple(finding.code for finding in receipt.findings)
+        else tuple(
+            finding.code
+            for finding in receipt.findings
+            if finding.certainty == "hard"
+        )
+    )
+    not_measured_signals = tuple(
+        finding.code
+        for finding in receipt.findings
+        if finding.certainty == "not_measured"
     )
     return ReviewSample(
         candidate_id=candidate_id,
@@ -4352,6 +4293,9 @@ def _sample_from_receipt(
         source=_review_excerpt(case.source if case is not None else "[case source unavailable]", identity_tokens),
         candidate=_review_excerpt(responses.get(receipt.call_id, "[response unavailable]"), identity_tokens),
         hard_findings=tuple(_review_excerpt(code, identity_tokens) for code in hard_findings),
+        not_measured_signals=tuple(
+            _review_excerpt(code, identity_tokens) for code in not_measured_signals
+        ),
         axes=case.review_axes if case is not None else (),
         response_sha256=receipt.response_sha256,
     )
@@ -4380,7 +4324,12 @@ def select_review_samples(
     for receipt in sorted(receipts, key=lambda item: (item.case_id, item.repeat_index, item.call_id)):
         if receipt.status != "failed":
             continue
-        for finding in receipt.findings or (Finding("failed_without_finding", "failed receipt lacks finding"),):
+        hard_findings = tuple(
+            finding
+            for finding in receipt.findings
+            if finding.certainty == "hard"
+        ) or (Finding("failed_without_finding", "failed receipt lacks hard finding"),)
+        for finding in hard_findings:
             representatives.setdefault(finding.code, (receipt, finding))
     ordered_codes = sorted(
         representatives,
@@ -4423,6 +4372,7 @@ def build_review_prompt(samples: Sequence[ReviewSample]) -> str:
                 "source": sample.source,
                 "candidate": sample.candidate,
                 "hard_findings": list(sample.hard_findings),
+                "not_measured_signals": list(sample.not_measured_signals),
                 "axes": list(sample.axes),
                 "band": sample.band,
                 "missing_control": sample.missing_control,
@@ -4908,7 +4858,9 @@ def render_operations_report(report_input: ReportInput) -> str:
     for receipt in sorted(receipts, key=lambda item: (item.case_id, item.repeat_index, item.call_id)):
         if receipt.status != "failed":
             continue
-        for finding in receipt.findings:
+        for finding in (
+            item for item in receipt.findings if item.certainty == "hard"
+        ):
             defect_number += 1
             case = report_input.cases.get(receipt.case_id)
             excerpt = _safe_report_text(finding.literal or finding.message)
@@ -5000,6 +4952,32 @@ def render_operations_report(report_input: ReportInput) -> str:
             "- Review packets use redacted 240-byte excerpts and do not establish general Korean quality.",
             "- Failed evidence has precedence in aggregation and is never averaged away.",
             "- Pending adjudication remains until the dedicated Task 8 classification step.",
+        )
+    )
+    soft_receipts = tuple(
+        receipt
+        for receipt in receipts
+        if any(finding.certainty == "not_measured" for finding in receipt.findings)
+    )
+    soft_codes = tuple(
+        sorted(
+            {
+                finding.code
+                for receipt in soft_receipts
+                for finding in receipt.findings
+                if finding.certainty == "not_measured"
+            }
+        )
+    )
+    if soft_codes:
+        lines.append(
+            "- Deterministic semantic coverage was not deterministically measured for "
+            f"{len(soft_receipts)} producer receipt(s); signals="
+            + ", ".join(_safe_report_text(code) for code in soft_codes)
+            + ". These are limitations, not hard findings."
+        )
+    lines.extend(
+        (
             "",
             "## Git And Installation State",
             "",

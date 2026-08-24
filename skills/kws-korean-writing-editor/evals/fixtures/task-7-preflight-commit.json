@@ -32,6 +32,6 @@
     "size": 3
   },
   "run_id": "fixture-run",
-  "runner_version": "12",
+  "runner_version": "13",
   "schema_version": 1
 }
