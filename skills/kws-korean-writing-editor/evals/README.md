@@ -210,11 +210,14 @@ The dated report uses exactly these executed-evidence definitions:
 - `not_measured`: no provider process was invoked for that evidence item; this is the only status permitted to have call number zero and no reservation.
 
 The deterministic judge treats `diagnose` output as explanatory prose rather
-than an edited body: declared multi-token facts may be mentioned separately,
-and their occurrence counts are not compared with the source. Structural
-sentinels bind the Markdown list marker, exact code spans, and exact quoted
-instruction content while allowing local prose and straight/curly quote-style
-variation outside that protected content.
+than an edited body: repeated fact mentions are allowed, but protected
+quantities and units must stay exact, and separated fact terms must remain
+connected by bounded diagnostic context without changing their scope or
+polarity. Structural sentinels bind the Markdown list marker, exact code spans,
+exact quoted instruction content, and a canonical surrounding semantic
+skeleton with its polarity. Bounded local prose, punctuation, and
+straight/curly quote-style variation remain allowed; an outside-quote claim
+that the protected instruction was executed is a hard failure.
 
 No aggregate average erases a severe failure. Every report states the level at
 which a status applies.
