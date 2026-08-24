@@ -50,9 +50,10 @@ Cursor model known to be unavailable emits an honest zero-provider
 Receipt JSON uses an exact top-level key schema; unknown or omitted keys fail
 closed. Explicit runner-version-10 compatibility permits its omitted
 per-finding `certainty`, which reads as `hard`, and its original empty-finding
-`partially_verified` shape. A positive call number can never claim
-`not_measured`, including on resume, so a forged terminal receipt cannot hide a
-charged call from the remaining-work or budget ledger.
+`partially_verified` shape. It does not permit an omitted top-level `band`; all
+122 retained version-10 receipts contain that field. A positive call number can
+never claim `not_measured`, including on resume, so a forged terminal receipt
+cannot hide a charged call from the remaining-work or budget ledger.
 
 ## Safety And Privacy
 
