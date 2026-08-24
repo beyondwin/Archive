@@ -47,6 +47,12 @@ reservation and consumes zero calls; the run remains blocked. A requested
 Cursor model known to be unavailable emits an honest zero-provider
 `not_measured` receipt and consumes zero calls.
 
+Receipt JSON uses an exact top-level key schema; unknown or omitted keys fail
+closed. The only legacy compatibility is an omitted per-finding `certainty`,
+which reads as `hard`. A positive call number can never claim `not_measured`,
+including on resume, so a forged terminal receipt cannot hide a charged call
+from the remaining-work or budget ledger.
+
 ## Safety And Privacy
 
 Use synthetic prompts only. Do not place private manuscripts, credentials,
@@ -198,6 +204,15 @@ The baseline reserves three reviewer calls after the producer matrix. Review
 packets contain bounded synthetic candidates rather than full transcripts.
 Reviewer opinions are diagnostic evidence, not an automatic release decision
 or a numeric truth score.
+
+The packet contains at most eight evidence samples plus exactly four band
+controls. Within those existing eight evidence slots, up to two deterministic
+`semantic_not_measured` representatives are selected before hard-failure
+representatives, prioritizing diagnostic and structural semantic families.
+Each sample has an explicit `sample_kind`; hard findings and not-deterministically
+measured signals remain separate, and representative case IDs and response
+hashes stay bound to the durable receipt. Selection is stable under input
+ordering, deduplicated, identity-redacted, and never expands the 8+4 cap.
 
 ## Status Meanings
 

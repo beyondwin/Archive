@@ -99,7 +99,7 @@ ORACLE_PUNCTUATION_TRANSLATION = str.maketrans(
 MAX_STREAM_BYTES = 131_072
 COMMAND_TIMEOUT_SECONDS = 300
 DIAGNOSTIC_TAIL_BYTES = 256
-RUNNER_VERSION = "13"
+RUNNER_VERSION = "14"
 RUN_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 MIN_JOBS = 1
 MAX_JOBS = 4
@@ -171,6 +171,34 @@ PENDING_OPERATIONS_REPORT = (
 MAX_OPERATIONS_REPORT_BYTES = 1_048_576
 COMPLETE_RECEIPT_STATUSES = frozenset(
     {"verified", "partially_verified", "failed", "blocked", "not_measured"}
+)
+RECEIPT_FIELDS = frozenset(
+    {
+        "band",
+        "call_id",
+        "call_number",
+        "case_id",
+        "duration_ms",
+        "exit_code",
+        "findings",
+        "finished_at",
+        "host",
+        "identity",
+        "kind",
+        "logical_call_id",
+        "prompt_sha256",
+        "raw_paths",
+        "reported_model",
+        "repeat_index",
+        "requested_model",
+        "response_sha256",
+        "started_at",
+        "status",
+        "stderr_bytes",
+        "stderr_sha256",
+        "stdout_bytes",
+        "stdout_sha256",
+    }
 )
 FINDING_CERTAINTIES = frozenset({"hard", "not_measured"})
 RESUME_SKIP_STATUSES = frozenset(
@@ -901,7 +929,11 @@ def evaluate_response(case: LiveCase, response: str) -> tuple[Finding, ...]:
                 fact,
             )
         )
-    if case.expected_behavior == "diagnose" and case.preserve_counts:
+    if case.expected_behavior == "diagnose" and (
+        case.exact_output is None
+        or _canonical_structural_text(candidate)
+        != _canonical_structural_text(case.exact_output)
+    ):
         findings.append(
             Finding(
                 "diagnostic_semantics_not_measured",
@@ -1357,6 +1389,7 @@ def remaining_calls(
             raise LiveMatrixError("receipt identity drift requires a new run ID")
         if receipt.call_id.split(":attempt-", 1)[0] != call.call_id:
             raise LiveMatrixError("receipt call ID does not match plan")
+        _validate_receipt_provider_shape(receipt)
         if receipt.status not in RESUME_SKIP_STATUSES:
             remaining.append(call)
     return tuple(remaining)
@@ -3243,6 +3276,8 @@ def _validate_receipt_provider_shape(receipt: CallReceipt) -> None:
     ):
         raise LiveMatrixError("receipt has invalid call number")
     if receipt.call_number > 0:
+        if receipt.status == "not_measured":
+            raise LiveMatrixError("positive receipt cannot be not_measured")
         certainties = {finding.certainty for finding in receipt.findings}
         if not certainties <= FINDING_CERTAINTIES:
             raise LiveMatrixError("receipt has unsupported finding certainty")
@@ -3279,7 +3314,11 @@ def _validate_receipt_provider_shape(receipt: CallReceipt) -> None:
 
 
 def _receipt_from_json(payload: Any) -> CallReceipt:
-    if not isinstance(payload, dict) or not isinstance(payload.get("identity"), dict):
+    if (
+        not isinstance(payload, dict)
+        or frozenset(payload) != RECEIPT_FIELDS
+        or not isinstance(payload.get("identity"), dict)
+    ):
         raise LiveMatrixError("malformed receipt")
     identity_data = payload["identity"]
     try:
@@ -3329,7 +3368,7 @@ def _receipt_from_json(payload: Any) -> CallReceipt:
             requested_model=payload["requested_model"],
             reported_model=payload["reported_model"],
             case_id=payload["case_id"],
-            band=payload.get("band"),
+            band=payload["band"],
             repeat_index=payload["repeat_index"],
             prompt_sha256=payload["prompt_sha256"],
             started_at=payload["started_at"],
@@ -4034,6 +4073,11 @@ REVIEWER_MODELS = (
     ("reviewer-grok", "cursor-grok-4.6-high"),
 )
 REVIEW_CONTROL_BANDS = ("valid-mode", "preservation", "noop-hold", "near-miss")
+MAX_REVIEW_EVIDENCE_SAMPLES = 8
+MAX_REVIEW_SOFT_SAMPLES = 2
+REVIEW_SAMPLE_KINDS = frozenset(
+    {"hard_failure", "semantic_not_measured", "control"}
+)
 STATUS_PRIORITY = {
     "not_measured": 0,
     "verified": 1,
@@ -4064,6 +4108,7 @@ class ReviewSample:
     """A bounded anonymous review candidate, never a raw provider transcript."""
 
     candidate_id: str
+    sample_kind: str
     is_failure: bool
     missing_control: bool
     case_id: str
@@ -4246,6 +4291,7 @@ def _sample_from_receipt(
     receipt: CallReceipt | None,
     *,
     candidate_id: str,
+    sample_kind: str,
     is_failure: bool,
     band: str,
     responses: Mapping[str, str],
@@ -4253,9 +4299,12 @@ def _sample_from_receipt(
     identity_tokens: Sequence[str],
     finding_code: str | None = None,
 ) -> ReviewSample:
+    if sample_kind not in REVIEW_SAMPLE_KINDS:
+        raise LiveMatrixError("review sample has unsupported kind")
     if receipt is None:
         return ReviewSample(
             candidate_id=candidate_id,
+            sample_kind="control",
             is_failure=False,
             missing_control=True,
             case_id="not-measured",
@@ -4285,6 +4334,7 @@ def _sample_from_receipt(
     )
     return ReviewSample(
         candidate_id=candidate_id,
+        sample_kind=sample_kind,
         is_failure=is_failure,
         missing_control=False,
         case_id=receipt.case_id,
@@ -4307,7 +4357,7 @@ def select_review_samples(
     responses: Mapping[str, str] | None = None,
     cases: Mapping[str, LiveCase] | None = None,
 ) -> tuple[ReviewSample, ...]:
-    """Choose a deterministic capped failure packet plus one control per band."""
+    """Choose eight bounded evidence samples plus one control per band."""
     response_map = responses or {}
     case_map = cases or {}
     identity_tokens = tuple(
@@ -4331,14 +4381,59 @@ def select_review_samples(
         ) or (Finding("failed_without_finding", "failed receipt lacks hard finding"),)
         for finding in hard_findings:
             representatives.setdefault(finding.code, (receipt, finding))
+    soft_representatives: dict[str, list[CallReceipt]] = {}
+    for receipt in sorted(
+        receipts, key=lambda item: (item.case_id, item.repeat_index, item.call_id)
+    ):
+        if receipt.status != "partially_verified":
+            continue
+        for finding in receipt.findings:
+            if finding.certainty == "not_measured":
+                soft_representatives.setdefault(finding.code, []).append(receipt)
+
+    soft_priority = {
+        "diagnostic_semantics_not_measured": 0,
+        "structural_semantics_not_measured": 1,
+    }
+    ordered_soft_codes = sorted(
+        soft_representatives,
+        key=lambda code: (soft_priority.get(code, 2), code),
+    )
+    selected_soft: list[CallReceipt] = []
+    selected_soft_evidence: set[tuple[str, str | None]] = set()
+    for code in ordered_soft_codes:
+        receipt = next(
+            (
+                candidate
+                for candidate in soft_representatives[code]
+                if (candidate.case_id, candidate.response_sha256)
+                not in selected_soft_evidence
+            ),
+            None,
+        )
+        if receipt is None:
+            continue
+        selected_soft.append(receipt)
+        selected_soft_evidence.add((receipt.case_id, receipt.response_sha256))
+        if len(selected_soft) == MAX_REVIEW_SOFT_SAMPLES:
+            break
+
     ordered_codes = sorted(
         representatives,
         key=lambda code: _failure_priority(
             representatives[code][1], _case_for_sample(representatives[code][0], case_map)
         ),
-    )[:8]
-    selected: list[tuple[CallReceipt | None, bool, str, str | None]] = [
-        (representatives[code][0], True, representatives[code][0].band or "unclassified", code)
+    )[: MAX_REVIEW_EVIDENCE_SAMPLES - len(selected_soft)]
+    selected: list[tuple[CallReceipt | None, str, str, str | None]] = [
+        (receipt, "semantic_not_measured", receipt.band or "unclassified", None)
+        for receipt in selected_soft
+    ] + [
+        (
+            representatives[code][0],
+            "hard_failure",
+            representatives[code][0].band or "unclassified",
+            code,
+        )
         for code in ordered_codes
     ]
     for band in REVIEW_CONTROL_BANDS:
@@ -4346,19 +4441,24 @@ def select_review_samples(
             (receipt for receipt in receipts if receipt.status == "verified" and receipt.band == band),
             key=lambda item: (item.case_id, item.repeat_index, item.call_id),
         )
-        selected.append((control_candidates[0] if control_candidates else None, False, band, None))
+        selected.append(
+            (control_candidates[0] if control_candidates else None, "control", band, None)
+        )
     return tuple(
         _sample_from_receipt(
             receipt,
             candidate_id=f"candidate-{index:03d}",
-            is_failure=is_failure,
+            sample_kind=sample_kind,
+            is_failure=sample_kind == "hard_failure",
             band=band,
             responses=response_map,
             cases=case_map,
             identity_tokens=identity_tokens,
             finding_code=finding_code,
         )
-        for index, (receipt, is_failure, band, finding_code) in enumerate(selected, start=1)
+        for index, (receipt, sample_kind, band, finding_code) in enumerate(
+            selected, start=1
+        )
     )
 
 
@@ -4368,6 +4468,7 @@ def build_review_prompt(samples: Sequence[ReviewSample]) -> str:
         "samples": [
             {
                 "candidate_id": sample.candidate_id,
+                "sample_kind": sample.sample_kind,
                 "request": sample.request,
                 "source": sample.source,
                 "candidate": sample.candidate,
