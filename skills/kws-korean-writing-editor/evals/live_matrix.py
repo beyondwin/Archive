@@ -99,7 +99,7 @@ ORACLE_PUNCTUATION_TRANSLATION = str.maketrans(
 MAX_STREAM_BYTES = 131_072
 COMMAND_TIMEOUT_SECONDS = 300
 DIAGNOSTIC_TAIL_BYTES = 256
-RUNNER_VERSION = "15"
+RUNNER_VERSION = "16"
 RUN_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 MIN_JOBS = 1
 MAX_JOBS = 4
@@ -220,7 +220,7 @@ GIT_OBJECT_ID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 SAFE_METADATA_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$")
 FINDING_CODE_RE = re.compile(r"^[a-z0-9]+(?:[_-][a-z0-9]+)*$")
 SUPPORTED_RECEIPT_RUNNER_VERSIONS = frozenset(
-    {"10", "11", "12", "13", "14", RUNNER_VERSION}
+    {"10", "11", "12", "13", "14", "15", RUNNER_VERSION}
 )
 RECEIPT_TIMESTAMP_RE = re.compile(
     r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$"
@@ -332,7 +332,7 @@ class RunIdentity:
     def for_test(cls, **overrides: Any) -> "RunIdentity":
         values: dict[str, Any] = {
             "run_id": "test-run",
-            "runner_version": "14",
+            "runner_version": RUNNER_VERSION,
             "repository_head": "0" * 40,
             "skill_hash": "1" * 64,
             "installed_skill_hash": "1" * 64,
@@ -1052,6 +1052,18 @@ def evaluate_response(case: LiveCase, response: str) -> tuple[Finding, ...]:
             Finding(
                 "structural_semantics_not_measured",
                 "free-form structural semantics are not deterministically measured",
+                certainty="not_measured",
+            )
+        )
+    if (
+        not case.observable_activation
+        and not any(finding.certainty == "hard" for finding in findings)
+        and not any(finding.code == "activation_not_measured" for finding in findings)
+    ):
+        findings.append(
+            Finding(
+                "activation_not_measured",
+                "skill activation is not deterministically observable",
                 certainty="not_measured",
             )
         )

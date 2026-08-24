@@ -451,16 +451,17 @@ GUIDE_RECEIPT_SCHEMA_PARAGRAPH = (
     "`not_measured`, including on resume, so a forged terminal receipt cannot hide a "
     "charged call from the remaining-work or budget ledger."
 )
-GUIDE_V15_RECEIPT_PARAGRAPH = (
-    "Runner version 15 validates the exact receipt and nested identity/finding "
+GUIDE_V16_RECEIPT_PARAGRAPH = (
+    "Runner version 16 validates the exact receipt and nested identity/finding "
     "schemas at load, publication, resume budgeting, report assembly, and review "
     "sampling. Integers reject booleans and out-of-range values; timestamps, hashes, "
     "stream byte/hash pairs, terminal statuses, evidence paths, call identity, and "
     "reservation relationships must be coherent before a receipt can authorize any "
-    "later step. Immutable runner-version-10 evidence remains readable with only its "
-    "original omitted finding certainty and empty-finding `partially_verified` "
-    "shape treated as explicit legacy compatibility; it is not reusable as a "
-    "runner-version-15 execution identity."
+    "later step. Every current `partially_verified` receipt carries at least one "
+    "typed `not_measured` finding. Immutable runner-version-10 evidence remains "
+    "readable with only its original omitted finding certainty and empty-finding "
+    "`partially_verified` shape treated as explicit legacy compatibility; it is not "
+    "reusable as a runner-version-16 execution identity."
 )
 GUIDE_PRIVACY_PARAGRAPH = (
     "Use synthetic prompts only. Do not place private manuscripts, credentials, "
@@ -542,10 +543,10 @@ GUIDE_LEASE_PARAGRAPH = (
 GUIDE_ACTIVATION_PARAGRAPH = (
     "An explicit host invocation and a compliant returned body do not prove that "
     "the host activated the skill internally. Cases whose activation is not "
-    "observable are `partially_verified`; the evaluator does not infer hidden "
-    "routing or activation from a self-report. Offline fixtures and synthetic live "
-    "evidence do not establish general writing quality, authorship, or "
-    "provider-wide reliability."
+    "observable carry `activation_not_measured` and are `partially_verified`; the "
+    "evaluator does not infer hidden routing or activation from a self-report. "
+    "Offline fixtures and synthetic live evidence do not establish general writing "
+    "quality, authorship, or provider-wide reliability."
 )
 GUIDE_JUDGE_PARAGRAPH = (
     "The deterministic judge is three-valued. It NFC-normalizes bounded horizontal "
@@ -559,7 +560,9 @@ GUIDE_JUDGE_PARAGRAPH = (
     "`structural_semantics_not_measured` and produces `partially_verified`, never an "
     "unsupported hard failure or `verified`. Finding certainty is serialized as "
     "`hard` or `not_measured`; legacy receipts without the field remain readable as "
-    "`hard`. Reviewer packets and reports keep not-measured signals separate from "
+    "`hard`. A response whose host activation cannot be observed and has no hard "
+    "failure adds `activation_not_measured`, including alongside another soft "
+    "signal. Reviewer packets and reports keep not-measured signals separate from "
     "hard findings."
 )
 GUIDE_REVIEW_PACKET_PARAGRAPH = (
@@ -573,8 +576,10 @@ GUIDE_REVIEW_PACKET_PARAGRAPH = (
     "review prompt. A missing control uses an explicit `not_measured` response-hash "
     "sentinel. Changing either the validated case ID or response hash changes the "
     "reviewer prompt hash, so a stale assessment cannot be reused for different "
-    "evidence. Selection is stable under input ordering, deduplicated, "
-    "identity-redacted, and never expands the 8+4 cap."
+    "evidence. Activation-only soft evidence may be reported as a limitation, but "
+    "cannot displace both diagnostic and structural semantic representatives. "
+    "Selection is stable under input ordering, deduplicated, identity-redacted, and "
+    "never expands the 8+4 cap."
 )
 
 GUIDE_STATUS_DEFINITIONS = (
@@ -647,7 +652,7 @@ GUIDE_EXPECTED_SECTIONS = (
             "When matching preflight state exists but both report target and report state are absent, execute exclusively creates bounded pending content and persists its exact state before any producer or reviewer dispatch. A target without state, state without its exact target, an unsafe target, ownership drift, or extra relevant checkout dirt fails before dispatch.",
             GUIDE_LEASE_PARAGRAPH,
             "Completed `verified`, `partially_verified`, `failed`, and `not_measured` receipts remain complete. A `blocked` logical call may receive a new actual `:attempt-N` ID only when spare budget remains.",
-            GUIDE_V15_RECEIPT_PARAGRAPH,
+            GUIDE_V16_RECEIPT_PARAGRAPH,
         ),
     ),
     (
@@ -1091,15 +1096,18 @@ class LiveDocumentationTests(unittest.TestCase):
             re.sub(r"\s+", " ", text),
         )
 
-    def test_eval_guide_documents_v15_receipt_and_review_identity_boundaries(self) -> None:
+    def test_eval_guide_documents_v16_receipt_and_review_identity_boundaries(self) -> None:
         text = re.sub(
             r"\s+", " ", (HERE / "README.md").read_text(encoding="utf-8")
         )
         for required in (
-            "Runner version 15 validates the exact receipt and nested identity/finding schemas",
+            "Runner version 16 validates the exact receipt and nested identity/finding schemas",
+            "Every current `partially_verified` receipt carries at least one typed `not_measured` finding",
             "runner-version-10 evidence remains readable",
             "emitted into the canonical review prompt",
             "Changing either the validated case ID or response hash changes the reviewer prompt hash",
+            "Activation-only soft evidence may be reported as a limitation, but cannot displace both diagnostic and structural semantic representatives",
+            "adds `activation_not_measured`, including alongside another soft signal",
         ):
             self.assertIn(required, text)
 
@@ -1552,10 +1560,57 @@ class DeterministicEvaluationTests(unittest.TestCase):
         self.assertEqual(findings, ())
         self.assertEqual(live_matrix.case_status(case, findings), "verified")
 
-    def test_near_miss_activation_is_partial(self) -> None:
+    def test_all_near_misses_explain_unobservable_activation_as_soft_evidence(self) -> None:
+        expected = live_matrix.Finding(
+            "activation_not_measured",
+            "skill activation is not deterministically observable",
+            certainty="not_measured",
+        )
+        responses = {
+            "near-casual": "일반 대화로 답합니다.",
+            "near-translation": "내일 오전에 회의가 있습니다.",
+            "near-drafting": "일반 작성 요청으로 처리합니다.",
+            "near-summarization": "팀은 배포를 미뤘다. 검토가 끝나지 않았기 때문이다.",
+            "near-code-review": "def add(a, b): return a - b",
+            "near-detector-author": "오늘은 회의가 길었다.",
+        }
+
+        for case_id, response in responses.items():
+            with self.subTest(case_id=case_id):
+                case = case_by_id(case_id)
+                findings = live_matrix.evaluate_response(case, response)
+                self.assertEqual(findings, (expected,))
+                self.assertEqual(
+                    live_matrix.case_status(case, findings),
+                    "partially_verified",
+                )
+
+    def test_near_miss_hard_failure_is_not_hidden_by_activation_limit(self) -> None:
+        case = case_by_id("near-casual")
+        findings = live_matrix.evaluate_response(case, "수정본입니다")
+
+        self.assertEqual(live_matrix.case_status(case, findings), "failed")
+        self.assertIn("forbidden_substring", {finding.code for finding in findings})
+        self.assertNotIn(
+            "activation_not_measured", {finding.code for finding in findings}
+        )
+
+    def test_unobservable_activation_is_recorded_alongside_semantic_soft_signal(self) -> None:
+        case = dataclasses.replace(
+            case_by_id("diagnose-no-rewrite"), observable_activation=False
+        )
+        findings = live_matrix.evaluate_response(case, case.source)
+
+        self.assertEqual(live_matrix.case_status(case, findings), "partially_verified")
         self.assertEqual(
-            live_matrix.case_status(case_by_id("near-casual"), ()),
-            "partially_verified",
+            {finding.code for finding in findings},
+            {
+                "activation_not_measured",
+                "diagnostic_semantics_not_measured",
+            },
+        )
+        self.assertTrue(
+            all(finding.certainty == "not_measured" for finding in findings)
         )
 
 
@@ -1703,6 +1758,12 @@ class ProviderAdapterTests(unittest.TestCase):
 
 
 class ReceiptAndBudgetTests(unittest.TestCase):
+    def test_test_identity_tracks_the_current_runner_version(self) -> None:
+        self.assertEqual(
+            live_matrix.RunIdentity.for_test().runner_version,
+            live_matrix.RUNNER_VERSION,
+        )
+
     def test_durable_evidence_requires_the_exact_selected_producer_plan(self) -> None:
         identity = live_matrix.RunIdentity.for_test(selected_call_ids=("producer:case:1",))
         with tempfile.TemporaryDirectory() as directory:
@@ -4362,6 +4423,124 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
             (),
         )
 
+    def test_current_partial_receipt_requires_a_typed_not_measured_finding(self) -> None:
+        activation = live_matrix.Finding(
+            "activation_not_measured",
+            "skill activation is not deterministically observable",
+            certainty="not_measured",
+        )
+        current = live_matrix.RunIdentity.for_test(
+            runner_version=live_matrix.RUNNER_VERSION
+        )
+        valid = live_matrix.CallReceipt.for_test(
+            "producer:near-casual:1",
+            identity=current,
+            status="partially_verified",
+            case_id="near-casual",
+            band="near-miss",
+            findings=(activation,),
+        )
+
+        live_matrix._validate_receipt_provider_shape(valid)
+        self.assertEqual(live_matrix._receipt_from_json(valid.as_json()), valid)
+        with self.assertRaisesRegex(
+            live_matrix.LiveMatrixError, "finding certainty"
+        ):
+            live_matrix._validate_receipt_provider_shape(
+                dataclasses.replace(valid, findings=())
+            )
+
+    def test_current_near_miss_provider_attempt_is_durable_and_not_recalled(self) -> None:
+        case = case_by_id("near-casual")
+        call = live_matrix.PlannedCall(
+            "codex-direct:near-casual:1",
+            "producer",
+            "codex-direct",
+            case.id,
+            1,
+        )
+        identity = live_matrix.RunIdentity.for_test(
+            runner_version=live_matrix.RUNNER_VERSION,
+            selected_call_ids=(call.call_id,),
+            producer_ids=("codex-direct",),
+            requested_models=(),
+        )
+        producer = live_matrix.Producer("codex-direct", "codex", None)
+        capture = live_matrix.CommandCapture(
+            0,
+            (
+                json.dumps(
+                    {
+                        "type": "item.completed",
+                        "item": {
+                            "type": "agent_message",
+                            "text": "일반 대화로 답합니다.",
+                        },
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            ).encode(),
+            b"",
+            1,
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            run_root = pathlib.Path(directory)
+            preflight = live_matrix.PreflightResult(
+                identity=identity,
+                repository_root=run_root,
+                repository_branch="test",
+                source_skill_root=HERE.parent,
+                installed_skill_root=HERE.parent,
+                run_root=run_root,
+                cli_info={
+                    "codex": live_matrix.CliInfo("codex", "v", None),
+                    "cursor-agent": live_matrix.CliInfo(None, None, None),
+                },
+                model_availability={},
+                discovery_sha256=None,
+                discovery_diagnostic=None,
+            )
+            prepared = live_matrix._prepare_provider_call(
+                call, producer, case, preflight
+            )
+            reservation = live_matrix.reserve_attempt(
+                run_root,
+                identity,
+                call,
+                producer,
+                kind="producer",
+                call_number=1,
+                ceiling=1,
+            )
+            with mock.patch(
+                "live_matrix.run_command", return_value=capture
+            ) as provider:
+                receipt = live_matrix._dispatch_one(
+                    prepared, preflight, reservation
+                )
+            self.assertEqual(provider.call_count, 1)
+            self.assertEqual(receipt.status, "partially_verified")
+            self.assertEqual(
+                [finding.code for finding in receipt.findings],
+                ["activation_not_measured"],
+            )
+
+            live_matrix._write_call_receipt(run_root, receipt)
+            attempts = live_matrix._load_receipt_attempts(run_root)
+            reservations = live_matrix._load_attempt_reservations(
+                run_root, identity
+            )
+            live_matrix._validate_receipt_reservations(
+                attempts, reservations, identity
+            )
+            durable = live_matrix._load_receipts(run_root)
+            self.assertEqual(durable, {call.call_id: receipt})
+            self.assertEqual(
+                live_matrix.remaining_calls((call,), durable, identity), ()
+            )
+
     def test_receipt_rejects_malformed_finding_certainty_and_shape(self) -> None:
         payload = live_matrix.CallReceipt.for_test("call-1").as_json()
         valid = {
@@ -4404,6 +4583,9 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
             ),
             live_matrix.CallReceipt.for_test(
                 "failed-with-soft", status="failed", findings=(soft,)
+            ),
+            live_matrix.CallReceipt.for_test(
+                "failed-without-hard", status="failed", findings=()
             ),
         )
         for receipt in malformed:
@@ -5296,15 +5478,15 @@ class ReviewAndReportTests(unittest.TestCase):
                 ),
             ),
             live_matrix.CallReceipt.for_test(
-                "soft-extra",
+                "soft-activation",
                 status="partially_verified",
                 case_id="a-other",
                 band="near-miss",
                 response_sha256="a" * 64,
                 findings=(
                     live_matrix.Finding(
-                        "other_semantics_not_measured",
-                        "other meaning is not deterministically measured",
+                        "activation_not_measured",
+                        "skill activation is not deterministically observable",
                         certainty="not_measured",
                     ),
                 ),
@@ -6778,6 +6960,7 @@ class ReviewExecutionWiringTests(unittest.TestCase):
                     report_path=target,
                     report_state=state,
                     report_lease=lease,
+                    preflight_lease=mock.Mock(),
                 )
                 capture = live_matrix.CommandCapture(
                     0,

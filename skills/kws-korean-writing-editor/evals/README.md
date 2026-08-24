@@ -199,15 +199,16 @@ Completed `verified`, `partially_verified`, `failed`, and `not_measured`
 receipts remain complete. A `blocked` logical call may receive a new actual
 `:attempt-N` ID only when spare budget remains.
 
-Runner version 15 validates the exact receipt and nested identity/finding
+Runner version 16 validates the exact receipt and nested identity/finding
 schemas at load, publication, resume budgeting, report assembly, and review
 sampling. Integers reject booleans and out-of-range values; timestamps, hashes,
 stream byte/hash pairs, terminal statuses, evidence paths, call identity, and
 reservation relationships must be coherent before a receipt can authorize any
-later step. Immutable runner-version-10 evidence remains readable with only its
-original omitted finding certainty and empty-finding `partially_verified`
-shape treated as explicit legacy compatibility; it is not reusable as a
-runner-version-15 execution identity.
+later step. Every current `partially_verified` receipt carries at least one
+typed `not_measured` finding. Immutable runner-version-10 evidence remains
+readable with only its original omitted finding certainty and empty-finding
+`partially_verified` shape treated as explicit legacy compatibility; it is not
+reusable as a runner-version-16 execution identity.
 
 ## Review Packet
 
@@ -226,7 +227,9 @@ hashes stay bound to the durable receipt and are emitted into the canonical
 review prompt. A missing control uses an explicit `not_measured` response-hash
 sentinel. Changing either the validated case ID or response hash changes the
 reviewer prompt hash, so a stale assessment cannot be reused for different
-evidence. Selection is stable under input ordering, deduplicated,
+evidence. Activation-only soft evidence may be reported as a limitation, but
+cannot displace both diagnostic and structural semantic representatives.
+Selection is stable under input ordering, deduplicated,
 identity-redacted, and never expands the 8+4 cap.
 
 ## Status Meanings
@@ -250,7 +253,9 @@ cannot be proven from a positive canonical form emits
 `structural_semantics_not_measured` and produces `partially_verified`, never an
 unsupported hard failure or `verified`. Finding certainty is serialized as
 `hard` or `not_measured`; legacy receipts without the field remain readable as
-`hard`. Reviewer packets and reports keep not-measured signals separate from
+`hard`. A response whose host activation cannot be observed and has no hard
+failure adds `activation_not_measured`, including alongside another soft
+signal. Reviewer packets and reports keep not-measured signals separate from
 hard findings.
 
 No aggregate average erases a severe failure. Every report states the level at
@@ -298,7 +303,7 @@ The optional dated report is written only to
 
 An explicit host invocation and a compliant returned body do not prove that the
 host activated the skill internally. Cases whose activation is not observable
-are `partially_verified`; the evaluator does not infer hidden routing or
-activation from a self-report. Offline fixtures and synthetic live evidence do
-not establish general writing quality, authorship, or provider-wide
-reliability.
+carry `activation_not_measured` and are `partially_verified`; the evaluator
+does not infer hidden routing or activation from a self-report. Offline
+fixtures and synthetic live evidence do not establish general writing quality,
+authorship, or provider-wide reliability.
