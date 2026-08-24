@@ -155,6 +155,22 @@
 
 ## Defect Register
 
+### Final adjudication groups
+
+Reproduction counts below are unique producer receipts, not assertion counts. The baseline assertion ledger remains intact beneath the groups so every D-ID keeps its original case, repeat, response hash, and oracle detail.
+
+- F-001 | D-ID mapping=`D-001`–`D-003`, `D-018`, `D-020`–`D-022` | class=`host_variance` | severity=`medium` | reproductions=6 | affected producers/models=`cursor-agent/Auto`, `cursor-agent/Grok 4.6`, `cursor-agent/Kimi K2.5` | design criterion=`§9.3 eligibility criterion 2 (at least two distinct model families)` | action=`reject` | The candidates added process narration or a footer; `D-022` is the resulting repetition-count symptom. The portable contract already requires output-only editing and forbids process narration, so these failures do not prove contract under-specification.
+- F-002 | D-ID mapping=`D-004`–`D-015` | class=`harness_defect` | severity=`high` | reproductions=7 | affected producers/models=`codex/GPT-5.4`, `cursor-agent/Claude 4.6 Opus`, `cursor-agent/Gemini 3.1 Pro`, `cursor-agent/Grok 4.6`, `cursor-agent/Kimi K2.5`, `cursor-agent/Composer 2`, `cursor-agent/GLM-5.2` | design criterion=`surface evidence appears to meet §9.3 eligibility criteria 2 and 3, but the harness defect makes skill remediation inapplicable` | action=`repair-harness` | Diagnose-mode explanations preserved the source facts but did not necessarily repeat them as one contiguous substring or with edited-body occurrence counts. The old oracle applied edit-output invariants to explanatory prose and produced false material findings.
+- F-003 | D-ID mapping=`D-016`, `D-017` | class=`host_variance` | severity=`medium` | reproductions=1 | affected producers/models=`codex/GPT-5.4` | design criterion=`none; one non-critical single-family repetition failure does not meet §9.3 eligibility` | action=`reject` | One candidate removed deliberate repetition even though the current contract explicitly protects intentional voice and repetition; no portable contract gap was demonstrated.
+- F-004 | D-ID mapping=`D-019` | class=`subjective_disagreement` | severity=`low` | reproductions=1 | affected producers/models=`cursor-agent/GLM-5.2` | design criterion=`none; no hard invariant harm, so §9.3 remediation eligibility does not apply` | action=`reject` | The only difference was permissible auxiliary spacing in a no-op case. Treating one exact string as uniquely correct was stricter than the intended invariant, with no meaning, voice, structure, or literal harm.
+- F-005 | D-ID mapping=`D-023` | class=`host_variance` | severity=`medium` | reproductions=1 | affected producers/models=`cursor-agent/GLM-5.2` | design criterion=`§9.3 eligibility criterion 3 (one-run material quotation/literal boundary)` | action=`reject` | The protected quotation's words and attribution remained, but its quotation-mark glyph style changed. The current contract already treats quotations as material invariants and permits only scoped corrections, so this is a model-local compliance failure rather than evidence for provider-specific wording.
+- F-006 | D-ID mapping=`D-024`–`D-031` | class=`host_variance` | severity=`high` | reproductions=4 | affected producers/models=`codex/GPT-5.4`, `cursor-agent/Claude 4.6 Opus`, `cursor-agent/Gemini 3.1 Pro`, `cursor-agent/Kimi K2.5` | design criteria=`§9.3 eligibility criteria 2 (cross-family) and 3 (one-run material negation boundary)` | action=`reject` | The candidates rewrote grammatical possibility or negation. The portable contract already prohibits changing modality and negation, so the cross-family failures are serious but do not establish a missing general instruction.
+- F-007 | D-ID mapping=`D-032`–`D-037` | class=`harness_defect` | severity=`high` | reproductions=6 | affected producers/models=`codex/GPT-5.4`, `cursor-agent/Claude 4.6 Opus`, `cursor-agent/Kimi K2.5`, `cursor-agent/GLM-5.2` | design criterion=`surface evidence appears to meet §9.3 eligibility criteria 2 and 3, but the harness defect makes skill remediation inapplicable` | action=`repair-harness` | The old sentinel required whole-line byte equality. Private candidate/source comparison and the verified reviewer packet show that the list marker, inline code span, quoted instruction, and non-execution boundary were preserved while only quotation style or surrounding prose changed.
+
+The seven groups cover all 37 material assertion IDs and all 26 unique failed producer receipts. No group is classified `contract_defect`; the two proven false-positive groups were repaired in the evaluator, while the remaining behavior changes are rejected for this skill version.
+
+### Baseline assertion ledger
+
 - D-001 | material | case=`correct-obligation` | repeat=1 | response_sha256=`9acccdb5ee0ca80831ec9536c9e4e4d1eba4f95c88fd2084a21a11cb0e09044c` | `exact_output_mismatch`: `response does not match exact output`
 - D-002 | material | case=`correct-obligation` | repeat=1 | response_sha256=`d780605e09e50e11a712a43592d4c9078c1c3b762e20944014504f85eea8554a` | `exact_output_mismatch`: `response does not match exact output`
 - D-003 | material | case=`correct-obligation` | repeat=2 | response_sha256=`424066841b4401a85e3e91cad46c1708e27d6c05083a76dd4ae4c5329ffeff2b` | `exact_output_mismatch`: `response does not match exact output`
@@ -209,28 +225,40 @@
 - Reviewer receipt: requested=`claude-sonnet-5-thinking-high`; reported=not measured; status=blocked; response_sha256=`1a87bced73cf84561b6c6531e2a5a26bf8290414b4fb4fe4acefe6000fe3be0d`; cause=`review_json_invalid`: `review response rejected without repair`.
 - Reviewer receipt: requested=`gemini-3.7-flash-high`; reported=not measured; status=verified; response_sha256=`f131c0280ee7355a5dcb73cbf21d29d65710f6b783b2498debeec6a82c38b810`; cause=none.
 - Reviewer receipt: requested=`cursor-grok-4.6-high`; reported=not measured; status=blocked; response_sha256=not measured; cause=`provider_blocked`: `reviewer returned non-zero exit status`.
+- Supervisory use: `candidate-001` corroborates F-001's process-narration finding. The clipped excerpts for `candidate-002` and `candidate-003` cannot prove missing diagnose facts; complete private source/candidate comparison instead establishes F-002. `candidate-004` explicitly says Markdown formatting and injection defense were preserved, corroborating F-007's false-positive diagnosis. Candidates 005–007 are controls, and candidate 008 lacks a measured comparison control.
+- Coverage limitation: only 1 of 3 requested reviewer calls returned a verified packet. The Claude packet was rejected as invalid JSON and the Grok host returned nonzero, so reviewer agreement, majority, and cross-reviewer generalization are not measurable. Classification therefore rests on baseline receipts, hashes, repeat evidence, the portable contract, and private full-candidate inspection—not reviewer vote.
 
 ## Adopted And Rejected Improvements
 
-- Supervisory classification: pending adjudication.
-- No reviewer suggestion is adopted or rejected before evidence-based adjudication.
+- F-002 and F-007 are adopted only as evaluator repairs. Commit `70daf234100d2158aa28a21a16287d19e9ef3531` narrows diagnose-mode and structure-mode oracles without changing the Korean editor's behavior contract.
+- Before repair, the existing baseline produced 7/7 false diagnose failures and 6/6 false structural failures. Provider-free replay under runner version 11 clears all 13 affected receipts; the original baseline statuses, receipts, response hashes, and Fixed Evidence remain immutable.
+- Behavior changes suggested by F-001, F-003, F-005, and F-006 are rejected because the current portable contract already states the applicable invariant. F-004 is rejected as an exact-output preference without invariant harm.
+- No finding is both `contract_defect` and `adopt`. The skill remains version 1.0.2, no behavior-contract file was changed, and no remediation plan was created. The remaining 38-call program budget was not consumed.
 
 ## Verification
 
-- `python3 evals/run.py --self-test`: `verified`
-- `python3 evals/run.py --scope full`: `verified`
-- `receipt identity and bounds`: `verified`
+- Strict RED: four focused oracle tests produced 3 expected failures and 1 negative-boundary pass before implementation.
+- Focused GREEN: 4/4 focused oracle tests and 5/5 exact evaluator-documentation contract tests passed.
+- Provider-free baseline replay: 7/7 diagnose receipts and 6/6 structural receipts produced zero findings under the corrected oracles; no new live receipt was created.
+- `python3 skills/kws-korean-writing-editor/evals/run.py --self-test`: 8/8 verified.
+- `python3 skills/kws-korean-writing-editor/evals/run.py --scope full`: 30/30 verified, including mutation and tree checks.
+- `python3 -m unittest skills.kws-korean-writing-editor.evals.test_live_matrix`: 163/163 passed.
+- Python compilation, dry-run accounting (`119/3/122/38/160`), `bun run agent:verify`, receipt identity, and bounds checks passed.
 
 ## Limitations And Residual Risks
 
 - Review packets use redacted 240-byte excerpts and do not establish general Korean quality.
 - Failed evidence has precedence in aggregation and is never averaged away.
-- Pending adjudication remains until the dedicated Task 8 classification step.
+- Reviewer coverage is 1/3 verified. The two blocked reviewer receipts cannot support consensus claims, and no replacement reviewer call was authorized.
+- The baseline remains a bounded synthetic matrix rather than a general Korean-quality benchmark. Host/model failures classified as variance remain real interoperability risks even when the portable contract is already explicit.
+- Harness replay corrects classification logic but does not rewrite immutable baseline receipts or aggregate statuses. Any future report generated by runner version 11 must clearly distinguish the original live result from provider-free reclassification.
+- Source and installed skill manifests intentionally diverge after the offline evaluator repair because installation was prohibited in Task 8. A future paid run must perform its exact reviewed swap and preflight; the remaining 38 calls stay unused.
 
 ## Git And Installation State
 
 - Changed files: `skills/kws-korean-writing-editor/CHANGE_PROTOCOL.md`, `skills/kws-korean-writing-editor/README.md`, `skills/kws-korean-writing-editor/evals/README.md`, `skills/kws-korean-writing-editor/evals/fixtures/task-7-install-state.json`, `skills/kws-korean-writing-editor/evals/fixtures/task-7-preflight-commit.json`, `skills/kws-korean-writing-editor/evals/live_cases.json`, `skills/kws-korean-writing-editor/evals/live_matrix.py`, `skills/kws-korean-writing-editor/evals/test_live_matrix.py`
-- Local: `current local refs: branch=codex/kws-korean-writing-editor-cross-model-evaluation; base=main; merge_base=4357cf28e2afd74dd4e38eb466ac128080d76b3a; divergence main...HEAD behind=18 ahead=27`
+- Harness repair: `70daf234100d2158aa28a21a16287d19e9ef3531` (`fix: repair Korean editor live evaluation`)
+- Local before this adjudication commit: `branch=codex/kws-korean-writing-editor-cross-model-evaluation; base=main; merge_base=4357cf28e2afd74dd4e38eb466ac128080d76b3a; divergence main...HEAD behind=18 ahead=29`
 - Remote: `current local remote-tracking refs contain no HEAD; no fetch or publication was performed`
 - Git: `local execution evidence only`
-- Installation: `retained source/install manifest equality required`
+- Installation: `recorded post-repair source manifest=d67b8bb434139b2ef7365d02dcf6170b92c37a03ac0115e959dca6e0761d7aa1; installed baseline manifest=1fc47de6f08d237255846550a435d6d3afe3a74ff3a29d6d38dbf48a7e837767; later provider-free gates generated ignored bytecode cache, so any future preflight must recompute the exact tree; no Task 8 install or provider call occurred`
