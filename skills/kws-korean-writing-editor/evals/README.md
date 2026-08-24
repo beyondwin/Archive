@@ -209,6 +209,13 @@ The dated report uses exactly these executed-evidence definitions:
 - `blocked`: a positively reserved provider attempt could not produce usable evidence because execution or response processing failed.
 - `not_measured`: no provider process was invoked for that evidence item; this is the only status permitted to have call number zero and no reservation.
 
+The deterministic judge treats `diagnose` output as explanatory prose rather
+than an edited body: declared multi-token facts may be mentioned separately,
+and their occurrence counts are not compared with the source. Structural
+sentinels bind the Markdown list marker, exact code spans, and exact quoted
+instruction content while allowing local prose and straight/curly quote-style
+variation outside that protected content.
+
 No aggregate average erases a severe failure. Every report states the level at
 which a status applies.
 
