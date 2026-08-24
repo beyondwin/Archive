@@ -106,7 +106,12 @@ completed marker binds the exact preflight device, inode, mode, size, SHA-256,
 canonical bytes, bootstrap state and previous-tree binding, runner version, and
 run ID. Reuse opens both files with bounded `O_NOFOLLOW` reads through the same
 held run-directory FD and compares every current preflight payload field
-exactly.
+exactly. It retains those three descriptors through execution and, immediately
+before every provider attempt reservation, rechecks their exact held bytes and
+metadata, both current evidence names, the bootstrap inputs, and the exact known
+run-directory entry set. Completion of that recheck is the authorization
+linearization point: a later swap can affect at most the immediately reserved
+attempt, while persistent drift blocks every later reservation.
 
 The approved Task 7 baseline run ID is
 `kws-editor-20260823-baseline-02` because run-01 is already consumed, while the
