@@ -24,6 +24,7 @@ sys.path.insert(0, str(HERE))
 import live_matrix  # noqa: E402
 
 INSTALL_STATE_FIXTURE = HERE / "fixtures" / "task-7-install-state.json"
+PREFLIGHT_COMMIT_FIXTURE = HERE / "fixtures" / "task-7-preflight-commit.json"
 
 
 REPORT_SEPARATOR_CASES = (
@@ -131,6 +132,14 @@ def write_complete_install_bootstrap(
     state_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     state_path.chmod(0o600)
     return run_root
+
+
+def json_shape(value: object) -> object:
+    if isinstance(value, dict):
+        return {key: json_shape(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [json_shape(item) for item in value]
+    return type(value).__name__
 
 
 def rewrite_install_bootstrap_state(
@@ -401,16 +410,34 @@ GUIDE_BOOTSTRAP_PARAGRAPH = (
     "an already-existing mode-`0700` real run directory whose complete contents "
     "are exactly a real `install-previous` directory and a real mode-`0600` "
     "`task-7-install-state.json` file; it never creates or accepts an absent, "
-    "empty, or partial run directory. `preflight.json` must be absent, and the "
-    "record's run ID, exact source/target/previous/stage paths, final swap state, "
-    "equal source/install hashes, and current source/install/previous manifest "
-    "hashes must all match the validated filesystem state."
+    "empty, or partial run directory. Both `preflight.json` and "
+    "`preflight-commit.json` must be absent. The record's run ID, exact "
+    "source/target/previous/stage paths, final swap state, equal source/install "
+    "hashes, and current source/install hashes must match, while the complete "
+    "previous tree is bounded and hashed recursively through its held directory "
+    "FD with no symlinks or special files."
+)
+GUIDE_PREFLIGHT_COMMIT_PARAGRAPH = (
+    "Preflight holds the same run-directory FD, rechecks the exact install-state "
+    "bytes and recursive previous-tree manifest before and after publishing "
+    "pending mode-`0600` `preflight.json` and `preflight-commit.json` files, and "
+    "never unlinks either public name. A pending preflight or missing, partial, "
+    "tampered, replaced, unsafe, or oversized marker never authorizes reuse. The "
+    "final marker suffix write is the commit point; an fsync error after that "
+    "complete write reports committed success so a failed command cannot leave a "
+    "reusable commit. The completed marker binds the exact preflight device, "
+    "inode, mode, size, SHA-256, canonical bytes, bootstrap state and previous-tree "
+    "binding, runner version, and run ID. Reuse opens both files with bounded "
+    "`O_NOFOLLOW` reads through the same held run-directory FD and compares every "
+    "current preflight payload field exactly."
 )
 GUIDE_IDENTITY_PARAGRAPH = (
-    "Resume validates the complete run identity: run ID, runner version, "
-    "repository HEAD, source skill hash, installed skill hash, `live_cases.json` "
-    "hash, producer IDs, requested model IDs, scope, and canonical selected call "
-    "IDs. A missing field or any mismatch fails closed and requires a new run ID."
+    "Resume validates the complete current preflight payload: run ID, runner "
+    "version, repository HEAD and branch, source and installed skill hashes, "
+    "`live_cases.json` hash, producer IDs, requested model IDs, scope, canonical "
+    "selected call IDs, CLI paths, versions and diagnostics, model availability, "
+    "and model-discovery digest and diagnostic. A missing field or any mismatch "
+    "fails closed and requires a new run ID."
 )
 GUIDE_LEASE_PARAGRAPH = (
     "One `ReportLease` holds one `O_RDWR` and `O_NOFOLLOW` target file FD plus one "
@@ -487,6 +514,7 @@ GUIDE_EXPECTED_SECTIONS = (
         (
             "Before execution, ensure that source and installed skill manifests match, the relevant checkout is clean, and the approved run ID has only the complete Task 7 install bootstrap described below and no preflight or provider evidence. Preflight writes the immutable identity to the ignored evidence root and makes no provider call.",
             GUIDE_BOOTSTRAP_PARAGRAPH,
+            GUIDE_PREFLIGHT_COMMIT_PARAGRAPH,
             GUIDE_ARTIFACT_PARAGRAPH,
             "`--jobs` accepts 1 through 4. The report path must be the exact dated filename under `docs/operations` shown above.",
         ),
@@ -531,7 +559,7 @@ GUIDE_EXPECTED_SECTIONS = (
     (
         "Evidence Layout",
         (
-            "Each ignored run directory contains immutable preflight state, `attempt-reservations/`, `receipts/`, `raw/`, and `normalized/` evidence plus report ownership state when a report was requested. Positive reservation numbers and filenames are exactly gap-free `1..N`; crash-only reservations are part of that ledger. Every positive receipt matches the full reservation identity. Report ownership state also persists the held target device, inode, and expected hash. Raw and normalized bodies are local operational evidence, not report attachments.",
+            "Each successfully committed ignored run directory contains immutable `preflight.json` and `preflight-commit.json` state, `attempt-reservations/`, `receipts/`, `raw/`, and `normalized/` evidence plus report ownership state when a report was requested. Positive reservation numbers and filenames are exactly gap-free `1..N`; crash-only reservations are part of that ledger. Every positive receipt matches the full reservation identity. Report ownership state also persists the held target device, inode, and expected hash. Raw and normalized bodies are local operational evidence, not report attachments.",
             "The optional dated report is written only to `docs/operations/YYYY-MM-DD-kws-korean-writing-editor-cross-model-evaluation.md`.",
         ),
     ),
@@ -602,6 +630,7 @@ def assert_live_guide_contract(markdown: str) -> None:
         GUIDE_BODY_INTEGRITY_PARAGRAPH,
         GUIDE_PRIVACY_PARAGRAPH,
         GUIDE_OFFLINE_PARAGRAPH,
+        GUIDE_PREFLIGHT_COMMIT_PARAGRAPH,
         GUIDE_ARTIFACT_PARAGRAPH,
         GUIDE_IDENTITY_PARAGRAPH,
         GUIDE_LEASE_PARAGRAPH,
@@ -927,6 +956,7 @@ class LiveDocumentationTests(unittest.TestCase):
         for paragraph in (
             GUIDE_PRIVACY_PARAGRAPH,
             GUIDE_IDENTITY_PARAGRAPH,
+            GUIDE_PREFLIGHT_COMMIT_PARAGRAPH,
             GUIDE_ARTIFACT_PARAGRAPH,
             GUIDE_LEASE_PARAGRAPH,
         ):
@@ -1264,6 +1294,45 @@ class ReceiptAndBudgetTests(unittest.TestCase):
             (root / "link.txt").symlink_to(root / "target.txt")
             with self.assertRaisesRegex(live_matrix.LiveMatrixError, "symlink"):
                 live_matrix.recursive_manifest_hash(root)
+
+    def test_fd_relative_manifest_matches_canonical_hash_and_rejects_specials(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            nested = root / "nested"
+            nested.mkdir()
+            (root / "a.txt").write_text("one", encoding="utf-8")
+            (nested / "b.txt").write_bytes(b"two\x00three")
+            flags = os.O_RDONLY
+            if hasattr(os, "O_DIRECTORY"):
+                flags |= os.O_DIRECTORY
+            if hasattr(os, "O_NOFOLLOW"):
+                flags |= os.O_NOFOLLOW
+            descriptor = os.open(root, flags)
+            try:
+                self.assertEqual(
+                    live_matrix.recursive_manifest_hash(root),
+                    live_matrix._recursive_manifest_hash_fd(descriptor),
+                )
+                with mock.patch("live_matrix.MAX_INSTALL_MANIFEST_ENTRIES", 2):
+                    with self.assertRaisesRegex(
+                        live_matrix.LiveMatrixError, "entry count"
+                    ):
+                        live_matrix._recursive_manifest_hash_fd(descriptor)
+                with mock.patch("live_matrix.MAX_INSTALL_MANIFEST_FILE_BYTES", 2):
+                    with self.assertRaisesRegex(
+                        live_matrix.LiveMatrixError, "file exceeds"
+                    ):
+                        live_matrix._recursive_manifest_hash_fd(descriptor)
+                with mock.patch("live_matrix.MAX_INSTALL_MANIFEST_DEPTH", 0):
+                    with self.assertRaisesRegex(live_matrix.LiveMatrixError, "depth"):
+                        live_matrix._recursive_manifest_hash_fd(descriptor)
+                os.mkfifo(root / "unsafe-fifo", 0o600)
+                with self.assertRaisesRegex(
+                    live_matrix.LiveMatrixError, "unsupported entry type"
+                ):
+                    live_matrix._recursive_manifest_hash_fd(descriptor)
+            finally:
+                os.close(descriptor)
 
     def test_receipt_is_exclusive_and_0600(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1985,9 +2054,26 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
                 {path.name for path in run_root.iterdir()},
                 {
                     "install-previous",
+                    "preflight-commit.json",
                     "preflight.json",
                     "task-7-install-state.json",
                 },
+            )
+            marker_payload = json.loads(
+                (run_root / "preflight-commit.json").read_text(encoding="utf-8")
+            )
+            marker_fixture = json.loads(
+                PREFLIGHT_COMMIT_FIXTURE.read_text(encoding="utf-8")
+            )
+            self.assertEqual(json_shape(marker_payload), json_shape(marker_fixture))
+            self.assertEqual(
+                marker_payload["commit_state"], marker_fixture["commit_state"]
+            )
+            self.assertEqual(
+                marker_payload["runner_version"], marker_fixture["runner_version"]
+            )
+            self.assertEqual(
+                marker_payload["schema_version"], marker_fixture["schema_version"]
             )
             self.assertFalse((run_root / live_matrix.ATTEMPT_RESERVATION_DIRECTORY_NAME).exists())
             self.assertFalse((run_root / live_matrix.RECEIPT_DIRECTORY_NAME).exists())
@@ -2079,12 +2165,57 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
             previous.chmod(0o700 if original_mode != 0o700 else 0o755)
             return (run_root,)
 
+        def append_previous_file_in_place(
+            run_root: pathlib.Path,
+        ) -> tuple[pathlib.Path, ...]:
+            with (run_root / "install-previous" / "SKILL.md").open("ab") as stream:
+                stream.write(b"x")
+            return (run_root,)
+
+        def rewrite_previous_file_in_place(
+            run_root: pathlib.Path,
+        ) -> tuple[pathlib.Path, ...]:
+            skill = run_root / "install-previous" / "SKILL.md"
+            original = skill.read_bytes()
+            changed = bytes([original[0] ^ 1]) + original[1:]
+            self.assertEqual(len(changed), len(original))
+            skill.write_bytes(changed)
+            return (run_root,)
+
+        def add_previous_file(run_root: pathlib.Path) -> tuple[pathlib.Path, ...]:
+            (run_root / "install-previous" / "attacker-added.txt").write_text(
+                "added\n", encoding="utf-8"
+            )
+            return (run_root,)
+
+        def remove_previous_file(run_root: pathlib.Path) -> tuple[pathlib.Path, ...]:
+            (run_root / "install-previous" / "README.md").unlink()
+            return (run_root,)
+
+        def add_previous_symlink(run_root: pathlib.Path) -> tuple[pathlib.Path, ...]:
+            (run_root / "install-previous" / "attacker-link").symlink_to("SKILL.md")
+            return (run_root,)
+
+        def mutate_nested_previous_file(
+            run_root: pathlib.Path,
+        ) -> tuple[pathlib.Path, ...]:
+            nested = run_root / "install-previous" / "references" / "editorial-guide.md"
+            with nested.open("ab") as stream:
+                stream.write(b"nested-race\n")
+            return (run_root,)
+
         mutations = (
             ("run root rename and replacement", replace_root),
             ("install state rename and symlink", replace_state_with_symlink),
             ("previous install rename and symlink", replace_previous_with_symlink),
             ("install state same-inode rewrite", rewrite_state_in_place),
             ("previous install same-inode chmod", chmod_previous_in_place),
+            ("previous file same-inode append", append_previous_file_in_place),
+            ("previous file same-inode rewrite", rewrite_previous_file_in_place),
+            ("previous file addition", add_previous_file),
+            ("previous file removal", remove_previous_file),
+            ("previous tree symlink", add_previous_symlink),
+            ("previous nested file mutation", mutate_nested_previous_file),
         )
         with tempfile.TemporaryDirectory() as directory:
             root, source, installed, evidence_root = temporary_git_install_fixture(directory)
@@ -2140,6 +2271,12 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
                             for candidate in publication_roots
                         )
                     )
+                    self.assertTrue(
+                        all(
+                            not (candidate / "preflight-commit.json").exists()
+                            for candidate in publication_roots
+                        )
+                    )
 
     def test_first_preflight_rechecks_bound_bytes_and_modes_after_publication(self) -> None:
         def append_state_in_place(run_root: pathlib.Path) -> None:
@@ -2151,6 +2288,31 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
             previous = run_root / "install-previous"
             original_mode = stat.S_IMODE(previous.stat().st_mode)
             previous.chmod(0o700 if original_mode != 0o700 else 0o755)
+
+        def append_previous_file_in_place(run_root: pathlib.Path) -> None:
+            with (run_root / "install-previous" / "SKILL.md").open("ab") as stream:
+                stream.write(b"x")
+
+        def rewrite_previous_file_in_place(run_root: pathlib.Path) -> None:
+            skill = run_root / "install-previous" / "SKILL.md"
+            original = skill.read_bytes()
+            skill.write_bytes(bytes([original[0] ^ 1]) + original[1:])
+
+        def add_previous_file(run_root: pathlib.Path) -> None:
+            (run_root / "install-previous" / "attacker-added.txt").write_text(
+                "added\n", encoding="utf-8"
+            )
+
+        def remove_previous_file(run_root: pathlib.Path) -> None:
+            (run_root / "install-previous" / "README.md").unlink()
+
+        def add_previous_symlink(run_root: pathlib.Path) -> None:
+            (run_root / "install-previous" / "attacker-link").symlink_to("SKILL.md")
+
+        def mutate_nested_previous_file(run_root: pathlib.Path) -> None:
+            nested = run_root / "install-previous" / "references" / "editorial-guide.md"
+            with nested.open("ab") as stream:
+                stream.write(b"nested-race\n")
 
         def rewrite_preflight_in_place(run_root: pathlib.Path) -> None:
             (run_root / "preflight.json").write_text("{}\n", encoding="utf-8")
@@ -2171,6 +2333,12 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
         mutations = (
             ("install state same-inode size change", append_state_in_place, False),
             ("previous install same-inode chmod", chmod_previous_in_place, False),
+            ("previous file same-inode append", append_previous_file_in_place, False),
+            ("previous file same-inode rewrite", rewrite_previous_file_in_place, False),
+            ("previous file addition", add_previous_file, False),
+            ("previous file removal", remove_previous_file, False),
+            ("previous tree symlink", add_previous_symlink, False),
+            ("previous nested file mutation", mutate_nested_previous_file, False),
             ("preflight same-inode content rewrite", rewrite_preflight_in_place, False),
             ("preflight symlink replacement", replace_preflight_with_symlink, True),
             ("preflight regular-file replacement", replace_preflight_with_regular_file, True),
@@ -2232,9 +2400,156 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
                                 "attacker-owned\n",
                             )
                     else:
-                        self.assertFalse(preflight.exists())
+                        self.assertTrue(preflight.exists())
+                    self.assertTrue((run_root / "preflight-commit.json").exists())
+                    with self.assertRaises(live_matrix.LiveMatrixError):
+                        self.validate_fixture_preflight(
+                            root=root,
+                            source=source,
+                            installed=installed,
+                            evidence_root=evidence_root,
+                            run_id=run_id,
+                            reuse_preflight=True,
+                        )
 
-    def test_first_preflight_rolls_back_exact_receipt_after_failed_postcheck(self) -> None:
+    def test_failed_publication_never_unlinks_a_swappable_preflight_name(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root, source, installed, evidence_root = temporary_git_install_fixture(directory)
+            run_id = "rollback-swap-1"
+            run_root = write_complete_install_bootstrap(
+                evidence_root, run_id, source, installed
+            )
+            original_validate = live_matrix._validate_install_bootstrap_directory_fd
+            original_unlink = os.unlink
+            attacker = b"attacker replacement must survive\n"
+            swapped = False
+
+            def fail_after_publication(
+                directory_descriptor: int,
+                binding: live_matrix._InstallBootstrapBinding,
+                *,
+                preflight_published: bool,
+            ) -> None:
+                original_validate(
+                    directory_descriptor,
+                    binding,
+                    preflight_published=preflight_published,
+                )
+                if preflight_published:
+                    raise ValueError("deterministic post-publication failure")
+
+            def swap_before_unlink(
+                path: object,
+                *args: object,
+                dir_fd: int | None = None,
+                **kwargs: object,
+            ) -> None:
+                nonlocal swapped
+                if path == "preflight.json" and dir_fd is not None:
+                    swapped = True
+                    os.rename(
+                        "preflight.json",
+                        ".publisher-owned-preflight.json",
+                        src_dir_fd=dir_fd,
+                        dst_dir_fd=dir_fd,
+                    )
+                    descriptor = os.open(
+                        "preflight.json",
+                        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                        0o600,
+                        dir_fd=dir_fd,
+                    )
+                    try:
+                        os.write(descriptor, attacker)
+                    finally:
+                        os.close(descriptor)
+                original_unlink(path, *args, dir_fd=dir_fd, **kwargs)
+
+            with mock.patch(
+                "live_matrix._validate_install_bootstrap_directory_fd",
+                side_effect=fail_after_publication,
+            ):
+                with mock.patch("live_matrix.os.unlink", side_effect=swap_before_unlink):
+                    with self.assertRaisesRegex(
+                        live_matrix.LiveMatrixError,
+                        "installation bootstrap is invalid",
+                    ):
+                        self.validate_fixture_preflight(
+                            root=root,
+                            source=source,
+                            installed=installed,
+                            evidence_root=evidence_root,
+                            run_id=run_id,
+                        )
+
+            self.assertFalse(swapped, "publication must not unlink a replaceable name")
+            self.assertTrue((run_root / "preflight.json").is_file())
+            self.assertNotEqual((run_root / "preflight.json").read_bytes(), attacker)
+
+    def test_canonical_preflight_replacement_after_failed_first_run_cannot_reuse(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root, source, installed, evidence_root = temporary_git_install_fixture(directory)
+            run_id = "canonical-replacement-1"
+            run_root = write_complete_install_bootstrap(
+                evidence_root, run_id, source, installed
+            )
+            original_validate = live_matrix._validate_install_bootstrap_directory_fd
+            replacement_inode: int | None = None
+
+            def replace_after_publication(
+                directory_descriptor: int,
+                binding: live_matrix._InstallBootstrapBinding,
+                *,
+                preflight_published: bool,
+            ) -> None:
+                nonlocal replacement_inode
+                if preflight_published and replacement_inode is None:
+                    preflight = run_root / "preflight.json"
+                    content = preflight.read_bytes()
+                    original_inode = preflight.stat().st_ino
+                    preflight.rename(
+                        run_root.parent / f".{run_id}-publisher-preflight.json"
+                    )
+                    preflight.write_bytes(content)
+                    preflight.chmod(0o600)
+                    replacement_inode = preflight.stat().st_ino
+                    self.assertNotEqual(replacement_inode, original_inode)
+                original_validate(
+                    directory_descriptor,
+                    binding,
+                    preflight_published=preflight_published,
+                )
+
+            with mock.patch(
+                "live_matrix._validate_install_bootstrap_directory_fd",
+                side_effect=replace_after_publication,
+            ):
+                with self.assertRaisesRegex(
+                    live_matrix.LiveMatrixError,
+                    "installation bootstrap is invalid",
+                ):
+                    self.validate_fixture_preflight(
+                        root=root,
+                        source=source,
+                        installed=installed,
+                        evidence_root=evidence_root,
+                        run_id=run_id,
+                    )
+
+            self.assertIsNotNone(replacement_inode)
+            self.assertTrue((run_root / "preflight.json").is_file())
+            self.assertTrue((run_root / "preflight-commit.json").exists())
+            with self.assertRaises(live_matrix.LiveMatrixError):
+                self.validate_fixture_preflight(
+                    root=root,
+                    source=source,
+                    installed=installed,
+                    evidence_root=evidence_root,
+                    run_id=run_id,
+                    reuse_preflight=True,
+                )
+
+    def test_first_preflight_does_not_publish_before_failed_git_postcheck(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root, source, installed, evidence_root = temporary_git_install_fixture(directory)
             run_id = "failed-postcheck-1"
@@ -2266,12 +2581,25 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
                     reuse_preflight=True,
                 )
 
-    def test_reuse_rejects_symlink_unsafe_mode_and_oversized_preflight(self) -> None:
+    def test_reuse_rejects_missing_replaced_unsafe_and_oversized_preflight(self) -> None:
+        def remove(preflight: pathlib.Path) -> None:
+            preflight.unlink()
+
         def replace_with_symlink(preflight: pathlib.Path) -> None:
             attacker = preflight.parent.parent / f".{preflight.parent.name}-valid.json"
             shutil.copy2(preflight, attacker)
             preflight.unlink()
             preflight.symlink_to(attacker)
+
+        def replace_with_canonical_copy(preflight: pathlib.Path) -> None:
+            content = preflight.read_bytes()
+            original_inode = preflight.stat().st_ino
+            preflight.rename(
+                preflight.parent.parent / f".{preflight.parent.name}-publisher.json"
+            )
+            preflight.write_bytes(content)
+            preflight.chmod(0o600)
+            self.assertNotEqual(preflight.stat().st_ino, original_inode)
 
         def chmod_unsafe(preflight: pathlib.Path) -> None:
             preflight.chmod(0o644)
@@ -2282,7 +2610,9 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
                 stream.write(padding)
 
         mutations = (
+            ("missing", remove),
             ("symlink", replace_with_symlink),
+            ("different-inode canonical replacement", replace_with_canonical_copy),
             ("unsafe mode", chmod_unsafe),
             ("oversized", append_beyond_bound),
         )
@@ -2311,6 +2641,227 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
                             run_id=run_id,
                             reuse_preflight=True,
                         )
+
+    def test_reuse_rejects_missing_partial_tampered_replaced_or_unsafe_commit_marker(self) -> None:
+        def remove(marker: pathlib.Path) -> None:
+            marker.unlink()
+
+        def write_partial(marker: pathlib.Path) -> None:
+            marker.write_bytes(b'{"schema_version":1')
+
+        def rewrite_valid_json_in_place(marker: pathlib.Path) -> None:
+            payload = json.loads(marker.read_text(encoding="utf-8"))
+            payload["runner_version"] = "tampered"
+            marker.write_bytes(live_matrix._canonical_json_bytes(payload))
+
+        def rewrite_schema_version_as_boolean(marker: pathlib.Path) -> None:
+            payload = json.loads(marker.read_text(encoding="utf-8"))
+            payload["schema_version"] = True
+            marker.write_bytes(live_matrix._canonical_json_bytes(payload))
+
+        def replace_with_canonical_copy(marker: pathlib.Path) -> None:
+            content = marker.read_bytes()
+            original_inode = marker.stat().st_ino
+            marker.rename(
+                marker.parent.parent / f".{marker.parent.name}-{marker.name}.publisher"
+            )
+            marker.write_bytes(content)
+            marker.chmod(0o600)
+            self.assertNotEqual(marker.stat().st_ino, original_inode)
+
+        def chmod_unsafe(marker: pathlib.Path) -> None:
+            marker.chmod(0o644)
+
+        def replace_with_symlink(marker: pathlib.Path) -> None:
+            attacker = marker.parent.parent / f".{marker.parent.name}-commit.json"
+            shutil.copy2(marker, attacker)
+            marker.unlink()
+            marker.symlink_to(attacker)
+
+        def append_beyond_bound(marker: pathlib.Path) -> None:
+            padding = b" " * (live_matrix.MAX_STREAM_BYTES - marker.stat().st_size + 1)
+            with marker.open("ab") as stream:
+                stream.write(padding)
+
+        mutations = (
+            ("missing", remove),
+            ("partial", write_partial),
+            ("same-inode valid JSON tamper", rewrite_valid_json_in_place),
+            ("boolean schema version", rewrite_schema_version_as_boolean),
+            ("different-inode canonical replacement", replace_with_canonical_copy),
+            ("unsafe mode", chmod_unsafe),
+            ("symlink", replace_with_symlink),
+            ("oversized", append_beyond_bound),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root, source, installed, evidence_root = temporary_git_install_fixture(directory)
+            for index, (label, mutate) in enumerate(mutations, start=1):
+                with self.subTest(label=label):
+                    run_id = f"commit-tamper-{index}"
+                    run_root = write_complete_install_bootstrap(
+                        evidence_root, run_id, source, installed
+                    )
+                    self.validate_fixture_preflight(
+                        root=root,
+                        source=source,
+                        installed=installed,
+                        evidence_root=evidence_root,
+                        run_id=run_id,
+                    )
+                    marker = run_root / "preflight-commit.json"
+                    self.assertTrue(marker.is_file())
+                    mutate(marker)
+                    with self.assertRaises(live_matrix.LiveMatrixError):
+                        self.validate_fixture_preflight(
+                            root=root,
+                            source=source,
+                            installed=installed,
+                            evidence_root=evidence_root,
+                            run_id=run_id,
+                            reuse_preflight=True,
+                        )
+
+    def test_reuse_compares_every_preflight_field_to_current_expected_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root, source, installed, evidence_root = temporary_git_install_fixture(directory)
+            run_id = "complete-payload-drift-1"
+            run_root = write_complete_install_bootstrap(
+                evidence_root, run_id, source, installed
+            )
+            self.validate_fixture_preflight(
+                root=root,
+                source=source,
+                installed=installed,
+                evidence_root=evidence_root,
+                run_id=run_id,
+            )
+            preflight = run_root / "preflight.json"
+            marker = run_root / "preflight-commit.json"
+            self.assertTrue(marker.is_file())
+            original_preflight_bytes = preflight.read_bytes()
+            original_preflight = json.loads(original_preflight_bytes.decode("utf-8"))
+            original_marker_bytes = marker.read_bytes()
+            original_marker = json.loads(original_marker_bytes.decode("utf-8"))
+            drift_values: dict[str, object] = {
+                "identity": {
+                    **original_preflight["identity"],
+                    "runner_version": "tampered",
+                },
+                "repository_branch": "tampered-branch",
+                "cli": {"tampered": {"diagnostic": "tampered", "path": None, "version": None}},
+                "model_availability": {"tampered-model": True},
+                "model_discovery_sha256": "0" * 64,
+                "model_discovery_diagnostic": "tampered-discovery",
+            }
+            for field, value in drift_values.items():
+                with self.subTest(field=field):
+                    changed = dict(original_preflight)
+                    changed[field] = value
+                    changed_bytes = live_matrix._canonical_json_bytes(changed)
+                    preflight.write_bytes(changed_bytes)
+                    preflight.chmod(0o600)
+                    preflight_stat = preflight.stat()
+                    changed_marker = json.loads(json.dumps(original_marker))
+                    changed_marker["preflight"].update(
+                        {
+                            "canonical_json": changed_bytes.decode("ascii"),
+                            "device": preflight_stat.st_dev,
+                            "inode": preflight_stat.st_ino,
+                            "mode": stat.S_IMODE(preflight_stat.st_mode),
+                            "sha256": hashlib.sha256(changed_bytes).hexdigest(),
+                            "size": len(changed_bytes),
+                        }
+                    )
+                    marker.write_bytes(live_matrix._canonical_json_bytes(changed_marker))
+                    marker.chmod(0o600)
+                    with self.assertRaises(live_matrix.LiveMatrixError):
+                        self.validate_fixture_preflight(
+                            root=root,
+                            source=source,
+                            installed=installed,
+                            evidence_root=evidence_root,
+                            run_id=run_id,
+                            reuse_preflight=True,
+                        )
+                    preflight.write_bytes(original_preflight_bytes)
+                    preflight.chmod(0o600)
+                    marker.write_bytes(original_marker_bytes)
+                    marker.chmod(0o600)
+
+            reused = self.validate_fixture_preflight(
+                root=root,
+                source=source,
+                installed=installed,
+                evidence_root=evidence_root,
+                run_id=run_id,
+                reuse_preflight=True,
+            )
+            self.assertEqual(reused.run_root, run_root.resolve(strict=True))
+
+    def test_reuse_rejects_unknown_run_root_entry_after_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root, source, installed, evidence_root = temporary_git_install_fixture(directory)
+            run_id = "committed-unknown-entry-1"
+            run_root = write_complete_install_bootstrap(
+                evidence_root, run_id, source, installed
+            )
+            self.validate_fixture_preflight(
+                root=root,
+                source=source,
+                installed=installed,
+                evidence_root=evidence_root,
+                run_id=run_id,
+            )
+            (run_root / "unknown-entry.txt").write_text("unexpected\n", encoding="utf-8")
+            with self.assertRaises(live_matrix.LiveMatrixError):
+                self.validate_fixture_preflight(
+                    root=root,
+                    source=source,
+                    installed=installed,
+                    evidence_root=evidence_root,
+                    run_id=run_id,
+                    reuse_preflight=True,
+                )
+
+    def test_final_commit_marker_fsync_failure_reports_committed_success(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root, source, installed, evidence_root = temporary_git_install_fixture(directory)
+            run_id = "commit-fsync-1"
+            run_root = write_complete_install_bootstrap(
+                evidence_root, run_id, source, installed
+            )
+            marker = run_root / "preflight-commit.json"
+            original_fsync = os.fsync
+            marker_fsyncs = 0
+
+            def fail_second_marker_fsync(descriptor: int) -> None:
+                nonlocal marker_fsyncs
+                opened = os.fstat(descriptor)
+                if marker.exists() and marker.stat().st_ino == opened.st_ino:
+                    marker_fsyncs += 1
+                    if marker_fsyncs == 2:
+                        raise OSError("simulated durability ambiguity after commit write")
+                original_fsync(descriptor)
+
+            with mock.patch("live_matrix.os.fsync", side_effect=fail_second_marker_fsync):
+                first = self.validate_fixture_preflight(
+                    root=root,
+                    source=source,
+                    installed=installed,
+                    evidence_root=evidence_root,
+                    run_id=run_id,
+                )
+
+            self.assertEqual(marker_fsyncs, 2)
+            reused = self.validate_fixture_preflight(
+                root=root,
+                source=source,
+                installed=installed,
+                evidence_root=evidence_root,
+                run_id=run_id,
+                reuse_preflight=True,
+            )
+            self.assertEqual(reused.identity, first.identity)
 
     def test_first_preflight_rejects_every_incomplete_or_unsafe_install_bootstrap(self) -> None:
         def remove_previous(run_root: pathlib.Path) -> None:

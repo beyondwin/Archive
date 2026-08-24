@@ -81,7 +81,7 @@ ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 MAX_STREAM_BYTES = 131_072
 COMMAND_TIMEOUT_SECONDS = 300
 DIAGNOSTIC_TAIL_BYTES = 256
-RUNNER_VERSION = "8"
+RUNNER_VERSION = "9"
 RUN_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 MIN_JOBS = 1
 MAX_JOBS = 4
@@ -95,9 +95,28 @@ ATTEMPT_RESERVATION_DIRECTORY_NAME = "attempt-reservations"
 REPORT_STATE_FILENAME = "report-state.json"
 INSTALL_PREVIOUS_DIRECTORY_NAME = "install-previous"
 INSTALL_STATE_FILENAME = "task-7-install-state.json"
+PREFLIGHT_FILENAME = "preflight.json"
+PREFLIGHT_COMMIT_FILENAME = "preflight-commit.json"
 INSTALL_BOOTSTRAP_ENTRIES = frozenset(
     {INSTALL_PREVIOUS_DIRECTORY_NAME, INSTALL_STATE_FILENAME}
 )
+INSTALL_COMMITTED_ENTRIES = INSTALL_BOOTSTRAP_ENTRIES | frozenset(
+    {PREFLIGHT_FILENAME, PREFLIGHT_COMMIT_FILENAME}
+)
+KNOWN_RUN_ENTRIES = INSTALL_COMMITTED_ENTRIES | frozenset(
+    {
+        ATTEMPT_RESERVATION_DIRECTORY_NAME,
+        NORMALIZED_DIRECTORY_NAME,
+        RAW_DIRECTORY_NAME,
+        RECEIPT_DIRECTORY_NAME,
+        REPORT_STATE_FILENAME,
+    }
+)
+MAX_COMMIT_MARKER_BYTES = 32_768
+MAX_INSTALL_MANIFEST_DEPTH = 64
+MAX_INSTALL_MANIFEST_ENTRIES = 10_000
+MAX_INSTALL_MANIFEST_FILE_BYTES = 8 * 1024 * 1024
+MAX_INSTALL_MANIFEST_TOTAL_BYTES = 64 * 1024 * 1024
 INSTALL_STATE_FIELDS = frozenset(
     {
         "install_state",
@@ -272,6 +291,7 @@ class _InstallBootstrapBinding:
     previous_device: int
     previous_inode: int
     previous_mode: int
+    previous_manifest_sha256: str
 
 
 @dataclass(frozen=True)
@@ -816,6 +836,242 @@ def recursive_manifest_hash(root: pathlib.Path) -> str:
     return digest.hexdigest()
 
 
+def _recursive_manifest_hash_fd(root_descriptor: int) -> str:
+    """Hash a held directory tree without reopening any pathname from its parent."""
+    digest = hashlib.sha256()
+    entry_count = 0
+    total_file_bytes = 0
+    try:
+        root_stat = os.fstat(root_descriptor)
+        if not stat.S_ISDIR(root_stat.st_mode):
+            raise LiveMatrixError("manifest root must be a directory")
+        root_identity = (root_stat.st_dev, root_stat.st_ino, root_stat.st_mode)
+
+        def record_entry(relative: bytes, entry_type: bytes, mode: int) -> None:
+            nonlocal entry_count
+            entry_count += 1
+            if entry_count > MAX_INSTALL_MANIFEST_ENTRIES:
+                raise LiveMatrixError("manifest entry count exceeds limit")
+            digest.update(b"entry\0" + relative + b"\0" + entry_type + b"\0")
+            digest.update(f"{mode:o}".encode("ascii") + b"\0")
+
+        def encoded_names(directory_descriptor: int) -> tuple[tuple[bytes, str], ...]:
+            encoded: list[tuple[bytes, str]] = []
+            with os.scandir(directory_descriptor) as iterator:
+                for entry in iterator:
+                    name = entry.name
+                    if type(name) is not str or name in {".", ".."} or "/" in name:
+                        raise LiveMatrixError("manifest contains an invalid entry name")
+                    if len(encoded) >= MAX_INSTALL_MANIFEST_ENTRIES:
+                        raise LiveMatrixError("manifest entry count exceeds limit")
+                    encoded.append((name.encode("utf-8"), name))
+            encoded.sort(key=lambda item: item[0])
+            return tuple(encoded)
+
+        def add_directory(
+            directory_descriptor: int,
+            relative: bytes,
+            expected_stat: os.stat_result,
+            depth: int,
+        ) -> None:
+            nonlocal total_file_bytes
+            if depth > MAX_INSTALL_MANIFEST_DEPTH:
+                raise LiveMatrixError("manifest depth exceeds limit")
+            opened_directory = os.fstat(directory_descriptor)
+            expected_identity = (
+                expected_stat.st_dev,
+                expected_stat.st_ino,
+                expected_stat.st_mode,
+            )
+            if (
+                not stat.S_ISDIR(opened_directory.st_mode)
+                or (
+                    opened_directory.st_dev,
+                    opened_directory.st_ino,
+                    opened_directory.st_mode,
+                )
+                != expected_identity
+            ):
+                raise LiveMatrixError("manifest directory changed during hashing")
+            record_entry(relative, b"directory", stat.S_IMODE(opened_directory.st_mode))
+            before_names = encoded_names(directory_descriptor)
+            for encoded_name, name in before_names:
+                named_before = os.stat(
+                    name,
+                    dir_fd=directory_descriptor,
+                    follow_symlinks=False,
+                )
+                child_relative = (
+                    encoded_name
+                    if relative == b"."
+                    else relative + b"/" + encoded_name
+                )
+                if stat.S_ISLNK(named_before.st_mode):
+                    raise LiveMatrixError("manifest contains symlink")
+                if stat.S_ISDIR(named_before.st_mode):
+                    flags = os.O_RDONLY
+                    if hasattr(os, "O_DIRECTORY"):
+                        flags |= os.O_DIRECTORY
+                    if hasattr(os, "O_NOFOLLOW"):
+                        flags |= os.O_NOFOLLOW
+                    if hasattr(os, "O_NONBLOCK"):
+                        flags |= os.O_NONBLOCK
+                    child_descriptor = os.open(
+                        name,
+                        flags,
+                        dir_fd=directory_descriptor,
+                    )
+                    try:
+                        opened_child = os.fstat(child_descriptor)
+                        named_identity = (
+                            named_before.st_dev,
+                            named_before.st_ino,
+                            named_before.st_mode,
+                        )
+                        if (
+                            not stat.S_ISDIR(opened_child.st_mode)
+                            or (
+                                opened_child.st_dev,
+                                opened_child.st_ino,
+                                opened_child.st_mode,
+                            )
+                            != named_identity
+                        ):
+                            raise LiveMatrixError(
+                                "manifest directory changed while opening"
+                            )
+                        add_directory(
+                            child_descriptor,
+                            child_relative,
+                            opened_child,
+                            depth + 1,
+                        )
+                        after_child = os.fstat(child_descriptor)
+                        named_after = os.stat(
+                            name,
+                            dir_fd=directory_descriptor,
+                            follow_symlinks=False,
+                        )
+                        if (
+                            (
+                                after_child.st_dev,
+                                after_child.st_ino,
+                                after_child.st_mode,
+                            )
+                            != named_identity
+                            or (
+                                named_after.st_dev,
+                                named_after.st_ino,
+                                named_after.st_mode,
+                            )
+                            != named_identity
+                        ):
+                            raise LiveMatrixError(
+                                "manifest directory changed during hashing"
+                            )
+                    finally:
+                        os.close(child_descriptor)
+                elif stat.S_ISREG(named_before.st_mode):
+                    flags = os.O_RDONLY
+                    if hasattr(os, "O_NOFOLLOW"):
+                        flags |= os.O_NOFOLLOW
+                    if hasattr(os, "O_NONBLOCK"):
+                        flags |= os.O_NONBLOCK
+                    child_descriptor = os.open(
+                        name,
+                        flags,
+                        dir_fd=directory_descriptor,
+                    )
+                    try:
+                        opened_child = os.fstat(child_descriptor)
+                        named_identity = (
+                            named_before.st_dev,
+                            named_before.st_ino,
+                            named_before.st_mode,
+                            named_before.st_size,
+                        )
+                        opened_identity = (
+                            opened_child.st_dev,
+                            opened_child.st_ino,
+                            opened_child.st_mode,
+                            opened_child.st_size,
+                        )
+                        if (
+                            not stat.S_ISREG(opened_child.st_mode)
+                            or opened_identity != named_identity
+                        ):
+                            raise LiveMatrixError("manifest file changed while opening")
+                        if opened_child.st_size > MAX_INSTALL_MANIFEST_FILE_BYTES:
+                            raise LiveMatrixError("manifest file exceeds limit")
+                        if (
+                            total_file_bytes + opened_child.st_size
+                            > MAX_INSTALL_MANIFEST_TOTAL_BYTES
+                        ):
+                            raise LiveMatrixError("manifest total bytes exceed limit")
+                        record_entry(
+                            child_relative,
+                            b"file",
+                            stat.S_IMODE(opened_child.st_mode),
+                        )
+                        read_size = 0
+                        while True:
+                            chunk = os.read(child_descriptor, 65_536)
+                            if not chunk:
+                                break
+                            read_size += len(chunk)
+                            if read_size > MAX_INSTALL_MANIFEST_FILE_BYTES:
+                                raise LiveMatrixError("manifest file exceeds limit")
+                            digest.update(chunk)
+                        total_file_bytes += read_size
+                        after_child = os.fstat(child_descriptor)
+                        named_after = os.stat(
+                            name,
+                            dir_fd=directory_descriptor,
+                            follow_symlinks=False,
+                        )
+                        if (
+                            read_size != opened_child.st_size
+                            or (
+                                after_child.st_dev,
+                                after_child.st_ino,
+                                after_child.st_mode,
+                                after_child.st_size,
+                            )
+                            != opened_identity
+                            or (
+                                named_after.st_dev,
+                                named_after.st_ino,
+                                named_after.st_mode,
+                                named_after.st_size,
+                            )
+                            != opened_identity
+                        ):
+                            raise LiveMatrixError("manifest file changed during hashing")
+                    finally:
+                        os.close(child_descriptor)
+                else:
+                    raise LiveMatrixError("manifest contains unsupported entry type")
+            if encoded_names(directory_descriptor) != before_names:
+                raise LiveMatrixError("manifest directory changed during hashing")
+            after_directory = os.fstat(directory_descriptor)
+            if (
+                after_directory.st_dev,
+                after_directory.st_ino,
+                after_directory.st_mode,
+            ) != expected_identity:
+                raise LiveMatrixError("manifest directory changed during hashing")
+
+        add_directory(root_descriptor, b".", root_stat, 0)
+        after_root = os.fstat(root_descriptor)
+        if (after_root.st_dev, after_root.st_ino, after_root.st_mode) != root_identity:
+            raise LiveMatrixError("manifest root changed during hashing")
+        return digest.hexdigest()
+    except LiveMatrixError:
+        raise
+    except (OSError, UnicodeError, RecursionError, ValueError) as exc:
+        raise LiveMatrixError("cannot hash manifest safely") from exc
+
+
 def _canonical_json_bytes(payload: dict[str, Any]) -> bytes:
     return json.dumps(
         payload, ensure_ascii=True, sort_keys=True, separators=(",", ":")
@@ -1057,6 +1313,7 @@ def _read_bounded_regular_file_at(
     expected_inode: int | None = None,
     expected_size: int | None = None,
     expected_sha256: str | None = None,
+    max_bytes: int = MAX_STREAM_BYTES,
 ) -> tuple[bytes, os.stat_result]:
     """Read one stable regular file through a held directory without following links."""
     if pathlib.PurePath(filename).name != filename:
@@ -1073,14 +1330,14 @@ def _read_bounded_regular_file_at(
         if (
             not stat.S_ISREG(opened.st_mode)
             or stat.S_IMODE(opened.st_mode) != expected_mode
-            or opened.st_size > MAX_STREAM_BYTES
+            or opened.st_size > max_bytes
             or (expected_device is not None and opened.st_dev != expected_device)
             or (expected_inode is not None and opened.st_ino != expected_inode)
             or (expected_size is not None and opened.st_size != expected_size)
         ):
             raise ValueError("unsafe bounded file")
         chunks: list[bytes] = []
-        remaining = MAX_STREAM_BYTES + 1
+        remaining = max_bytes + 1
         while remaining > 0:
             chunk = os.read(descriptor, min(65_536, remaining))
             if not chunk:
@@ -1088,7 +1345,7 @@ def _read_bounded_regular_file_at(
             chunks.append(chunk)
             remaining -= len(chunk)
         content = b"".join(chunks)
-        if len(content) > MAX_STREAM_BYTES:
+        if len(content) > max_bytes:
             raise ValueError("bounded file exceeds limit")
         after_read = os.fstat(descriptor)
         named = os.stat(filename, dir_fd=directory_descriptor, follow_symlinks=False)
@@ -1195,7 +1452,7 @@ def _validate_install_bootstrap(
         else:
             raise ValueError("install stage still exists")
         previous = run_root / INSTALL_PREVIOUS_DIRECTORY_NAME
-        previous_hash = recursive_manifest_hash(previous)
+        previous_hash = _recursive_manifest_hash_fd(previous_descriptor)
         expected_state: dict[str, Any] = {
             "install_state": FINAL_INSTALL_STATE,
             "installed_manifest_sha256": expectation.installed_manifest_sha256,
@@ -1222,6 +1479,7 @@ def _validate_install_bootstrap(
             previous_device=previous_stat.st_dev,
             previous_inode=previous_stat.st_ino,
             previous_mode=stat.S_IMODE(previous_stat.st_mode),
+            previous_manifest_sha256=previous_hash,
         )
         _validate_install_bootstrap_directory_fd(
             directory_descriptor,
@@ -1260,20 +1518,27 @@ def _validate_install_bootstrap_directory_fd(
     *,
     preflight_published: bool,
 ) -> None:
+    run_stat = os.fstat(directory_descriptor)
+    expected_entries = set(INSTALL_BOOTSTRAP_ENTRIES)
+    if preflight_published:
+        expected_entries.update({PREFLIGHT_FILENAME, PREFLIGHT_COMMIT_FILENAME})
+    if (
+        not stat.S_ISDIR(run_stat.st_mode)
+        or stat.S_IMODE(run_stat.st_mode) != 0o700
+        or (run_stat.st_dev, run_stat.st_ino)
+        != (binding.run_device, binding.run_inode)
+        or set(os.listdir(directory_descriptor)) != expected_entries
+    ):
+        raise ValueError("install bootstrap root binding changed")
+    _validate_install_bootstrap_bound_inputs_fd(directory_descriptor, binding)
+
+
+def _validate_install_bootstrap_bound_inputs_fd(
+    directory_descriptor: int,
+    binding: _InstallBootstrapBinding,
+) -> None:
     previous_descriptor: int | None = None
     try:
-        run_stat = os.fstat(directory_descriptor)
-        expected_entries = set(INSTALL_BOOTSTRAP_ENTRIES)
-        if preflight_published:
-            expected_entries.add("preflight.json")
-        if (
-            not stat.S_ISDIR(run_stat.st_mode)
-            or stat.S_IMODE(run_stat.st_mode) != 0o700
-            or (run_stat.st_dev, run_stat.st_ino)
-            != (binding.run_device, binding.run_inode)
-            or set(os.listdir(directory_descriptor)) != expected_entries
-        ):
-            raise ValueError("install bootstrap root binding changed")
         _read_bounded_regular_file_at(
             directory_descriptor,
             INSTALL_STATE_FILENAME,
@@ -1317,6 +1582,8 @@ def _validate_install_bootstrap_directory_fd(
             or not stat.S_ISDIR(named_previous.st_mode)
         ):
             raise ValueError("install bootstrap previous binding changed")
+        if _recursive_manifest_hash_fd(previous_descriptor) != binding.previous_manifest_sha256:
+            raise ValueError("install bootstrap previous manifest changed")
     finally:
         if previous_descriptor is not None:
             os.close(previous_descriptor)
@@ -1332,6 +1599,7 @@ def _open_install_bootstrap_directory(
         if (
             stat.S_ISLNK(path_stat.st_mode)
             or not stat.S_ISDIR(path_stat.st_mode)
+            or stat.S_IMODE(path_stat.st_mode) != 0o700
             or (path_stat.st_dev, path_stat.st_ino)
             != (binding.run_device, binding.run_inode)
         ):
@@ -1346,63 +1614,38 @@ def _open_install_bootstrap_directory(
             descriptor, binding, preflight_published=False
         )
         return descriptor
-    except (OSError, ValueError) as exc:
+    except (LiveMatrixError, OSError, ValueError) as exc:
         if descriptor is not None:
             os.close(descriptor)
         raise LiveMatrixError("installation bootstrap is invalid") from exc
 
 
-def _rollback_exact_published_file_at(
-    directory_descriptor: int,
-    filename: str,
-    binding: _PublishedPreflightBinding,
-) -> bool:
-    """Remove only the exact inode created by this publication attempt."""
-    if pathlib.PurePath(filename).name != filename:
-        raise ValueError("invalid rollback filename")
-    try:
-        current = os.stat(
-            filename,
-            dir_fd=directory_descriptor,
-            follow_symlinks=False,
-        )
-    except FileNotFoundError:
-        return True
-    if (
-        not stat.S_ISREG(current.st_mode)
-        or (current.st_dev, current.st_ino) != (binding.device, binding.inode)
-    ):
-        return False
-    os.unlink(filename, dir_fd=directory_descriptor)
-    os.fsync(directory_descriptor)
-    return True
+def _write_all(descriptor: int, content: bytes) -> None:
+    offset = 0
+    while offset < len(content):
+        written = os.write(descriptor, content[offset:])
+        if written <= 0:
+            raise LiveMatrixError("incomplete receipt write")
+        offset += written
 
 
-def _write_exclusive_json_at(
+def _write_pending_json_at(
     directory_descriptor: int,
     filename: str,
     payload: dict[str, Any],
 ) -> _PublishedPreflightBinding:
+    """Create a durable pending receipt without ever unlinking its public name."""
     if pathlib.PurePath(filename).name != filename:
         raise LiveMatrixError("invalid receipt filename")
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
-    temporary = f".{filename}.{secrets.token_hex(16)}.partial"
     descriptor: int | None = None
-    temporary_exists = False
-    published: _PublishedPreflightBinding | None = None
     try:
-        descriptor = os.open(temporary, flags, 0o600, dir_fd=directory_descriptor)
-        temporary_exists = True
+        descriptor = os.open(filename, flags, 0o600, dir_fd=directory_descriptor)
         os.fchmod(descriptor, 0o600)
         encoded = _canonical_json_bytes(payload)
-        offset = 0
-        while offset < len(encoded):
-            written = os.write(descriptor, encoded[offset:])
-            if written <= 0:
-                raise LiveMatrixError("incomplete receipt write")
-            offset += written
+        _write_all(descriptor, encoded)
         os.fsync(descriptor)
         created = os.fstat(descriptor)
         if (
@@ -1411,55 +1654,32 @@ def _write_exclusive_json_at(
             or created.st_size != len(encoded)
         ):
             raise LiveMatrixError("invalid receipt inode")
-        published = _PublishedPreflightBinding(
+        named = os.stat(filename, dir_fd=directory_descriptor, follow_symlinks=False)
+        if (
+            named.st_dev,
+            named.st_ino,
+            named.st_mode,
+            named.st_size,
+        ) != (created.st_dev, created.st_ino, created.st_mode, created.st_size):
+            raise LiveMatrixError("receipt name changed during publication")
+        os.fsync(directory_descriptor)
+        return _PublishedPreflightBinding(
             device=created.st_dev,
             inode=created.st_ino,
             mode=stat.S_IMODE(created.st_mode),
             size=len(encoded),
             sha256=hashlib.sha256(encoded).hexdigest(),
         )
-        try:
-            os.link(
-                temporary,
-                filename,
-                src_dir_fd=directory_descriptor,
-                dst_dir_fd=directory_descriptor,
-                follow_symlinks=False,
-            )
-        except FileExistsError as exc:
-            raise LiveMatrixError("receipt already exists") from exc
-        os.fsync(directory_descriptor)
-        os.unlink(temporary, dir_fd=directory_descriptor)
-        temporary_exists = False
-        os.fsync(directory_descriptor)
-        if published is None:
-            raise LiveMatrixError("receipt publication binding is missing")
-        return published
+    except FileExistsError as exc:
+        raise LiveMatrixError("receipt already exists") from exc
     except LiveMatrixError:
-        if published is not None:
-            try:
-                _rollback_exact_published_file_at(
-                    directory_descriptor, filename, published
-                )
-            except OSError:
-                pass
         raise
     except OSError as exc:
-        if published is not None:
-            try:
-                _rollback_exact_published_file_at(
-                    directory_descriptor, filename, published
-                )
-            except OSError:
-                pass
         raise LiveMatrixError("cannot publish receipt") from exc
     finally:
         if descriptor is not None:
-            os.close(descriptor)
-        if temporary_exists:
             try:
-                os.unlink(temporary, dir_fd=directory_descriptor)
-                os.fsync(directory_descriptor)
+                os.close(descriptor)
             except OSError:
                 pass
 
@@ -1472,7 +1692,7 @@ def _validate_published_preflight_at(
     expected = _canonical_json_bytes(payload)
     content, _ = _read_bounded_regular_file_at(
         directory_descriptor,
-        "preflight.json",
+        PREFLIGHT_FILENAME,
         expected_mode=binding.mode,
         expected_device=binding.device,
         expected_inode=binding.inode,
@@ -1483,44 +1703,249 @@ def _validate_published_preflight_at(
         raise ValueError("published preflight content changed")
 
 
+def _commit_marker_payload(
+    bootstrap: _InstallBootstrapBinding,
+    preflight: _PublishedPreflightBinding,
+    marker_stat: os.stat_result,
+    preflight_payload: dict[str, Any],
+) -> dict[str, Any]:
+    canonical_preflight = _canonical_json_bytes(preflight_payload)
+    identity = preflight_payload.get("identity")
+    if not isinstance(identity, dict):
+        raise LiveMatrixError("preflight identity is invalid")
+    return {
+        "bootstrap": {
+            "previous": {
+                "device": bootstrap.previous_device,
+                "inode": bootstrap.previous_inode,
+                "manifest_sha256": bootstrap.previous_manifest_sha256,
+                "mode": bootstrap.previous_mode,
+            },
+            "run_root": {
+                "device": bootstrap.run_device,
+                "inode": bootstrap.run_inode,
+            },
+            "state": {
+                "device": bootstrap.state_device,
+                "inode": bootstrap.state_inode,
+                "sha256": bootstrap.state_sha256,
+                "size": bootstrap.state_size,
+            },
+        },
+        "commit_state": "validated_preflight_committed",
+        "marker": {
+            "device": marker_stat.st_dev,
+            "inode": marker_stat.st_ino,
+            "mode": stat.S_IMODE(marker_stat.st_mode),
+        },
+        "preflight": {
+            "canonical_json": canonical_preflight.decode("ascii"),
+            "device": preflight.device,
+            "inode": preflight.inode,
+            "mode": preflight.mode,
+            "sha256": preflight.sha256,
+            "size": preflight.size,
+        },
+        "run_id": identity.get("run_id"),
+        "runner_version": identity.get("runner_version"),
+        "schema_version": 1,
+    }
+
+
+def _write_pending_commit_marker_at(
+    directory_descriptor: int,
+    bootstrap: _InstallBootstrapBinding,
+    preflight: _PublishedPreflightBinding,
+    preflight_payload: dict[str, Any],
+) -> tuple[int, bytes]:
+    flags = os.O_RDWR | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(
+            PREFLIGHT_COMMIT_FILENAME,
+            flags,
+            0o600,
+            dir_fd=directory_descriptor,
+        )
+        os.fchmod(descriptor, 0o600)
+        created = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(created.st_mode)
+            or stat.S_IMODE(created.st_mode) != 0o600
+            or created.st_size != 0
+        ):
+            raise LiveMatrixError("invalid commit marker inode")
+        encoded = _canonical_json_bytes(
+            _commit_marker_payload(bootstrap, preflight, created, preflight_payload)
+        )
+        if len(encoded) > MAX_COMMIT_MARKER_BYTES or not encoded.endswith(b"}\n"):
+            raise LiveMatrixError("commit marker exceeds its bounded schema")
+        pending = encoded[:-2]
+        _write_all(descriptor, pending)
+        os.fsync(descriptor)
+        after_write = os.fstat(descriptor)
+        named = os.stat(
+            PREFLIGHT_COMMIT_FILENAME,
+            dir_fd=directory_descriptor,
+            follow_symlinks=False,
+        )
+        expected_identity = (
+            created.st_dev,
+            created.st_ino,
+            created.st_mode,
+            len(pending),
+        )
+        if (
+            after_write.st_dev,
+            after_write.st_ino,
+            after_write.st_mode,
+            after_write.st_size,
+        ) != expected_identity or (
+            named.st_dev,
+            named.st_ino,
+            named.st_mode,
+            named.st_size,
+        ) != expected_identity:
+            raise LiveMatrixError("commit marker changed while pending")
+        os.fsync(directory_descriptor)
+        result = descriptor
+        descriptor = None
+        return result, encoded
+    except FileExistsError as exc:
+        raise LiveMatrixError("commit marker already exists") from exc
+    except LiveMatrixError:
+        raise
+    except OSError as exc:
+        raise LiveMatrixError("cannot publish commit marker") from exc
+    finally:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+
+
+def _validate_pending_commit_marker_at(
+    directory_descriptor: int,
+    marker_descriptor: int,
+    encoded: bytes,
+) -> None:
+    pending = encoded[:-2]
+    os.lseek(marker_descriptor, 0, os.SEEK_SET)
+    content = os.read(marker_descriptor, MAX_COMMIT_MARKER_BYTES + 1)
+    after_read = os.fstat(marker_descriptor)
+    named = os.stat(
+        PREFLIGHT_COMMIT_FILENAME,
+        dir_fd=directory_descriptor,
+        follow_symlinks=False,
+    )
+    expected_identity = (
+        after_read.st_dev,
+        after_read.st_ino,
+        after_read.st_mode,
+        len(pending),
+    )
+    if (
+        content != pending
+        or after_read.st_size != len(pending)
+        or (
+            named.st_dev,
+            named.st_ino,
+            named.st_mode,
+            named.st_size,
+        )
+        != expected_identity
+    ):
+        raise ValueError("pending commit marker changed")
+
+
+def _finish_commit_marker(marker_descriptor: int, encoded: bytes) -> None:
+    """Linearize commit; durability ambiguity after the full suffix is success."""
+    os.lseek(marker_descriptor, len(encoded) - 2, os.SEEK_SET)
+    _write_all(marker_descriptor, encoded[-2:])
+    try:
+        os.fsync(marker_descriptor)
+    except OSError:
+        # The complete, validating marker is already visible. Reporting failure here
+        # could leave a reusable run after a failed command, so this is committed success.
+        pass
+
+
 def _publish_install_bootstrap_preflight(
     run_root: pathlib.Path,
     binding: _InstallBootstrapBinding,
     payload: dict[str, Any],
 ) -> _PublishedPreflightBinding:
     directory_descriptor = _open_install_bootstrap_directory(run_root, binding)
-    published: _PublishedPreflightBinding | None = None
+    marker_descriptor: int | None = None
     try:
-        published = _write_exclusive_json_at(
-            directory_descriptor, "preflight.json", payload
+        published = _write_pending_json_at(
+            directory_descriptor, PREFLIGHT_FILENAME, payload
+        )
+        marker_descriptor, encoded_marker = _write_pending_commit_marker_at(
+            directory_descriptor,
+            binding,
+            published,
+            payload,
         )
         _validate_install_bootstrap_directory_fd(
             directory_descriptor, binding, preflight_published=True
         )
         _validate_published_preflight_at(directory_descriptor, published, payload)
+        _validate_pending_commit_marker_at(
+            directory_descriptor,
+            marker_descriptor,
+            encoded_marker,
+        )
         current_root = run_root.lstat()
         if (
             stat.S_ISLNK(current_root.st_mode)
             or not stat.S_ISDIR(current_root.st_mode)
+            or stat.S_IMODE(current_root.st_mode) != 0o700
             or (current_root.st_dev, current_root.st_ino)
             != (binding.run_device, binding.run_inode)
         ):
             raise ValueError("install bootstrap root path changed")
+        _finish_commit_marker(marker_descriptor, encoded_marker)
         return published
     except (LiveMatrixError, OSError, ValueError) as exc:
-        if published is not None:
-            try:
-                _rollback_exact_published_file_at(
-                    directory_descriptor, "preflight.json", published
-                )
-            except OSError:
-                pass
         raise LiveMatrixError("installation bootstrap is invalid") from exc
     finally:
-        os.close(directory_descriptor)
+        if marker_descriptor is not None:
+            try:
+                os.close(marker_descriptor)
+            except OSError:
+                pass
+        try:
+            os.close(directory_descriptor)
+        except OSError:
+            pass
 
 
-def _read_reusable_preflight(run_root: pathlib.Path) -> Any:
+def _strict_commit_object(
+    value: Any,
+    fields: frozenset[str],
+    label: str,
+) -> dict[str, Any]:
+    if not isinstance(value, dict) or frozenset(value) != fields:
+        raise ValueError(f"commit marker {label} schema mismatch")
+    return value
+
+
+def _strict_commit_integer(value: Any, label: str) -> int:
+    if type(value) is not int or value < 0:
+        raise ValueError(f"commit marker {label} type mismatch")
+    return value
+
+
+def _read_reusable_preflight(
+    run_root: pathlib.Path,
+    *,
+    expected_payload: dict[str, Any],
+    run_id: str,
+) -> dict[str, Any]:
     directory_descriptor: int | None = None
     try:
         path_run = run_root.lstat()
@@ -1544,11 +1969,155 @@ def _read_reusable_preflight(run_root: pathlib.Path) -> Any:
             != (path_run.st_dev, path_run.st_ino)
         ):
             raise ValueError("preflight run root changed while opening")
+        marker_bytes, opened_marker = _read_bounded_regular_file_at(
+            directory_descriptor,
+            PREFLIGHT_COMMIT_FILENAME,
+            expected_mode=0o600,
+            max_bytes=MAX_COMMIT_MARKER_BYTES,
+        )
+        entries = set(os.listdir(directory_descriptor))
+        if not INSTALL_COMMITTED_ENTRIES.issubset(entries) or not entries.issubset(
+            KNOWN_RUN_ENTRIES
+        ):
+            raise ValueError("committed run root entries are invalid")
+        marker_payload = json.loads(marker_bytes.decode("utf-8"))
+        marker_payload = _strict_commit_object(
+            marker_payload,
+            frozenset(
+                {
+                    "bootstrap",
+                    "commit_state",
+                    "marker",
+                    "preflight",
+                    "run_id",
+                    "runner_version",
+                    "schema_version",
+                }
+            ),
+            "root",
+        )
+        if marker_bytes != _canonical_json_bytes(marker_payload):
+            raise ValueError("commit marker is not canonical")
+        if (
+            marker_payload["commit_state"] != "validated_preflight_committed"
+            or marker_payload["run_id"] != run_id
+            or marker_payload["runner_version"] != RUNNER_VERSION
+            or type(marker_payload["schema_version"]) is not int
+            or marker_payload["schema_version"] != 1
+        ):
+            raise ValueError("commit marker identity mismatch")
+
+        marker = _strict_commit_object(
+            marker_payload["marker"],
+            frozenset({"device", "inode", "mode"}),
+            "marker",
+        )
+        marker_identity = tuple(
+            _strict_commit_integer(marker[field], f"marker.{field}")
+            for field in ("device", "inode", "mode")
+        )
+        if marker_identity != (
+            opened_marker.st_dev,
+            opened_marker.st_ino,
+            stat.S_IMODE(opened_marker.st_mode),
+        ):
+            raise ValueError("commit marker inode mismatch")
+
+        bootstrap = _strict_commit_object(
+            marker_payload["bootstrap"],
+            frozenset({"previous", "run_root", "state"}),
+            "bootstrap",
+        )
+        run_binding = _strict_commit_object(
+            bootstrap["run_root"],
+            frozenset({"device", "inode"}),
+            "run root",
+        )
+        state_binding = _strict_commit_object(
+            bootstrap["state"],
+            frozenset({"device", "inode", "sha256", "size"}),
+            "state",
+        )
+        previous_binding = _strict_commit_object(
+            bootstrap["previous"],
+            frozenset({"device", "inode", "manifest_sha256", "mode"}),
+            "previous",
+        )
+        for value, label in (
+            (state_binding["sha256"], "state.sha256"),
+            (previous_binding["manifest_sha256"], "previous.manifest_sha256"),
+        ):
+            if type(value) is not str or re.fullmatch(r"[0-9a-f]{64}", value) is None:
+                raise ValueError(f"commit marker {label} format mismatch")
+        binding = _InstallBootstrapBinding(
+            run_device=_strict_commit_integer(run_binding["device"], "run_root.device"),
+            run_inode=_strict_commit_integer(run_binding["inode"], "run_root.inode"),
+            state_device=_strict_commit_integer(state_binding["device"], "state.device"),
+            state_inode=_strict_commit_integer(state_binding["inode"], "state.inode"),
+            state_size=_strict_commit_integer(state_binding["size"], "state.size"),
+            state_sha256=state_binding["sha256"],
+            previous_device=_strict_commit_integer(
+                previous_binding["device"], "previous.device"
+            ),
+            previous_inode=_strict_commit_integer(
+                previous_binding["inode"], "previous.inode"
+            ),
+            previous_mode=_strict_commit_integer(
+                previous_binding["mode"], "previous.mode"
+            ),
+            previous_manifest_sha256=previous_binding["manifest_sha256"],
+        )
+        if (binding.run_device, binding.run_inode) != (
+            opened_run.st_dev,
+            opened_run.st_ino,
+        ):
+            raise ValueError("commit marker run root mismatch")
+        _validate_install_bootstrap_bound_inputs_fd(directory_descriptor, binding)
+
+        preflight = _strict_commit_object(
+            marker_payload["preflight"],
+            frozenset(
+                {"canonical_json", "device", "inode", "mode", "sha256", "size"}
+            ),
+            "preflight",
+        )
+        if (
+            type(preflight["canonical_json"]) is not str
+            or type(preflight["sha256"]) is not str
+            or re.fullmatch(r"[0-9a-f]{64}", preflight["sha256"]) is None
+        ):
+            raise ValueError("commit marker preflight string mismatch")
+        preflight_binding = _PublishedPreflightBinding(
+            device=_strict_commit_integer(preflight["device"], "preflight.device"),
+            inode=_strict_commit_integer(preflight["inode"], "preflight.inode"),
+            mode=_strict_commit_integer(preflight["mode"], "preflight.mode"),
+            size=_strict_commit_integer(preflight["size"], "preflight.size"),
+            sha256=preflight["sha256"],
+        )
+        preflight_bytes = preflight["canonical_json"].encode("ascii")
+        expected_bytes = _canonical_json_bytes(expected_payload)
+        if (
+            preflight_binding.mode != 0o600
+            or preflight_binding.size != len(preflight_bytes)
+            or preflight_binding.sha256
+            != hashlib.sha256(preflight_bytes).hexdigest()
+            or preflight_bytes != expected_bytes
+        ):
+            raise LiveMatrixError("preflight identity drift requires a new run ID")
         content, _ = _read_bounded_regular_file_at(
             directory_descriptor,
-            "preflight.json",
-            expected_mode=0o600,
+            PREFLIGHT_FILENAME,
+            expected_mode=preflight_binding.mode,
+            expected_device=preflight_binding.device,
+            expected_inode=preflight_binding.inode,
+            expected_size=preflight_binding.size,
+            expected_sha256=preflight_binding.sha256,
         )
+        if content != preflight_bytes:
+            raise ValueError("committed preflight content changed")
+        parsed_preflight = json.loads(content.decode("utf-8"))
+        if not isinstance(parsed_preflight, dict) or parsed_preflight != expected_payload:
+            raise LiveMatrixError("preflight identity drift requires a new run ID")
         current_run = run_root.lstat()
         if (
             stat.S_ISLNK(current_run.st_mode)
@@ -1558,14 +2127,25 @@ def _read_reusable_preflight(run_root: pathlib.Path) -> Any:
             != (opened_run.st_dev, opened_run.st_ino)
         ):
             raise ValueError("preflight run root changed while reading")
-        return json.loads(content.decode("utf-8"))
+        return parsed_preflight
     except FileNotFoundError as exc:
         raise LiveMatrixError("preflight receipt is required before execution") from exc
-    except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+    except LiveMatrixError:
+        raise
+    except (
+        OSError,
+        UnicodeError,
+        json.JSONDecodeError,
+        RecursionError,
+        ValueError,
+    ) as exc:
         raise LiveMatrixError("malformed preflight receipt") from exc
     finally:
         if directory_descriptor is not None:
-            os.close(directory_descriptor)
+            try:
+                os.close(directory_descriptor)
+            except OSError:
+                pass
 
 
 def _run_root(
@@ -1728,9 +2308,11 @@ def validate_preflight(
             "model_discovery_diagnostic": discovery_diagnostic,
         }
         if resume or reuse_preflight:
-            previous = _read_reusable_preflight(run_root)
-            if not isinstance(previous, dict) or previous.get("identity") != identity_json(identity):
-                raise LiveMatrixError("preflight identity drift requires a new run ID")
+            _read_reusable_preflight(
+                run_root,
+                expected_payload=preflight_payload,
+                run_id=run_id,
+            )
         else:
             if bootstrap_binding is None:
                 raise LiveMatrixError("installation bootstrap is invalid")

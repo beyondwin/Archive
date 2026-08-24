@@ -89,10 +89,24 @@ After Task 7's exact-target swap, the first non-resume preflight requires an
 already-existing mode-`0700` real run directory whose complete contents are
 exactly a real `install-previous` directory and a real mode-`0600`
 `task-7-install-state.json` file; it never creates or accepts an absent, empty,
-or partial run directory. `preflight.json` must be absent, and the record's run
-ID, exact source/target/previous/stage paths, final swap state, equal
-source/install hashes, and current source/install/previous manifest hashes must
-all match the validated filesystem state.
+or partial run directory. Both `preflight.json` and `preflight-commit.json` must
+be absent. The record's run ID, exact source/target/previous/stage paths, final
+swap state, equal source/install hashes, and current source/install hashes must
+match, while the complete previous tree is bounded and hashed recursively
+through its held directory FD with no symlinks or special files.
+
+Preflight holds the same run-directory FD, rechecks the exact install-state
+bytes and recursive previous-tree manifest before and after publishing pending
+mode-`0600` `preflight.json` and `preflight-commit.json` files, and never unlinks
+either public name. A pending preflight or missing, partial, tampered, replaced,
+unsafe, or oversized marker never authorizes reuse. The final marker suffix
+write is the commit point; an fsync error after that complete write reports
+committed success so a failed command cannot leave a reusable commit. The
+completed marker binds the exact preflight device, inode, mode, size, SHA-256,
+canonical bytes, bootstrap state and previous-tree binding, runner version, and
+run ID. Reuse opens both files with bounded `O_NOFOLLOW` reads through the same
+held run-directory FD and compares every current preflight payload field
+exactly.
 
 The approved Task 7 baseline run ID is
 `kws-editor-20260823-baseline-02` because run-01 is already consumed, while the
@@ -132,10 +146,12 @@ authorization, and the approved baseline plus remediation total never exceeds
 Use `--resume` only with `--execute` after an interrupted run, using the same
 run ID and scope.
 
-Resume validates the complete run identity: run ID, runner version, repository
-HEAD, source skill hash, installed skill hash, `live_cases.json` hash, producer
-IDs, requested model IDs, scope, and canonical selected call IDs. A missing
-field or any mismatch fails closed and requires a new run ID.
+Resume validates the complete current preflight payload: run ID, runner
+version, repository HEAD and branch, source and installed skill hashes,
+`live_cases.json` hash, producer IDs, requested model IDs, scope, canonical
+selected call IDs, CLI paths, versions and diagnostics, model availability, and
+model-discovery digest and diagnostic. A missing field or any mismatch fails
+closed and requires a new run ID.
 
 When matching preflight state exists but both report target and report state
 are absent, execute exclusively creates bounded pending content and persists
@@ -217,14 +233,14 @@ python3 skills/kws-korean-writing-editor/evals/live_matrix.py \
 
 ## Evidence Layout
 
-Each ignored run directory contains immutable preflight state,
-`attempt-reservations/`, `receipts/`, `raw/`, and `normalized/` evidence plus
-report ownership state when a report was requested. Positive reservation
-numbers and filenames are exactly gap-free `1..N`; crash-only reservations are
-part of that ledger. Every positive receipt matches the full reservation
-identity. Report ownership state also persists the held target device, inode,
-and expected hash. Raw and normalized bodies are local operational evidence,
-not report attachments.
+Each successfully committed ignored run directory contains immutable
+`preflight.json` and `preflight-commit.json` state, `attempt-reservations/`,
+`receipts/`, `raw/`, and `normalized/` evidence plus report ownership state when
+a report was requested. Positive reservation numbers and filenames are exactly
+gap-free `1..N`; crash-only reservations are part of that ledger. Every
+positive receipt matches the full reservation identity. Report ownership state
+also persists the held target device, inode, and expected hash. Raw and
+normalized bodies are local operational evidence, not report attachments.
 
 The optional dated report is written only to
 `docs/operations/YYYY-MM-DD-kws-korean-writing-editor-cross-model-evaluation.md`.
