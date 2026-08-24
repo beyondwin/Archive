@@ -48,10 +48,11 @@ Cursor model known to be unavailable emits an honest zero-provider
 `not_measured` receipt and consumes zero calls.
 
 Receipt JSON uses an exact top-level key schema; unknown or omitted keys fail
-closed. The only legacy compatibility is an omitted per-finding `certainty`,
-which reads as `hard`. A positive call number can never claim `not_measured`,
-including on resume, so a forged terminal receipt cannot hide a charged call
-from the remaining-work or budget ledger.
+closed. Explicit runner-version-10 compatibility permits its omitted
+per-finding `certainty`, which reads as `hard`, and its original empty-finding
+`partially_verified` shape. A positive call number can never claim
+`not_measured`, including on resume, so a forged terminal receipt cannot hide a
+charged call from the remaining-work or budget ledger.
 
 ## Safety And Privacy
 
@@ -198,6 +199,16 @@ Completed `verified`, `partially_verified`, `failed`, and `not_measured`
 receipts remain complete. A `blocked` logical call may receive a new actual
 `:attempt-N` ID only when spare budget remains.
 
+Runner version 15 validates the exact receipt and nested identity/finding
+schemas at load, publication, resume budgeting, report assembly, and review
+sampling. Integers reject booleans and out-of-range values; timestamps, hashes,
+stream byte/hash pairs, terminal statuses, evidence paths, call identity, and
+reservation relationships must be coherent before a receipt can authorize any
+later step. Immutable runner-version-10 evidence remains readable with only its
+original omitted finding certainty and empty-finding `partially_verified`
+shape treated as explicit legacy compatibility; it is not reusable as a
+runner-version-15 execution identity.
+
 ## Review Packet
 
 The baseline reserves three reviewer calls after the producer matrix. Review
@@ -211,8 +222,12 @@ controls. Within those existing eight evidence slots, up to two deterministic
 representatives, prioritizing diagnostic and structural semantic families.
 Each sample has an explicit `sample_kind`; hard findings and not-deterministically
 measured signals remain separate, and representative case IDs and response
-hashes stay bound to the durable receipt. Selection is stable under input
-ordering, deduplicated, identity-redacted, and never expands the 8+4 cap.
+hashes stay bound to the durable receipt and are emitted into the canonical
+review prompt. A missing control uses an explicit `not_measured` response-hash
+sentinel. Changing either the validated case ID or response hash changes the
+reviewer prompt hash, so a stale assessment cannot be reused for different
+evidence. Selection is stable under input ordering, deduplicated,
+identity-redacted, and never expands the 8+4 cap.
 
 ## Status Meanings
 

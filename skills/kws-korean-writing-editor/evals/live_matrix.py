@@ -99,7 +99,7 @@ ORACLE_PUNCTUATION_TRANSLATION = str.maketrans(
 MAX_STREAM_BYTES = 131_072
 COMMAND_TIMEOUT_SECONDS = 300
 DIAGNOSTIC_TAIL_BYTES = 256
-RUNNER_VERSION = "14"
+RUNNER_VERSION = "15"
 RUN_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 MIN_JOBS = 1
 MAX_JOBS = 4
@@ -200,7 +200,36 @@ RECEIPT_FIELDS = frozenset(
         "stdout_sha256",
     }
 )
+IDENTITY_FIELDS = frozenset(
+    {
+        "installed_skill_hash",
+        "live_cases_hash",
+        "producer_ids",
+        "repository_head",
+        "requested_models",
+        "run_id",
+        "runner_version",
+        "scope",
+        "selected_call_ids",
+        "skill_hash",
+    }
+)
 FINDING_CERTAINTIES = frozenset({"hard", "not_measured"})
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+GIT_OBJECT_ID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
+SAFE_METADATA_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$")
+FINDING_CODE_RE = re.compile(r"^[a-z0-9]+(?:[_-][a-z0-9]+)*$")
+SUPPORTED_RECEIPT_RUNNER_VERSIONS = frozenset(
+    {"10", "11", "12", "13", "14", RUNNER_VERSION}
+)
+RECEIPT_TIMESTAMP_RE = re.compile(
+    r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$"
+)
+MAX_RECEIPT_DURATION_MS = COMMAND_TIMEOUT_SECONDS * 1_000 + 1_000
+MAX_RECEIPT_FINDINGS = 64
+MAX_FINDING_TEXT_LENGTH = 4_096
+MAX_RAW_PATH_LENGTH = 128
+MAX_IDENTITY_SEQUENCE_ITEMS = 256
 RESUME_SKIP_STATUSES = frozenset(
     {"verified", "partially_verified", "failed", "not_measured"}
 )
@@ -303,11 +332,11 @@ class RunIdentity:
     def for_test(cls, **overrides: Any) -> "RunIdentity":
         values: dict[str, Any] = {
             "run_id": "test-run",
-            "runner_version": "test-runner",
-            "repository_head": "test-head",
-            "skill_hash": "test-skill",
-            "installed_skill_hash": "test-installed-skill",
-            "live_cases_hash": "test-live-cases",
+            "runner_version": "14",
+            "repository_head": "0" * 40,
+            "skill_hash": "1" * 64,
+            "installed_skill_hash": "1" * 64,
+            "live_cases_hash": "3" * 64,
             "producer_ids": ("test-producer",),
             "requested_models": ("test-model",),
             "scope": "baseline",
@@ -393,21 +422,22 @@ class CallReceipt:
             if not isinstance(finding_code, str) or not finding_code:
                 raise TypeError("finding_code must be a non-empty string")
             overrides["findings"] = (Finding(finding_code, "synthetic deterministic finding"),)
+        kind = "reviewer" if call_id.startswith("reviewer-") else "producer"
         values: dict[str, Any] = {
             "identity": identity if identity is not None else RunIdentity.for_test(),
             "logical_call_id": _logical_call_id(call_id),
             "call_id": call_id,
             "call_number": 1,
-            "kind": "reviewer" if call_id.startswith("reviewer-") else "producer",
+            "kind": kind,
             "host": "test-host",
             "requested_model": "test-model",
             "reported_model": "test-model",
             "case_id": "test-case",
-            "band": None,
+            "band": None if kind == "reviewer" else "valid-mode",
             "repeat_index": 1,
             "prompt_sha256": "0" * 64,
-            "started_at": "1970-01-01T00:00:00Z",
-            "finished_at": "1970-01-01T00:00:00Z",
+            "started_at": "1970-01-01T00:00:00.000Z",
+            "finished_at": "1970-01-01T00:00:00.000Z",
             "duration_ms": 0,
             "exit_code": 0,
             "stdout_bytes": 0,
@@ -423,6 +453,58 @@ class CallReceipt:
         if unknown:
             raise TypeError(f"unknown CallReceipt test override: {sorted(unknown)[0]}")
         values.update(overrides)
+        explicit = frozenset(overrides)
+        effective_kind = values["kind"]
+        if "band" not in explicit:
+            values["band"] = None if effective_kind == "reviewer" else "valid-mode"
+        if status == "not_measured" and "call_number" not in explicit:
+            values.update(
+                {
+                    "call_number": 0,
+                    "reported_model": None,
+                    "duration_ms": 0,
+                    "exit_code": None,
+                    "stdout_bytes": 0,
+                    "stdout_sha256": None,
+                    "stderr_bytes": 0,
+                    "stderr_sha256": None,
+                    "response_sha256": None,
+                    "raw_paths": (),
+                }
+            )
+            if effective_kind == "producer" and "prompt_sha256" not in explicit:
+                values["prompt_sha256"] = hashlib.sha256(b"").hexdigest()
+            if "findings" not in explicit:
+                values["findings"] = (
+                    Finding("model_unavailable", "synthetic model is unavailable"),
+                )
+        elif status == "blocked":
+            if "exit_code" not in explicit:
+                values["exit_code"] = 1
+            if "reported_model" not in explicit:
+                values["reported_model"] = None
+            if "response_sha256" not in explicit:
+                values["response_sha256"] = None
+            if "findings" not in explicit:
+                values["findings"] = (
+                    Finding("provider_blocked", "synthetic provider block"),
+                )
+        elif status == "failed" and "findings" not in explicit:
+            values["findings"] = (
+                Finding("synthetic_failure", "synthetic deterministic finding"),
+            )
+        if "raw_paths" not in explicit and values["call_number"] > 0:
+            number = values["call_number"]
+            raw_paths = (
+                f"{RAW_DIRECTORY_NAME}/{number:04d}.stdout.bin",
+                f"{RAW_DIRECTORY_NAME}/{number:04d}.stderr.bin",
+            )
+            if status in {"verified", "partially_verified", "failed"}:
+                suffix = "review.json" if effective_kind == "reviewer" else "response.txt"
+                raw_paths += (
+                    f"{NORMALIZED_DIRECTORY_NAME}/{number:04d}.{suffix}",
+                )
+            values["raw_paths"] = raw_paths
         return cls(**values)
 
     def as_json(self) -> dict[str, Any]:
@@ -1367,6 +1449,7 @@ def _write_exclusive_json(path: pathlib.Path, payload: dict[str, Any]) -> None:
 
 def write_receipt(path: pathlib.Path, receipt: CallReceipt) -> None:
     """Persist one complete receipt. Existing attempts are never overwritten."""
+    _validate_receipt_provider_shape(receipt)
     _write_exclusive_json(path, receipt.as_json())
 
 
@@ -1376,6 +1459,7 @@ def remaining_calls(
     identity: RunIdentity,
 ) -> tuple[PlannedCall, ...]:
     """Return only calls with no complete matching receipt; reject identity drift."""
+    _validate_run_identity(identity, label="resume")
     plan_ids = {call.call_id for call in plan}
     if len(plan_ids) != len(plan):
         raise LiveMatrixError("planned call IDs must be unique")
@@ -1385,11 +1469,11 @@ def remaining_calls(
         if receipt is None:
             remaining.append(call)
             continue
+        _validate_receipt_provider_shape(receipt)
         if receipt.identity != identity:
             raise LiveMatrixError("receipt identity drift requires a new run ID")
         if receipt.call_id.split(":attempt-", 1)[0] != call.call_id:
             raise LiveMatrixError("receipt call ID does not match plan")
-        _validate_receipt_provider_shape(receipt)
         if receipt.status not in RESUME_SKIP_STATUSES:
             remaining.append(call)
     return tuple(remaining)
@@ -3145,22 +3229,119 @@ def _read_evidence_file(run_root: pathlib.Path, relative_path: str) -> bytes:
     return payload
 
 
+def _require_metadata_string(
+    value: Any,
+    *,
+    label: str,
+    maximum: int = 256,
+    pattern: re.Pattern[str] | None = None,
+) -> str:
+    if (
+        type(value) is not str
+        or not value
+        or len(value) > maximum
+        or any(unicodedata.category(character).startswith("C") for character in value)
+        or (pattern is not None and pattern.fullmatch(value) is None)
+    ):
+        raise LiveMatrixError(f"{label} is malformed")
+    return value
+
+
+def _require_sha256(value: Any, *, label: str, nullable: bool = False) -> str | None:
+    if value is None and nullable:
+        return None
+    if type(value) is not str or SHA256_RE.fullmatch(value) is None:
+        raise LiveMatrixError(f"{label} is malformed")
+    return value
+
+
+def _receipt_timestamp(value: Any, *, label: str) -> datetime.datetime:
+    if type(value) is not str or RECEIPT_TIMESTAMP_RE.fullmatch(value) is None:
+        raise LiveMatrixError(f"{label} is malformed")
+    try:
+        parsed = datetime.datetime.strptime(value, "%Y-%m-%dT%H:%M:%S.%fZ")
+    except ValueError as exc:
+        raise LiveMatrixError(f"{label} is malformed") from exc
+    return parsed.replace(tzinfo=datetime.UTC)
+
+
+def _validate_identity_sequence(
+    values: Any,
+    *,
+    label: str,
+    allow_empty: bool,
+) -> tuple[str, ...]:
+    if type(values) is not tuple or not allow_empty and not values:
+        raise LiveMatrixError(f"{label} is malformed")
+    if len(values) > MAX_IDENTITY_SEQUENCE_ITEMS:
+        raise LiveMatrixError(f"{label} is malformed")
+    checked = tuple(
+        _require_metadata_string(
+            value, label=label, pattern=SAFE_METADATA_ID_RE
+        )
+        for value in values
+    )
+    if len(set(checked)) != len(checked):
+        raise LiveMatrixError(f"{label} contains a duplicate")
+    return checked
+
+
+def _validate_run_identity(identity: RunIdentity, *, label: str = "run") -> None:
+    if type(identity) is not RunIdentity:
+        raise LiveMatrixError(f"{label} identity is malformed")
+    _require_metadata_string(
+        identity.run_id, label=f"{label} run ID", pattern=RUN_ID_RE
+    )
+    if (
+        type(identity.runner_version) is not str
+        or identity.runner_version not in SUPPORTED_RECEIPT_RUNNER_VERSIONS
+    ):
+        raise LiveMatrixError(f"{label} runner version is malformed")
+    if (
+        type(identity.repository_head) is not str
+        or GIT_OBJECT_ID_RE.fullmatch(identity.repository_head) is None
+    ):
+        raise LiveMatrixError(f"{label} repository head is malformed")
+    _require_sha256(identity.skill_hash, label=f"{label} skill hash")
+    _require_sha256(
+        identity.installed_skill_hash, label=f"{label} installed skill hash"
+    )
+    if identity.skill_hash != identity.installed_skill_hash:
+        raise LiveMatrixError(f"{label} source and installed skill hashes differ")
+    _require_sha256(identity.live_cases_hash, label=f"{label} live cases hash")
+    _validate_identity_sequence(
+        identity.producer_ids, label=f"{label} producer IDs", allow_empty=False
+    )
+    _validate_identity_sequence(
+        identity.requested_models,
+        label=f"{label} requested models",
+        allow_empty=True,
+    )
+    if type(identity.scope) is not str or identity.scope not in {"baseline", "remediation"}:
+        raise LiveMatrixError(f"{label} scope is malformed")
+    selected = _validate_identity_sequence(
+        identity.selected_call_ids,
+        label=f"{label} selected call IDs",
+        allow_empty=True,
+    )
+    if any(_logical_call_id(call_id) != call_id for call_id in selected):
+        raise LiveMatrixError(f"{label} selected call IDs must be logical IDs")
+
+
 def _identity_from_json(payload: Any, *, label: str) -> RunIdentity:
-    if not isinstance(payload, dict):
+    if type(payload) is not dict or frozenset(payload) != IDENTITY_FIELDS:
         raise LiveMatrixError(f"malformed {label} identity")
     try:
         producer_ids = payload["producer_ids"]
         requested_models = payload["requested_models"]
         selected_call_ids = payload["selected_call_ids"]
-        if not all(isinstance(item, str) for item in producer_ids) or not all(
-            isinstance(item, str) for item in requested_models
+        if (
+            type(producer_ids) is not list
+            or type(requested_models) is not list
+            or type(selected_call_ids) is not list
         ):
-            raise TypeError
-        if not isinstance(selected_call_ids, list) or not all(
-            isinstance(item, str) for item in selected_call_ids
-        ):
-            raise TypeError
-        return RunIdentity(
+            raise LiveMatrixError("identity sequences must be arrays")
+        identity = RunIdentity(
             run_id=payload["run_id"],
             runner_version=payload["runner_version"],
             repository_head=payload["repository_head"],
@@ -3172,7 +3353,9 @@ def _identity_from_json(payload: Any, *, label: str) -> RunIdentity:
             scope=payload["scope"],
             selected_call_ids=tuple(selected_call_ids),
         )
-    except (KeyError, TypeError) as exc:
+        _validate_run_identity(identity, label=label)
+        return identity
+    except (KeyError, TypeError, LiveMatrixError) as exc:
         raise LiveMatrixError(f"malformed {label} identity") from exc
 
 
@@ -3264,40 +3447,180 @@ def load_normalized_responses(
 
 
 def _validate_receipt_provider_shape(receipt: CallReceipt) -> None:
-    """Permit an unreserved zero only when no provider-side effect is represented."""
-    if receipt.status not in COMPLETE_RECEIPT_STATUSES:
-        raise LiveMatrixError("receipt has unsupported evidence status")
-    if receipt.kind not in {"producer", "reviewer"}:
-        raise LiveMatrixError("receipt has unsupported call kind")
+    """Validate the complete durable receipt, including zero-provider coherence."""
+    if type(receipt) is not CallReceipt:
+        raise LiveMatrixError("receipt object is malformed")
+    _validate_run_identity(receipt.identity, label="receipt")
+    logical_call_id = _require_metadata_string(
+        receipt.logical_call_id,
+        label="receipt logical call ID",
+        pattern=SAFE_METADATA_ID_RE,
+    )
+    call_id = _require_metadata_string(
+        receipt.call_id, label="receipt call ID", pattern=SAFE_METADATA_ID_RE
+    )
     if (
-        not isinstance(receipt.call_number, int)
-        or isinstance(receipt.call_number, bool)
-        or receipt.call_number < 0
+        logical_call_id != _logical_call_id(call_id)
+        or _actual_attempt_index(call_id, logical_call_id) < 1
+    ):
+        raise LiveMatrixError("receipt actual/logical call ID mismatch")
+    if (
+        type(receipt.call_number) is not int
+        or not 0 <= receipt.call_number <= GLOBAL_CALL_CEILING
     ):
         raise LiveMatrixError("receipt has invalid call number")
+    if type(receipt.kind) is not str or receipt.kind not in {"producer", "reviewer"}:
+        raise LiveMatrixError("receipt has unsupported call kind")
+    _require_metadata_string(
+        receipt.host, label="receipt host", pattern=SAFE_METADATA_ID_RE
+    )
+    for label, value in (
+        ("requested model", receipt.requested_model),
+        ("reported model", receipt.reported_model),
+    ):
+        if value is not None:
+            _require_metadata_string(
+                value, label=f"receipt {label}", pattern=SAFE_METADATA_ID_RE
+            )
+    _require_metadata_string(
+        receipt.case_id, label="receipt case ID", pattern=CASE_ID_RE
+    )
+    if (
+        receipt.kind == "producer"
+        and (type(receipt.band) is not str or receipt.band not in ALLOWED_BANDS)
+    ) or (receipt.kind == "reviewer" and receipt.band is not None):
+        raise LiveMatrixError("receipt band does not match call kind")
+    if type(receipt.repeat_index) is not int or not 1 <= receipt.repeat_index <= 1_000:
+        raise LiveMatrixError("receipt repeat index is malformed")
+    _require_sha256(receipt.prompt_sha256, label="receipt prompt hash")
+    started = _receipt_timestamp(receipt.started_at, label="receipt start timestamp")
+    finished = _receipt_timestamp(receipt.finished_at, label="receipt finish timestamp")
+    if finished < started:
+        raise LiveMatrixError("receipt finish timestamp precedes start")
+    if (
+        type(receipt.duration_ms) is not int
+        or not 0 <= receipt.duration_ms <= MAX_RECEIPT_DURATION_MS
+    ):
+        raise LiveMatrixError("receipt duration is malformed")
+    if receipt.exit_code is not None and (
+        type(receipt.exit_code) is not int or not -255 <= receipt.exit_code <= 255
+    ):
+        raise LiveMatrixError("receipt exit code is malformed")
+    for label, byte_count, digest in (
+        ("stdout", receipt.stdout_bytes, receipt.stdout_sha256),
+        ("stderr", receipt.stderr_bytes, receipt.stderr_sha256),
+    ):
+        if type(byte_count) is not int or not 0 <= byte_count <= MAX_STREAM_BYTES:
+            raise LiveMatrixError(f"receipt {label} byte count is malformed")
+        _require_sha256(digest, label=f"receipt {label} hash", nullable=True)
+    _require_sha256(
+        receipt.response_sha256, label="receipt response hash", nullable=True
+    )
+    if type(receipt.status) is not str or receipt.status not in COMPLETE_RECEIPT_STATUSES:
+        raise LiveMatrixError("receipt has unsupported evidence status")
+    if type(receipt.findings) is not tuple or len(receipt.findings) > MAX_RECEIPT_FINDINGS:
+        raise LiveMatrixError("receipt findings are malformed")
+    for finding in receipt.findings:
+        if type(finding) is not Finding:
+            raise LiveMatrixError("receipt finding is malformed")
+        _require_metadata_string(
+            finding.code,
+            label="receipt finding code",
+            maximum=128,
+            pattern=FINDING_CODE_RE,
+        )
+        _require_metadata_string(
+            finding.message,
+            label="receipt finding message",
+            maximum=MAX_FINDING_TEXT_LENGTH,
+        )
+        if finding.literal is not None:
+            _require_metadata_string(
+                finding.literal,
+                label="receipt finding literal",
+                maximum=MAX_FINDING_TEXT_LENGTH,
+            )
+        if type(finding.certainty) is not str or finding.certainty not in FINDING_CERTAINTIES:
+            raise LiveMatrixError("receipt has unsupported finding certainty")
+    if type(receipt.raw_paths) is not tuple or any(
+        type(path) is not str or not path or len(path) > MAX_RAW_PATH_LENGTH
+        for path in receipt.raw_paths
+    ):
+        raise LiveMatrixError("receipt raw paths are malformed")
+
+    certainties = {finding.certainty for finding in receipt.findings}
     if receipt.call_number > 0:
         if receipt.status == "not_measured":
             raise LiveMatrixError("positive receipt cannot be not_measured")
-        certainties = {finding.certainty for finding in receipt.findings}
-        if not certainties <= FINDING_CERTAINTIES:
-            raise LiveMatrixError("receipt has unsupported finding certainty")
+        legacy_v10_partial = (
+            receipt.identity.runner_version == "10"
+            and receipt.status == "partially_verified"
+            and not receipt.findings
+        )
         if (
             (receipt.status == "verified" and receipt.findings)
-            or (receipt.status == "partially_verified" and "hard" in certainties)
-            or (receipt.status == "failed" and "hard" not in certainties)
+            or (
+                receipt.status == "partially_verified"
+                and not legacy_v10_partial
+                and (not receipt.findings or certainties != {"not_measured"})
+            )
+            or (receipt.status in {"failed", "blocked"} and "hard" not in certainties)
         ):
             raise LiveMatrixError("receipt finding certainty does not match status")
+        if receipt.status != "blocked" and receipt.exit_code != 0:
+            raise LiveMatrixError("terminal receipt requires a successful provider exit")
+        no_capture = (
+            receipt.exit_code is None
+            and receipt.duration_ms == 0
+            and receipt.stdout_bytes == 0
+            and receipt.stdout_sha256 is None
+            and receipt.stderr_bytes == 0
+            and receipt.stderr_sha256 is None
+        )
+        if no_capture:
+            if (
+                receipt.status != "blocked"
+                or receipt.reported_model is not None
+                or receipt.response_sha256 is not None
+            ):
+                raise LiveMatrixError("terminal receipt is missing provider capture")
+        else:
+            if receipt.exit_code is None:
+                raise LiveMatrixError("captured receipt is missing provider exit code")
+            empty_hash = hashlib.sha256(b"").hexdigest()
+            for label, byte_count, digest in (
+                ("stdout", receipt.stdout_bytes, receipt.stdout_sha256),
+                ("stderr", receipt.stderr_bytes, receipt.stderr_sha256),
+            ):
+                if digest is None or (
+                    byte_count == 0 and digest != empty_hash
+                ) or (byte_count > 0 and digest == empty_hash):
+                    raise LiveMatrixError(
+                        f"receipt {label} byte count and hash are inconsistent"
+                    )
+        if receipt.status in {"verified", "partially_verified", "failed"}:
+            if receipt.response_sha256 is None:
+                raise LiveMatrixError("terminal receipt is missing response hash")
+        expected_raw = (
+            f"{RAW_DIRECTORY_NAME}/{receipt.call_number:04d}.stdout.bin",
+            f"{RAW_DIRECTORY_NAME}/{receipt.call_number:04d}.stderr.bin",
+        )
+        if receipt.status in {"verified", "partially_verified", "failed"}:
+            suffix = "review.json" if receipt.kind == "reviewer" else "response.txt"
+            expected_raw += (
+                f"{NORMALIZED_DIRECTORY_NAME}/{receipt.call_number:04d}.{suffix}",
+            )
+        elif no_capture:
+            expected_raw = ()
+        if receipt.raw_paths != expected_raw:
+            raise LiveMatrixError("receipt raw paths do not match the provider shape")
         return
+
     empty_prompt_hash = hashlib.sha256(b"").hexdigest()
     if (
-        receipt.call_number != 0
-        or receipt.status != "not_measured"
+        receipt.status != "not_measured"
         or receipt.reported_model is not None
-        or not re.fullmatch(r"[0-9a-f]{64}", receipt.prompt_sha256)
-        or (
-            receipt.kind == "producer"
-            and receipt.prompt_sha256 != empty_prompt_hash
-        )
+        or (receipt.kind == "producer" and receipt.prompt_sha256 != empty_prompt_hash)
         or receipt.started_at != receipt.finished_at
         or receipt.duration_ms != 0
         or receipt.exit_code is not None
@@ -3306,6 +3629,8 @@ def _validate_receipt_provider_shape(receipt: CallReceipt) -> None:
         or receipt.stderr_bytes != 0
         or receipt.stderr_sha256 is not None
         or receipt.response_sha256 is not None
+        or not receipt.findings
+        or certainties != {"hard"}
         or receipt.raw_paths
     ):
         raise LiveMatrixError(
@@ -3315,30 +3640,25 @@ def _validate_receipt_provider_shape(receipt: CallReceipt) -> None:
 
 def _receipt_from_json(payload: Any) -> CallReceipt:
     if (
-        not isinstance(payload, dict)
+        type(payload) is not dict
         or frozenset(payload) != RECEIPT_FIELDS
-        or not isinstance(payload.get("identity"), dict)
+        or type(payload.get("identity")) is not dict
     ):
         raise LiveMatrixError("malformed receipt")
     identity_data = payload["identity"]
     try:
         raw_path_values = payload["raw_paths"]
-        if not isinstance(raw_path_values, list) or any(
-            not isinstance(value, str)
-            or pathlib.PurePosixPath(value).is_absolute()
-            or any(part in {"", ".", ".."} for part in pathlib.PurePosixPath(value).parts)
-            for value in raw_path_values
-        ):
-            raise ValueError("unsafe raw path")
+        if type(raw_path_values) is not list:
+            raise ValueError("raw paths must be an array")
         identity = _identity_from_json(identity_data, label="receipt")
         finding_values = payload["findings"]
-        if not isinstance(finding_values, list):
+        if type(finding_values) is not list:
             raise ValueError("findings must be an array")
         findings: list[Finding] = []
         legacy_finding_fields = {"code", "literal", "message"}
         current_finding_fields = legacy_finding_fields | {"certainty"}
         for item in finding_values:
-            if not isinstance(item, dict) or frozenset(item) not in {
+            if type(item) is not dict or frozenset(item) not in {
                 frozenset(legacy_finding_fields),
                 frozenset(current_finding_fields),
             }:
@@ -3346,17 +3666,9 @@ def _receipt_from_json(payload: Any) -> CallReceipt:
             code = item["code"]
             message = item["message"]
             literal = item["literal"]
+            if "certainty" not in item and identity.runner_version != "10":
+                raise ValueError("finding certainty omission is not legacy v10")
             certainty = item.get("certainty", "hard")
-            if (
-                not isinstance(code, str)
-                or not code
-                or not isinstance(message, str)
-                or not message
-                or not isinstance(literal, (str, type(None)))
-                or not isinstance(certainty, str)
-                or certainty not in FINDING_CERTAINTIES
-            ):
-                raise ValueError("invalid finding fields")
             findings.append(Finding(code, message, literal, certainty))
         receipt = CallReceipt(
             identity=identity,
@@ -3384,27 +3696,10 @@ def _receipt_from_json(payload: Any) -> CallReceipt:
             findings=tuple(findings),
             raw_paths=tuple(raw_path_values),
         )
-        if (
-            not isinstance(receipt.call_id, str)
-            or not isinstance(receipt.logical_call_id, str)
-            or receipt.logical_call_id != _logical_call_id(receipt.call_id)
-            or _actual_attempt_index(receipt.call_id, receipt.logical_call_id) < 1
-            or not isinstance(receipt.call_number, int)
-            or isinstance(receipt.call_number, bool)
-            or receipt.call_number < 0
-            or receipt.kind not in {"producer", "reviewer"}
-            or not isinstance(receipt.host, str)
-            or not isinstance(receipt.requested_model, (str, type(None)))
-            or not isinstance(receipt.case_id, str)
-            or not isinstance(receipt.repeat_index, int)
-            or isinstance(receipt.repeat_index, bool)
-            or receipt.status not in COMPLETE_RECEIPT_STATUSES
-        ):
-            raise ValueError("invalid receipt fields")
         _validate_receipt_provider_shape(receipt)
         return receipt
-    except (KeyError, TypeError, ValueError) as exc:
-        raise LiveMatrixError("malformed receipt") from exc
+    except (KeyError, TypeError, ValueError, LiveMatrixError) as exc:
+        raise LiveMatrixError(f"malformed receipt: {exc}") from exc
 
 
 def _load_receipt_attempts(run_root: pathlib.Path) -> tuple[CallReceipt, ...]:
@@ -3479,7 +3774,10 @@ def _validate_reservation_ledger(
     numbers: set[int] = set()
     call_ids: set[str] = set()
     attempts_by_logical: dict[str, set[int]] = {}
+    if identity is not None:
+        _validate_run_identity(identity, label="reservation")
     for reservation in reservations:
+        _validate_run_identity(reservation.identity, label="attempt reservation")
         if identity is not None and reservation.identity != identity:
             raise LiveMatrixError("attempt reservation identity drift requires a new run ID")
         if reservation.call_number in numbers or reservation.call_id in call_ids:
@@ -3686,6 +3984,7 @@ def _load_receipts(run_root: pathlib.Path) -> dict[str, CallReceipt]:
 
 
 def _write_call_receipt(run_root: pathlib.Path, receipt: CallReceipt) -> None:
+    _validate_receipt_provider_shape(receipt)
     receipt_root = run_root / RECEIPT_DIRECTORY_NAME
     receipt_root.mkdir(mode=0o700, exist_ok=True)
     os.chmod(receipt_root, 0o700)
@@ -4075,6 +4374,7 @@ REVIEWER_MODELS = (
 REVIEW_CONTROL_BANDS = ("valid-mode", "preservation", "noop-hold", "near-miss")
 MAX_REVIEW_EVIDENCE_SAMPLES = 8
 MAX_REVIEW_SOFT_SAMPLES = 2
+REVIEW_NOT_MEASURED_SHA256 = "not_measured"
 REVIEW_SAMPLE_KINDS = frozenset(
     {"hard_failure", "semantic_not_measured", "control"}
 )
@@ -4358,6 +4658,8 @@ def select_review_samples(
     cases: Mapping[str, LiveCase] | None = None,
 ) -> tuple[ReviewSample, ...]:
     """Choose eight bounded evidence samples plus one control per band."""
+    for receipt in receipts:
+        _validate_receipt_provider_shape(receipt)
     response_map = responses or {}
     case_map = cases or {}
     identity_tokens = tuple(
@@ -4464,10 +4766,84 @@ def select_review_samples(
 
 def build_review_prompt(samples: Sequence[ReviewSample]) -> str:
     """Build the identity-free JSON-only review packet without provider metadata."""
+    if (
+        type(samples) not in {tuple, list}
+        or not samples
+        or len(samples) > MAX_REVIEW_EVIDENCE_SAMPLES + len(REVIEW_CONTROL_BANDS)
+    ):
+        raise LiveMatrixError("review samples are malformed")
+    for index, sample in enumerate(samples, start=1):
+        if type(sample) is not ReviewSample:
+            raise LiveMatrixError("review sample is malformed")
+        if sample.candidate_id != f"candidate-{index:03d}":
+            raise LiveMatrixError("review sample candidate identity is malformed")
+        if type(sample.sample_kind) is not str or sample.sample_kind not in REVIEW_SAMPLE_KINDS:
+            raise LiveMatrixError("review sample kind is malformed")
+        if type(sample.is_failure) is not bool or type(sample.missing_control) is not bool:
+            raise LiveMatrixError("review sample flags are malformed")
+        if sample.is_failure != (sample.sample_kind == "hard_failure"):
+            raise LiveMatrixError("review sample failure flag is inconsistent")
+        if sample.missing_control and sample.sample_kind != "control":
+            raise LiveMatrixError("review sample missing-control shape is inconsistent")
+        if sample.missing_control:
+            if sample.case_id != "not-measured" or sample.response_sha256 is not None:
+                raise LiveMatrixError("review sample missing-control identity is malformed")
+        else:
+            _require_metadata_string(
+                sample.case_id, label="review sample case ID", pattern=CASE_ID_RE
+            )
+            _require_sha256(
+                sample.response_sha256, label="review sample response hash"
+            )
+        if type(sample.band) is not str or sample.band not in ALLOWED_BANDS:
+            raise LiveMatrixError("review sample band is malformed")
+        for label, value in (
+            ("request", sample.request),
+            ("source", sample.source),
+            ("candidate", sample.candidate),
+        ):
+            if type(value) is not str or not value or len(value.encode("utf-8")) > 240:
+                raise LiveMatrixError(f"review sample {label} is malformed")
+        for label, values in (
+            ("hard findings", sample.hard_findings),
+            ("not-measured signals", sample.not_measured_signals),
+        ):
+            if type(values) is not tuple or any(
+                type(value) is not str
+                or FINDING_CODE_RE.fullmatch(value) is None
+                for value in values
+            ):
+                raise LiveMatrixError(f"review sample {label} are malformed")
+        if type(sample.axes) is not tuple or any(
+            type(axis) is not str or axis not in ALLOWED_AXES for axis in sample.axes
+        ):
+            raise LiveMatrixError("review sample axes are malformed")
+        if (
+            (sample.sample_kind == "hard_failure" and not sample.hard_findings)
+            or (
+                sample.sample_kind == "semantic_not_measured"
+                and (sample.hard_findings or not sample.not_measured_signals)
+            )
+            or (
+                sample.sample_kind == "control"
+                and not sample.missing_control
+                and (sample.hard_findings or sample.not_measured_signals)
+            )
+            or (
+                sample.missing_control
+                and (
+                    sample.hard_findings
+                    or sample.not_measured_signals != ("control_not_measured",)
+                    or sample.axes
+                )
+            )
+        ):
+            raise LiveMatrixError("review sample evidence shape is inconsistent")
     packet = {
         "samples": [
             {
                 "candidate_id": sample.candidate_id,
+                "case_id": sample.case_id,
                 "sample_kind": sample.sample_kind,
                 "request": sample.request,
                 "source": sample.source,
@@ -4477,6 +4853,11 @@ def build_review_prompt(samples: Sequence[ReviewSample]) -> str:
                 "axes": list(sample.axes),
                 "band": sample.band,
                 "missing_control": sample.missing_control,
+                "response_sha256": (
+                    sample.response_sha256
+                    if sample.response_sha256 is not None
+                    else REVIEW_NOT_MEASURED_SHA256
+                ),
             }
             for sample in samples
         ]
@@ -5296,6 +5677,9 @@ def build_report_input(
     producer_attempted_calls: int,
     reviewer_attempted_calls: int,
 ) -> ReportInput:
+    _validate_run_identity(preflight.identity, label="report")
+    for receipt in (*producer_receipts, *reviewer_receipts):
+        _validate_receipt_provider_shape(receipt)
     case_counts: dict[str, int] = {"total": len(cases), "repeats": sum(case.repeats for case in cases)}
     case_counts.update({band: sum(case.band == band for case in cases) for band in REVIEW_CONTROL_BANDS})
     cli_versions = {name: info.version for name, info in preflight.cli_info.items()}
