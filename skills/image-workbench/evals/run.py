@@ -41,8 +41,8 @@ class EvaluatorTests(unittest.TestCase):
                 "description: canonical description",
                 "metadata:",
                 f"  compatibility: {CANONICAL_COMPATIBILITY}",
-                '  version: "1.0.0"',
-                '  updated_at: "2026-08-23"',
+                '  version: "2.0.0"',
+                '  updated_at: "2026-08-25"',
             )
         )
 

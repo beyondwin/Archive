@@ -70,8 +70,8 @@ byte size, SHA-256, path readiness를 확인하지만 SHA-256은 권리나 prove
 새 경로를 만든 뒤 이전 `~/.agents/skills/kws-image-workbench`는 이 스킬의 옛 설치임이 확인될 때만 제거한다.
 
 ```bash
-IMAGE_SOURCE="/Users/kws/source/private/Archive/skills/image-workbench"
-IMAGE_TARGET="/Users/kws/.agents/skills/image-workbench"
+IMAGE_SOURCE="/absolute/path/to/Archive/skills/image-workbench"
+IMAGE_TARGET="$HOME/.agents/skills/image-workbench"
 test -e "$IMAGE_TARGET" -o -L "$IMAGE_TARGET"
 readlink "$IMAGE_TARGET"
 ```
