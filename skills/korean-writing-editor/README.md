@@ -1,4 +1,4 @@
-# kws-korean-writing-editor
+# korean-writing-editor
 
 ## 1분 시작
 
@@ -50,19 +50,19 @@
 
 | 런타임 | 호출 |
 | --- | --- |
-| Codex | `$kws-korean-writing-editor` |
-| Claude Code | `/kws-korean-writing-editor` |
-| Cursor | `/kws-korean-writing-editor` |
-| Grok Build | `/kws-korean-writing-editor` |
+| Codex | `$korean-writing-editor` |
+| Claude Code | `/korean-writing-editor` |
+| Cursor | `/korean-writing-editor` |
+| Grok Build | `/korean-writing-editor` |
 
 Grok은 Grok Build만 해당합니다. grok.com이나 모바일 앱이 아닙니다.
 
 ```text
-$kws-korean-writing-editor 오탈자만 고쳐줘: 이 기능은 사용할수 있지만 반드시 켤 필요는 없습니다.
+$korean-writing-editor 오탈자만 고쳐줘: 이 기능은 사용할수 있지만 반드시 켤 필요는 없습니다.
 ```
 
 ```text
-/kws-korean-writing-editor 고치지 말고 어색한 부분만 알려줘: 지금 상태에선 배포할수 있다.
+/korean-writing-editor 고치지 말고 어색한 부분만 알려줘: 지금 상태에선 배포할수 있다.
 ```
 
 ```text
@@ -98,40 +98,42 @@ $kws-korean-writing-editor 오탈자만 고쳐줘: 이 기능은 사용할수 �
 ## 설치
 
 정식 원본은 Archive에 추적된
-`skills/kws-korean-writing-editor/`입니다. 설치 스크립트는 없습니다.
+`skills/korean-writing-editor/`입니다. 설치 스크립트는 없습니다.
 
 1. 추적된 Archive 디렉터리를 정식 원본으로 둡니다.
 2. Codex, Cursor, Grok Build는 검증된 사본을
-   `~/.agents/skills/kws-korean-writing-editor`에 만듭니다.
+   `~/.agents/skills/korean-writing-editor`에 만듭니다.
 3. Claude Code는 그 검증된 설치를
-   `~/.claude/skills/kws-korean-writing-editor`에 복사하거나 링크합니다.
+   `~/.claude/skills/korean-writing-editor`에 복사하거나 링크합니다.
 4. 이미 있는 실제 디렉터리는 내용을 확인하기 전에 덮어쓰지 않습니다.
 5. 설치 후 에이전트 세션을 새로 시작합니다.
 6. Grok 지원은 Grok Build입니다. grok.com이나 모바일이 아닙니다.
+
+새 경로를 만든 뒤에, 이 스킬의 이전 설치임이 확인된 `~/.agents/skills/kws-korean-writing-editor`(및 대응 Claude 경로)만 제거한다. 지원하는 호출 이름이 아니다.
 
 작업 전용 변수만 복사·삭제 대상으로 씁니다. `$HOME`, `$CODEX_HOME`,
 `~/.agents/skills` 같은 상위 경로는 복사하거나 지우지 마세요.
 
 ```bash
-KWS_EDITOR_SOURCE="/absolute/path/to/Archive/skills/kws-korean-writing-editor"
-KWS_EDITOR_AGENTS_TARGET="$HOME/.agents/skills/kws-korean-writing-editor"
-KWS_EDITOR_CLAUDE_TARGET="$HOME/.claude/skills/kws-korean-writing-editor"
+EDITOR_SOURCE="/absolute/path/to/Archive/skills/korean-writing-editor"
+EDITOR_AGENTS_TARGET="$HOME/.agents/skills/korean-writing-editor"
+EDITOR_CLAUDE_TARGET="$HOME/.claude/skills/korean-writing-editor"
 
-ls -ld "$KWS_EDITOR_SOURCE"
-ls -ld "$KWS_EDITOR_AGENTS_TARGET" "$KWS_EDITOR_CLAUDE_TARGET"
+ls -ld "$EDITOR_SOURCE"
+ls -ld "$EDITOR_AGENTS_TARGET" "$EDITOR_CLAUDE_TARGET"
 ```
 
 두 대상이 없을 때만 아래를 진행합니다. 실제 디렉터리가 있으면 중단하세요.
 
 ```bash
-KWS_EDITOR_SOURCE="/absolute/path/to/Archive/skills/kws-korean-writing-editor"
-KWS_EDITOR_AGENTS_TARGET="$HOME/.agents/skills/kws-korean-writing-editor"
-KWS_EDITOR_CLAUDE_TARGET="$HOME/.claude/skills/kws-korean-writing-editor"
+EDITOR_SOURCE="/absolute/path/to/Archive/skills/korean-writing-editor"
+EDITOR_AGENTS_TARGET="$HOME/.agents/skills/korean-writing-editor"
+EDITOR_CLAUDE_TARGET="$HOME/.claude/skills/korean-writing-editor"
 
-mkdir -p "$(dirname "$KWS_EDITOR_AGENTS_TARGET")" \
-         "$(dirname "$KWS_EDITOR_CLAUDE_TARGET")"
-cp -R "$KWS_EDITOR_SOURCE" "$KWS_EDITOR_AGENTS_TARGET"
-ln -s "$KWS_EDITOR_AGENTS_TARGET" "$KWS_EDITOR_CLAUDE_TARGET"
+mkdir -p "$(dirname "$EDITOR_AGENTS_TARGET")" \
+         "$(dirname "$EDITOR_CLAUDE_TARGET")"
+cp -R "$EDITOR_SOURCE" "$EDITOR_AGENTS_TARGET"
+ln -s "$EDITOR_AGENTS_TARGET" "$EDITOR_CLAUDE_TARGET"
 ```
 
 Claude 대상이 이미 실제 디렉터리이면 링크를 강제하지 말고 내용을 확인하세요.
@@ -141,21 +143,21 @@ Claude 대상이 이미 실제 디렉터리이면 링크를 강제하지 말고 
 같은 변수로 대상만 다룹니다. 상위 홈이나 스킬 부모 디렉터리는 지우지 않습니다.
 
 ```bash
-KWS_EDITOR_SOURCE="/absolute/path/to/Archive/skills/kws-korean-writing-editor"
-KWS_EDITOR_AGENTS_TARGET="$HOME/.agents/skills/kws-korean-writing-editor"
-KWS_EDITOR_CLAUDE_TARGET="$HOME/.claude/skills/kws-korean-writing-editor"
+EDITOR_SOURCE="/absolute/path/to/Archive/skills/korean-writing-editor"
+EDITOR_AGENTS_TARGET="$HOME/.agents/skills/korean-writing-editor"
+EDITOR_CLAUDE_TARGET="$HOME/.claude/skills/korean-writing-editor"
 
-ls -ld "$KWS_EDITOR_AGENTS_TARGET" "$KWS_EDITOR_CLAUDE_TARGET"
+ls -ld "$EDITOR_AGENTS_TARGET" "$EDITOR_CLAUDE_TARGET"
 ```
 
 이 스킬의 사본임이 확인된 뒤에만 갱신합니다.
 
 ```bash
-KWS_EDITOR_SOURCE="/absolute/path/to/Archive/skills/kws-korean-writing-editor"
-KWS_EDITOR_AGENTS_TARGET="$HOME/.agents/skills/kws-korean-writing-editor"
+EDITOR_SOURCE="/absolute/path/to/Archive/skills/korean-writing-editor"
+EDITOR_AGENTS_TARGET="$HOME/.agents/skills/korean-writing-editor"
 
-rm -rf "$KWS_EDITOR_AGENTS_TARGET"
-cp -R "$KWS_EDITOR_SOURCE" "$KWS_EDITOR_AGENTS_TARGET"
+rm -rf "$EDITOR_AGENTS_TARGET"
+cp -R "$EDITOR_SOURCE" "$EDITOR_AGENTS_TARGET"
 ```
 
 Claude 대상이 위 사본을 가리키는 심볼릭 링크이면 그대로 두고, 없으면 다시
@@ -164,11 +166,11 @@ Claude 대상이 위 사본을 가리키는 심볼릭 링크이면 그대로 두
 제거할 때도 대상을 확인한 뒤 정확한 경로만 지웁니다.
 
 ```bash
-KWS_EDITOR_AGENTS_TARGET="$HOME/.agents/skills/kws-korean-writing-editor"
-KWS_EDITOR_CLAUDE_TARGET="$HOME/.claude/skills/kws-korean-writing-editor"
+EDITOR_AGENTS_TARGET="$HOME/.agents/skills/korean-writing-editor"
+EDITOR_CLAUDE_TARGET="$HOME/.claude/skills/korean-writing-editor"
 
-rm -rf "$KWS_EDITOR_AGENTS_TARGET"
-rm -- "$KWS_EDITOR_CLAUDE_TARGET"
+rm -rf "$EDITOR_AGENTS_TARGET"
+rm -- "$EDITOR_CLAUDE_TARGET"
 ```
 
 갱신·제거 뒤에도 에이전트 세션을 새로 시작하세요.
@@ -187,10 +189,10 @@ rm -- "$KWS_EDITOR_CLAUDE_TARGET"
 오프라인 계약 확인:
 
 ```bash
-python3 skills/kws-korean-writing-editor/evals/run.py --scope full
+python3 skills/korean-writing-editor/evals/run.py --scope full
 ```
 
-통과는 30개 픽스처와 문서 계약이 맞다는 뜻이지, 실제 모델 품질 증거가
+통과는 31개 픽스처와 문서 계약이 맞다는 뜻이지, 실제 모델 품질 증거가
 아닙니다. 라이브 카나리는 별도 선택이며 따로 보고합니다. 라이브 양성
 프롬프트에는 원고와 교정 요청만 넣습니다. 모델에게 CANARY나
 skill_used를 적으라고 시키지 않습니다. 본문을 보고 판정합니다. 변경

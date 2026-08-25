@@ -1,13 +1,13 @@
 ---
-name: kws-korean-writing-editor
+name: korean-writing-editor
 description: Use only when the user asks to proofread, correct, or polish Korean text they provide. Do not use for translation, drafting, summarization, general writing advice, code review, casual Korean conversation, AI-authorship detection, or detector evasion.
 compatibility: Requires Korean source text and local Agent Skills file access. Model delegation is optional and host-dependent.
 metadata:
-  version: "1.0.2"
-  updated_at: "2026-08-23"
+  version: "2.0.0"
+  updated_at: "2026-08-25"
 ---
 
-# KWS Korean Writing Editor
+# Korean Writing Editor
 
 Edit Korean text the user already supplied. Preserve meaning, factual
 literals, and the writer's voice. Do not draft, translate, summarize, review
@@ -15,8 +15,8 @@ code, chat casually, score authorship, or evade detectors.
 
 ## Activation Gate
 
-Prefer explicit invocation (`$kws-korean-writing-editor` or
-`/kws-korean-writing-editor`) with Korean source text.
+Prefer explicit invocation (`$korean-writing-editor` or
+`/korean-writing-editor`) with Korean source text.
 
 Implicit use requires both:
 

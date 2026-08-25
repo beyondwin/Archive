@@ -61,17 +61,17 @@ Use synthetic prompts only. Do not place private manuscripts, credentials,
 secrets, personal data, or full provider transcripts in `live_cases.json`,
 receipts intended for review, commits, issues, or reports. Raw and normalized
 provider bodies stay only in the ignored exact evidence root
-`.superpowers/kws-korean-writing-editor/live`; reports contain hashes, status
+`.superpowers/korean-writing-editor/live`; reports contain hashes, status
 facts, and only bounded redacted excerpts.
 
 ## Offline Validation
 
 The offline command below does not call Codex, Cursor, or any provider and does
-not authorize or prove live execution; it verifies only the thirty synthetic
+not authorize or prove live execution; it verifies only the thirty-one synthetic
 offline fixtures and their mutation contract.
 
 ```bash
-python3 skills/kws-korean-writing-editor/evals/run.py --scope full
+python3 skills/korean-writing-editor/evals/run.py --scope full
 ```
 
 ## Dry Run
@@ -79,7 +79,7 @@ python3 skills/kws-korean-writing-editor/evals/run.py --scope full
 This provider-free command prints only the approved call plan and budgets:
 
 ```bash
-python3 skills/kws-korean-writing-editor/evals/live_matrix.py --dry-run
+python3 skills/korean-writing-editor/evals/live_matrix.py --dry-run
 ```
 
 The payload must show 119 producer calls, 3 reviewer calls, and 122 baseline
@@ -136,11 +136,16 @@ The approved Task 7 baseline run ID is
 approved operations artifact date remains intentionally `2026-08-23`. Keep
 run-02 and that report date unchanged; do not substitute the current date.
 
+The following preflight, paid baseline, and resume commands replay the dated
+report `docs/operations/2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md`;
+they are not the current default. That report's `RUN_ID` and report path stay
+as recorded.
+
 ```bash
 RUN_ID="kws-editor-20260823-baseline-02"
-python3 skills/kws-korean-writing-editor/evals/live_matrix.py \
+python3 skills/korean-writing-editor/evals/live_matrix.py \
   --preflight --scope baseline --run-id "$RUN_ID" --jobs 3 --max-calls 122 \
-  --evidence-root .superpowers/kws-korean-writing-editor/live \
+  --evidence-root .superpowers/korean-writing-editor/live \
   --report docs/operations/2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md
 ```
 
@@ -154,9 +159,9 @@ the operation that may be billable.
 
 ```bash
 RUN_ID="kws-editor-20260823-baseline-02"
-python3 skills/kws-korean-writing-editor/evals/live_matrix.py \
+python3 skills/korean-writing-editor/evals/live_matrix.py \
   --execute --scope baseline --run-id "$RUN_ID" --jobs 3 --max-calls 122 \
-  --evidence-root .superpowers/kws-korean-writing-editor/live \
+  --evidence-root .superpowers/korean-writing-editor/live \
   --report docs/operations/2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md
 ```
 
@@ -200,9 +205,9 @@ publication.
 
 ```bash
 RUN_ID="kws-editor-20260823-baseline-02"
-python3 skills/kws-korean-writing-editor/evals/live_matrix.py \
+python3 skills/korean-writing-editor/evals/live_matrix.py \
   --execute --resume --scope baseline --run-id "$RUN_ID" --jobs 3 --max-calls 122 \
-  --evidence-root .superpowers/kws-korean-writing-editor/live \
+  --evidence-root .superpowers/korean-writing-editor/live \
   --report docs/operations/2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md
 ```
 
@@ -281,19 +286,19 @@ from evidence; do not invent either value here. Repeat `--remediation-call`
 only for those exact IDs, in canonical plan order.
 
 ```bash
-python3 skills/kws-korean-writing-editor/evals/live_matrix.py \
+python3 skills/korean-writing-editor/evals/live_matrix.py \
   --preflight --scope remediation --run-id "<Task-8 approved remediation run ID>" \
   --jobs 3 --max-calls 38 \
   --remediation-call "<Task-8 exact planned producer call ID>" \
-  --evidence-root .superpowers/kws-korean-writing-editor/live
+  --evidence-root .superpowers/korean-writing-editor/live
 ```
 
 ```bash
-python3 skills/kws-korean-writing-editor/evals/live_matrix.py \
+python3 skills/korean-writing-editor/evals/live_matrix.py \
   --execute --scope remediation --run-id "<Task-8 approved remediation run ID>" \
   --jobs 3 --max-calls 38 \
   --remediation-call "<Task-8 exact planned producer call ID>" \
-  --evidence-root .superpowers/kws-korean-writing-editor/live
+  --evidence-root .superpowers/korean-writing-editor/live
 ```
 
 ## Evidence Layout
@@ -308,7 +313,7 @@ also persists the held target device, inode, and expected hash. Raw and
 normalized bodies are local operational evidence, not report attachments.
 
 The optional dated report is written only to
-`docs/operations/YYYY-MM-DD-kws-korean-writing-editor-cross-model-evaluation.md`.
+`docs/operations/YYYY-MM-DD-korean-writing-editor-cross-model-evaluation.md`.
 
 ## Limitations
 
