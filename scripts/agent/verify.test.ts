@@ -427,7 +427,7 @@ test("Claude offline checks execute while the live full eval stays opt-in", asyn
   const calls: string[] = [];
   const result = await runVerification({
     root: process.cwd(),
-    paths: ["skills/kws-claude-multi-agent-executor/SKILL.md"],
+    paths: ["skills/_legacy/kws-claude-multi-agent-executor/SKILL.md"],
     run: async (command) => {
       calls.push(command.id);
       return 0;
@@ -501,23 +501,23 @@ test("CLI reports live provider evidence as opt-in and not run", async () => {
 test("CLI reports the Claude full eval as opt-in and not run", async () => {
   const script = join(process.cwd(), "scripts/agent/verify.ts");
   const child = Bun.spawn([
-    "bun", script, "--dry-run", "--path", "skills/kws-claude-multi-agent-executor/SKILL.md",
+    "bun", script, "--dry-run", "--path", "skills/_legacy/kws-claude-multi-agent-executor/SKILL.md",
   ], { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" });
 
   expect(await child.exited).toBe(0);
   const stdout = await new Response(child.stdout).text();
   expect(stdout).toContain(
-    "[NOT RUN (opt-in)] \"claude-executor-eval\": argv=[\"./evals/run.sh\"] cwd=\"skills/kws-claude-multi-agent-executor\"",
+    "[NOT RUN (opt-in)] \"claude-executor-eval\": argv=[\"./evals/run.sh\"] cwd=\"skills/_legacy/kws-claude-multi-agent-executor\"",
   );
   expect(stdout).toContain(
-    "NOT RUN (opt-in) \"claude-executor-eval\": argv=[\"./evals/run.sh\"] cwd=\"skills/kws-claude-multi-agent-executor\"",
+    "NOT RUN (opt-in) \"claude-executor-eval\": argv=[\"./evals/run.sh\"] cwd=\"skills/_legacy/kws-claude-multi-agent-executor\"",
   );
 });
 
 test.each([
   ["console", "apps/console/src/App.tsx", "\"console-test\": argv=[\"bun\",\"test\",\"src\"] cwd=\"apps/console\""],
   ["native", "native/kernel/crates/kernel-cli/src/main.rs", "\"rust-test\": argv=[\"cargo\",\"test\",\"--workspace\"] cwd=\"native/kernel\""],
-  ["Codex plan runner", "skills/kws-codex-plan-runner/scripts/runner.py", "\"codex-plan-runner-eval\": argv=[\"./evals/run.sh\"] cwd=\"skills/kws-codex-plan-runner\""],
+  ["Codex plan runner", "skills/_legacy/kws-codex-plan-runner/scripts/runner.py", "\"codex-plan-runner-eval\": argv=[\"./evals/run.sh\"] cwd=\"skills/_legacy/kws-codex-plan-runner\""],
 ])("CLI includes cwd in $0 command summaries", async (_name, path, expected) => {
   const script = join(process.cwd(), "scripts/agent/verify.ts");
   const child = Bun.spawn([

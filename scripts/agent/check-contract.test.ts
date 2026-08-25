@@ -12,9 +12,9 @@ import { checkContract, formatContractIssues } from "./check-contract";
 import { VERIFICATION_SCOPES, type VerificationScope } from "./verification-map";
 
 const EXECUTOR_GATES = [
-  "skills/kws-codex-plan-runner/evals/run.sh",
-  "skills/kws-claude-plan-runner/evals/run.sh",
-  "skills/kws-claude-multi-agent-executor/evals/run.sh",
+  "skills/_legacy/kws-codex-plan-runner/evals/run.sh",
+  "skills/_legacy/kws-claude-plan-runner/evals/run.sh",
+  "skills/_legacy/kws-claude-multi-agent-executor/evals/run.sh",
 ] as const;
 
 const fixtureRoots: string[] = [];
@@ -383,36 +383,44 @@ describe("checkContract", () => {
     ]));
   });
 
+  test("requires the general skill catalog roots", () => {
+    expect(REQUIRED_PATHS).toEqual(expect.arrayContaining([
+      "skills/korean-writing-editor",
+      "skills/image-workbench",
+      "skills/_legacy/waygent",
+    ]));
+  });
+
   test("requires the Codex plan runner root, guidance, and deterministic gate", () => {
-    expect(REQUIRED_PATHS).toContain("skills/kws-codex-plan-runner");
+    expect(REQUIRED_PATHS).toContain("skills/_legacy/kws-codex-plan-runner");
     expect(REQUIRED_AGENT_FILES).toContain(
-      "skills/kws-codex-plan-runner/AGENTS.md",
+      "skills/_legacy/kws-codex-plan-runner/AGENTS.md",
     );
     expect(EXECUTOR_GATES).toContain(
-      "skills/kws-codex-plan-runner/evals/run.sh",
+      "skills/_legacy/kws-codex-plan-runner/evals/run.sh",
     );
   });
 
   test("requires the Claude plan runner root, guidance, and deterministic gate", () => {
-    expect(REQUIRED_PATHS).toContain("skills/kws-claude-plan-runner");
+    expect(REQUIRED_PATHS).toContain("skills/_legacy/kws-claude-plan-runner");
     expect(REQUIRED_AGENT_FILES).toContain(
-      "skills/kws-claude-plan-runner/AGENTS.md",
+      "skills/_legacy/kws-claude-plan-runner/AGENTS.md",
     );
     expect(EXECUTOR_GATES).toContain(
-      "skills/kws-claude-plan-runner/evals/run.sh",
+      "skills/_legacy/kws-claude-plan-runner/evals/run.sh",
     );
   });
 
   test("routes only the new sequential runners while retaining the Claude multi-agent executor", () => {
     expect(REQUIRED_PATHS).toEqual(expect.arrayContaining([
-      "skills/kws-codex-plan-runner",
-      "skills/kws-claude-plan-runner",
-      "skills/kws-claude-multi-agent-executor",
+      "skills/_legacy/kws-codex-plan-runner",
+      "skills/_legacy/kws-claude-plan-runner",
+      "skills/_legacy/kws-claude-multi-agent-executor",
     ]));
     expect(REQUIRED_AGENT_FILES).toEqual(expect.arrayContaining([
-      "skills/kws-codex-plan-runner/AGENTS.md",
-      "skills/kws-claude-plan-runner/AGENTS.md",
-      "skills/kws-claude-multi-agent-executor/AGENTS.md",
+      "skills/_legacy/kws-codex-plan-runner/AGENTS.md",
+      "skills/_legacy/kws-claude-plan-runner/AGENTS.md",
+      "skills/_legacy/kws-claude-multi-agent-executor/AGENTS.md",
     ]));
     for (const legacy of [
       "skills/kws-codex-plan-executor",

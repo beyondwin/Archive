@@ -1686,7 +1686,7 @@ def _production_worktree_observation(
         raise CanaryError("dirty_checkpoint_changed")
     scripts = (
         REPO_ROOT
-        / f"skills/kws-{provider}-plan-runner/scripts"
+        / f"skills/_legacy/kws-{provider}-plan-runner/scripts"
     ).resolve(strict=True)
     source = """
 import dataclasses, json, sys
@@ -2124,7 +2124,7 @@ def probe_runner(
             specs, plans = _write_runner_documents(root)
             runner = (
                 REPO_ROOT
-                / f"skills/kws-{provider}-plan-runner/scripts/runner"
+                / f"skills/_legacy/kws-{provider}-plan-runner/scripts/runner"
             )
             argv = _runner_argv(
                 provider,
@@ -2824,7 +2824,7 @@ def _probe_interruption_live(provider: str) -> dict[str, object]:
                 raise CanaryError("provider_auth_blocked")
             runner = (
                 REPO_ROOT
-                / f"skills/kws-{provider}-plan-runner/scripts/runner"
+                / f"skills/_legacy/kws-{provider}-plan-runner/scripts/runner"
             )
             evidence = _run_interrupted_once(
                 provider=provider,

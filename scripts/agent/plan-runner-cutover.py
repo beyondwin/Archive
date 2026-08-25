@@ -194,9 +194,14 @@ def git_branch(repo: Path) -> str:
     return result.stdout.strip()
 
 
+def _legacy_skill_dir(repo: Path, name: str) -> Path:
+    return repo / "skills" / "_legacy" / name
+
+
 def _source_paths(repo: Path) -> dict[str, Path]:
     return {
-        name: repo / "skills" / name for name in (*LEGACY_NAMES, *NEW_NAMES)
+        name: _legacy_skill_dir(repo, name)
+        for name in (*LEGACY_NAMES, *NEW_NAMES)
     }
 
 
@@ -240,8 +245,8 @@ def _legacy_roots(
 ) -> dict[str, tuple[Path, ...]]:
     roots = tuple(worktrees or repository_worktree_roots(repo))
     return {
-        "codex": tuple(root / "skills" / LEGACY_NAMES[0] for root in roots),
-        "claude": tuple(root / "skills" / LEGACY_NAMES[1] for root in roots),
+        "codex": tuple(_legacy_skill_dir(root, LEGACY_NAMES[0]) for root in roots),
+        "claude": tuple(_legacy_skill_dir(root, LEGACY_NAMES[1]) for root in roots),
     }
 
 
@@ -741,7 +746,7 @@ def _source_facts(
 ) -> list[dict[str, object]]:
     paths: list[Path] = []
     for root in worktrees:
-        paths.extend(root / "skills" / name for name in LEGACY_NAMES)
+        paths.extend(_legacy_skill_dir(root, name) for name in LEGACY_NAMES)
     paths.extend(_source_paths(repo)[name] for name in NEW_NAMES)
     return [_lstat_fact(path) for path in sorted(set(paths), key=str)]
 
@@ -765,9 +770,11 @@ def _link_integrity_blockers(
         elif skill_name == LEGACY_NAMES[1]:
             targets = legacy_roots["claude"]
         elif skill_name in NEW_NAMES:
-            targets = (repo / "skills" / skill_name,)
+            targets = (_legacy_skill_dir(repo, skill_name),)
         else:
-            targets = tuple(root / "skills" / MULTI_AGENT_NAME for root in worktrees)
+            targets = tuple(
+                _legacy_skill_dir(root, MULTI_AGENT_NAME) for root in worktrees
+            )
         expected[str(link)] = {str(target) for target in targets}
     for fact in facts:
         if fact["kind"] == "absent":
@@ -1243,7 +1250,7 @@ def _prevalidate_links(repo: Path, home: Path) -> dict[str, dict[str, object]]:
             if (
                 fact["kind"] != "symlink"
                 or fact.get("owner_uid") != os.getuid()
-                or fact.get("target") != str(repo / "skills" / name)
+                or fact.get("target") != str(_legacy_skill_dir(repo, name))
             ):
                 raise CutoverError("legacy_link_integrity")
             removals[str(path)] = fact
@@ -1258,7 +1265,7 @@ def _prevalidate_links(repo: Path, home: Path) -> dict[str, dict[str, object]]:
         if (
             fact["kind"] != "symlink"
             or fact.get("owner_uid") != os.getuid()
-            or fact.get("target") != str(repo / "skills" / name)
+            or fact.get("target") != str(_legacy_skill_dir(repo, name))
         ):
             raise CutoverError("legacy_link_integrity")
     return removals
@@ -1564,11 +1571,11 @@ def apply_cutover(
         destination = links[f"{provider}:{name}"]
         fact = _lstat_fact(destination)
         if fact["kind"] == "absent":
-            atomic_symlink(repository / "skills" / name, destination)
+            atomic_symlink(_legacy_skill_dir(repository, name), destination)
         elif (
             fact["kind"] != "symlink"
             or fact.get("owner_uid") != os.getuid()
-            or fact.get("target") != str(repository / "skills" / name)
+            or fact.get("target") != str(_legacy_skill_dir(repository, name))
         ):
             raise CutoverError("legacy_link_integrity")
     quarantined: list[dict[str, object]] = []
@@ -1582,7 +1589,9 @@ def apply_cutover(
                         quarantine_legacy_entry(
                             path,
                             expected,
-                            expected_target=str(repository / "skills" / name),
+                            expected_target=str(
+                                _legacy_skill_dir(repository, name)
+                            ),
                         )
                     )
                 except CutoverError as error:
@@ -1603,7 +1612,12 @@ def apply_cutover(
 
 def _tracked_legacy_paths(repo: Path) -> list[str]:
     result = _run(
-        ("git", "ls-files", "--", *(f"skills/{name}" for name in LEGACY_NAMES)),
+        (
+            "git",
+            "ls-files",
+            "--",
+            *(f"skills/_legacy/{name}" for name in LEGACY_NAMES),
+        ),
         cwd=repo,
     )
     if result.returncode != 0:
