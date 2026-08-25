@@ -83,7 +83,7 @@ durable state and TypeScript projections, not from chat context.
 - Verification: [docs/operations/verification.md](docs/operations/verification.md)
 - State root migration: [docs/operations/state-root-migration.md](docs/operations/state-root-migration.md)
 - Skill overview and installation: [skills/README.md](skills/README.md)
-- Waygent skill: [skills/waygent/README.md](skills/waygent/README.md)
+- Waygent CLI: `apps/cli` / `waygent`
 
 ## Working Rules
 

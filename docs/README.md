@@ -60,16 +60,10 @@ verification, recovery, and apply readiness.
 ## Skill Docs
 
 - [Skills overview](../skills/README.md)
-- [Waygent skill](../skills/waygent/README.md)
-- [Codex plan runner](../skills/kws-codex-plan-runner/README.md)
-- [Claude plan runner](../skills/kws-claude-plan-runner/README.md)
-- [Claude multi-agent executor](../skills/kws-claude-multi-agent-executor/README.md)
 
-The Waygent skill routes natural-language operator intent to the CLI. The KWS
-plan runners and specialized multi-agent executor remain load-bearing local
-execution contracts, but they are not the Waygent product runtime. Legacy plan
-executor documents are migration history, not the active sequential-runner
-entry points.
+The catalog is two general skills. Deprecated execution skills live under
+`skills/_legacy/` and are not the default path. Operators run Waygent through
+the `waygent` CLI, not a skill.
 
 ## Historical Planning
 
