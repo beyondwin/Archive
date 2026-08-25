@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Property evaluator and skill-tree validator for kws-korean-writing-editor."""
+"""Property evaluator and skill-tree validator for korean-writing-editor."""
 
 from __future__ import annotations
 
@@ -37,12 +37,12 @@ EXPECTED_CATEGORY_COUNTS = {
     "preservation": 8,
     "noop": 6,
     "voice": 4,
-    "trigger": 4,
+    "trigger": 5,
 }
 CASE_ID_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 STRING_LIST_FIELDS = ("must_preserve", "required_substrings", "forbidden_substrings")
 BOOLEAN_FIELDS = ("candidate_trigger", "expected_trigger", "expected_noop")
-SKILL_NAME = "kws-korean-writing-editor"
+SKILL_NAME = "korean-writing-editor"
 DESCRIPTION_REQUIRED_TERMS = (
     "proofread",
     "correct",
@@ -59,7 +59,7 @@ MODE_TERMS = ("diagnose", "correct", "polish")
 TIER_TERMS = ("fast", "balanced", "frontier")
 REQUIRED_HEADINGS = {
     "SKILL.md": (
-        "# KWS Korean Writing Editor",
+        "# Korean Writing Editor",
         "## Activation Gate",
         "## Modes",
         "## Default Interaction",
@@ -81,7 +81,7 @@ REQUIRED_HEADINGS = {
         "## Compact Examples",
     ),
     "README.md": (
-        "# kws-korean-writing-editor",
+        "# korean-writing-editor",
         "## 1분 시작",
         "## 언제 사용하나",
         "## 세 가지 모드",
@@ -664,7 +664,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     print(
-        "30 cases: "
+        "31 cases: "
         f"normative={category_counts['normative']} "
         f"preservation={category_counts['preservation']} "
         f"noop={category_counts['noop']} "

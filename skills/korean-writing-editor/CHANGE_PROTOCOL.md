@@ -31,7 +31,7 @@ of them.
 
 ## Fixture Changes
 
-Keep the thirty property cases and mutation checks honest in
+Keep the thirty-one property cases and mutation checks honest in
 `evals/cases.json` and [evals/run.py](evals/run.py).
 
 - Trigger work needs both positive and near-miss records.
@@ -119,7 +119,7 @@ publication.
 Required offline verification:
 
 ```bash
-python3 skills/kws-korean-writing-editor/evals/run.py --scope full
+python3 skills/korean-writing-editor/evals/run.py --scope full
 bun run agent:verify
 git diff --check
 ```

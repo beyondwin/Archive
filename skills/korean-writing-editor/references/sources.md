@@ -1,7 +1,7 @@
 # Evidence Register
 
 Authoritative links, evidence class, and reuse limits for
-`kws-korean-writing-editor`. This skill cites these sources; it does not copy
+`korean-writing-editor`. This skill cites these sources; it does not copy
 their corpora, datasets, or rule lists. Checked dates are `2026-08-22`.
 
 ## Sources

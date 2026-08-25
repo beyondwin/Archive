@@ -472,7 +472,7 @@
     {
       "id": "trigger-explicit-01",
       "category": "trigger",
-      "request": "$kws-korean-writing-editor 이 문장을 자연스럽게 다듬어줘: 결과 공유가 늦어져서 미안해요.",
+      "request": "$korean-writing-editor 이 문장을 자연스럽게 다듬어줘: 결과 공유가 늦어져서 미안해요.",
       "source": "결과 공유가 늦어져서 미안해요.",
       "candidate": "결과 공유가 늦어져서 미안해요.",
       "candidate_trigger": true,
@@ -540,6 +540,24 @@
       "required_substrings": ["안녕!", "오늘 날씨 좋지 않아?"],
       "forbidden_substrings": ["교정 결과"],
       "rationale": "Ordinary casual Korean chat is a near-miss."
+    },
+    {
+      "id": "trigger-legacy-kws-05",
+      "category": "trigger",
+      "request": "$kws-korean-writing-editor 이 문장을 자연스럽게 다듬어줘: 결과 공유가 늦어져서 미안해요.",
+      "source": "결과 공유가 늦어져서 미안해요.",
+      "candidate": "결과 공유가 늦어져서 미안해요.",
+      "candidate_trigger": false,
+      "candidate_mode": "none",
+      "candidate_tier": "none",
+      "expected_trigger": false,
+      "expected_mode": "none",
+      "expected_tier": "none",
+      "expected_noop": true,
+      "must_preserve": ["결과 공유가 늦어져서 미안해요."],
+      "required_substrings": ["결과 공유가 늦어져서 미안해요."],
+      "forbidden_substrings": ["번역하면"],
+      "rationale": "Former kws- invocation is a near-miss; do not activate."
     }
   ]
 }

@@ -80,8 +80,8 @@ def temporary_git_install_fixture(
     directory: str,
 ) -> tuple[pathlib.Path, pathlib.Path, pathlib.Path, pathlib.Path]:
     root = pathlib.Path(directory) / "repo"
-    source = root / "skills" / "kws-korean-writing-editor"
-    installed = pathlib.Path(directory) / "installed" / "kws-korean-writing-editor"
+    source = root / "skills" / "korean-writing-editor"
+    installed = pathlib.Path(directory) / "installed" / "korean-writing-editor"
     root.mkdir()
     shutil.copytree(HERE.parent, source, ignore=shutil.ignore_patterns("__pycache__"))
     shutil.copytree(source, installed)
@@ -100,7 +100,7 @@ def temporary_git_install_fixture(
         ),
     ):
         subprocess.run(("git", *argv), cwd=root, check=True, capture_output=True)
-    evidence_root = root / ".superpowers" / "kws-korean-writing-editor" / "live"
+    evidence_root = root / ".superpowers" / "korean-writing-editor" / "live"
     return root, source, installed, evidence_root
 
 
@@ -114,7 +114,7 @@ def write_complete_install_bootstrap(
     previous = run_root / "install-previous"
     run_root.mkdir(parents=True, mode=0o700)
     shutil.copytree(source, previous)
-    stage = installed.parent / f".kws-korean-writing-editor-{run_id}-stage"
+    stage = installed.parent / f".korean-writing-editor-{run_id}-stage"
     payload = json.loads(INSTALL_STATE_FIXTURE.read_text(encoding="utf-8"))
     source_hash = live_matrix.recursive_manifest_hash(source)
     payload.update(
@@ -471,13 +471,19 @@ GUIDE_PRIVACY_PARAGRAPH = (
     "secrets, personal data, or full provider transcripts in `live_cases.json`, "
     "receipts intended for review, commits, issues, or reports. Raw and normalized "
     "provider bodies stay only in the ignored exact evidence root "
-    "`.superpowers/kws-korean-writing-editor/live`; reports contain hashes, status "
+    "`.superpowers/korean-writing-editor/live`; reports contain hashes, status "
     "facts, and only bounded redacted excerpts."
 )
 GUIDE_OFFLINE_PARAGRAPH = (
     "The offline command below does not call Codex, Cursor, or any provider and "
-    "does not authorize or prove live execution; it verifies only the thirty "
+    "does not authorize or prove live execution; it verifies only the thirty-one "
     "synthetic offline fixtures and their mutation contract."
+)
+GUIDE_REPLAY_PARAGRAPH = (
+    "The following preflight, paid baseline, and resume commands replay the dated "
+    "report `docs/operations/2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md`; "
+    "they are not the current default. That report's `RUN_ID` and report path stay "
+    "as recorded."
 )
 GUIDE_ARTIFACT_PARAGRAPH = (
     "The approved Task 7 baseline run ID is "
@@ -649,6 +655,7 @@ GUIDE_EXPECTED_SECTIONS = (
             GUIDE_MANIFEST_CACHE_PARAGRAPH,
             GUIDE_PREFLIGHT_COMMIT_PARAGRAPH,
             GUIDE_ARTIFACT_PARAGRAPH,
+            GUIDE_REPLAY_PARAGRAPH,
             "`--jobs` accepts 1 through 4. The report path must be the exact dated filename under `docs/operations` shown above.",
         ),
     ),
@@ -696,7 +703,7 @@ GUIDE_EXPECTED_SECTIONS = (
         "Evidence Layout",
         (
             "Each successfully committed ignored run directory contains immutable `preflight.json` and `preflight-commit.json` state, `attempt-reservations/`, `receipts/`, `raw/`, and `normalized/` evidence plus report ownership state when a report was requested. Positive reservation numbers and filenames are exactly gap-free `1..N`; crash-only reservations are part of that ledger. Every positive receipt matches the full reservation identity. Report ownership state also persists the held target device, inode, and expected hash. Raw and normalized bodies are local operational evidence, not report attachments.",
-            "The optional dated report is written only to `docs/operations/YYYY-MM-DD-kws-korean-writing-editor-cross-model-evaluation.md`.",
+            "The optional dated report is written only to `docs/operations/YYYY-MM-DD-korean-writing-editor-cross-model-evaluation.md`.",
         ),
     ),
     ("Limitations", (GUIDE_ACTIVATION_PARAGRAPH,)),
@@ -724,33 +731,33 @@ def assert_live_guide_contract(markdown: str) -> None:
         ("##", "Limitations"),
     ]
     expected_bash_fences = [
-        "python3 skills/kws-korean-writing-editor/evals/run.py --scope full",
-        "python3 skills/kws-korean-writing-editor/evals/live_matrix.py --dry-run",
+        "python3 skills/korean-writing-editor/evals/run.py --scope full",
+        "python3 skills/korean-writing-editor/evals/live_matrix.py --dry-run",
         'RUN_ID="kws-editor-20260823-baseline-02"\n'
-        "python3 skills/kws-korean-writing-editor/evals/live_matrix.py \\\n"
+        "python3 skills/korean-writing-editor/evals/live_matrix.py \\\n"
         '  --preflight --scope baseline --run-id "$RUN_ID" --jobs 3 --max-calls 122 \\\n'
-        "  --evidence-root .superpowers/kws-korean-writing-editor/live \\\n"
+        "  --evidence-root .superpowers/korean-writing-editor/live \\\n"
         "  --report docs/operations/2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md",
         'RUN_ID="kws-editor-20260823-baseline-02"\n'
-        "python3 skills/kws-korean-writing-editor/evals/live_matrix.py \\\n"
+        "python3 skills/korean-writing-editor/evals/live_matrix.py \\\n"
         '  --execute --scope baseline --run-id "$RUN_ID" --jobs 3 --max-calls 122 \\\n'
-        "  --evidence-root .superpowers/kws-korean-writing-editor/live \\\n"
+        "  --evidence-root .superpowers/korean-writing-editor/live \\\n"
         "  --report docs/operations/2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md",
         'RUN_ID="kws-editor-20260823-baseline-02"\n'
-        "python3 skills/kws-korean-writing-editor/evals/live_matrix.py \\\n"
+        "python3 skills/korean-writing-editor/evals/live_matrix.py \\\n"
         '  --execute --resume --scope baseline --run-id "$RUN_ID" --jobs 3 --max-calls 122 \\\n'
-        "  --evidence-root .superpowers/kws-korean-writing-editor/live \\\n"
+        "  --evidence-root .superpowers/korean-writing-editor/live \\\n"
         "  --report docs/operations/2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md",
-        "python3 skills/kws-korean-writing-editor/evals/live_matrix.py \\\n"
+        "python3 skills/korean-writing-editor/evals/live_matrix.py \\\n"
         '  --preflight --scope remediation --run-id "<Task-8 approved remediation run ID>" \\\n'
         "  --jobs 3 --max-calls 38 \\\n"
         '  --remediation-call "<Task-8 exact planned producer call ID>" \\\n'
-        "  --evidence-root .superpowers/kws-korean-writing-editor/live",
-        "python3 skills/kws-korean-writing-editor/evals/live_matrix.py \\\n"
+        "  --evidence-root .superpowers/korean-writing-editor/live",
+        "python3 skills/korean-writing-editor/evals/live_matrix.py \\\n"
         '  --execute --scope remediation --run-id "<Task-8 approved remediation run ID>" \\\n'
         "  --jobs 3 --max-calls 38 \\\n"
         '  --remediation-call "<Task-8 exact planned producer call ID>" \\\n'
-        "  --evidence-root .superpowers/kws-korean-writing-editor/live",
+        "  --evidence-root .superpowers/korean-writing-editor/live",
     ]
     assert re.findall(r"```bash\n(.*?)\n```", markdown, flags=re.DOTALL) == expected_bash_fences
     statuses = tuple(
@@ -770,6 +777,7 @@ def assert_live_guide_contract(markdown: str) -> None:
         GUIDE_PREFLIGHT_COMMIT_PARAGRAPH,
         GUIDE_MANIFEST_CACHE_PARAGRAPH,
         GUIDE_ARTIFACT_PARAGRAPH,
+        GUIDE_REPLAY_PARAGRAPH,
         GUIDE_IDENTITY_PARAGRAPH,
         GUIDE_LEASE_PARAGRAPH,
         GUIDE_JUDGE_PARAGRAPH,
@@ -789,7 +797,7 @@ CHANGE_PROTOCOL_HEADINGS = (
     ("##", "Required Verification"),
 )
 CHANGE_PROTOCOL_VERIFICATION_FENCE = (
-    "python3 skills/kws-korean-writing-editor/evals/run.py --scope full\n"
+    "python3 skills/korean-writing-editor/evals/run.py --scope full\n"
     "bun run agent:verify\n"
     "git diff --check"
 )
@@ -1053,7 +1061,7 @@ class LiveDocumentationTests(unittest.TestCase):
         dry_run = next(command for command in commands if "--dry-run" in command)
         self.assertEqual(
             dry_run.strip().split(),
-            ["python3", "skills/kws-korean-writing-editor/evals/live_matrix.py", "--dry-run"],
+            ["python3", "skills/korean-writing-editor/evals/live_matrix.py", "--dry-run"],
         )
         self.assertIn(
             "119 producer calls, 3 reviewer calls, and "
@@ -1077,7 +1085,7 @@ class LiveDocumentationTests(unittest.TestCase):
             self.assertIn('--run-id "$RUN_ID"', command)
             self.assertIn("--jobs 3", command)
             self.assertIn(f"--max-calls {live_matrix.BASELINE_CALL_CEILING}", command)
-            self.assertIn("--evidence-root .superpowers/kws-korean-writing-editor/live", command)
+            self.assertIn("--evidence-root .superpowers/korean-writing-editor/live", command)
             self.assertIn(
                 "--report docs/operations/2026-08-23-kws-korean-writing-editor-cross-model-evaluation.md",
                 command,
@@ -1092,7 +1100,7 @@ class LiveDocumentationTests(unittest.TestCase):
             )
             self.assertIn("--jobs 3", command)
             self.assertIn(f"--max-calls {live_matrix.REMEDIATION_CALL_CEILING}", command)
-            self.assertIn("--evidence-root .superpowers/kws-korean-writing-editor/live", command)
+            self.assertIn("--evidence-root .superpowers/korean-writing-editor/live", command)
         paragraphs = normalized_markdown_paragraphs(text)
         for paragraph in (
             GUIDE_PRIVACY_PARAGRAPH,
@@ -1765,12 +1773,12 @@ class ProviderAdapterTests(unittest.TestCase):
         case = case_by_id("correct-obligation")
         self.assertTrue(
             live_matrix.build_prompt(case, "codex").startswith(
-                "$kws-korean-writing-editor "
+                "$korean-writing-editor "
             )
         )
         self.assertTrue(
             live_matrix.build_prompt(case, "cursor").startswith(
-                "/kws-korean-writing-editor "
+                "/korean-writing-editor "
             )
         )
         self.assertEqual(
@@ -2742,10 +2750,10 @@ class LiveMatrixCliTests(unittest.TestCase):
             source.mkdir()
             installed.mkdir()
             (source / "SKILL.md").write_text(
-                "---\nname: kws-korean-writing-editor\n---\nsource\n", encoding="utf-8"
+                "---\nname: korean-writing-editor\n---\nsource\n", encoding="utf-8"
             )
             (installed / "SKILL.md").write_text(
-                "---\nname: kws-korean-writing-editor\n---\ninstalled\n", encoding="utf-8"
+                "---\nname: korean-writing-editor\n---\ninstalled\n", encoding="utf-8"
             )
             with mock.patch("live_matrix.dispatch_calls") as dispatch:
                 with contextlib.redirect_stderr(io.StringIO()):
@@ -4227,7 +4235,7 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
 
             def create_stage(run_root: pathlib.Path) -> None:
                 run_id = run_root.name
-                stage = installed.parent / f".kws-korean-writing-editor-{run_id}-stage"
+                stage = installed.parent / f".korean-writing-editor-{run_id}-stage"
                 stage.mkdir()
                 stage_paths.append(stage)
 
@@ -5016,7 +5024,7 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
             repository.mkdir()
             outside.mkdir()
             (repository / ".superpowers").symlink_to(outside, target_is_directory=True)
-            evidence_root = repository / ".superpowers" / "kws-korean-writing-editor" / "live"
+            evidence_root = repository / ".superpowers" / "korean-writing-editor" / "live"
             before = tuple(outside.iterdir())
             with mock.patch(
                 "live_matrix.run_command",
@@ -5172,7 +5180,7 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
             (root / "README.md").write_text("fixture\n", encoding="utf-8")
             for argv in (("init", "-b", "main"), ("add", "."), ("-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "fixture")):
                 subprocess.run(("git", *argv), cwd=root, check=True, capture_output=True)
-            evidence_root = root / ".superpowers" / "kws-korean-writing-editor" / "live"
+            evidence_root = root / ".superpowers" / "korean-writing-editor" / "live"
             write_complete_install_bootstrap(
                 evidence_root, "baseline-1", HERE.parent, HERE.parent
             )
@@ -5262,7 +5270,7 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
                 ("-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "fixture"),
             ):
                 subprocess.run(("git", *argv), cwd=root, check=True, capture_output=True)
-            evidence_root = root / ".superpowers" / "kws-korean-writing-editor" / "live"
+            evidence_root = root / ".superpowers" / "korean-writing-editor" / "live"
             write_complete_install_bootstrap(
                 evidence_root, "baseline-1", HERE.parent, HERE.parent
             )
@@ -5375,7 +5383,7 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
             )
             selected = (plan[10].call_id, plan[2].call_id)
             expected = (plan[2].call_id, plan[10].call_id)
-            evidence_root = root / ".superpowers" / "kws-korean-writing-editor" / "live"
+            evidence_root = root / ".superpowers" / "korean-writing-editor" / "live"
             write_complete_install_bootstrap(
                 evidence_root, "remediation-1", HERE.parent, HERE.parent
             )
@@ -5436,7 +5444,7 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
                 ("-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "fixture"),
             ):
                 subprocess.run(("git", *argv), cwd=root, check=True, capture_output=True)
-            evidence_root = root / ".superpowers" / "kws-korean-writing-editor" / "live"
+            evidence_root = root / ".superpowers" / "korean-writing-editor" / "live"
             write_complete_install_bootstrap(
                 evidence_root, "baseline-1", HERE.parent, HERE.parent
             )
@@ -5506,7 +5514,7 @@ class LiveMatrixLifecycleTests(unittest.TestCase):
                 ("-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "fixture"),
             ):
                 subprocess.run(("git", *argv), cwd=root, check=True, capture_output=True)
-            evidence_root = root / ".superpowers" / "kws-korean-writing-editor" / "live"
+            evidence_root = root / ".superpowers" / "korean-writing-editor" / "live"
             write_complete_install_bootstrap(
                 evidence_root, "baseline-1", HERE.parent, HERE.parent
             )
@@ -6152,7 +6160,7 @@ class ReviewAndReportTests(unittest.TestCase):
         report_input = live_matrix.ReportInput.for_test(receipts=receipts)
         report = live_matrix.render_operations_report(report_input)
         for heading in (
-            "# KWS Korean Writing Editor Cross-Model Evaluation",
+            "# Korean Writing Editor Cross-Model Evaluation",
             "## Fixed Evidence",
             "## Model Matrix",
             "## Results By Band",
@@ -6402,7 +6410,7 @@ class ReviewAndReportTests(unittest.TestCase):
                     "`한Latin`",
                 )
 
-        safe = "한글 Latin python3 skills/kws-korean-writing-editor/evals/run.py --scope full"
+        safe = "한글 Latin python3 skills/korean-writing-editor/evals/run.py --scope full"
         self.assertEqual(live_matrix._safe_report_text(safe), f"`{safe}`")
         self.assertEqual(live_matrix._safe_report_text("\u202e" * 300 + safe), f"`{safe}`")
         self.assertEqual(
@@ -6507,7 +6515,7 @@ class ReviewAndReportTests(unittest.TestCase):
         self.assertIn("details=`empty`/material/`empty`.", report)
         self.assertGreaterEqual(report.count("- `empty`: `empty`"), 2)
         for fixed_label in (
-            "# KWS Korean Writing Editor Cross-Model Evaluation",
+            "# Korean Writing Editor Cross-Model Evaluation",
             "## Fixed Evidence",
             "Producer receipt: requested=",
             "reported=",
@@ -6561,7 +6569,7 @@ class ReviewAndReportTests(unittest.TestCase):
             response_sha256=hostile,
             findings=(live_matrix.Finding(hostile, hostile),),
         )
-        safe_command = "python3 skills/kws-korean-writing-editor/evals/run.py --scope full"
+        safe_command = "python3 skills/korean-writing-editor/evals/run.py --scope full"
         report = live_matrix.render_operations_report(
             live_matrix.ReportInput.for_test(
                 receipts=(producer,),
@@ -6609,7 +6617,7 @@ class ReviewAndReportTests(unittest.TestCase):
             self.assertNotIn(block_injection, report)
         for separator in ("\x00", "\x85", "\u2028", "\u2029"):
             self.assertNotIn(separator, report)
-        self.assertIn("# KWS Korean Writing Editor Cross-Model Evaluation", report)
+        self.assertIn("# Korean Writing Editor Cross-Model Evaluation", report)
         self.assertIn("## Verification", report)
         self.assertIn("| Producer | valid mode | preservation | noop hold | near miss |", report)
         self.assertIn(f"- `{safe_command}`: `", report)
@@ -6690,7 +6698,7 @@ class ReviewAndReportTests(unittest.TestCase):
             outputs = iter((
                 b"base-sha\n",
                 b"2\t3\n",
-                b"skills/kws-korean-writing-editor/SKILL.md\nevals/live_matrix.py\n",
+                b"skills/korean-writing-editor/SKILL.md\nevals/live_matrix.py\n",
                 b"refs/remotes/origin/evaluation\n",
             ))
             def git_capture(argv: tuple[str, ...], **_: object) -> live_matrix.CommandCapture:
@@ -6701,7 +6709,7 @@ class ReviewAndReportTests(unittest.TestCase):
         self.assertEqual(facts.merge_base, "base-sha")
         self.assertEqual(facts.ahead, 3)
         self.assertEqual(facts.behind, 2)
-        self.assertEqual(facts.changed_files, ("evals/live_matrix.py", "skills/kws-korean-writing-editor/SKILL.md"))
+        self.assertEqual(facts.changed_files, ("evals/live_matrix.py", "skills/korean-writing-editor/SKILL.md"))
         self.assertIn("current local refs", facts.remote_state)
         self.assertIn("origin/evaluation", facts.remote_state)
         self.assertTrue(any(call[1:] == ("merge-base", "main", "head-sha") for call in calls))

@@ -730,8 +730,8 @@ def build_prompt(case: LiveCase, host: str) -> str:
     if case.invocation != "explicit":
         return case.request
     prefixes = {
-        "codex": "$kws-korean-writing-editor",
-        "cursor": "/kws-korean-writing-editor",
+        "codex": "$korean-writing-editor",
+        "cursor": "/korean-writing-editor",
     }
     try:
         return f"{prefixes[host]} {case.request}"
@@ -1116,7 +1116,7 @@ def _validate_skill_identity(root: pathlib.Path, label: str) -> None:
         content = skill_file.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
         raise LiveMatrixError(f"cannot read {label} SKILL.md") from exc
-    if re.search(r"^name:\s*kws-korean-writing-editor\s*$", content, re.MULTILINE) is None:
+    if re.search(r"^name:\s*korean-writing-editor\s*$", content, re.MULTILINE) is None:
         raise LiveMatrixError(f"{label} is not the Korean editor skill")
 
 
@@ -1854,7 +1854,7 @@ def validate_evidence_root(
 ) -> pathlib.Path:
     """Accept only the ignored, exact live-evidence root below this checkout."""
     repo_root = _checked_directory(repository_root, "repository root")
-    expected = repo_root / ".superpowers" / "kws-korean-writing-editor" / "live"
+    expected = repo_root / ".superpowers" / "korean-writing-editor" / "live"
     candidate = evidence_root if evidence_root.is_absolute() else repo_root / evidence_root
     try:
         resolved_repo_root = repo_root.resolve(strict=True)
@@ -2110,7 +2110,7 @@ def _validate_install_bootstrap(
 
         stage = (
             expectation.installed_root.parent
-            / f".kws-korean-writing-editor-{run_id}-stage"
+            / f".korean-writing-editor-{run_id}-stage"
         )
         try:
             stage.lstat()
@@ -4664,7 +4664,7 @@ RAW_EVIDENCE_PATH_RE = re.compile(r"\b(?:raw|normalized)/[^\s`'\"]+")
 REPORT_REMOVED_CATEGORIES = frozenset({"Cc", "Cf", "Zl", "Zp"})
 EMPTY_REPORT_TEXT = "empty"
 OPERATIONS_REPORT_RE = re.compile(
-    r"^\d{4}-\d{2}-\d{2}-kws-korean-writing-editor-cross-model-evaluation\.md$"
+    r"^\d{4}-\d{2}-\d{2}-(?:kws-)?korean-writing-editor-cross-model-evaluation\.md$"
 )
 
 
@@ -5553,7 +5553,7 @@ def render_operations_report(report_input: ReportInput) -> str:
     producer_ids = report_input.producer_ids or report_input.identity.producer_ids
     matrix = aggregate_statuses(receipts, producer_ids=producer_ids)
     lines = [
-        "# KWS Korean Writing Editor Cross-Model Evaluation",
+        "# Korean Writing Editor Cross-Model Evaluation",
         "",
         "## Fixed Evidence",
         "",
@@ -6462,11 +6462,11 @@ def main(argv: list[str] | None = None) -> int:
 
     source_root = args.source_skill_root or pathlib.Path(__file__).resolve().parent.parent
     installed_root = args.installed_skill_root or (
-        pathlib.Path.home() / ".agents" / "skills" / "kws-korean-writing-editor"
+        pathlib.Path.home() / ".agents" / "skills" / "korean-writing-editor"
     )
     repository_root = args.repository_root or pathlib.Path.cwd()
     evidence_root = args.evidence_root or (
-        repository_root / ".superpowers" / "kws-korean-writing-editor" / "live"
+        repository_root / ".superpowers" / "korean-writing-editor" / "live"
     )
     report_lease: ReportLease | None = None
     preflight_lease: PreflightLease | None = None
