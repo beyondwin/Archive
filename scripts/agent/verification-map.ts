@@ -99,7 +99,7 @@ const LIVE_PROVIDER_SMOKE: CommandSpec = {
 const OFFLINE_COMMANDS = [
   CONTRACT, DIFF_CHECK, TYPECHECK, CHECK, PLATFORM_DEMO, SCENARIOS, FIXTURE_LAB, DOGFOOD,
   CONSOLE_TEST, CONSOLE_BUILD, RUST_FORMAT, RUST_TEST, WAYGENT_SKILL_EVAL,
-  IMAGE_WORKBENCH_EVAL, IMAGE_WORKBENCH_INSPECTOR,
+  KOREAN_WRITING_EDITOR_EVAL, IMAGE_WORKBENCH_EVAL, IMAGE_WORKBENCH_INSPECTOR,
   CODEX_PLAN_RUNNER_EVAL, CLAUDE_PLAN_RUNNER_EVAL,
   PLAN_RUNNER_PARITY, PLAN_RUNNER_CUTOVER_TEST, CLAUDE_EXECUTOR_OFFLINE,
   CLAUDE_EXECUTOR_EVAL, LIVE_PROVIDER_SMOKE,
@@ -152,7 +152,9 @@ export function selectVerification(
 ): VerificationSelection {
   const deletedPaths = stablePaths(options.deletedPaths ?? []);
   const deleted = new Set(deletedPaths);
-  const markdownFiles = paths.filter((path) => path.endsWith(".md") && !deleted.has(path));
+  const markdownFiles = paths.filter((path) =>
+    path.endsWith(".md") && !deleted.has(path) && isLiveMarkdownPointer(path)
+  );
   const packageRoots = new Set(paths.flatMap(packageRoot));
   const hasClosure = paths.includes("bun.lock") || packageRoots.size >= 2;
   const unknownPaths = paths.filter((path) => !matchesKnownScope(path));
@@ -263,6 +265,12 @@ function focusedTestCommands(paths: readonly string[]): CommandSpec[] {
       id: `focused-test:${path}`,
       argv: ["bun", "test", path],
     }));
+}
+
+function isLiveMarkdownPointer(path: string): boolean {
+  if (path.startsWith("docs/superpowers/")) return false;
+  if (path === "skills/_legacy/README.md") return true;
+  return !path.startsWith("skills/_legacy/");
 }
 
 function stablePaths(paths: readonly string[]): string[] {
