@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline decision-contract evaluator for kws-image-workbench."""
+"""Offline decision-contract evaluator for image-workbench."""
 
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ class EvaluatorTests(unittest.TestCase):
     def canonical_frontmatter(self) -> str:
         return "\n".join(
             (
-                "name: kws-image-workbench",
+                "name: image-workbench",
                 "description: canonical description",
                 "metadata:",
                 f"  compatibility: {CANONICAL_COMPATIBILITY}",
@@ -61,11 +61,11 @@ class EvaluatorTests(unittest.TestCase):
             original = (
                 "metadata:\n"
                 f"  compatibility: {CANONICAL_COMPATIBILITY}\n"
-                '  version: "1.0.0"\n'
+                '  version: "2.0.0"\n'
             )
-            replacement = metadata_header + "\n" + "\n".join(metadata_lines) + '\n  version: "1.0.0"\n'
+            replacement = metadata_header + "\n" + "\n".join(metadata_lines) + '\n  version: "2.0.0"\n'
             for header, lines in extra_metadata_blocks:
-                replacement += header + "\n" + "\n".join(lines) + '\n  version: "1.0.0"\n'
+                replacement += header + "\n" + "\n".join(lines) + '\n  version: "2.0.0"\n'
             skill.write_text(source.replace(original, replacement), encoding="utf-8")
             return validate_skill_tree(root, "core")
 
@@ -101,7 +101,7 @@ class EvaluatorTests(unittest.TestCase):
                 encoding="utf-8",
             )
         (root.parent / "README.md").write_text(
-            "kws-image-workbench\n", encoding="utf-8"
+            "image-workbench\n", encoding="utf-8"
         )
 
     def valid_case(self, **overrides: object) -> dict[str, object]:
@@ -366,7 +366,7 @@ class EvaluatorTests(unittest.TestCase):
         )
         for old, new, expected in source_mutations:
             with self.subTest(expected=expected), tempfile.TemporaryDirectory() as directory:
-                root = pathlib.Path(directory) / "skills" / "kws-image-workbench"
+                root = pathlib.Path(directory) / "skills" / "image-workbench"
                 self.copy_full_tree(root)
                 sources = root / "references" / "sources.md"
                 sources.write_text(sources.read_text(encoding="utf-8").replace(old, new, 1), encoding="utf-8")
@@ -402,13 +402,13 @@ class EvaluatorTests(unittest.TestCase):
 
     def test_full_scope_requires_quick_start_heading(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = pathlib.Path(directory) / "skills" / "kws-image-workbench"
+            root = pathlib.Path(directory) / "skills" / "image-workbench"
             self.copy_core_tree(root)
             (root / "scripts").mkdir()
             (root / "scripts" / "inspect_asset.py").write_text(
                 "#!/usr/bin/env python3\n", encoding="utf-8"
             )
-            (root / "README.md").write_text("# kws-image-workbench\n", encoding="utf-8")
+            (root / "README.md").write_text("# image-workbench\n", encoding="utf-8")
             (root / "CHANGE_PROTOCOL.md").write_text(
                 "# Change Protocol\n", encoding="utf-8"
             )
@@ -416,14 +416,14 @@ class EvaluatorTests(unittest.TestCase):
                 "# Evidence And Source Register\n", encoding="utf-8"
             )
             (root.parent / "README.md").write_text(
-                "kws-image-workbench\n", encoding="utf-8"
+                "image-workbench\n", encoding="utf-8"
             )
             errors = validate_skill_tree(root, "full")
         self.assertIn("README.md: missing heading '## 1분 시작'", errors)
 
     def test_full_scope_rejects_hash_rights_overclaim(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = pathlib.Path(directory) / "skills" / "kws-image-workbench"
+            root = pathlib.Path(directory) / "skills" / "image-workbench"
             self.copy_core_tree(root)
             (root / "scripts").mkdir()
             (root / "scripts" / "inspect_asset.py").write_text(
@@ -432,7 +432,7 @@ class EvaluatorTests(unittest.TestCase):
             (root / "README.md").write_text(
                 "\n".join(
                     (
-                        "# kws-image-workbench",
+                        "# image-workbench",
                         "## 1분 시작",
                         "## 언제 사용하나",
                         "## 네 가지 모드",
@@ -478,33 +478,33 @@ class EvaluatorTests(unittest.TestCase):
                 encoding="utf-8",
             )
             (root.parent / "README.md").write_text(
-                "kws-image-workbench\n", encoding="utf-8"
+                "image-workbench\n", encoding="utf-8"
             )
             errors = validate_skill_tree(root, "full")
         self.assertIn("README.md: unsupported claim: hashes prove rights", errors)
 
     def test_full_scope_rejects_altered_approved_quick_start_request(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = pathlib.Path(directory) / "skills" / "kws-image-workbench"
+            root = pathlib.Path(directory) / "skills" / "image-workbench"
             self.copy_full_tree(root)
             readme = root / "README.md"
             readme.write_text(
                 readme.read_text(encoding="utf-8").replace(
-                    "$kws-image-workbench 이 상품 사진은 그대로 두고 배경만 바꿔줘.",
-                    "$kws-image-workbench 이 상품 사진에서 배경만 바꿔줘.",
+                    "$image-workbench 이 상품 사진은 그대로 두고 배경만 바꿔줘.",
+                    "$image-workbench 이 상품 사진에서 배경만 바꿔줘.",
                 ),
                 encoding="utf-8",
             )
             errors = validate_skill_tree(root, "full")
         self.assertIn(
             "README.md: missing approved request "
-            "'$kws-image-workbench 이 상품 사진은 그대로 두고 배경만 바꿔줘.'",
+            "'$image-workbench 이 상품 사진은 그대로 두고 배경만 바꿔줘.'",
             errors,
         )
 
     def test_full_scope_requires_verification_map_change_protocol(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = pathlib.Path(directory) / "skills" / "kws-image-workbench"
+            root = pathlib.Path(directory) / "skills" / "image-workbench"
             self.copy_full_tree(root)
             protocol = root / "CHANGE_PROTOCOL.md"
             protocol.write_text(
@@ -520,12 +520,12 @@ class EvaluatorTests(unittest.TestCase):
 
     def test_full_scope_requires_quick_validate_command(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = pathlib.Path(directory) / "skills" / "kws-image-workbench"
+            root = pathlib.Path(directory) / "skills" / "image-workbench"
             self.copy_full_tree(root)
             protocol = root / "CHANGE_PROTOCOL.md"
             protocol.write_text(
                 protocol.read_text(encoding="utf-8").replace(
-                    'python3 "${CODEX_HOME:-$HOME/.codex}/skills/.system/skill-creator/scripts/quick_validate.py" skills/kws-image-workbench\n',
+                    'python3 "${CODEX_HOME:-$HOME/.codex}/skills/.system/skill-creator/scripts/quick_validate.py" skills/image-workbench\n',
                     "",
                 ),
                 encoding="utf-8",
@@ -533,7 +533,7 @@ class EvaluatorTests(unittest.TestCase):
             errors = validate_skill_tree(root, "full")
         self.assertIn(
             "skill tree: missing advertised command "
-            "'python3 \"${CODEX_HOME:-$HOME/.codex}/skills/.system/skill-creator/scripts/quick_validate.py\" skills/kws-image-workbench'",
+            "'python3 \"${CODEX_HOME:-$HOME/.codex}/skills/.system/skill-creator/scripts/quick_validate.py\" skills/image-workbench'",
             errors,
         )
 
@@ -553,7 +553,7 @@ class EvaluatorTests(unittest.TestCase):
             )
             errors = validate_skill_tree(root, "core")
         self.assertIn(
-            "SKILL.md: frontmatter name must be 'kws-image-workbench'", errors
+            "SKILL.md: frontmatter name must be 'image-workbench'", errors
         )
 
     def test_core_scope_rejects_prompt_gallery_scope_expansion(self):
@@ -561,7 +561,7 @@ class EvaluatorTests(unittest.TestCase):
             root = pathlib.Path(directory)
             (root / "references").mkdir()
             (root / "SKILL.md").write_text(
-                "---\nname: kws-image-workbench\nmetadata:\n  version: \"1.0.0\"\n---\n\nPrompt gallery\n",
+                "---\nname: image-workbench\nmetadata:\n  version: \"1.0.0\"\n---\n\nPrompt gallery\n",
                 encoding="utf-8",
             )
             (root / "references" / "image-spec.md").write_text(
@@ -844,7 +844,7 @@ REQUIRED_SOURCE_ROWS = {
     },
 }
 EXPECTED_CATEGORY_COUNTS = {
-    "routing": 8,
+    "routing": 9,
     "authorization": 5,
     "spec": 5,
     "hybrid": 4,
@@ -1307,10 +1307,10 @@ def validate_skill_tree(skill_root: pathlib.Path, scope: str) -> list[str]:
         else:
             metadata = frontmatter.group(1)
             if not re.search(
-                r"(?m)^name:\s*kws-image-workbench\s*$", metadata
+                r"(?m)^name:\s*image-workbench\s*$", metadata
             ):
                 errors.append(
-                    "SKILL.md: frontmatter name must be 'kws-image-workbench'"
+                    "SKILL.md: frontmatter name must be 'image-workbench'"
                 )
             if not re.search(
                 r'''(?m)^  version:\s*["'][^"']+["']\s*$''', metadata
@@ -1322,7 +1322,7 @@ def validate_skill_tree(skill_root: pathlib.Path, scope: str) -> list[str]:
 
         required_headings = {
             "SKILL.md": (
-                "# KWS Image Workbench",
+                "# Image Workbench",
                 "## Activation Gate",
                 "## Mode And Authorization",
                 "## Route The Deliverable",
@@ -1364,7 +1364,7 @@ def validate_skill_tree(skill_root: pathlib.Path, scope: str) -> list[str]:
         if scope == "full":
             full_headings = {
                 "README.md": (
-                    "# kws-image-workbench",
+                    "# image-workbench",
                     "## 1분 시작",
                     "## 언제 사용하나",
                     "## 네 가지 모드",
@@ -1402,10 +1402,10 @@ def validate_skill_tree(skill_root: pathlib.Path, scope: str) -> list[str]:
                         errors.append(f"{relative}: missing heading {heading!r}")
 
             for request in (
-                "$kws-image-workbench 이 프로젝트 랜딩 페이지 hero 이미지를 만들어줘.",
-                "$kws-image-workbench 이 상품 사진은 그대로 두고 배경만 바꿔줘.",
-                "$kws-image-workbench 생성하지 말고 이미지 브리프만 정리해줘.",
-                "$kws-image-workbench 이 자산이 모바일 크롭과 다크 모드에 맞는지 검토해줘.",
+                "$image-workbench 이 프로젝트 랜딩 페이지 hero 이미지를 만들어줘.",
+                "$image-workbench 이 상품 사진은 그대로 두고 배경만 바꿔줘.",
+                "$image-workbench 생성하지 말고 이미지 브리프만 정리해줘.",
+                "$image-workbench 이 자산이 모바일 크롭과 다크 모드에 맞는지 검토해줘.",
             ):
                 if request not in documents["README.md"]:
                     errors.append(f"README.md: missing approved request {request!r}")
@@ -1423,12 +1423,12 @@ def validate_skill_tree(skill_root: pathlib.Path, scope: str) -> list[str]:
             errors.extend(_validate_source_register(sources_text))
 
             required_commands = (
-                'python3 "${CODEX_HOME:-$HOME/.codex}/skills/.system/skill-creator/scripts/quick_validate.py" skills/kws-image-workbench',
-                "python3 skills/kws-image-workbench/evals/run.py --self-test",
-                "python3 skills/kws-image-workbench/evals/run.py --scope fixtures",
-                "python3 skills/kws-image-workbench/evals/run.py --scope core",
-                "python3 skills/kws-image-workbench/evals/run.py --scope full",
-                "python3 skills/kws-image-workbench/scripts/inspect_asset.py --self-test",
+                'python3 "${CODEX_HOME:-$HOME/.codex}/skills/.system/skill-creator/scripts/quick_validate.py" skills/image-workbench',
+                "python3 skills/image-workbench/evals/run.py --self-test",
+                "python3 skills/image-workbench/evals/run.py --scope fixtures",
+                "python3 skills/image-workbench/evals/run.py --scope core",
+                "python3 skills/image-workbench/evals/run.py --scope full",
+                "python3 skills/image-workbench/scripts/inspect_asset.py --self-test",
                 "bun run agent:verify",
                 "git diff --check",
             )
@@ -1447,9 +1447,9 @@ def validate_skill_tree(skill_root: pathlib.Path, scope: str) -> list[str]:
                     ).is_file():
                         errors.append(f"{relative}: unresolved local link {target!r}")
 
-            if skill_root.name != "kws-image-workbench" or skill_root.parent.name != "skills":
+            if skill_root.name != "image-workbench" or skill_root.parent.name != "skills":
                 errors.append(
-                    "skill tree: canonical directory must be skills/kws-image-workbench"
+                    "skill tree: canonical directory must be skills/image-workbench"
                 )
 
             for label, pattern in (
@@ -1573,8 +1573,8 @@ def validate_skill_tree(skill_root: pathlib.Path, scope: str) -> list[str]:
         index_path = skill_root.parent / "README.md"
         if not index_path.is_file():
             errors.append("skill tree: missing skills/README.md")
-        elif "kws-image-workbench" not in index_path.read_text(encoding="utf-8"):
-            errors.append("skill tree: skills/README.md missing kws-image-workbench")
+        elif "image-workbench" not in index_path.read_text(encoding="utf-8"):
+            errors.append("skill tree: skills/README.md missing image-workbench")
     return errors
 
 
@@ -1654,7 +1654,7 @@ def _validate_fixtures(
         if not case_errors:
             errors.extend(evaluate_candidate(case))
     if len(cases) != sum(EXPECTED_CATEGORY_COUNTS.values()):
-        errors.append(f"fixtures: expected 30 cases, found {len(cases)}")
+        errors.append(f"fixtures: expected 31 cases, found {len(cases)}")
     for category, expected in EXPECTED_CATEGORY_COUNTS.items():
         actual = category_counts[category]
         if actual != expected:
@@ -1672,7 +1672,7 @@ def run_self_tests() -> unittest.result.TestResult:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Evaluate kws-image-workbench offline decision fixtures."
+        description="Evaluate image-workbench offline decision fixtures."
     )
     parser.add_argument("--self-test", action="store_true")
     parser.add_argument("--scope", choices=("fixtures", "core", "full"))
@@ -1696,7 +1696,7 @@ def main(argv: list[str] | None = None) -> int:
             print(error, file=sys.stderr)
         return 1
     print(
-        "30 cases: "
+        "31 cases: "
         f"routing={counts['routing']} "
         f"authorization={counts['authorization']} "
         f"spec={counts['spec']} "

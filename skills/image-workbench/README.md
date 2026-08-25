@@ -1,13 +1,13 @@
-# kws-image-workbench
+# image-workbench
 
 ## 1분 시작
 
 프로젝트 안에서 쓸 래스터 이미지는 자연어로 바로 요청하면 됩니다.
 
-- `$kws-image-workbench 이 프로젝트 랜딩 페이지 hero 이미지를 만들어줘.`
-- `$kws-image-workbench 이 상품 사진은 그대로 두고 배경만 바꿔줘.`
-- `$kws-image-workbench 생성하지 말고 이미지 브리프만 정리해줘.`
-- `$kws-image-workbench 이 자산이 모바일 크롭과 다크 모드에 맞는지 검토해줘.`
+- `$image-workbench 이 프로젝트 랜딩 페이지 hero 이미지를 만들어줘.`
+- `$image-workbench 이 상품 사진은 그대로 두고 배경만 바꿔줘.`
+- `$image-workbench 생성하지 말고 이미지 브리프만 정리해줘.`
+- `$image-workbench 이 자산이 모바일 크롭과 다크 모드에 맞는지 검토해줘.`
 
 앞의 두 요청은 각각 새 생성과 편집입니다. 세 번째는 `brief`, 네 번째는
 `audit`입니다. 먼저 비슷한 요청을 구분합니다. 프로젝트 맥락 없는 재미용
@@ -61,17 +61,19 @@ byte size, SHA-256, path readiness를 확인하지만 SHA-256은 권리나 prove
 
 ## 설치
 
-이 v1 설치 지침은 Codex 전용입니다. 추적되는 Archive source
-`skills/kws-image-workbench/`가 canonical입니다. mutation 전에 명시적 target
-`/Users/kws/.agents/skills/kws-image-workbench`의 type과 destination을 확인합니다.
+이 설치 지침은 Codex 전용입니다. 추적되는 Archive source
+`skills/image-workbench/`가 canonical입니다. mutation 전에 명시적 target
+`~/.agents/skills/image-workbench`의 type과 destination을 확인합니다.
 없거나 canonical source를 안전하게 가리키는 경우에만 복사 또는 link를 선택하고,
 기존 real directory는 절대 덮어쓰지 않습니다.
 
+새 경로를 만든 뒤 이전 `~/.agents/skills/kws-image-workbench`는 이 스킬의 옛 설치임이 확인될 때만 제거한다.
+
 ```bash
-KWS_IMAGE_SOURCE="/Users/kws/source/private/Archive/skills/kws-image-workbench"
-KWS_IMAGE_TARGET="/Users/kws/.agents/skills/kws-image-workbench"
-test -e "$KWS_IMAGE_TARGET" -o -L "$KWS_IMAGE_TARGET"
-readlink "$KWS_IMAGE_TARGET"
+IMAGE_SOURCE="/Users/kws/source/private/Archive/skills/image-workbench"
+IMAGE_TARGET="/Users/kws/.agents/skills/image-workbench"
+test -e "$IMAGE_TARGET" -o -L "$IMAGE_TARGET"
+readlink "$IMAGE_TARGET"
 ```
 
 위 검사는 상태만 확인합니다. 설치를 자동화하는 script나 제거 command는 제공하지
@@ -101,12 +103,12 @@ image quality, rights clearance, provider superiority를 증명하지 않습니�
 canary는 opt-in이고 별도 보고합니다.
 
 ```bash
-python3 skills/kws-image-workbench/evals/run.py --self-test
-python3 skills/kws-image-workbench/evals/run.py --cases skills/kws-image-workbench/evals/cases.json
-python3 skills/kws-image-workbench/evals/run.py --scope fixtures
-python3 skills/kws-image-workbench/evals/run.py --scope core
-python3 skills/kws-image-workbench/evals/run.py --scope full
-python3 skills/kws-image-workbench/scripts/inspect_asset.py --self-test
+python3 skills/image-workbench/evals/run.py --self-test
+python3 skills/image-workbench/evals/run.py --cases skills/image-workbench/evals/cases.json
+python3 skills/image-workbench/evals/run.py --scope fixtures
+python3 skills/image-workbench/evals/run.py --scope core
+python3 skills/image-workbench/evals/run.py --scope full
+python3 skills/image-workbench/scripts/inspect_asset.py --self-test
 ```
 
 변경 범위와 SemVer 규칙은 [Change Protocol](CHANGE_PROTOCOL.md)을 따릅니다.

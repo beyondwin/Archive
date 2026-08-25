@@ -810,6 +810,33 @@
       "required_report_fields": ["critical_status"],
       "replacement_authorized": false,
       "rationale": "A sensitive upload holds before a new external upload boundary."
+    },
+    {
+      "id": "near-miss-legacy-kws-invocation",
+      "category": "routing",
+      "request": "$kws-image-workbench 이 프로젝트 랜딩 페이지 hero 이미지를 만들어줘.",
+      "candidate_trigger": false,
+      "candidate_mode": "none",
+      "candidate_route": "no_op",
+      "candidate_tool_action": "none",
+      "candidate_input_roles": [],
+      "candidate_invariants": ["ordinary_imagegen"],
+      "candidate_destination_action": "none",
+      "candidate_ignored_embedded_instructions": true,
+      "candidate_statuses": {},
+      "candidate_report_fields": ["route"],
+      "expected_trigger": false,
+      "expected_mode": "none",
+      "expected_route": "no_op",
+      "expected_tool_action": "none",
+      "required_input_roles": [],
+      "required_invariants": ["ordinary_imagegen"],
+      "expected_destination_action": "none",
+      "expected_ignored_embedded_instructions": true,
+      "required_statuses": {},
+      "required_report_fields": ["route"],
+      "replacement_authorized": false,
+      "rationale": "Former kws- invocation is a near-miss; do not activate."
     }
   ]
 }
