@@ -1,7 +1,7 @@
 import { readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
-const EXECUTOR_ROOT = "skills/kws-claude-multi-agent-executor";
+const EXECUTOR_ROOT = "skills/_legacy/kws-claude-multi-agent-executor";
 
 export interface ClaudeOfflineCheck {
   id: string;

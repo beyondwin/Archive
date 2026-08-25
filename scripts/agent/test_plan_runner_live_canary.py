@@ -74,7 +74,7 @@ class LauncherTests(unittest.TestCase):
         for provider in ("codex", "claude"):
             launcher = (
                 REPO_ROOT
-                / f"skills/kws-{provider}-plan-runner/scripts/runner"
+                / f"skills/_legacy/kws-{provider}-plan-runner/scripts/runner"
             )
             with self.subTest(provider=provider):
                 text = launcher.read_text(encoding="utf-8")
@@ -1624,7 +1624,7 @@ class SessionAndRunnerOutcomeTests(unittest.TestCase):
                         root=resume_root,
                         runner=(
                             REPO_ROOT
-                            / f"skills/kws-{provider}-plan-runner/scripts/runner"
+                            / f"skills/_legacy/kws-{provider}-plan-runner/scripts/runner"
                         ),
                         environment=resume_environment,
                         drift=False,
@@ -1635,7 +1635,7 @@ class SessionAndRunnerOutcomeTests(unittest.TestCase):
                             root=drift_root,
                             runner=(
                                 REPO_ROOT
-                                / f"skills/kws-{provider}-plan-runner/scripts/runner"
+                                / f"skills/_legacy/kws-{provider}-plan-runner/scripts/runner"
                             ),
                             environment=drift_environment,
                             drift=True,

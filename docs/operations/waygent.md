@@ -346,7 +346,7 @@ choosing a recovery action.
 Default local verification:
 
 ```bash
-skills/waygent/evals/run.sh
+skills/_legacy/waygent/evals/run.sh
 bun install
 bun run check
 bun run platform:demo
@@ -362,7 +362,7 @@ cd native/kernel && cargo fmt --all -- --check && cargo clippy --workspace --all
 Default offline gate:
 
 ```bash
-skills/waygent/evals/run.sh
+skills/_legacy/waygent/evals/run.sh
 bun run check
 bun run platform:demo
 bun run check:legacy
