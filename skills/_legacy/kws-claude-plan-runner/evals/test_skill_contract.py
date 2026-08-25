@@ -15,16 +15,15 @@ class SkillContractTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         readme = (SKILL_ROOT / "README.md").read_text(encoding="utf-8")
         changelog = (SKILL_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-        catalog = (SKILL_ROOT.parent / "README.md").read_text(encoding="utf-8")
+        catalog = (SKILL_ROOT.parents[1] / "README.md").read_text(encoding="utf-8")
 
         self.assertIn('version: "2.0.0"', skill)
         self.assertIn('__version__ = "2.0.0"', package)
         self.assertIn("Current release: `2.0.0`", readme)
         self.assertIn("## 2.0.0 - 2026-07-25", changelog)
-        self.assertIn(
-            "두 sequential plan runner의 현재 릴리스는 `2.0.0`입니다.",
-            catalog,
-        )
+        self.assertIn("[`korean-writing-editor`](./korean-writing-editor/)", catalog)
+        self.assertIn("[`image-workbench`](./image-workbench/)", catalog)
+        self.assertNotIn("kws-claude-plan-runner", catalog)
 
     def test_skill_frontmatter_is_discoverable_and_versioned(self) -> None:
         skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")

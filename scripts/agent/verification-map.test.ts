@@ -78,7 +78,8 @@ const closureCommands = [contract, diffCheck, check, platformDemo, scenarios, fi
 const offlineCommands = [
   contract, diffCheck, typecheck, check, platformDemo, scenarios, fixtureLab, dogfood,
   consoleTest, consoleBuild, rustFormat, rustTest, waygentSkillEval,
-  imageWorkbenchEval, imageWorkbenchInspector, codexPlanRunnerEval, claudePlanRunnerEval, planRunnerParity, planRunnerCutoverTest,
+  koreanWritingEditorEval, imageWorkbenchEval, imageWorkbenchInspector,
+  codexPlanRunnerEval, claudePlanRunnerEval, planRunnerParity, planRunnerCutoverTest,
   claudeExecutorOffline, claudeExecutorEval, liveProvider,
 ];
 
@@ -215,6 +216,32 @@ test("always selects contract and plain patch hygiene for a clean tree", () => {
 
   expect(selection.scopeIds).toEqual([]);
   expect(selection.commands.map(toCommand)).toEqual([contract, diffCheck]);
+});
+
+test("does not schedule Markdown link reads for frozen legacy skill bodies", () => {
+  const selection = selectVerification([
+    "skills/_legacy/README.md",
+    "skills/_legacy/kws-claude-multi-agent-executor/HISTORY.md",
+    "skills/_legacy/waygent/SKILL.md",
+  ]);
+
+  expect(selection.markdownFiles).toEqual(["skills/_legacy/README.md"]);
+  expect(selection.scopeIds).toEqual(["docs", "waygent-skill", "claude-executor"]);
+});
+
+test("does not schedule Markdown link reads for Superpowers design artifacts", () => {
+  const selection = selectVerification([
+    "docs/README.md",
+    "docs/architecture/waygent.md",
+    "docs/superpowers/plans/2026-08-25-skills-catalog-identity.md",
+    "docs/superpowers/specs/2026-08-25-skills-catalog-identity-design.md",
+  ]);
+
+  expect(selection.markdownFiles).toEqual([
+    "docs/README.md",
+    "docs/architecture/waygent.md",
+  ]);
+  expect(selection.scopeIds).toEqual(["docs"]);
 });
 
 test("classifies deleted Markdown without scheduling a link read", () => {
