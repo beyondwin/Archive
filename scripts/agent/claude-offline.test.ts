@@ -3,7 +3,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { runClaudeOffline, type ClaudeOfflineCheck } from "./claude-offline";
 
-const EXECUTOR = "skills/kws-claude-multi-agent-executor";
+const EXECUTOR = "skills/_legacy/kws-claude-multi-agent-executor";
 
 type ObservedCheck = ClaudeOfflineCheck;
 
@@ -66,7 +66,7 @@ test("injected discovery is sorted and the runner fails fast", async () => {
     "scripts/kernel/test_a.py",
     "scripts/kernel/test_z.py",
   ]);
-  expect(calls[0]?.cwd).toBe("/fixture/skills/kws-claude-multi-agent-executor");
+  expect(calls[0]?.cwd).toBe("/fixture/skills/_legacy/kws-claude-multi-agent-executor");
   expect(stdout).toEqual([
     "[agent:claude-offline] PASS compare-agentlens-events-self-test",
     "[agent:claude-offline] PASS scripts/kernel/test_a.py",
@@ -96,25 +96,25 @@ test("injected runner receives the self-test, sorted Python tests, and strict do
     {
       id: "compare-agentlens-events-self-test",
       argv: ["python3", "scripts/compare_agentlens_events.py", "--self-test"],
-      cwd: "/fixture/skills/kws-claude-multi-agent-executor",
+      cwd: "/fixture/skills/_legacy/kws-claude-multi-agent-executor",
       env: undefined,
     },
     {
       id: "scripts/kernel/test_a.py",
       argv: ["python3", "scripts/kernel/test_a.py"],
-      cwd: "/fixture/skills/kws-claude-multi-agent-executor",
+      cwd: "/fixture/skills/_legacy/kws-claude-multi-agent-executor",
       env: undefined,
     },
     {
       id: "scripts/kernel/test_b.py",
       argv: ["python3", "scripts/kernel/test_b.py"],
-      cwd: "/fixture/skills/kws-claude-multi-agent-executor",
+      cwd: "/fixture/skills/_legacy/kws-claude-multi-agent-executor",
       env: undefined,
     },
     {
       id: "doc-freshness-strict",
       argv: ["python3", "evals/check_doc_freshness.py"],
-      cwd: "/fixture/skills/kws-claude-multi-agent-executor",
+      cwd: "/fixture/skills/_legacy/kws-claude-multi-agent-executor",
       env: { DOC_FRESHNESS_STRICT: "1" },
     },
   ]);
