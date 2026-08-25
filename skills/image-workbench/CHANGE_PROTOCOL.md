@@ -44,10 +44,10 @@ refresh도 adopted/rejected boundary와 behavior가 그대로면 version bump를
 Repository acceptance는 다음 정확한 command set입니다.
 
 ```bash
-python3 "${CODEX_HOME:-$HOME/.codex}/skills/.system/skill-creator/scripts/quick_validate.py" skills/kws-image-workbench
-python3 skills/kws-image-workbench/evals/run.py --self-test
-python3 skills/kws-image-workbench/evals/run.py --scope full
-python3 skills/kws-image-workbench/scripts/inspect_asset.py --self-test
+python3 "${CODEX_HOME:-$HOME/.codex}/skills/.system/skill-creator/scripts/quick_validate.py" skills/image-workbench
+python3 skills/image-workbench/evals/run.py --self-test
+python3 skills/image-workbench/evals/run.py --scope full
+python3 skills/image-workbench/scripts/inspect_asset.py --self-test
 bun run agent:verify
 git diff --check
 ```
