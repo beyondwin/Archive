@@ -38,6 +38,7 @@ Excluded near misses (always no-op):
 - AI-authorship detection
 - detector evasion or “make this look human”
 - named-author imitation
+- a former `kws-` prefixed invocation
 
 ## Modes
 
