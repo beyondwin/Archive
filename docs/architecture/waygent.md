@@ -8,8 +8,8 @@ expose that evidence to operators.
 The default execution profile is multi-agent. Scheduler release still comes
 from durable safe-wave projection, not from chat context.
 
-The active product tree is `apps/`, `packages/`, `native/`, `tests/`, `docs/`,
-and `skills/waygent/`. The legacy Python `components/agentlens/`
+The active product tree is `apps/`, `packages/`, `native/`, `tests/`, and
+`docs/`. The legacy Python `components/agentlens/`
 implementation has been removed. New run inspection work uses the TypeScript
 Lens path.
 
@@ -40,7 +40,8 @@ dependencies.
 
 Waygent now owns the local product execution path end to end:
 
-- `skills/waygent` maps operator intent to the `waygent` CLI and stays thin.
+- Operators use the `waygent` CLI. The former skill tree is
+  `skills/_legacy/waygent` and is not the catalog entrypoint.
 - `apps/cli` resolves plan files, starts durable runs, and reads persisted
   status, events, inspection, explanation, resume, and apply state.
 - `packages/orchestrator` creates durable state, records completion audits,

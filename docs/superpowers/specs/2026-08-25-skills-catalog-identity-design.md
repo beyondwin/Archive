@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-25
 
-**Status:** Draft awaiting spec review
+**Status:** Approved
 
 **Repository:** Archive
 
