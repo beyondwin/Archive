@@ -26,31 +26,31 @@ const packageTest = (name: string) =>
   command(`package-test:${name}`, ["bun", "test", "tests"], `packages/${name}`);
 const rustFormat = command("rust-format", ["cargo", "fmt", "--check"], "native/kernel");
 const rustTest = command("rust-test", ["cargo", "test", "--workspace"], "native/kernel");
-const waygentSkillEval = command("waygent-skill-eval", ["./evals/run.sh"], "skills/waygent");
+const waygentSkillEval = command("waygent-skill-eval", ["./evals/run.sh"], "skills/_legacy/waygent");
 const koreanWritingEditorEval = command(
   "korean-writing-editor-eval",
   ["python3", "evals/run.py", "--scope", "full"],
-  "skills/kws-korean-writing-editor",
+  "skills/korean-writing-editor",
 );
 const imageWorkbenchEval = command(
   "image-workbench-eval",
   ["python3", "evals/run.py", "--scope", "full"],
-  "skills/kws-image-workbench",
+  "skills/image-workbench",
 );
 const imageWorkbenchInspector = command(
   "image-workbench-inspector",
   ["python3", "scripts/inspect_asset.py", "--self-test"],
-  "skills/kws-image-workbench",
+  "skills/image-workbench",
 );
 const codexPlanRunnerEval = command(
   "codex-plan-runner-eval",
   ["./evals/run.sh"],
-  "skills/kws-codex-plan-runner",
+  "skills/_legacy/kws-codex-plan-runner",
 );
 const claudePlanRunnerEval = command(
   "claude-plan-runner-eval",
   ["./evals/run.sh"],
-  "skills/kws-claude-plan-runner",
+  "skills/_legacy/kws-claude-plan-runner",
 );
 const planRunnerParity = command(
   "plan-runner-parity",
@@ -64,7 +64,7 @@ const claudeExecutorOffline = command("claude-executor-offline", ["bun", "run", 
 const claudeExecutorEval = command(
   "claude-executor-eval",
   ["./evals/run.sh"],
-  "skills/kws-claude-multi-agent-executor",
+  "skills/_legacy/kws-claude-multi-agent-executor",
   true,
 );
 const liveProvider = command(
@@ -90,12 +90,12 @@ test.each([
   ["two packages", ["packages/orchestrator/src/index.ts", "packages/runway-control/src/scheduler.ts"], ["waygent-closure"], closureCommands],
   ["bun lock", ["bun.lock"], ["waygent-closure"], closureCommands],
   ["native", ["native/kernel/crates/kernel-cli/src/main.rs"], ["native"], [contract, diffCheck, rustFormat, rustTest]],
-  ["Waygent skill", ["skills/waygent/SKILL.md"], ["waygent-skill"], [contract, diffCheck, waygentSkillEval, check, platformDemo, scenarios]],
-  ["Korean writing editor", ["skills/kws-korean-writing-editor/SKILL.md"], ["korean-writing-editor"], [contract, diffCheck, koreanWritingEditorEval]],
-  ["Image workbench", ["skills/kws-image-workbench/SKILL.md"], ["image-workbench"], [contract, diffCheck, imageWorkbenchEval, imageWorkbenchInspector]],
-  ["Codex plan runner", ["skills/kws-codex-plan-runner/SKILL.md"], ["codex-plan-runner"], [contract, diffCheck, codexPlanRunnerEval, planRunnerParity, planRunnerCutoverTest, check]],
-  ["Claude plan runner", ["skills/kws-claude-plan-runner/scripts/runner"], ["claude-plan-runner"], [contract, diffCheck, claudePlanRunnerEval, planRunnerParity, planRunnerCutoverTest, check]],
-  ["Claude executor", ["skills/kws-claude-multi-agent-executor/scripts/kernel/kernel.py"], ["claude-executor"], [contract, diffCheck, claudeExecutorOffline, claudeExecutorEval, check]],
+  ["Waygent skill", ["skills/_legacy/waygent/SKILL.md"], ["waygent-skill"], [contract, diffCheck, waygentSkillEval, check, platformDemo, scenarios]],
+  ["Korean writing editor", ["skills/korean-writing-editor/SKILL.md"], ["korean-writing-editor"], [contract, diffCheck, koreanWritingEditorEval]],
+  ["Image workbench", ["skills/image-workbench/SKILL.md"], ["image-workbench"], [contract, diffCheck, imageWorkbenchEval, imageWorkbenchInspector]],
+  ["Codex plan runner", ["skills/_legacy/kws-codex-plan-runner/SKILL.md"], ["codex-plan-runner"], [contract, diffCheck, codexPlanRunnerEval, planRunnerParity, planRunnerCutoverTest, check]],
+  ["Claude plan runner", ["skills/_legacy/kws-claude-plan-runner/scripts/runner"], ["claude-plan-runner"], [contract, diffCheck, claudePlanRunnerEval, planRunnerParity, planRunnerCutoverTest, check]],
+  ["Claude executor", ["skills/_legacy/kws-claude-multi-agent-executor/scripts/kernel/kernel.py"], ["claude-executor"], [contract, diffCheck, claudeExecutorOffline, claudeExecutorEval, check]],
   ["unknown", ["unexpected/new-surface.txt"], ["full-offline"], offlineCommands],
 ] satisfies readonly [string, string[], ScopeId[], ReturnType<typeof command>[]][])(
   "selects the complete $0 command set",
@@ -107,7 +107,7 @@ test.each([
 
 test("selects the complete image workbench gate for inspector changes", () => {
   const selection = selectVerification([
-    "skills/kws-image-workbench/scripts/inspect_asset.py",
+    "skills/image-workbench/scripts/inspect_asset.py",
   ]);
 
   expect(selection.scopeIds).toEqual(["image-workbench"]);
@@ -119,6 +119,9 @@ test("selects the complete image workbench gate for inspector changes", () => {
 test.each([
   ["Codex project guidance", ".codex/README.md"],
   ["skills guidance", "skills/README.md"],
+  ["skills agent routing", "skills/AGENTS.md"],
+  ["adding a skill", "skills/adding-a-skill.md"],
+  ["legacy catalog note", "skills/_legacy/README.md"],
 ] satisfies readonly [string, string][])(
   "classifies exact $0 as docs with Markdown checking",
   (_name, path) => {
@@ -155,7 +158,7 @@ test("keeps independently relevant docs, native, and skill scopes with closure",
     "bun.lock",
     "docs/README.md",
     "native/kernel/crates/kernel-cli/src/main.rs",
-    "skills/waygent/SKILL.md",
+    "skills/_legacy/waygent/SKILL.md",
   ];
 
   expect(selectVerification(paths).scopeIds).toEqual([
@@ -271,7 +274,7 @@ test("deduplicates commands by cwd and argv", () => {
   const actualCommands = commands([
     "docs/README.md",
     "native/kernel/crates/kernel-cli/src/main.rs",
-    "skills/kws-codex-plan-runner/scripts/runner.py",
+    "skills/_legacy/kws-codex-plan-runner/scripts/runner.py",
   ]);
 
   expect(actualCommands).toEqual([
