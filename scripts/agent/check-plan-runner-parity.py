@@ -19,13 +19,13 @@ FIXTURE = REPO_ROOT / "scripts/agent/fixtures/plan-runner-parity-v1.json"
 CONTRACT = REPO_ROOT / "scripts/agent/fixtures/plan-runner-contract-v1.json"
 PROVIDERS = {
     "codex": {
-        "runner": REPO_ROOT / "skills/kws-codex-plan-runner/scripts/runner",
-        "fake": REPO_ROOT / "skills/kws-codex-plan-runner/evals/fake_codex.py",
+        "runner": REPO_ROOT / "skills/_legacy/kws-codex-plan-runner/scripts/runner",
+        "fake": REPO_ROOT / "skills/_legacy/kws-codex-plan-runner/evals/fake_codex.py",
         "state": Path(".codex/plan-runner"),
     },
     "claude": {
-        "runner": REPO_ROOT / "skills/kws-claude-plan-runner/scripts/runner",
-        "fake": REPO_ROOT / "skills/kws-claude-plan-runner/evals/fake_claude.py",
+        "runner": REPO_ROOT / "skills/_legacy/kws-claude-plan-runner/scripts/runner",
+        "fake": REPO_ROOT / "skills/_legacy/kws-claude-plan-runner/evals/fake_claude.py",
         "state": Path(".claude/plan-runner"),
     },
 }

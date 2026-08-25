@@ -4,16 +4,16 @@
 **Branch**: `main` (in-repo skill change, following the v2.26 / v2.27 precedent)
 **Production baseline**: v2.27.0 (SKILL.md frontmatter at experiment start)
 
-> **Spec (design)**: [`docs/superpowers/specs/2026-06-07-executor-instrumentation-integrity-design.md`](../../../../../docs/superpowers/specs/2026-06-07-executor-instrumentation-integrity-design.md)
-> **Plan (implementation)**: [`docs/superpowers/plans/2026-06-07-executor-instrumentation-integrity.md`](../../../../../docs/superpowers/plans/2026-06-07-executor-instrumentation-integrity.md)
+> **Spec (design)**: [`docs/superpowers/specs/2026-06-07-executor-instrumentation-integrity-design.md`](../../../../../../docs/superpowers/specs/2026-06-07-executor-instrumentation-integrity-design.md)
+> **Plan (implementation)**: [`docs/superpowers/plans/2026-06-07-executor-instrumentation-integrity.md`](../../../../../../docs/superpowers/plans/2026-06-07-executor-instrumentation-integrity.md)
 >
 > This README is the **experiment record** — the field evidence and the
 > hypothesis that motivate the change. The *design* (goals, non-goals, the six
 > deliverables, data flow, remaining risks) lives in the spec; the *per-task
 > edits + tests + ordering* live in the plan. This follows the superpowers
 > convention used by v2.26
-> ([`…/specs/2026-06-04-executor-finalization-enforcement-design.md`](../../../../../docs/superpowers/specs/2026-06-04-executor-finalization-enforcement-design.md)
-> + [`…/plans/2026-06-04-executor-finalization-enforcement.md`](../../../../../docs/superpowers/plans/2026-06-04-executor-finalization-enforcement.md)),
+> ([`…/specs/2026-06-04-executor-finalization-enforcement-design.md`](../../../../../../docs/superpowers/specs/2026-06-04-executor-finalization-enforcement-design.md)
+> + [`…/plans/2026-06-04-executor-finalization-enforcement.md`](../../../../../../docs/superpowers/plans/2026-06-04-executor-finalization-enforcement.md)),
 > rather than embedding the spec in this file.
 
 ## Goal
@@ -108,8 +108,8 @@ new severities and the auto-waive do not over-fire.
 
 ## Status / quick links
 
-- **Spec (design)** — [`…/specs/2026-06-07-executor-instrumentation-integrity-design.md`](../../../../../docs/superpowers/specs/2026-06-07-executor-instrumentation-integrity-design.md)
-- **Plan (implementation, per-task edits + tests)** — [`…/plans/2026-06-07-executor-instrumentation-integrity.md`](../../../../../docs/superpowers/plans/2026-06-07-executor-instrumentation-integrity.md)
+- **Spec (design)** — [`…/specs/2026-06-07-executor-instrumentation-integrity-design.md`](../../../../../../docs/superpowers/specs/2026-06-07-executor-instrumentation-integrity-design.md)
+- **Plan (implementation, per-task edits + tests)** — [`…/plans/2026-06-07-executor-instrumentation-integrity.md`](../../../../../../docs/superpowers/plans/2026-06-07-executor-instrumentation-integrity.md)
 - [decisions/](./decisions/) — ADRs per major decision
 - [JOURNAL.md](./JOURNAL.md) — chronological log (created at implementation time)
 - [findings/](./findings/) — close-out + replay proof (created at close-out)
@@ -127,9 +127,9 @@ new severities and the auto-waive do not over-fire.
 ## Phase status
 
 The canonical detailed docs are the superpowers
-[spec](../../../../../docs/superpowers/specs/2026-06-07-executor-instrumentation-integrity-design.md)
+[spec](../../../../../../docs/superpowers/specs/2026-06-07-executor-instrumentation-integrity-design.md)
 (design: goals, the five gaps, deliverables A–F, data flow, remaining risks) and
-[plan](../../../../../docs/superpowers/plans/2026-06-07-executor-instrumentation-integrity.md)
+[plan](../../../../../../docs/superpowers/plans/2026-06-07-executor-instrumentation-integrity.md)
 (per-task edits + tests + ordering). This table tracks landing status only.
 
 | Task | Status | Notes |

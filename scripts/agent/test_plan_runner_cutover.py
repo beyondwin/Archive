@@ -227,7 +227,7 @@ class AuditStateTests(CutoverFixture):
         self.assertIn("legacy_state_integrity", report["blocker_codes"])
 
     def test_source_inventory_records_lstat_identity_without_following(self):
-        source = self.repo / "skills" / "kws-codex-plan-executor"
+        source = self.repo / "skills" / "_legacy" / "kws-codex-plan-executor"
         source.mkdir(parents=True)
         report = self.audit()
         fact = next(item for item in report["sources"] if item["path"] == str(source))
@@ -240,7 +240,7 @@ class AuditStateTests(CutoverFixture):
 
 class ProcessAuditTests(CutoverFixture):
     def test_exact_legacy_roots_scripts_and_installed_links_block(self):
-        codex_root = self.repo / "skills" / "kws-codex-plan-executor"
+        codex_root = self.repo / "skills" / "_legacy" / "kws-codex-plan-executor"
         claude_link = self.home / ".claude" / "skills" / "kws-claude-plan-executor"
         snapshot = "\n".join(
             [
@@ -277,7 +277,7 @@ class ProcessAuditTests(CutoverFixture):
         self.assertIn("legacy_process_active", report["blocker_codes"])
 
     def test_exact_legacy_cwd_blocks_even_when_command_is_generic(self):
-        source = self.repo / "skills" / "kws-codex-plan-executor"
+        source = self.repo / "skills" / "_legacy" / "kws-codex-plan-executor"
         source.mkdir(parents=True)
         report = self.audit(
             ps="302 1 302 python worker.py",
@@ -303,7 +303,7 @@ class ProcessAuditTests(CutoverFixture):
         )
         skill_home = self.home / ".codex" / "skills"
         skill_home.mkdir(parents=True)
-        primary_source = self.repo / "skills" / "kws-codex-plan-executor"
+        primary_source = self.repo / "skills" / "_legacy" / "kws-codex-plan-executor"
         (skill_home / "kws-codex-plan-executor").symlink_to(primary_source)
         report = cutover.audit_repository(
             linked,
@@ -323,7 +323,7 @@ class ProcessAuditTests(CutoverFixture):
         inspected = report["legacy_source_roots"]
         self.assertIn(str(primary_source), inspected)
         self.assertIn(
-            str(linked / "skills" / "kws-codex-plan-executor"), inspected
+            str(linked / "skills" / "_legacy" / "kws-codex-plan-executor"), inspected
         )
 
 
@@ -464,9 +464,9 @@ class ApplyTests(CutoverFixture):
     def setUp(self) -> None:
         super().setUp()
         for name in ("kws-codex-plan-runner", "kws-claude-plan-runner"):
-            (self.repo / "skills" / name).mkdir(parents=True)
-        self.codex_legacy = self.repo / "skills" / "kws-codex-plan-executor"
-        self.claude_legacy = self.repo / "skills" / "kws-claude-plan-executor"
+            (self.repo / "skills" / "_legacy" / name).mkdir(parents=True)
+        self.codex_legacy = self.repo / "skills" / "_legacy" / "kws-codex-plan-executor"
+        self.claude_legacy = self.repo / "skills" / "_legacy" / "kws-claude-plan-executor"
 
     def make_links(self) -> None:
         for provider in ("codex", "claude"):
@@ -516,11 +516,11 @@ class ApplyTests(CutoverFixture):
             self.assertFalse(Path(move["source"]).exists())
             self.assertTrue(Path(move["destination"]).is_symlink())
         self.assertEqual(
-            str(self.repo / "skills" / "kws-codex-plan-runner"),
+            str(self.repo / "skills" / "_legacy" / "kws-codex-plan-runner"),
             os.readlink(self.home / ".codex" / "skills" / "kws-codex-plan-runner"),
         )
         self.assertEqual(
-            str(self.repo / "skills" / "kws-claude-plan-runner"),
+            str(self.repo / "skills" / "_legacy" / "kws-claude-plan-runner"),
             os.readlink(self.home / ".claude" / "skills" / "kws-claude-plan-runner"),
         )
         self.assertFalse(
@@ -573,7 +573,7 @@ class ApplyTests(CutoverFixture):
 
     def test_apply_preserves_multi_agent_links_byte_for_byte(self):
         self.make_links()
-        target = self.repo / "skills" / "kws-claude-multi-agent-executor"
+        target = self.repo / "skills" / "_legacy" / "kws-claude-multi-agent-executor"
         link = self.home / ".claude" / "skills" / "kws-claude-multi-agent-executor"
         link.symlink_to(target)
         before = os.fsencode(os.readlink(link))
@@ -591,7 +591,7 @@ class ApplyTests(CutoverFixture):
     def test_atomic_install_interruption_never_creates_regular_file(self):
         destination = self.home / ".codex" / "skills" / "kws-codex-plan-runner"
         destination.parent.mkdir(parents=True)
-        target = self.repo / "skills" / "kws-codex-plan-runner"
+        target = self.repo / "skills" / "_legacy" / "kws-codex-plan-runner"
 
         def interrupt(_temporary: Path, _destination: Path) -> None:
             raise KeyboardInterrupt
@@ -605,7 +605,7 @@ class ApplyTests(CutoverFixture):
     def test_atomic_install_never_replaces_raced_regular_destination(self):
         destination = self.home / ".codex" / "skills" / "kws-codex-plan-runner"
         destination.parent.mkdir(parents=True)
-        target = self.repo / "skills" / "kws-codex-plan-runner"
+        target = self.repo / "skills" / "_legacy" / "kws-codex-plan-runner"
 
         def create_regular(_temporary: Path, raced_destination: Path) -> None:
             raced_destination.write_text("operator data", encoding="utf-8")
@@ -625,7 +625,7 @@ class ApplyTests(CutoverFixture):
             with self.subTest(replacement=replacement):
                 parent = self.home / replacement
                 parent.mkdir()
-                target = self.repo / "skills" / "kws-codex-plan-executor"
+                target = self.repo / "skills" / "_legacy" / "kws-codex-plan-executor"
                 link = parent / "kws-codex-plan-executor"
                 link.symlink_to(target)
                 expected = cutover._lstat_fact(link)
@@ -662,7 +662,7 @@ class ApplyTests(CutoverFixture):
     def test_quarantine_destination_race_never_overwrites_existing_entry(self):
         parent = self.home / "destination-race"
         parent.mkdir()
-        target = self.repo / "skills" / "kws-codex-plan-executor"
+        target = self.repo / "skills" / "_legacy" / "kws-codex-plan-executor"
         link = parent / "kws-codex-plan-executor"
         link.symlink_to(target)
         expected = cutover._lstat_fact(link)
@@ -688,7 +688,7 @@ class ApplyTests(CutoverFixture):
     def test_post_move_io_failure_reports_exact_recovery_path(self):
         parent = self.home / "post-move-error"
         parent.mkdir()
-        target = self.repo / "skills" / "kws-codex-plan-executor"
+        target = self.repo / "skills" / "_legacy" / "kws-codex-plan-executor"
         link = parent / "kws-codex-plan-executor"
         link.symlink_to(target)
         expected = cutover._lstat_fact(link)

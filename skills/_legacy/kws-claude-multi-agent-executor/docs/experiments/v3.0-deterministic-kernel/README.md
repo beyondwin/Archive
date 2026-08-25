@@ -17,7 +17,7 @@ Rebuild the kws-claude-multi-agent-executor skill around a deterministic Python 
 ## Status / quick links
 
 - [JOURNAL.md](./JOURNAL.md) — chronological log of work
-- [Spec: 2026-07-06-cme-v3-deterministic-kernel-design.md](../../../../../docs/superpowers/specs/2026-07-06-cme-v3-deterministic-kernel-design.md)
+- [Spec: 2026-07-06-cme-v3-deterministic-kernel-design.md](../../../../../../docs/superpowers/specs/2026-07-06-cme-v3-deterministic-kernel-design.md)
 - [decisions/](./decisions/) — ADRs per major decision
 - [findings/](./findings/) — data and analysis
 
