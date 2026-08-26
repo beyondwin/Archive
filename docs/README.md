@@ -61,9 +61,9 @@ verification, recovery, and apply readiness.
 
 - [Skills overview](../skills/README.md)
 
-The catalog is two general skills. Deprecated execution skills live under
-`skills/_legacy/` and are not the default path. Operators run Waygent through
-the `waygent` CLI, not a skill.
+This repository is not a general skill catalog. Frozen execution trees live
+under `skills/_legacy/` and are not the default path. Operators run Waygent
+through the `waygent` CLI, not a skill.
 
 ## Historical Planning
 
