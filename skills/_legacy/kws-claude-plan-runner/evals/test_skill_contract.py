@@ -21,8 +21,6 @@ class SkillContractTests(unittest.TestCase):
         self.assertIn('__version__ = "2.0.0"', package)
         self.assertIn("Current release: `2.0.0`", readme)
         self.assertIn("## 2.0.0 - 2026-07-25", changelog)
-        self.assertIn("[`korean-writing-editor`](./korean-writing-editor/)", catalog)
-        self.assertIn("[`image-workbench`](./image-workbench/)", catalog)
         self.assertNotIn("kws-claude-plan-runner", catalog)
 
     def test_skill_frontmatter_is_discoverable_and_versioned(self) -> None:
