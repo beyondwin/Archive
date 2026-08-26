@@ -27,21 +27,6 @@ const packageTest = (name: string) =>
 const rustFormat = command("rust-format", ["cargo", "fmt", "--check"], "native/kernel");
 const rustTest = command("rust-test", ["cargo", "test", "--workspace"], "native/kernel");
 const waygentSkillEval = command("waygent-skill-eval", ["./evals/run.sh"], "skills/_legacy/waygent");
-const koreanWritingEditorEval = command(
-  "korean-writing-editor-eval",
-  ["python3", "evals/run.py", "--scope", "full"],
-  "skills/korean-writing-editor",
-);
-const imageWorkbenchEval = command(
-  "image-workbench-eval",
-  ["python3", "evals/run.py", "--scope", "full"],
-  "skills/image-workbench",
-);
-const imageWorkbenchInspector = command(
-  "image-workbench-inspector",
-  ["python3", "scripts/inspect_asset.py", "--self-test"],
-  "skills/image-workbench",
-);
 const codexPlanRunnerEval = command(
   "codex-plan-runner-eval",
   ["./evals/run.sh"],
@@ -78,7 +63,6 @@ const closureCommands = [contract, diffCheck, check, platformDemo, scenarios, fi
 const offlineCommands = [
   contract, diffCheck, typecheck, check, platformDemo, scenarios, fixtureLab, dogfood,
   consoleTest, consoleBuild, rustFormat, rustTest, waygentSkillEval,
-  koreanWritingEditorEval, imageWorkbenchEval, imageWorkbenchInspector,
   codexPlanRunnerEval, claudePlanRunnerEval, planRunnerParity, planRunnerCutoverTest,
   claudeExecutorOffline, claudeExecutorEval, liveProvider,
 ];
@@ -92,8 +76,6 @@ test.each([
   ["bun lock", ["bun.lock"], ["waygent-closure"], closureCommands],
   ["native", ["native/kernel/crates/kernel-cli/src/main.rs"], ["native"], [contract, diffCheck, rustFormat, rustTest]],
   ["Waygent skill", ["skills/_legacy/waygent/SKILL.md"], ["waygent-skill"], [contract, diffCheck, waygentSkillEval, check, platformDemo, scenarios]],
-  ["Korean writing editor", ["skills/korean-writing-editor/SKILL.md"], ["korean-writing-editor"], [contract, diffCheck, koreanWritingEditorEval]],
-  ["Image workbench", ["skills/image-workbench/SKILL.md"], ["image-workbench"], [contract, diffCheck, imageWorkbenchEval, imageWorkbenchInspector]],
   ["Codex plan runner", ["skills/_legacy/kws-codex-plan-runner/SKILL.md"], ["codex-plan-runner"], [contract, diffCheck, codexPlanRunnerEval, planRunnerParity, planRunnerCutoverTest, check]],
   ["Claude plan runner", ["skills/_legacy/kws-claude-plan-runner/scripts/runner"], ["claude-plan-runner"], [contract, diffCheck, claudePlanRunnerEval, planRunnerParity, planRunnerCutoverTest, check]],
   ["Claude executor", ["skills/_legacy/kws-claude-multi-agent-executor/scripts/kernel/kernel.py"], ["claude-executor"], [contract, diffCheck, claudeExecutorOffline, claudeExecutorEval, check]],
@@ -105,17 +87,6 @@ test.each([
     expect(commands(paths)).toEqual(expectedCommands);
   },
 );
-
-test("selects the complete image workbench gate for inspector changes", () => {
-  const selection = selectVerification([
-    "skills/image-workbench/scripts/inspect_asset.py",
-  ]);
-
-  expect(selection.scopeIds).toEqual(["image-workbench"]);
-  expect(selection.commands.map(toCommand)).toEqual([
-    contract, diffCheck, imageWorkbenchEval, imageWorkbenchInspector,
-  ]);
-});
 
 test.each([
   ["Codex project guidance", ".codex/README.md"],
@@ -233,8 +204,8 @@ test("does not schedule Markdown link reads for Superpowers design artifacts", (
   const selection = selectVerification([
     "docs/README.md",
     "docs/architecture/waygent.md",
-    "docs/superpowers/plans/2026-08-25-skills-catalog-identity.md",
-    "docs/superpowers/specs/2026-08-25-skills-catalog-identity-design.md",
+    "docs/superpowers/plans/2026-07-25-provider-plan-runners-thin-superpowers-boundary.md",
+    "docs/superpowers/specs/2026-07-17-cpe-2.0-token-evidence-observability-addendum.md",
   ]);
 
   expect(selection.markdownFiles).toEqual([
@@ -325,6 +296,22 @@ test("does not route either retired sequential executor", () => {
   expect(serialized).not.toContain("kws-codex-plan-executor");
   expect(serialized).not.toContain("kws-claude-plan-executor");
   expect(VERIFICATION_SCOPES.map(({ id }) => id)).not.toContain("codex-executor");
+});
+
+test("verification map has no migrated skill scopes", () => {
+  expect(VERIFICATION_SCOPES.map(({ id }) => id)).toEqual([
+    "docs",
+    "console",
+    "app",
+    "package",
+    "waygent-closure",
+    "native",
+    "waygent-skill",
+    "codex-plan-runner",
+    "claude-plan-runner",
+    "claude-executor",
+    "full-offline",
+  ]);
 });
 
 test("reports unknown and Markdown paths alongside conservative selection", () => {

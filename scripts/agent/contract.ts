@@ -3,8 +3,6 @@ export const REQUIRED_PATHS = [
   "packages/orchestrator", "packages/runway-control",
   "packages/provider-adapters", "packages/lens-store",
   "packages/lens-projectors", "native/kernel",
-  "skills/korean-writing-editor",
-  "skills/image-workbench",
   "skills/_legacy/waygent",
   "skills/_legacy/kws-codex-plan-runner",
   "skills/_legacy/kws-claude-plan-runner",

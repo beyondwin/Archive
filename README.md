@@ -7,8 +7,7 @@ emission.
 
 Lens is the TypeScript observability and inspection path inside Waygent.
 `agentlens.event.v3` remains the event contract label, but the legacy Python
-`components/agentlens/` tree has been removed from the product runtime. The
-catalog is two general skills (`korean-writing-editor`, `image-workbench`).
+`components/agentlens/` tree has been removed from the product runtime.
 Deprecated execution trees live under `skills/_legacy/` and are not the
 default path. Operators run Waygent through the `waygent` CLI, not a skill.
 
@@ -18,7 +17,7 @@ default path. Operators run Waygent through the `waygent` CLI, not a skill.
 apps/                  CLI, API, and console surfaces
 packages/              TypeScript runtime packages
 native/kernel/         Rust execution kernel boundary
-skills/                General skills; frozen execution trees under _legacy/
+skills/                Frozen execution trees under _legacy/
 docs/                  Architecture, operations, contracts, and migration notes
 ```
 
@@ -83,7 +82,7 @@ durable state and TypeScript projections, not from chat context.
 - Recovery: [docs/operations/recovery.md](docs/operations/recovery.md)
 - Verification: [docs/operations/verification.md](docs/operations/verification.md)
 - State root migration: [docs/operations/state-root-migration.md](docs/operations/state-root-migration.md)
-- Skill overview and installation: [skills/README.md](skills/README.md)
+- Legacy skill trees: [skills/README.md](skills/README.md)
 - Waygent CLI: `apps/cli` / `waygent`
 
 ## Working Rules

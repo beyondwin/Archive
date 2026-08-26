@@ -13,9 +13,8 @@ Archive is now focused on these active Waygent surfaces:
   filesystem storage and projection path.
 - `packages/orchestrator/`, `packages/runway-control/`,
   `packages/provider-adapters/`, and `native/kernel/` - the Waygent runtime.
-- `skills/` - source of truth for general personal skills
-  (`korean-writing-editor`, `image-workbench`), not Waygent execution or
-  plan-runner skills. Frozen execution trees live under `skills/_legacy/`.
+- `skills/` - not Waygent execution or plan-runner skills. Frozen execution
+  trees live under `skills/_legacy/`.
 
 Waygent is the approved brand for the unified agent platform and user-facing
 orchestrator. Lens is the TypeScript projection and inspection layer inside
@@ -60,8 +59,6 @@ not automatically as authoritative `main`. Identify the nearest applicable
 - Lens storage/projection: `packages/lens-store/`, `packages/lens-projectors/`
 - Product surfaces: `apps/cli/`, `apps/api/`, `apps/console/`
 - Waygent workflow contract: `apps/cli` and the `waygent` CLI, not a skill
-- General skills: `skills/korean-writing-editor/`,
-  `skills/image-workbench/`
 
 Filesystem JSON and JSONL artifacts are the source of truth. SQLite indexes are
 rebuildable caches when present. Active Waygent events use `platform.*`,

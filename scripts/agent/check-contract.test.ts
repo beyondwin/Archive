@@ -385,10 +385,14 @@ describe("checkContract", () => {
 
   test("requires the general skill catalog roots", () => {
     expect(REQUIRED_PATHS).toEqual(expect.arrayContaining([
-      "skills/korean-writing-editor",
-      "skills/image-workbench",
       "skills/_legacy/waygent",
     ]));
+  });
+
+  test("does not require migrated public skill roots", () => {
+    expect(
+      REQUIRED_PATHS.filter((path) => path.startsWith("skills/") && !path.startsWith("skills/_legacy/")),
+    ).toEqual([]);
   });
 
   test("requires the Codex plan runner root, guidance, and deterministic gate", () => {
