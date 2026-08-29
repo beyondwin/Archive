@@ -1,62 +1,50 @@
-# Waygent Recovery
+# Recovery
 
-## First Step
-
-Start with evidence, not a guess:
+Start with evidence:
 
 ```bash
 waygent inspect --run <run_id> --json
 waygent explain --last
 ```
 
-Use the reported blocker, artifact refs, checkpoint state, and recovery policy
-before retrying providers, regenerating checkpoints, resuming, or applying.
+Read the blocker, artifact refs, checkpoint state, and recovery policy before
+you retry, regenerate, resume, or apply.
 
-## Failure Classes
-
-| Failure | Operator action |
+| Failure | What to do |
 | --- | --- |
-| `dirty_source_checkout` | Clean or commit the source checkout before resume or apply. |
-| `dependency_missing` | Repair the verification environment and rerun verification. |
-| `environment_blocker` | Inspect setup evidence before retrying. |
-| `verification_failed` | Fix the task worktree or route to human decision. |
-| `artifact_missing` | Inspect checkpoint artifacts before regeneration. |
-| `state_drift` | Reconcile drift before apply. |
-| duplicate run id | Choose a new run id or resume the existing run. |
+| `dirty_source_checkout` | Clean or commit before resume/apply |
+| `dependency_missing` | Fix the verify env, rerun verify |
+| `environment_blocker` | Inspect setup evidence |
+| `verification_failed` | Fix the task worktree or escalate |
+| `artifact_missing` | Inspect checkpoints before regenerating |
+| `state_drift` | Reconcile before apply |
+| duplicate run id | New id, or resume the existing run |
+| `needs_rebase` | Regenerate/rebase the checkpoint; do not apply the stale patch |
+| budget paused | `waygent cost --last`, then raise or disable the cap |
+| `review_evidence_missing` | `waygent review --run <id>` |
+| `lens.evidence_apply_blocked` | Method audit evidence, or an allowlisted waiver |
 
-## Recovery Actions
+`waygent resume --last` only when the run pick is unambiguous and policy
+allows the next action. Provider crashes, bad output, and timeouts can retry
+or switch provider if prior evidence is kept.
 
-Use `waygent resume --last` only when the selected run is unambiguous and the
-recovery policy allows the next action. Provider crashes, malformed output, and
-timeouts can be retried or routed to another provider only when prior evidence
-is preserved. Missing or corrupted checkpoint artifacts require inspection
-before regeneration.
+## Scope failures
 
-Dirty source checkouts block apply. Verification failures require fixing the
-task worktree or escalating to a human decision before runtime state can become
-ready.
+None of these create a checkpoint or release dependents:
 
-## Structural Scope Failures
+- `generated_artifact_unclaimed` — generated files outside `allowed_write_globs`
+- `forbidden_write` — `.git/**`, `node_modules/**`, and similar. No retry.
+- `provider_claim_gap` — changed files the provider did not report
+- `provider_overreach` — unrelated files. One retry with evidence, then a
+  decision.
 
-`diff_scope_failed` is split into retryable and non-retryable kinds.
+Patch-bearing `verification_failed` goes to focused repair first.
+`malformed_result`, `adapter_crashed`, and `timeout` with a bounded captured
+diff record `waygent.salvage_result.v1` and stay review-required. Salvage is
+not success.
 
-- `generated_artifact_unclaimed`: a task produced expected generated files that
-  are outside `allowed_write_globs`. Waygent requests an operator decision and
-  lists missing claims.
-- `forbidden_write`: a task touched forbidden paths such as `.git/**` or
-  `node_modules/**`. Waygent requests an operator decision and never retries.
-- `provider_claim_gap`: actual changed files were not reported by the provider.
-  Waygent requests a decision because the worker evidence is inconsistent.
-- `provider_overreach`: a task changed unrelated files. Waygent may retry once
-  with evidence, then requests a decision.
+## Stop
 
-No structural scope failure can produce a checkpoint or release dependent
-tasks. Apply remains blocked until the plan claims are amended and the run is
-rerun with valid scope evidence.
-
-## Stop Conditions
-
-Stop when the run id is ambiguous, source checkout state is dirty for apply,
-checkpoint artifacts are missing, state drift is unresolved, or verification
-evidence does not match the requested change. Do not invent patches from chat or
-bypass `waygent.run_state.v2`.
+Stop when the run id is ambiguous, apply would hit a dirty checkout,
+checkpoints are missing, drift is unresolved, or verification does not match
+the change. Do not invent patches from chat.

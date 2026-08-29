@@ -551,9 +551,9 @@ policy.
 
 The original observations and proposed alternatives above remain forensic
 evidence. The selected implementation is defined by the
-[approved remediation design](../superpowers/specs/2026-07-24-codex-plan-runner-incident-remediation-design.md),
-the [core-correctness plan](../superpowers/plans/2026-07-24-codex-plan-runner-core-correctness.md),
-and the [permission/recovery plan](../superpowers/plans/2026-07-24-codex-plan-runner-permission-recovery.md).
+[approved remediation design](../../superpowers/specs/2026-07-24-codex-plan-runner-incident-remediation-design.md),
+the [core-correctness plan](../../superpowers/plans/2026-07-24-codex-plan-runner-core-correctness.md),
+and the [permission/recovery plan](../../superpowers/plans/2026-07-24-codex-plan-runner-permission-recovery.md).
 The implementation range is inclusive from `3c93a09e` through `c3a30f61`.
 
 Focused regressions prove that full-access execution uses

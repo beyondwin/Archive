@@ -13,7 +13,7 @@
 
 This is a `kws-codex-plan-executor` incident. It is separate from the
 `kws-codex-plan-runner` incidents documented elsewhere under
-`docs/operations/`.
+`docs/history/incidents/`.
 
 ## Executive summary
 

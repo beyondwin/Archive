@@ -1,79 +1,38 @@
-# Waygent Documentation
+# Docs
 
-## Start Here
+Start with the root [README](../README.md), then pick a path.
 
-Waygent is the active local agent runtime. Start with the root
-[`README.md`](../README.md) for the product overview, then use this index to
-choose the current architecture, operation, contract, component, or skill docs
-that match your role.
+| If you want to | Read |
+| --- | --- |
+| Run it | [Getting started](getting-started.md), [Codex setup](operations/codex-local-setup.md), [operations](operations/waygent.md), [recovery](operations/recovery.md) |
+| Change it | [Architecture](architecture/waygent.md), [events](contracts/events.md), [run state](contracts/run-state.md), [provider result](contracts/provider-result.md) |
+| Agent work | [AGENTS.md](../AGENTS.md), nearest subtree `AGENTS.md`, [PLANS.md](../PLANS.md), [code_review.md](../code_review.md) |
 
-Current docs describe the Waygent product runtime. Migration plans and older
-design records remain available as history, but they are not the first path for
-understanding current behavior.
+## Architecture
 
-## Reader Paths
+- [Waygent](architecture/waygent.md)
+- [Runtime](architecture/runtime.md)
+- [Lens](architecture/agentlens.md)
+- [Decisions](architecture/decisions.md)
 
-- Reviewers: read the root `README.md`, then `architecture/waygent.md`, then
-  `operations/waygent.md`.
-- Operators: read `getting-started.md`, `operations/codex-local-setup.md`,
-  `operations/waygent.md`, `operations/recovery.md`, and
-  `operations/verification.md`.
-- Developers: read `architecture/waygent.md`, `contracts/events.md`,
-  `contracts/run-state.md`, and `contracts/provider-result.md`.
-- AI agents: read `../AGENTS.md`, the nearest subtree `AGENTS.md`,
-  `../PLANS.md`, `../code_review.md`, and the target skill README.
+## Operations
 
-## Current Product Docs
-
-- [Architecture overview](architecture/waygent.md)
-- [Runtime architecture](architecture/runtime.md)
-- [AgentLens architecture](architecture/agentlens.md)
-- [Architecture decisions](architecture/decisions.md)
-- [Operations](operations/waygent.md)
-- [Codex local setup](operations/codex-local-setup.md)
+- [Run, inspect, apply](operations/waygent.md)
+- [Codex setup](operations/codex-local-setup.md)
 - [Codex best loop](operations/codex-best-loop.md)
 - [Recovery](operations/recovery.md)
 - [Verification](operations/verification.md)
 - [Plan authoring](operations/plan-authoring.md)
-- [State root migration](operations/state-root-migration.md)
-- [Event contract](contracts/events.md)
-- [Run-state contract](contracts/run-state.md)
-- [Provider-result contract](contracts/provider-result.md)
-- [Roadmap](roadmap/README.md)
-- [Migration history](roadmap/migration-history.md)
+- [State root](operations/state-root-migration.md)
 
-Migration documents are historical planning records. Use the roadmap index for
-status and use architecture, operations, and contracts for current runtime
-behavior.
+## Contracts
 
-## Lens Docs
+- [Events](contracts/events.md)
+- [Run state](contracts/run-state.md)
+- [Provider result](contracts/provider-result.md)
 
-- [Lens architecture](architecture/agentlens.md)
-- [Event contract](contracts/events.md)
-- [Run-state contract](contracts/run-state.md)
-- [Operations](operations/waygent.md)
+## History
 
-Lens records, queries, evaluates, and visualizes run evidence through the
-TypeScript Waygent path. Waygent owns active scheduling, provider execution,
-verification, recovery, and apply readiness.
-
-## Skill Docs
-
-- [Skills overview](../skills/README.md)
-
-This repository is not a general skill catalog. Frozen execution trees live
-under `skills/_legacy/` and are not the default path. Operators run Waygent
-through the `waygent` CLI, not a skill.
-
-## Historical Planning
-
-- [Roadmap](roadmap/README.md)
-- [Migration history](roadmap/migration-history.md)
-- [Migration records](migration/)
-- [CPE 2.0 token evidence and observability addendum](superpowers/specs/2026-07-17-cpe-2.0-token-evidence-observability-addendum.md)
-- [Superpowers plans](superpowers/plans/)
-- [Superpowers specs](superpowers/specs/)
-
-Historical records preserve why the repository moved into the current Waygent
-shape. Do not treat older AgentRunway, KWS CPE, or KWS CME routing language as
-active product architecture unless a current doc explicitly says so.
+Old designs, incidents, and migration notes: [history](history/README.md).
+Design scratch: [plans](superpowers/plans/), [specs](superpowers/specs/).
+Frozen skills: [skills/README.md](../skills/README.md).

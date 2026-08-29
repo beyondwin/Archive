@@ -112,6 +112,7 @@ function isHistoricalDoc(rel: string, text: string): boolean {
   return (
     rel.startsWith("docs/migration/")
     || rel.startsWith("docs/superpowers/")
+    || rel.startsWith("docs/history/")
     || /^> Status: historical\b/m.test(text)
   );
 }

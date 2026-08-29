@@ -1,25 +1,14 @@
 # GEMINI.md - Archive
 
-Gemini-based agents should read `AGENTS.md` first. It is the canonical
-repository instruction file for this checkout. This file only adds
-Gemini-specific reminders.
+Read `AGENTS.md` first. This file only adds Gemini-specific notes.
 
-Key reminders:
-
-- Active work centers on `apps/cli/`, `apps/api/`, `apps/console/`,
+- Active code: `apps/cli/`, `apps/api/`, `apps/console/`,
   `packages/orchestrator/`, `packages/runway-control/`,
   `packages/provider-adapters/`, `packages/lens-store/`,
-  `packages/lens-projectors/`, `native/kernel/`, and `skills/`.
-- The legacy Python `components/agentlens/` tree has been removed from this
-  checkout. Do not recreate it or route active Waygent work there.
-- Runtime state such as `.waygent/`, `.agentlens/`, `.claude/`,
-  `.codex-orchestrator/`, and `.orchestrator/` must not be committed.
-- Waygent run state is written to a platform-aware default root
-  (`~/Library/Application Support/waygent/runs/` on macOS,
-  `${XDG_DATA_HOME:-$HOME/.local/share}/waygent/runs/` on linux,
-  `%LOCALAPPDATA%/waygent/runs/` on win32). See
+  `packages/lens-projectors/`, `native/kernel/`.
+- Do not recreate `components/agentlens`.
+- Keep `.waygent/`, `.agentlens/`, `.claude/`, `.codex-orchestrator/`, and
+  `.orchestrator/` out of git.
+- Default run root is platform-specific. See
   `docs/operations/state-root-migration.md`.
-- Use the smallest verification command that proves the change, then report
-  the exact command and result.
-- Historical references to root `docs/superpowers/` may be stale after the
-  root docs pruning.
+- Use the smallest check that proves the change, and report the command.

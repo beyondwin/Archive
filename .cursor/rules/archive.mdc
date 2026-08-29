@@ -3,18 +3,13 @@ description: Archive repository instructions for Cursor agents
 alwaysApply: true
 ---
 
-# Archive Agent Instructions
+# Archive
 
-Read `AGENTS.md` first, then the nearest subtree `AGENTS.md`. They are the
-canonical instruction files for this repository. This rule only adds
-Cursor-specific reminders.
+Read `AGENTS.md` first, then the nearest subtree `AGENTS.md`.
 
-Important defaults:
-
-- Active code lives in `apps/`, `packages/`, `native/kernel/`, and `skills/`.
-- Follow subtree `AGENTS.md` files before editing internals.
+- Active code: `apps/`, `packages/`, `native/kernel/`
+- `skills/_legacy/` is frozen. Load it only when the user names that path.
 - Keep `.waygent/`, `.agentlens/`, `.claude/`, `.codex-orchestrator/`,
   `.orchestrator/`, `.superpowers/`, caches, build outputs, and secrets out of
   git.
-- Verify changes with the smallest relevant command and report the command
-  result.
+- Verify with the smallest relevant command and report that result.

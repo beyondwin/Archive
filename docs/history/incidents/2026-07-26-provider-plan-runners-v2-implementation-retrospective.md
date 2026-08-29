@@ -5,7 +5,7 @@
 | 항목 | 값 |
 | --- | --- |
 | 대상 작업 | Codex/Claude plan runner thin-Superpowers-boundary v2 |
-| 구현 기준 | 승인된 [설계](../superpowers/specs/2026-07-25-provider-plan-runners-thin-superpowers-boundary-design.md)와 [계획](../superpowers/plans/2026-07-25-provider-plan-runners-thin-superpowers-boundary.md) |
+| 구현 기준 | 승인된 [설계](../../superpowers/specs/2026-07-25-provider-plan-runners-thin-superpowers-boundary-design.md)와 [계획](../../superpowers/plans/2026-07-25-provider-plan-runners-thin-superpowers-boundary.md) |
 | 구현 기준 commit | `9049bb75465ab8ba2fdd55a5ad45b897031216d3` |
 | 최종 구현 candidate | `81514db5d1480cb5ce76a859da94570c1aa8a8a0` |
 | 로컬 main 병합 commit | `76c28ad8fc0a62539e8dd4b70f664d5f7523731a` |

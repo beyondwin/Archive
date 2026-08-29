@@ -1,32 +1,22 @@
 # Waygent
 
-Waygent is a local agent runtime for running, inspecting, recovering, and
-applying multi-agent implementation work. It owns scheduling, worktrees,
-provider adapters, verification, recovery, apply readiness, and durable event
-emission.
+Local runtime for multi-agent implementation work.
 
-Lens is the TypeScript observability and inspection path inside Waygent.
-`agentlens.event.v3` remains the event contract label, but the legacy Python
-`components/agentlens/` tree has been removed from the product runtime.
-Deprecated execution trees live under `skills/_legacy/` and are not the
-default path. Operators run Waygent through the `waygent` CLI, not a skill.
+It schedules tasks, isolates worktrees, talks to Codex, Claude, or a fake provider, verifies the result, and applies only when the run is ready. Lens stores and projects the evidence. You drive it with the `waygent` CLI, not a skill.
 
-## Project Map
+## Layout
 
 ```text
-apps/                  CLI, API, and console surfaces
-packages/              TypeScript runtime packages
-native/kernel/         Rust execution kernel boundary
-skills/                Frozen execution trees under _legacy/
-docs/                  Architecture, operations, contracts, and migration notes
+apps/            CLI, API, console
+packages/        TypeScript control plane
+native/kernel/   Rust execution kernel
+skills/_legacy/  Frozen executor trees
+docs/            Current docs, plus history
 ```
 
-## Quick Start
+## First run
 
-For a first Codex checkout, complete the
-[local operator setup](docs/operations/codex-local-setup.md). Install locked
-dependencies and run the repository agent contract before the default product
-checks:
+Codex checkout: [local setup](docs/operations/codex-local-setup.md).
 
 ```bash
 bun install --frozen-lockfile
@@ -35,61 +25,34 @@ bun run check
 bun run platform:demo
 ```
 
-Useful Waygent commands:
-
 ```bash
 waygent run --latest
-waygent run-chain --plan <p1.md> --plan <p2.md>
 waygent status --last
-waygent events --last
-waygent inspect --run <run_id> --json
+waygent inspect --last --json
 waygent explain --last
-waygent resume --last
-waygent verify --run <run_id> --last
-waygent apply --run <run_id>
-waygent repair --run <run_id> [--task <task_id>] [--instruction "<note>"]
-waygent decisions --last
-waygent cost --last
-waygent watch --last [--json] [--filter all|task_transition|failure|cost]
-waygent orphans [--stale] [--cleanup-worktree <run_id>]
-waygent lint-design --path <design.md>
-waygent lint-plan --path <waygent-task.md>
-waygent scaffold-plan --id <task_id> --title <title> --claim <path:mode> --risk <low|medium|high> --verify <command>
 ```
 
-Live Codex and Claude provider checks are opt-in because they require installed
-and authenticated local CLIs:
+Apply only when the source checkout is clean and `explain` says the run is ready:
+
+```bash
+waygent apply --run <run_id>
+```
+
+Live provider checks are opt-in:
 
 ```bash
 WAYGENT_LIVE_PROVIDER=codex bun run waygent:live-smoke
 WAYGENT_LIVE_PROVIDER=claude bun run waygent:live-smoke
 ```
 
-## Architecture
+## Docs
 
-Waygent uses a Bun/TypeScript control plane, a Rust execution kernel, and
-filesystem event journals as replayable evidence. Runtime decisions come from
-durable state and TypeScript projections, not from chat context.
+- [Getting started](docs/getting-started.md)
+- [Doc index](docs/README.md)
+- [Architecture](docs/architecture/waygent.md)
+- [Operations](docs/operations/waygent.md)
+- [Events](docs/contracts/events.md) · [run state](docs/contracts/run-state.md) · [provider result](docs/contracts/provider-result.md)
 
-- Runtime overview: [docs/architecture/waygent.md](docs/architecture/waygent.md)
-- Documentation index: [docs/README.md](docs/README.md)
-- Getting started: [docs/getting-started.md](docs/getting-started.md)
-- Event contracts: [docs/contracts/events.md](docs/contracts/events.md)
-- Run-state contract: [docs/contracts/run-state.md](docs/contracts/run-state.md)
-- Provider-result contract: [docs/contracts/provider-result.md](docs/contracts/provider-result.md)
-- Operations: [docs/operations/waygent.md](docs/operations/waygent.md)
-- Codex local setup: [docs/operations/codex-local-setup.md](docs/operations/codex-local-setup.md)
-- Recovery: [docs/operations/recovery.md](docs/operations/recovery.md)
-- Verification: [docs/operations/verification.md](docs/operations/verification.md)
-- State root migration: [docs/operations/state-root-migration.md](docs/operations/state-root-migration.md)
-- Legacy skill trees: [skills/README.md](skills/README.md)
-- Waygent CLI: `apps/cli` / `waygent`
+Agent work starts at [AGENTS.md](AGENTS.md). Plans use [PLANS.md](PLANS.md). Reviews use [code_review.md](code_review.md).
 
-## Working Rules
-
-Read [AGENTS.md](AGENTS.md) before changing this checkout. For complex plans,
-use [PLANS.md](PLANS.md). For reviews, use [code_review.md](code_review.md).
-
-Keep runtime state out of git, including `.agentlens/`, `.claude/`,
-`.codex-orchestrator/`, `.orchestrator/`, `.superpowers/`, `.waygent/`,
-`node_modules/`, build outputs, caches, and local virtualenvs.
+Keep `.waygent/`, `.agentlens/`, `.claude/`, `.codex-orchestrator/`, `.orchestrator/`, `.superpowers/`, `node_modules/`, build outputs, and local venvs out of git.

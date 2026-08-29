@@ -1,53 +1,46 @@
-# Code Review Guide
+# Code review
 
-Read `AGENTS.md` and the nearest subtree `AGENTS.md` first. This checklist is a
-thin review adapter; lead with concrete findings and file references.
+Read `AGENTS.md` and the nearest subtree `AGENTS.md` first. Lead with concrete
+findings and file refs.
 
-## Review Priorities
+## Look for
 
-- Correctness: Does the change satisfy the requested behavior?
-- Regression risk: Could existing workflows, schemas, CLI contracts, or runtime
-  state be broken?
-- Verification: Was `bun run agent:verify` run, with exact command results and
-  skipped opt-in evidence reported?
-- Scope control: Are unrelated refactors, generated files, caches, or local
-  runtime artifacts excluded?
-- Security and privacy: Are secrets, transcripts, credentials, screenshots, or
-  sensitive local paths avoided?
-- Observability: For AgentLens/Waygent changes, are durable artifacts,
-  event schemas, and non-blocking behavior preserved?
+- Correctness against the requested behavior
+- Regression risk: CLI, schemas, workflows, runtime state
+- Verification: `bun run agent:verify` ran, with exact results and skipped
+  opt-in checks
+- Scope: no unrelated refactors, generated files, caches, or local runtime
+  artifacts
+- Secrets, transcripts, credentials, screenshots, sensitive local paths
+- For Lens/Waygent: durable artifacts, event schemas, non-blocking behavior
 
-## AgentLens Checks
+## Lens
 
-- JSON artifacts remain the source of truth; SQLite stays a rebuildable cache.
-- AgentLens internal failures must not change the wrapped command exit code.
-- Schema changes are additive unless a versioned migration is explicitly
-  designed.
-- Dashboard/API type drift is checked with `bun run typecheck` plus targeted
-  contract, projector, and consumer tests when relevant.
+- JSON is source of truth; SQLite is a rebuildable cache
+- Internal Lens failures must not change the wrapped command's exit code
+- Schema changes are additive unless a versioned migration is designed
+- Dashboard/API type drift: `bun run typecheck` plus contract, projector, and
+  consumer tests when relevant
 
-## Waygent Runtime Checks
+## Runtime
 
-- Providers do not write SQLite or AgentLens directly.
+- Providers do not write SQLite or Lens directly
 - Scheduler changes respect safe waves, dependency checkpoints, and failure
-  barriers.
-- Recovery paths stop on missing handlers or human-decision classes instead of
-  recording fake progress.
-- Runtime behavior changes include targeted tests or scenario harness coverage.
+  barriers
+- Recovery stops on missing handlers or human-decision classes. No fake
+  progress.
+- Behavior changes need targeted tests or scenario coverage
 
-## Documentation Checks
+## Docs
 
-- Local Markdown targets resolve without network access.
-- Explicitly required live evidence stays opt-in and is reported separately
-  from deterministic offline verification.
+- Local Markdown targets resolve without the network
+- Required live evidence stays opt-in and is reported separately
 
-## Output Format
+## Output
 
-For review responses:
+1. Findings first, by severity
+2. File and line refs
+3. Open questions
+4. Short verification summary
 
-1. Findings first, ordered by severity.
-2. File and line references when possible.
-3. Open questions or assumptions.
-4. Short verification summary.
-
-If there are no findings, say that directly and mention any residual risk.
+If there are no findings, say so, and name leftover risk.

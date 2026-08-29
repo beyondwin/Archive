@@ -1,39 +1,24 @@
-# Getting Started With Waygent
+# Getting started
 
-## Prerequisites
-
-Use a local checkout with Bun installed. Rust is required for native kernel
-checks. Live Codex or Claude provider smoke tests also require the matching
-local CLI to be installed and authenticated.
+You need Bun. Rust is required for kernel checks. Live Codex or Claude checks
+also need that CLI installed and signed in.
 
 ## Install
 
-Install workspace dependencies from the repository root:
-
 ```bash
-bun install
+bun install --frozen-lockfile
 ```
 
-## Default Local Verification
-
-The default offline checks are deterministic and do not require live provider
-credentials:
+## Offline check
 
 ```bash
-bun install
 bun run check
 bun run platform:demo
 ```
 
-## Demo Run
+`platform:demo` is the first signal that the checkout actually runs.
 
-`bun run platform:demo` exercises the local platform path and demo surfaces. It
-is the first command to run when checking whether the checkout is usable before
-starting live provider work.
-
-## Basic CLI Flow
-
-Use the CLI to create or inspect runs:
+## First commands
 
 ```bash
 waygent run --latest
@@ -42,26 +27,32 @@ waygent inspect --run <run_id> --json
 waygent explain --last
 ```
 
-Use `waygent resume --last` only after inspecting the last run. Use
+Use `waygent resume --last` only after you have read the last run. Use
 `waygent apply --run <run_id>` only when the source checkout is clean and the
 apply projection is ready.
 
-## Live Provider Checks
+If PATH has no `waygent` binary:
 
-Live smoke checks are opt-in because they consume local provider CLIs and may
-depend on authentication, account limits, and local machine state:
+```bash
+bun run waygent -- status --last
+```
+
+## Live providers
+
+These consume a local CLI and may hit auth or account limits:
 
 ```bash
 WAYGENT_LIVE_PROVIDER=codex bun run waygent:live-smoke
 WAYGENT_LIVE_PROVIDER=claude bun run waygent:live-smoke
 ```
 
-If a provider CLI is unavailable or unauthenticated, keep verification on the
-offline fake-provider and scenario gates.
+If the CLI is missing or unsigned-in, stay on fake-provider and scenario
+checks.
 
-## Stop Rules
+## Stop
 
-Stop before applying when the source checkout is dirty, the run selection is
-ambiguous, verification has failed, checkpoint artifacts are missing, or
-`waygent explain` reports unresolved blockers. Do not replace Waygent resume or
-apply decisions with chat-managed file edits.
+Do not apply when the source checkout is dirty, the run pick is ambiguous,
+verification failed, checkpoints are missing, or `waygent explain` still
+reports blockers. Do not patch from chat instead of resume or apply.
+
+Next: [operations](operations/waygent.md) and [recovery](operations/recovery.md).
