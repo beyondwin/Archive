@@ -1,12 +1,10 @@
 # Adding a general skill
 
-Archive is not a general skill catalog. Do not add a new general skill
-here. Frozen execution trees live under `skills/_legacy/`. Do not put
-Waygent product runtime or Superpowers plan execution here.
+Archive is not a general skill catalog. Do not add a new general skill here.
+Frozen execution trees live under `skills/_legacy/`. Do not put Waygent
+runtime or Superpowers plan execution here.
 
-The layout below is historical reference for frozen trees only.
-
-## Layout
+Layout below is historical reference for those frozen trees.
 
 ```text
 skills/<kebab-name>/
@@ -18,15 +16,13 @@ skills/<kebab-name>/
   scripts/       # when needed
 ```
 
-Rules:
-
-- Directory name is letters, numbers, and hyphens only. No `kws-` prefix.
+- Directory name: letters, numbers, hyphens. No `kws-` prefix.
 - `SKILL.md` `name` equals the directory name.
-- `SKILL.md` is the English agent contract (triggers and behavior).
-- `README.md` is the Korean human one-minute start and install guide.
-- `evals/` must fail closed offline without network, credentials, or models.
+- `SKILL.md` is the English agent contract.
+- `README.md` is the Korean one-minute start.
+- `evals/` fail closed offline: no network, credentials, or models.
 - On a contract change, keep trigger, README, and fixtures in lockstep.
-- Do not add a catalog table or routing entry for a new general skill.
+- Do not add a catalog table for a new general skill.
 - Frozen `_legacy` trees keep their own README and change protocol.
 - If a frozen tree has evals, keep matchers and commands in
-  `scripts/agent/verification-map.ts` in lockstep with that tree.
+  `scripts/agent/verification-map.ts` in lockstep.

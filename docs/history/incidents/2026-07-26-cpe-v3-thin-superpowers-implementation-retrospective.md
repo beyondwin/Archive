@@ -5,8 +5,8 @@
 | 항목 | 값 |
 | --- | --- |
 | 대상 작업 | CPE v3 Thin Superpowers Durability Capsule |
-| 구현 계약 | 승인된 [설계](../superpowers/specs/2026-07-25-cpe-v3-thin-superpowers-durability-capsule-design.md)와 [계획](../superpowers/plans/2026-07-25-cpe-v3-thin-superpowers-durability-capsule.md) |
-| companion 경계 | [Provider plan runners thin-Superpowers boundary](../superpowers/specs/2026-07-25-provider-plan-runners-thin-superpowers-boundary-design.md) |
+| 구현 계약 | 승인된 [설계](../../superpowers/specs/2026-07-25-cpe-v3-thin-superpowers-durability-capsule-design.md)와 [계획](../../superpowers/plans/2026-07-25-cpe-v3-thin-superpowers-durability-capsule.md) |
+| companion 경계 | [Provider plan runners thin-Superpowers boundary](../../superpowers/specs/2026-07-25-provider-plan-runners-thin-superpowers-boundary-design.md) |
 | implementation base | `9049bb75465ab8ba2fdd55a5ad45b897031216d3` |
 | 시작 candidate | `82ef43adc83ae9c18029b4f5bdadb7716d5d5686` |
 | 최종 candidate | `1012b5bcb3b5988b7399bd74e807fb417fde7f7f` |

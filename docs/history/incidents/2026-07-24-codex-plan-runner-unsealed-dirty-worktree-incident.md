@@ -387,7 +387,7 @@ That composition is the incident.
 ### Provider outcome validation occurs before outcome checkpointing
 
 In
-[`engine.py`](../../skills/kws-codex-plan-runner/scripts/plan_runner/engine.py),
+[`engine.py`](../../../skills/_legacy/kws-codex-plan-runner/scripts/plan_runner/engine.py),
 `_execute_current_plan` performs this sequence:
 
 ```python
@@ -1277,7 +1277,7 @@ not pasted wholesale into a public issue.
 
 ## Relevant source files
 
-- [`scripts/plan_runner/engine.py`](../../skills/kws-codex-plan-runner/scripts/plan_runner/engine.py)
+- [`scripts/plan_runner/engine.py`](../../../skills/_legacy/kws-codex-plan-runner/scripts/plan_runner/engine.py)
   - `_require_git_contract`
   - `_require_sealed_partial_worktree`
   - `_execute_current_plan`
@@ -1286,26 +1286,26 @@ not pasted wholesale into a public issue.
   - `_validated_plan_result`
   - `_integrity_failure`
   - `_fail_closed`
-- [`scripts/plan_runner/provider.py`](../../skills/kws-codex-plan-runner/scripts/plan_runner/provider.py)
+- [`scripts/plan_runner/provider.py`](../../../skills/_legacy/kws-codex-plan-runner/scripts/plan_runner/provider.py)
   - `MAX_JSONL_LINE_BYTES`
   - `CodexAdapter.build_argv`
   - `CodexAdapter.launch`
   - `_consume_stdout`
   - `_read_result`
-- [`scripts/plan_runner/git_ops.py`](../../skills/kws-codex-plan-runner/scripts/plan_runner/git_ops.py)
+- [`scripts/plan_runner/git_ops.py`](../../../skills/_legacy/kws-codex-plan-runner/scripts/plan_runner/git_ops.py)
   - `_observation_digests`
   - `_regular_file`
   - `GitWorkspace.require_identity`
-- [`evals/test_engine.py`](../../skills/kws-codex-plan-runner/evals/test_engine.py)
+- [`evals/test_engine.py`](../../../skills/_legacy/kws-codex-plan-runner/evals/test_engine.py)
   - signal-based dirty checkpoint tests
-- [`evals/test_provider.py`](../../skills/kws-codex-plan-runner/evals/test_provider.py)
+- [`evals/test_provider.py`](../../../skills/_legacy/kws-codex-plan-runner/evals/test_provider.py)
   - malformed and oversized provider stream tests
-- [`evals/fake_codex.py`](../../skills/kws-codex-plan-runner/evals/fake_codex.py)
+- [`evals/fake_codex.py`](../../../skills/_legacy/kws-codex-plan-runner/evals/fake_codex.py)
   - deterministic provider scenarios
-- [`SKILL.md`](../../skills/kws-codex-plan-runner/SKILL.md)
-- [`README.md`](../../skills/kws-codex-plan-runner/README.md)
-- [Approved runner design](../superpowers/specs/2026-07-23-quality-first-provider-plan-runners-design.md)
-- [Approved Codex runner implementation plan](../superpowers/plans/2026-07-23-codex-quality-first-plan-runner.md)
+- [`SKILL.md`](../../../skills/_legacy/kws-codex-plan-runner/SKILL.md)
+- [`README.md`](../../../skills/_legacy/kws-codex-plan-runner/README.md)
+- [Approved runner design](../../superpowers/specs/2026-07-23-quality-first-provider-plan-runners-design.md)
+- [Approved Codex runner implementation plan](../../superpowers/plans/2026-07-23-codex-quality-first-plan-runner.md)
 
 ## Copy-ready concise issue description
 
@@ -1370,9 +1370,9 @@ sessions.
 repair shape.
 
 The original forensic evidence remains unchanged. The implemented behavior is
-defined by the [approved remediation design](../superpowers/specs/2026-07-24-codex-plan-runner-incident-remediation-design.md),
-the [core-correctness plan](../superpowers/plans/2026-07-24-codex-plan-runner-core-correctness.md),
-and the [permission/recovery plan](../superpowers/plans/2026-07-24-codex-plan-runner-permission-recovery.md).
+defined by the [approved remediation design](../../superpowers/specs/2026-07-24-codex-plan-runner-incident-remediation-design.md),
+the [core-correctness plan](../../superpowers/plans/2026-07-24-codex-plan-runner-core-correctness.md),
+and the [permission/recovery plan](../../superpowers/plans/2026-07-24-codex-plan-runner-permission-recovery.md).
 The implementation range is inclusive from `3c93a09e` through `c3a30f61`.
 
 Focused regressions cover checkpoint-before-result validation for invalid,

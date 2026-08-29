@@ -1210,9 +1210,9 @@ the incident unresolved.
 **Status:** resolved within the approved lightweight boundary.
 
 The original forensic record above remains unchanged. The implemented contract
-is defined by the [approved remediation design](../superpowers/specs/2026-07-24-codex-plan-runner-incident-remediation-design.md),
-the [core-correctness plan](../superpowers/plans/2026-07-24-codex-plan-runner-core-correctness.md),
-and the [permission/recovery plan](../superpowers/plans/2026-07-24-codex-plan-runner-permission-recovery.md).
+is defined by the [approved remediation design](../../superpowers/specs/2026-07-24-codex-plan-runner-incident-remediation-design.md),
+the [core-correctness plan](../../superpowers/plans/2026-07-24-codex-plan-runner-core-correctness.md),
+and the [permission/recovery plan](../../superpowers/plans/2026-07-24-codex-plan-runner-permission-recovery.md).
 The implementation range is inclusive from `3c93a09e` through `c3a30f61`.
 
 Focused regressions cover configured identity capture and bounds, child

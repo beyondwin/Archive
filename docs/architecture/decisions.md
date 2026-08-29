@@ -1,22 +1,13 @@
-# Waygent Architecture Decisions
+# Decisions
 
-| Decision | Current Position |
+| Decision | Position |
 | --- | --- |
-| Product brand | Waygent is the user-facing platform and orchestrator. |
-| Observability | Lens is the TypeScript storage and projection path in `packages/lens-store` and `packages/lens-projectors`; the legacy Python AgentLens tree has been deleted. |
-| Event families | Active events use `platform.*`, `runway.*`, `kernel.*`, and `lens.*`. |
-| Legacy namespaces | New Waygent runs must not emit `agentrunway.*`, `kws-cpe.*`, or `kws-cme.*`. |
-| KWS executor telemetry | `kws-cpe.*` and `kws-cme.*` remain skill-local/external observability for KWS executor skills only. They are not active Waygent product telemetry and may degrade if no external `agentlens` CLI is installed. |
-| Live providers | Codex and Claude live smoke checks are opt-in. |
+| Brand | Waygent is the product and orchestrator. |
+| Lens | TypeScript in `packages/lens-store` and `packages/lens-projectors`. The Python `components/agentlens` tree was removed. |
+| Events | `platform.*`, `runway.*`, `kernel.*`, `lens.*`. |
+| Legacy namespaces | New runs do not emit `agentrunway.*`, `kws-cpe.*`, or `kws-cme.*`. |
+| KWS skill telemetry | `kws-cpe.*` / `kws-cme.*` stay skill-local. They are not Waygent product telemetry. |
+| Live providers | Codex and Claude smoke checks are opt-in. |
 
-These decisions are current product guidance. Older migration records can
-explain how the repository arrived here, but they do not override current
-contracts, tests, and runtime docs.
-
-KWS executor skill references to `agentlens run-open`,
-`agentlens event append`, `agentlens run-close`, `agentlens events`,
-`AGENTLENS_*`, `agentlens_orchestration_run`, `kws-cpe.*`, and `kws-cme.*` are
-intentionally preserved as local skill telemetry. They did not block deletion
-of the legacy Python `components/agentlens` product tree because the skills
-guard AgentLens calls as best-effort observability and keep executor state
-outside AgentLens as the authoritative resume source.
+Older migration notes can explain the path here. They do not override current
+contracts, tests, or runtime docs.

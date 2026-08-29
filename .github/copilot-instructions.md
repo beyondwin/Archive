@@ -1,22 +1,13 @@
 # GitHub Copilot Instructions - Archive
 
-Read `AGENTS.md` and the nearest subtree `AGENTS.md` before making changes.
-They are the canonical project guidance for AI coding agents in this
-repository. This file only adds Copilot-specific notes.
+Read `AGENTS.md` and the nearest subtree `AGENTS.md` first. This file only
+adds Copilot-specific notes.
 
-Project focus:
+- Product surfaces: `apps/cli/`, `apps/api/`, `apps/console/`
+- Lens: `packages/lens-store/`, `packages/lens-projectors/`
+- Runtime: `packages/orchestrator/`, `packages/runway-control/`,
+  `packages/provider-adapters/`, `native/kernel/`
+- `skills/_legacy/` is frozen. Do not load it unless the user names that path.
 
-- `apps/cli/`, `apps/api/`, and `apps/console/` contain the active Waygent
-  product surfaces.
-- `packages/lens-store/` and `packages/lens-projectors/` contain the active
-  TypeScript Lens storage and projection path.
-- `packages/orchestrator/`, `packages/runway-control/`,
-  `packages/provider-adapters/`, and `native/kernel/` contain the active
-  Waygent runtime.
-- `skills/` contains load-bearing local skills used by Codex and Claude.
-
-Follow subtree instructions when present, especially the executor-specific
-instructions under `skills/`.
-
-Do not suggest committing runtime state, local caches, secrets, or machine-local
+Do not suggest committing runtime state, caches, secrets, or machine-local
 agent files.

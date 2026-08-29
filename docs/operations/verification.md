@@ -1,8 +1,8 @@
-# Waygent Verification
+# Verification
 
-## Repository Agent Contract
+## Repo contract
 
-Run these repository-owned entry points from the repository root:
+From the repo root:
 
 ```bash
 bun run agent:contract
@@ -12,265 +12,79 @@ bun run agent:verify -- --dry-run --path apps/console/src/App.tsx
 bun run agent:verify -- --base origin/main --head HEAD
 ```
 
-`agent:contract` validates the repository contract: the complete root,
-subtree, and tool-guidance inventory; the four exact `agent:*` package entry
-points; verification-map reachability, overlaps, command working directories,
-package scripts, executable gates, and tracked-state exclusions. `agent:test`
-runs the agent-script unit suite.
-`agent:verify` selects deterministic commands from changed tracked and untracked
-paths, including tracked deletions. It checks links only for Markdown files that
-still exist, resolves documents and local targets through their real paths so
-symlinks cannot escape the repository, and includes `git diff --check` for
-patch hygiene. A clean path set still runs `agent:contract` and patch hygiene.
-With `--base` and `--head`, both
-path classification and patch hygiene use the same normalized range: a
-three-dot range for normal refs, or the repository's computed empty tree and
-head for an all-zero push base. No-range and explicit-path modes keep plain
-`git diff --check`. Repeated `--path` arguments provide an explicit classifier
-probe. `--dry-run` prints the stable path, scope, and command manifest without
-executing it.
+`agent:verify` picks deterministic commands from changed tracked and untracked
+paths, including deletions. It checks Markdown links only for files that still
+exist, and runs `git diff --check`. A clean path set still runs
+`agent:contract` and patch hygiene.
 
-Known paths select the narrowest sufficient scopes. Changes crossing two or
-more `packages/*` roots or touching `bun.lock` select `waygent-closure`. Any
-unknown path escalates to `full-offline` and is listed under `unknown-paths` in
-the summary. That conservative escalation is a visible manifest-gap warning,
-not permission to silently skip verification.
+Known paths pick the narrowest scope. Changes across two `packages/*` roots or
+`bun.lock` select `waygent-closure`. Unknown paths escalate to `full-offline`.
 
-Source changes under `apps/api/`, `apps/cli/`, or a single `packages/*` root
-with a tracked `tests/` directory select that exact test directory in addition
-to typechecking. Console changes retain their focused `src` tests and
-production build. Deleted test files are classified by their former scope but
-are never passed to a focused test command.
-
-The verifier is fail-fast and reports every command as passed, failed, skipped,
-or `NOT RUN (opt-in)`. It never runs live-provider smoke or the Claude executor
-full eval. The deterministic Claude substitute is:
+Live provider smoke and the Claude executor full eval stay outside
+`agent:verify`. Report them as `NOT RUN (opt-in)`.
 
 ```bash
 bun run agent:claude-offline
-```
-
-Live-provider smoke and the Claude executor full eval require explicit operator
-choice and remain outside `agent:verify`:
-
-```bash
 WAYGENT_LIVE_PROVIDER=codex bun run waygent:live-smoke
 WAYGENT_LIVE_PROVIDER=claude bun run waygent:live-smoke
-(cd skills/kws-claude-multi-agent-executor && ./evals/run.sh)
+(cd skills/_legacy/kws-claude-multi-agent-executor && ./evals/run.sh)
 ```
 
-Report each omitted check as `NOT RUN (opt-in)`. The Claude full eval invokes a
-live Claude provider and may update its version baseline, so it is not a
-deterministic acceptance gate.
+CI uses the same entry points. Pins: Bun `1.3.10`, Rust `1.95.0`, Ubuntu
+`24.04`. See [Codex setup](codex-local-setup.md).
 
-Local and CI verification use the same entry points. CI pins Bun `1.3.10`, Rust
-`1.95.0`, Ubuntu `24.04`, and action revisions; see the
-[Codex local setup guide](codex-local-setup.md) for the support boundary and
-hosted-service limitations.
+## Which gate
 
-## Default Offline Gate
+| You changed | Run |
+| --- | --- |
+| Docs only | `git diff --check` plus link inspection |
+| Default runtime / fake provider | `bun run check && bun run platform:demo && bun run waygent:scenarios && bun run waygent:dogfood` |
+| Apply, review, recovery, budget, stale-run cleanup | add `waygent:fixture-lab`, console build |
+| Failure evidence / salvage / repair | orchestrator + projector tests, then scenarios / fixture-lab / dogfood |
+| Console UI | `bun run --cwd apps/console build` (and `bun test src` there) |
+| Native kernel | `cd native/kernel && cargo fmt --all -- --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace` |
 
-```bash
-bun run check
-bun run platform:demo
-bun run waygent:scenarios
-bun run waygent:dogfood
-```
+`waygent:dogfood` is an offline fake-provider run that asserts the maturity
+projection is complete. `waygent:scenarios` includes blocked replay fixtures;
+checkpoint dry-run conflicts must be `needs_rebase`, not `missing_checkpoint`.
+`waygent:fixture-lab` replays recoverable and unsafe intake.
 
-This is the default gate for docs-adjacent runtime checks and fake-provider
-coverage.
+## Verify env (SP-2)
 
-`waygent:dogfood` runs an offline fake-provider Waygent run and asserts the
-shared maturity projection has complete dogfood evidence, runtime cost,
-provider readiness, real timestamps, provider attempts, verification evidence,
-and a precise explain result.
+Waygent prepares an isolated dependency env per task.
 
-`waygent:scenarios` includes blocked replay fixtures for source/apply
-readiness, including checkpoint dry-run conflicts. Those conflicts must surface
-as `needs_rebase` with no apply-ready checkpoint refs, not as
-`missing_checkpoint`.
-
-`bun run waygent:fixture-lab` replays recoverable and unsafe intake examples.
-It proves that bad-but-recoverable plan/spec shapes start safely, unsafe input
-asks for a user decision, and provider-output parser regressions remain covered.
-
-## Closure, Review, and Cost Reliability Gate
-
-Use this gate after changes to apply readiness, review evidence, recovery,
-budget policy, or stale-run cleanup:
-
-```bash
-bun run check
-bun run platform:demo
-bun run waygent:scenarios
-bun run waygent:fixture-lab
-bun run waygent:dogfood
-bun run --cwd apps/console build
-git diff --check
-```
-
-This task is not allowed to report "no source changes needed" while these
-documentation sections or skill mappings are absent from the worktree. It must
-produce a checkpointable diff for the owned docs and skill updates, and may
-also include tightly scoped full-gate type fixes from the file claims above.
-
-Expected operator behavior:
-
-- stale verification failures are reported as recovered evidence, not active
-  blockers;
-- recovered tasks without review evidence block as `review_evidence_missing`;
-- review-passed recovered tasks can become apply-ready;
-- budget pauses emit `platform.budget_paused`;
-- stale runs can be marked blocked without mutating source checkouts.
-
-## Recovery-to-Review Gate
-
-Use this gate after changes to failure evidence classification, salvage
-artifacts, repair scheduling, review-required recovered work, or operator
-projection fields:
-
-```bash
-bun test packages/orchestrator/tests/failureEvidence.test.ts packages/orchestrator/tests/salvageArtifacts.test.ts
-bun test packages/lens-projectors/tests/operatorDecision.test.ts
-bun run waygent:scenarios
-bun run waygent:fixture-lab
-bun run waygent:dogfood
-git diff --check
-```
-
-Expected behavior:
-
-- patch-bearing verification failures route to focused repair before full retry;
-- malformed provider output with a safe captured diff records salvage evidence;
-- salvaged patches block as review-required until review evidence exists;
-- recovered and reviewed verification failures can become apply-ready;
-- `waygent explain`, API, and console projections read the same operator
-  decision fields.
-
-## Console Gate
-
-```bash
-bun run --cwd apps/console build
-```
-
-Use this when console models, UI code, or operator-facing projections change.
-
-## Native Kernel Gate
-
-```bash
-cd native/kernel && cargo fmt --all -- --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace
-```
-
-Use this when native kernel crates, worktree handling, process supervision,
-artifact sealing, policy, or diff application changes.
-
-## Live Provider Gate
-
-Live provider gates require an installed and authenticated provider CLI and an
-explicit provider selection:
-
-```bash
-WAYGENT_LIVE_PROVIDER=codex bun run waygent:live-smoke
-WAYGENT_LIVE_PROVIDER=claude bun run waygent:live-smoke
-```
-
-Keep these checks opt-in. Use offline scenario gates when provider access is
-not configured or not appropriate for the current time and cost budget.
-`bun run agent:verify` never runs either command automatically.
-
-## Docs-Only Gate
-
-```bash
-git diff --check
-```
-
-For documentation-only work, also manually inspect changed links and paths.
-
-## Full Local Checklist
-
-Use this combined checklist before accepting broader runtime or product-surface
-changes:
-
-```bash
-bun run check
-bun run platform:demo
-bun run waygent:scenarios
-bun run waygent:fixture-lab
-bun run waygent:dogfood
-bun run --cwd apps/console build
-git diff --check
-```
-
-Add `bun run check:legacy` for legacy compatibility sweeps and the native
-kernel gate when native files changed.
-
-## Verify Env Worktree-Awareness (SP-2)
-
-Waygent prepares an isolated dependency environment per task before running
-verification commands. Two strategies exist:
-
-- **inherit_node_modules** (fast path) — symlinks the workspace's
-  `node_modules` into the worktree. Used when the worker's diff stays inside
-  a single `packages/*` or only runs unit tests. Wall-clock cost is negligible.
-- **isolated_workspace_resolve** (isolated) — runs `bun install` against a
-  content-addressed snapshot, materializes it into the worktree, and rewrites
-  `@waygent/*` entries to worktree-local paths. Used when the worker edits
-  two or more `packages/*`, touches `bun.lock`/root `package.json`, or the
-  plan task carries `verify_isolation: "isolated"`.
-
-### Plan task field
+- `inherit_node_modules` — symlink workspace `node_modules`. Fast path.
+- `isolated_workspace_resolve` — `bun install` against a content-addressed
+  snapshot. Used for multi-package diffs, `bun.lock` / root `package.json`, or
+  `verify_isolation: "isolated"`.
 
 ```yaml
-verify_isolation: "isolated" | "fast" | "auto"   # default: "auto"
+verify_isolation: "isolated" | "fast" | "auto"   # default: auto
 ```
 
-- `"isolated"` — always isolate, even if the diff is small.
-- `"fast"` — always use inherit_node_modules, even if the diff is
-  cross-package. Author intent overrides automatic detection.
-- `"auto"` — let the strategy decider pick based on the worker's worktree
-  diff (`git status --porcelain`).
+If isolation cannot be prepared, verify fails with
+`runway.verification_environment` and `isolation_status="unavailable"`. No
+automatic fallback.
 
-### Failure surface
+| reason | meaning |
+| --- | --- |
+| `isolation_unavailable.bun_install` | `bun install` failed |
+| `isolation_unavailable.snapshot_io` | snapshot read/write error |
+| `isolation_unavailable.materialize` | failed to materialize `node_modules` |
+| `isolation_unavailable.manifest_drift` | workspace packages differ from snapshot |
+| `isolation_unavailable.cache_key_io` | cache key failed |
 
-When isolation cannot be prepared, the verify phase fails and emits a
-`runway.verification_environment` event with `isolation_status="unavailable"`.
-The `reason` field is namespaced:
+Cache: `<workspace>/.waygent/verify-env-snapshot/<cache_key>/`. LRU keeps 5
+snapshots (`WAYGENT_VERIFY_SNAPSHOT_KEEP=N`).
 
-| reason code                            | meaning                                       |
-|----------------------------------------|-----------------------------------------------|
-| `isolation_unavailable.bun_install`    | `bun install` exited non-zero                 |
-| `isolation_unavailable.snapshot_io`    | filesystem error reading/writing snapshot     |
-| `isolation_unavailable.materialize`    | failed to materialize node_modules in worktree |
-| `isolation_unavailable.manifest_drift` | workspace package set differs from snapshot   |
-| `isolation_unavailable.cache_key_io`   | failed to compute cache key                   |
+Kill switches: `WAYGENT_DISABLE_VERIFICATION_ENV=1`,
+`WAYGENT_DISABLE_ISOLATED_VERIFY_ENV=1`,
+`WAYGENT_VERIFY_ISOLATION_FROZEN_LOCKFILE=0` (tests only).
 
-There is no automatic retry and no automatic fallback to the fast path. The
-operator must intervene.
+## Intake commands
 
-## Intake Verification Policy
-
-Waygent classifies plan verification commands before provider dispatch. The
-same policy is used by Superpowers plan normalization, deterministic intake
-recovery, and plan preflight. Safe commands include known test runners,
-declared package scripts, `node --test`, `git diff --check`, and Android Gradle
-invocations through `./gradlew` or `gradle`.
-
-Command chains split by `&&` are safe only when every segment is safe. A leading
-`cd` is allowed only when it stays inside the workspace. Destructive commands,
-workspace escapes, shell redirection, and unknown shell features block intake.
-
-### Cache
-
-- Location: `<workspace>/.waygent/verify-env-snapshot/<cache_key>/`
-- Key: `sha256(bun.lock + packages/*/package.json + root workspaces/dependencies)`
-- LRU: keep newest 5 snapshots by default (`WAYGENT_VERIFY_SNAPSHOT_KEEP=N`).
-
-### Kill switches
-
-- `WAYGENT_DISABLE_VERIFICATION_ENV=1` — disable verify env preparation entirely.
-- `WAYGENT_DISABLE_ISOLATED_VERIFY_ENV=1` — force every task to fast path
-  regardless of `verify_isolation` value. Evidence records
-  `decision.reason="killed_by_env_var"`.
-- `WAYGENT_VERIFY_ISOLATION_FROZEN_LOCKFILE=0` — drop `--frozen-lockfile` from
-  the snapshot's `bun install`. Used by synthetic test fixtures with empty
-  lockfiles; production should leave this unset.
+Plan verify commands are classified before dispatch. Safe: known test runners,
+declared package scripts, `node --test`, `git diff --check`, Android Gradle
+through `./gradlew` or `gradle`. `&&` chains are safe only when every segment
+is. A leading `cd` must stay inside the workspace. Destructive commands, path
+escapes, redirects, and unknown shell features block intake.

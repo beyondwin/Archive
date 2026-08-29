@@ -1,15 +1,12 @@
-# Codex Local Setup
+# Codex local setup
 
-This guide prepares a local Codex installation to use Archive's committed
-agent contract. Repository files configure only repository behavior; account
-authentication, MCP credentials, sandbox and approval defaults, and retained
-sessions remain machine-local operator concerns.
+This repo's files configure repo behavior. Auth, MCP credentials, sandbox
+defaults, and retained sessions stay on your machine.
 
-## Prerequisites And First Run
+## First run
 
-Trust the checkout in Codex before expecting `AGENTS.md` or the project
-`.codex/config.toml` layer to load. Then run these commands from the repository
-root:
+Trust the checkout in Codex so `AGENTS.md` and `.codex/config.toml` load. Then
+from the repo root:
 
 ```bash
 codex doctor --summary --no-color
@@ -18,58 +15,43 @@ bun run agent:contract
 bun run agent:verify -- --dry-run --path README.md
 ```
 
-Treat `codex doctor` findings about authentication, user configuration, or
-external services as local-environment findings. A failure from
-`agent:contract` is a repository-contract blocker and should not be bypassed by
-weakening the shared checks.
+`codex doctor` findings about auth or user config are local. An
+`agent:contract` failure is a repo blocker. Do not weaken the shared checks to
+get past it.
 
-## Reload Boundaries
+## Reloads
 
-Start a new Codex task after changing `AGENTS.md`, a nearest subtree instruction
-file, or project configuration. Restart Codex when the client does not reload
-`.codex/config.toml` in a new task. Existing tasks can retain the instructions
-and configuration loaded when they started.
+Start a new Codex task after changing `AGENTS.md`, a subtree instruction file,
+or project config. Restart Codex if a new task still has the old
+`.codex/config.toml`. Opening the same checkout in another profile may need
+trust again.
 
-Repository trust is also a local client decision. Opening the same checkout in
-another Codex installation or profile may require trusting it again.
+## Keep local
 
-## Local-Only State
+- Provider auth
+- MCP credentials and account-specific servers
+- User-global model, sandbox, and approval policy
+- Env vars and notification prefs
+- Retained sessions, runtime evidence, stale worktrees
 
-Keep the following outside the repository:
+Wire only the MCP servers this task needs. Do not paste credentials into
+committed files.
 
-- provider authentication and account credentials;
-- MCP server credentials and account-specific server configuration;
-- user-global model, sandbox, and approval policy;
-- local environment variables and notification preferences;
-- retained task sessions, runtime evidence, and stale worktrees.
+## Git from Codex
 
-Configure only the MCP servers and environment variables required for the
-current work. Periodically review retained sessions and stale worktrees, but do
-not delete active worktrees or evidence automatically. Never paste credentials
-into committed configuration or documentation.
+The repo does not commit execpolicy rules. Desktop Full Access tasks skip
+interactive approvals, and a project rule that asks for confirmation can
+reject ordinary `git status` / `add` / `commit`. Destructive-operation
+boundaries stay in `AGENTS.md` and the runner's worktree / protected-ref /
+remote-mutation checks.
 
-## Command Safety
+## Pins
 
-Archive does not commit repository-local Codex execpolicy rules. Desktop Full
-Access tasks use non-interactive approvals, and a project rule that requests
-confirmation can otherwise reject routine Git commands such as status, add,
-and commit. Follow `AGENTS.md` destructive-operation boundaries and use the
-repository's isolated worktree, protected-ref, and remote-mutation checks for
-automated plan execution.
+Bun `1.3.10`, Rust `1.95.0`, Ubuntu `24.04`, GitHub Actions by full commit
+SHA. Change a pin on purpose, keep local files and workflows in sync, then
+rerun `bun run agent:test`, `bun run agent:contract`, and the affected scopes.
 
-## Version And CI Pin Updates
+CI is not fully hermetic. Runners, Actions, registries, and live providers sit
+outside the contract.
 
-The repository pins Bun `1.3.10`, Rust `1.95.0`, Ubuntu `24.04`, and GitHub
-Actions by full commit SHA. Update a pin intentionally in a reviewed change,
-keep the local pin files and workflow values synchronized, and rerun
-`bun run agent:test`, `bun run agent:contract`, and the affected verification
-scopes.
-
-These pins make the declared toolchain reproducible, but CI is not fully
-hermetic. GitHub-hosted runners, GitHub Actions availability, package
-registries, and tool distribution services remain operational dependencies.
-Provider authentication and live model availability are not part of the CI
-contract.
-
-Continue with the [verification guide](verification.md) for path-aware local and
-CI gates.
+Next: [verification](verification.md).
