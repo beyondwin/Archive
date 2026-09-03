@@ -26,32 +26,6 @@ const packageTest = (name: string) =>
   command(`package-test:${name}`, ["bun", "test", "tests"], `packages/${name}`);
 const rustFormat = command("rust-format", ["cargo", "fmt", "--check"], "native/kernel");
 const rustTest = command("rust-test", ["cargo", "test", "--workspace"], "native/kernel");
-const waygentSkillEval = command("waygent-skill-eval", ["./evals/run.sh"], "skills/_legacy/waygent");
-const codexPlanRunnerEval = command(
-  "codex-plan-runner-eval",
-  ["./evals/run.sh"],
-  "skills/_legacy/kws-codex-plan-runner",
-);
-const claudePlanRunnerEval = command(
-  "claude-plan-runner-eval",
-  ["./evals/run.sh"],
-  "skills/_legacy/kws-claude-plan-runner",
-);
-const planRunnerParity = command(
-  "plan-runner-parity",
-  ["./scripts/agent/check-plan-runner-parity"],
-);
-const planRunnerCutoverTest = command(
-  "plan-runner-cutover-test",
-  ["./scripts/agent/plan-runner-cutover", "self-test"],
-);
-const claudeExecutorOffline = command("claude-executor-offline", ["bun", "run", "agent:claude-offline"]);
-const claudeExecutorEval = command(
-  "claude-executor-eval",
-  ["./evals/run.sh"],
-  "skills/_legacy/kws-claude-multi-agent-executor",
-  true,
-);
 const liveProvider = command(
   "waygent-live-provider-smoke",
   ["bun", "run", "waygent:live-provider-smoke"],
@@ -62,9 +36,7 @@ const liveProvider = command(
 const closureCommands = [contract, diffCheck, check, platformDemo, scenarios, fixtureLab, dogfood, liveProvider];
 const offlineCommands = [
   contract, diffCheck, typecheck, check, platformDemo, scenarios, fixtureLab, dogfood,
-  consoleTest, consoleBuild, rustFormat, rustTest, waygentSkillEval,
-  codexPlanRunnerEval, claudePlanRunnerEval, planRunnerParity, planRunnerCutoverTest,
-  claudeExecutorOffline, claudeExecutorEval, liveProvider,
+  consoleTest, consoleBuild, rustFormat, rustTest, liveProvider,
 ];
 
 test.each([
@@ -75,10 +47,6 @@ test.each([
   ["two packages", ["packages/orchestrator/src/index.ts", "packages/runway-control/src/scheduler.ts"], ["waygent-closure"], closureCommands],
   ["bun lock", ["bun.lock"], ["waygent-closure"], closureCommands],
   ["native", ["native/kernel/crates/kernel-cli/src/main.rs"], ["native"], [contract, diffCheck, rustFormat, rustTest]],
-  ["Waygent skill", ["skills/_legacy/waygent/SKILL.md"], ["waygent-skill"], [contract, diffCheck, waygentSkillEval, check, platformDemo, scenarios]],
-  ["Codex plan runner", ["skills/_legacy/kws-codex-plan-runner/SKILL.md"], ["codex-plan-runner"], [contract, diffCheck, codexPlanRunnerEval, planRunnerParity, planRunnerCutoverTest, check]],
-  ["Claude plan runner", ["skills/_legacy/kws-claude-plan-runner/scripts/runner"], ["claude-plan-runner"], [contract, diffCheck, claudePlanRunnerEval, planRunnerParity, planRunnerCutoverTest, check]],
-  ["Claude executor", ["skills/_legacy/kws-claude-multi-agent-executor/scripts/kernel/kernel.py"], ["claude-executor"], [contract, diffCheck, claudeExecutorOffline, claudeExecutorEval, check]],
   ["unknown", ["unexpected/new-surface.txt"], ["full-offline"], offlineCommands],
 ] satisfies readonly [string, string[], ScopeId[], ReturnType<typeof command>[]][])(
   "selects the complete $0 command set",
@@ -90,10 +58,8 @@ test.each([
 
 test.each([
   ["Codex project guidance", ".codex/README.md"],
-  ["skills guidance", "skills/README.md"],
-  ["skills agent routing", "skills/AGENTS.md"],
-  ["adding a skill", "skills/adding-a-skill.md"],
-  ["legacy catalog note", "skills/_legacy/README.md"],
+  ["root readme", "README.md"],
+  ["root agents", "AGENTS.md"],
 ] satisfies readonly [string, string][])(
   "classifies exact $0 as docs with Markdown checking",
   (_name, path) => {
@@ -125,16 +91,15 @@ test.each([
   },
 );
 
-test("keeps independently relevant docs, native, and skill scopes with closure", () => {
+test("keeps independently relevant docs and native scopes with closure", () => {
   const paths = [
     "bun.lock",
     "docs/README.md",
     "native/kernel/crates/kernel-cli/src/main.rs",
-    "skills/_legacy/waygent/SKILL.md",
   ];
 
   expect(selectVerification(paths).scopeIds).toEqual([
-    "docs", "native", "waygent-skill", "waygent-closure",
+    "docs", "native", "waygent-closure",
   ]);
 });
 
@@ -187,17 +152,6 @@ test("always selects contract and plain patch hygiene for a clean tree", () => {
 
   expect(selection.scopeIds).toEqual([]);
   expect(selection.commands.map(toCommand)).toEqual([contract, diffCheck]);
-});
-
-test("does not schedule Markdown link reads for frozen legacy skill bodies", () => {
-  const selection = selectVerification([
-    "skills/_legacy/README.md",
-    "skills/_legacy/kws-claude-multi-agent-executor/HISTORY.md",
-    "skills/_legacy/waygent/SKILL.md",
-  ]);
-
-  expect(selection.markdownFiles).toEqual(["skills/_legacy/README.md"]);
-  expect(selection.scopeIds).toEqual(["docs", "waygent-skill", "claude-executor"]);
 });
 
 test("does not schedule Markdown link reads for Superpowers design artifacts", () => {
@@ -272,33 +226,24 @@ test("deduplicates commands by cwd and argv", () => {
   const actualCommands = commands([
     "docs/README.md",
     "native/kernel/crates/kernel-cli/src/main.rs",
-    "skills/_legacy/kws-codex-plan-runner/scripts/runner.py",
   ]);
 
   expect(actualCommands).toEqual([
-    contract, diffCheck, rustFormat, rustTest, codexPlanRunnerEval,
-    planRunnerParity, planRunnerCutoverTest, check,
+    contract, diffCheck, rustFormat, rustTest,
   ]);
   expect(new Set(actualCommands.map(({ argv, cwd }) => `${cwd ?? ""}\u0000${argv.join("\u0000")}`)).size)
     .toBe(actualCommands.length);
 });
 
-test("keeps the plan-runner live canary out of every offline scope", () => {
-  for (const scope of VERIFICATION_SCOPES) {
-    expect(scope.commands.some(({ argv }) =>
-      argv.some((part) => part.includes("plan-runner-live-canary"))
-    )).toBeFalse();
-  }
-});
-
-test("does not route either retired sequential executor", () => {
+test("does not route skill or plan-runner trees", () => {
   const serialized = JSON.stringify(VERIFICATION_SCOPES);
+  expect(serialized).not.toContain("skills/");
   expect(serialized).not.toContain("kws-codex-plan-executor");
   expect(serialized).not.toContain("kws-claude-plan-executor");
-  expect(VERIFICATION_SCOPES.map(({ id }) => id)).not.toContain("codex-executor");
+  expect(serialized).not.toContain("plan-runner");
 });
 
-test("verification map has no migrated skill scopes", () => {
+test("verification map has no skill or executor scopes", () => {
   expect(VERIFICATION_SCOPES.map(({ id }) => id)).toEqual([
     "docs",
     "console",
@@ -306,10 +251,6 @@ test("verification map has no migrated skill scopes", () => {
     "package",
     "waygent-closure",
     "native",
-    "waygent-skill",
-    "codex-plan-runner",
-    "claude-plan-runner",
-    "claude-executor",
     "full-offline",
   ]);
 });

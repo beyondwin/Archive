@@ -30,21 +30,9 @@ temp/
 .cache/
 .playwright-cli/
 
-# In-progress eval baseline scratch (committed baselines use .json only)
-*.json.partial
-
-# Python tooling
+# Accidental Python leftovers
 __pycache__/
 *.py[cod]
-.pytest_cache/
-.ruff_cache/
-.mypy_cache/
-.coverage
-.coverage.*
-coverage.xml
-htmlcov/
-.tox/
-.nox/
 .venv/
 venv/
 
@@ -97,12 +85,10 @@ docs/_graph/*
 .codex-orchestrator/
 .orchestrator/
 .parallel/
+.worktrees/
 .waygent-*.patch
 *.agentlens.bak
-
-# AgentLens runtime state (recorder home, default `<repo>/.agentlens`)
 .agentlens/
-*.egg-info/
 
 # Superpowers brainstorming scratchpad (top-level dir; persisted
 # spec/plan files live under docs/superpowers/specs/ and docs/superpowers/plans/)

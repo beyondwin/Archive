@@ -11,12 +11,6 @@ import {
 import { checkContract, formatContractIssues } from "./check-contract";
 import { VERIFICATION_SCOPES, type VerificationScope } from "./verification-map";
 
-const EXECUTOR_GATES = [
-  "skills/_legacy/kws-codex-plan-runner/evals/run.sh",
-  "skills/_legacy/kws-claude-plan-runner/evals/run.sh",
-  "skills/_legacy/kws-claude-multi-agent-executor/evals/run.sh",
-] as const;
-
 const fixtureRoots: string[] = [];
 
 afterEach(async () => {
@@ -236,7 +230,6 @@ describe("checkContract", () => {
     ["agent:contract", "false"],
     ["agent:test", "false"],
     ["agent:verify", "false"],
-    ["agent:claude-offline", "false"],
   ])("requires the exact %s package entry point", async (name, value) => {
     const root = await createContractFixture();
     const packageJson = JSON.parse(await readFile(join(root, "package.json"), "utf8")) as {
@@ -265,31 +258,6 @@ describe("checkContract", () => {
     });
 
     expect(issues).toEqual([]);
-  });
-
-  test("reports a non-executable executor gate", async () => {
-    const root = await createContractFixture();
-    await chmod(join(root, EXECUTOR_GATES[0]), 0o644);
-
-    const issues = await checkContract({ root, requiredPaths: [], requiredAgentFiles: [], trackedFiles: [] });
-
-    expect(issues).toContainEqual(expect.objectContaining({
-      code: "non_executable_gate",
-      path: EXECUTOR_GATES[0],
-    }));
-  });
-
-  test("reports a directory where an executor gate must be a file", async () => {
-    const root = await createContractFixture();
-    await rm(join(root, EXECUTOR_GATES[0]));
-    await mkdir(join(root, EXECUTOR_GATES[0]));
-
-    const issues = await checkContract({ root, requiredPaths: [], requiredAgentFiles: [], trackedFiles: [] });
-
-    expect(issues).toContainEqual(expect.objectContaining({
-      code: "non_executable_gate",
-      path: EXECUTOR_GATES[0],
-    }));
   });
 
   test("reports a directory where guidance requires a readable regular file", async () => {
@@ -383,57 +351,9 @@ describe("checkContract", () => {
     ]));
   });
 
-  test("requires the general skill catalog roots", () => {
-    expect(REQUIRED_PATHS).toEqual(expect.arrayContaining([
-      "skills/_legacy/waygent",
-    ]));
-  });
-
-  test("does not require migrated public skill roots", () => {
-    expect(
-      REQUIRED_PATHS.filter((path) => path.startsWith("skills/") && !path.startsWith("skills/_legacy/")),
-    ).toEqual([]);
-  });
-
-  test("requires the Codex plan runner root, guidance, and deterministic gate", () => {
-    expect(REQUIRED_PATHS).toContain("skills/_legacy/kws-codex-plan-runner");
-    expect(REQUIRED_AGENT_FILES).toContain(
-      "skills/_legacy/kws-codex-plan-runner/AGENTS.md",
-    );
-    expect(EXECUTOR_GATES).toContain(
-      "skills/_legacy/kws-codex-plan-runner/evals/run.sh",
-    );
-  });
-
-  test("requires the Claude plan runner root, guidance, and deterministic gate", () => {
-    expect(REQUIRED_PATHS).toContain("skills/_legacy/kws-claude-plan-runner");
-    expect(REQUIRED_AGENT_FILES).toContain(
-      "skills/_legacy/kws-claude-plan-runner/AGENTS.md",
-    );
-    expect(EXECUTOR_GATES).toContain(
-      "skills/_legacy/kws-claude-plan-runner/evals/run.sh",
-    );
-  });
-
-  test("routes only the new sequential runners while retaining the Claude multi-agent executor", () => {
-    expect(REQUIRED_PATHS).toEqual(expect.arrayContaining([
-      "skills/_legacy/kws-codex-plan-runner",
-      "skills/_legacy/kws-claude-plan-runner",
-      "skills/_legacy/kws-claude-multi-agent-executor",
-    ]));
-    expect(REQUIRED_AGENT_FILES).toEqual(expect.arrayContaining([
-      "skills/_legacy/kws-codex-plan-runner/AGENTS.md",
-      "skills/_legacy/kws-claude-plan-runner/AGENTS.md",
-      "skills/_legacy/kws-claude-multi-agent-executor/AGENTS.md",
-    ]));
-    for (const legacy of [
-      "skills/kws-codex-plan-executor",
-      "skills/kws-claude-plan-executor",
-    ]) {
-      expect(REQUIRED_PATHS).not.toContain(legacy);
-      expect(REQUIRED_AGENT_FILES).not.toContain(`${legacy}/AGENTS.md`);
-      expect(EXECUTOR_GATES).not.toContain(`${legacy}/evals/run.sh`);
-    }
+  test("does not require skill or legacy executor trees", () => {
+    expect(REQUIRED_PATHS.filter((path) => path.startsWith("skills/"))).toEqual([]);
+    expect(REQUIRED_AGENT_FILES.filter((path) => path.startsWith("skills/"))).toEqual([]);
   });
 
   test("does not let a retired mention mask a later primary claim", async () => {
@@ -561,13 +481,8 @@ async function createContractFixture(): Promise<string> {
       "agent:contract": "bun run scripts/agent/check-contract.ts",
       "agent:test": "bun test scripts/agent",
       "agent:verify": "bun run scripts/agent/verify.ts",
-      "agent:claude-offline": "bun run scripts/agent/claude-offline.ts",
     },
   }));
-  for (const path of EXECUTOR_GATES) {
-    await writeFixtureFile(root, path, "#!/bin/sh\nexit 0\n");
-    await chmod(join(root, path), 0o755);
-  }
   return root;
 }
 

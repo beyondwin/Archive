@@ -6,17 +6,26 @@ import { runLegacyCheck } from "../src/legacyCheck";
 
 function fixtureRoot(): string {
   const root = mkdtempSync(join(tmpdir(), "waygent-legacy-check-"));
-  for (const dir of ["apps", "packages", "native", "tests", "docs/architecture", "docs/operations", "docs/migration", "skills"]) {
+  for (const dir of ["apps", "packages", "native", "tests", "docs/architecture", "docs/operations", "docs/migration"]) {
     mkdirSync(join(root, dir), { recursive: true });
   }
   writeFileSync(join(root, "AGENTS.md"), "Waygent owns execution.\n");
   writeFileSync(join(root, "CLAUDE.md"), "Use Waygent CLI.\n");
   writeFileSync(join(root, "GEMINI.md"), "Use Waygent CLI.\n");
-  writeFileSync(join(root, "skills/README.md"), "| waygent | active runtime |\n");
   return root;
 }
 
 describe("legacy check", () => {
+  test("rejects a restored skills tree", () => {
+    const root = fixtureRoot();
+    mkdirSync(join(root, "skills"), { recursive: true });
+
+    const result = runLegacyCheck(root);
+
+    expect(result.passed).toBe(false);
+    expect(result.violations).toContain("skills/: skill and legacy execution trees must not exist");
+  });
+
   test("rejects active AgentRunway routing references", () => {
     const root = fixtureRoot();
     writeFileSync(join(root, "AGENTS.md"), "Use skills/agent-runway/SKILL.md for execution.\n");

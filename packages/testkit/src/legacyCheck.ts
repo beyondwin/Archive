@@ -14,7 +14,6 @@ export function runLegacyCheck(root = process.cwd()): LegacyCheckResult {
     "GEMINI.md",
     "README.md",
     ".github",
-    "skills/README.md",
     "docs/architecture",
     "docs/operations",
     "apps",
@@ -26,8 +25,8 @@ export function runLegacyCheck(root = process.cwd()): LegacyCheckResult {
   for (const scanRoot of scanRoots) {
     walk(join(root, scanRoot), root, violations);
   }
-  if (existsSync(join(root, "skills", "agent-runway"))) {
-    violations.push("skills/agent-runway: legacy AgentRunway skill directory must not exist");
+  if (existsSync(join(root, "skills"))) {
+    violations.push("skills/: skill and legacy execution trees must not exist");
   }
   for (const scanRoot of activeRoutingRoots) {
     walkActiveRouting(join(root, scanRoot), root, violations);

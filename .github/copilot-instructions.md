@@ -7,7 +7,6 @@ adds Copilot-specific notes.
 - Lens: `packages/lens-store/`, `packages/lens-projectors/`
 - Runtime: `packages/orchestrator/`, `packages/runway-control/`,
   `packages/provider-adapters/`, `native/kernel/`
-- `skills/_legacy/` is frozen. Do not load it unless the user names that path.
 
 Do not suggest committing runtime state, caches, secrets, or machine-local
 agent files.
