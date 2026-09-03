@@ -19,7 +19,6 @@ const REQUIRED_PACKAGE_SCRIPTS = {
   "agent:contract": "bun run scripts/agent/check-contract.ts",
   "agent:test": "bun test scripts/agent",
   "agent:verify": "bun run scripts/agent/verify.ts",
-  "agent:claude-offline": "bun run scripts/agent/claude-offline.ts",
 } as const;
 
 const ACTIVE_CLAIM = /\b(?:active|current|primary)\b/i;

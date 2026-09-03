@@ -8,7 +8,6 @@ alwaysApply: true
 Read `AGENTS.md` first, then the nearest subtree `AGENTS.md`.
 
 - Active code: `apps/`, `packages/`, `native/kernel/`
-- `skills/_legacy/` is frozen. Load it only when the user names that path.
 - Keep `.waygent/`, `.agentlens/`, `.claude/`, `.codex-orchestrator/`,
   `.orchestrator/`, `.superpowers/`, caches, build outputs, and secrets out of
   git.

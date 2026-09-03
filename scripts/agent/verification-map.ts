@@ -1,8 +1,6 @@
 export type ScopeId =
   | "docs" | "console" | "app" | "package" | "waygent-closure"
-  | "native" | "waygent-skill"
-  | "codex-plan-runner" | "claude-plan-runner"
-  | "claude-executor" | "full-offline";
+  | "native" | "full-offline";
 
 export interface CommandSpec {
   id: string;
@@ -45,35 +43,6 @@ const CONSOLE_TEST: CommandSpec = { id: "console-test", argv: ["bun", "test", "s
 const CONSOLE_BUILD: CommandSpec = { id: "console-build", argv: ["bun", "run", "build"], cwd: "apps/console" };
 const RUST_FORMAT: CommandSpec = { id: "rust-format", argv: ["cargo", "fmt", "--check"], cwd: "native/kernel" };
 const RUST_TEST: CommandSpec = { id: "rust-test", argv: ["cargo", "test", "--workspace"], cwd: "native/kernel" };
-const WAYGENT_SKILL_EVAL: CommandSpec = { id: "waygent-skill-eval", argv: ["./evals/run.sh"], cwd: "skills/_legacy/waygent" };
-const CODEX_PLAN_RUNNER_EVAL: CommandSpec = {
-  id: "codex-plan-runner-eval",
-  argv: ["./evals/run.sh"],
-  cwd: "skills/_legacy/kws-codex-plan-runner",
-};
-const CLAUDE_PLAN_RUNNER_EVAL: CommandSpec = {
-  id: "claude-plan-runner-eval",
-  argv: ["./evals/run.sh"],
-  cwd: "skills/_legacy/kws-claude-plan-runner",
-};
-const PLAN_RUNNER_PARITY: CommandSpec = {
-  id: "plan-runner-parity",
-  argv: ["./scripts/agent/check-plan-runner-parity"],
-};
-const PLAN_RUNNER_CUTOVER_TEST: CommandSpec = {
-  id: "plan-runner-cutover-test",
-  argv: ["./scripts/agent/plan-runner-cutover", "self-test"],
-};
-const CLAUDE_EXECUTOR_OFFLINE: CommandSpec = {
-  id: "claude-executor-offline",
-  argv: ["bun", "run", "agent:claude-offline"],
-};
-const CLAUDE_EXECUTOR_EVAL: CommandSpec = {
-  id: "claude-executor-eval",
-  argv: ["./evals/run.sh"],
-  cwd: "skills/_legacy/kws-claude-multi-agent-executor",
-  optIn: true,
-};
 const LIVE_PROVIDER_SMOKE: CommandSpec = {
   id: "waygent-live-provider-smoke",
   argv: ["bun", "run", "waygent:live-provider-smoke"],
@@ -82,18 +51,14 @@ const LIVE_PROVIDER_SMOKE: CommandSpec = {
 
 const OFFLINE_COMMANDS = [
   CONTRACT, DIFF_CHECK, TYPECHECK, CHECK, PLATFORM_DEMO, SCENARIOS, FIXTURE_LAB, DOGFOOD,
-  CONSOLE_TEST, CONSOLE_BUILD, RUST_FORMAT, RUST_TEST, WAYGENT_SKILL_EVAL,
-  CODEX_PLAN_RUNNER_EVAL, CLAUDE_PLAN_RUNNER_EVAL,
-  PLAN_RUNNER_PARITY, PLAN_RUNNER_CUTOVER_TEST, CLAUDE_EXECUTOR_OFFLINE,
-  CLAUDE_EXECUTOR_EVAL, LIVE_PROVIDER_SMOKE,
+  CONSOLE_TEST, CONSOLE_BUILD, RUST_FORMAT, RUST_TEST, LIVE_PROVIDER_SMOKE,
 ] as const;
 
 export const VERIFICATION_SCOPES: readonly VerificationScope[] = [
   {
     id: "docs",
     matchers: [
-      "docs/", "README.md", ".codex/README.md", "skills/README.md",
-      "skills/AGENTS.md", "skills/adding-a-skill.md", "skills/_legacy/README.md",
+      "docs/", "README.md", ".codex/README.md",
       "AGENTS.md", "CLAUDE.md", "GEMINI.md", ".cursor/rules/",
       ".github/copilot-instructions.md", "code_review.md",
     ],
@@ -104,10 +69,6 @@ export const VERIFICATION_SCOPES: readonly VerificationScope[] = [
   { id: "package", matchers: ["packages/"], commands: [CONTRACT, DIFF_CHECK, TYPECHECK], allowOverlapWith: ["waygent-closure"] },
   { id: "waygent-closure", matchers: ["packages/", "bun.lock"], commands: [CONTRACT, DIFF_CHECK, CHECK, PLATFORM_DEMO, SCENARIOS, FIXTURE_LAB, DOGFOOD, LIVE_PROVIDER_SMOKE], allowOverlapWith: ["package"] },
   { id: "native", matchers: ["native/kernel/"], commands: [CONTRACT, DIFF_CHECK, RUST_FORMAT, RUST_TEST] },
-  { id: "waygent-skill", matchers: ["skills/_legacy/waygent/"], commands: [CONTRACT, DIFF_CHECK, WAYGENT_SKILL_EVAL, CHECK, PLATFORM_DEMO, SCENARIOS] },
-  { id: "codex-plan-runner", matchers: ["skills/_legacy/kws-codex-plan-runner/"], commands: [CONTRACT, DIFF_CHECK, CODEX_PLAN_RUNNER_EVAL, PLAN_RUNNER_PARITY, PLAN_RUNNER_CUTOVER_TEST, CHECK] },
-  { id: "claude-plan-runner", matchers: ["skills/_legacy/kws-claude-plan-runner/"], commands: [CONTRACT, DIFF_CHECK, CLAUDE_PLAN_RUNNER_EVAL, PLAN_RUNNER_PARITY, PLAN_RUNNER_CUTOVER_TEST, CHECK] },
-  { id: "claude-executor", matchers: ["skills/_legacy/kws-claude-multi-agent-executor/"], commands: [CONTRACT, DIFF_CHECK, CLAUDE_EXECUTOR_OFFLINE, CLAUDE_EXECUTOR_EVAL, CHECK] },
   { id: "full-offline", matchers: ["*"], commands: OFFLINE_COMMANDS },
 ];
 
@@ -249,9 +210,7 @@ function focusedTestCommands(paths: readonly string[]): CommandSpec[] {
 }
 
 function isLiveMarkdownPointer(path: string): boolean {
-  if (path.startsWith("docs/superpowers/")) return false;
-  if (path === "skills/_legacy/README.md") return true;
-  return !path.startsWith("skills/_legacy/");
+  return !path.startsWith("docs/superpowers/");
 }
 
 function stablePaths(paths: readonly string[]): string[] {

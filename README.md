@@ -2,7 +2,7 @@
 
 Local runtime for multi-agent implementation work.
 
-It schedules tasks, isolates worktrees, talks to Codex, Claude, or a fake provider, verifies the result, and applies only when the run is ready. Lens stores and projects the evidence. You drive it with the `waygent` CLI, not a skill.
+It schedules tasks, isolates worktrees, talks to Codex, Claude, or a fake provider, verifies the result, and applies only when the run is ready. Lens stores and projects the evidence. You drive it with the `waygent` CLI.
 
 ## Layout
 
@@ -10,7 +10,6 @@ It schedules tasks, isolates worktrees, talks to Codex, Claude, or a fake provid
 apps/            CLI, API, console
 packages/        TypeScript control plane
 native/kernel/   Rust execution kernel
-skills/_legacy/  Frozen executor trees
 docs/            Current docs, plus history
 ```
 

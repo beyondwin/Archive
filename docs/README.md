@@ -35,4 +35,3 @@ Start with the root [README](../README.md), then pick a path.
 
 Old designs, incidents, and migration notes: [history](history/README.md).
 Design scratch: [plans](superpowers/plans/), [specs](superpowers/specs/).
-Frozen skills: [skills/README.md](../skills/README.md).

@@ -20,14 +20,12 @@ exist, and runs `git diff --check`. A clean path set still runs
 Known paths pick the narrowest scope. Changes across two `packages/*` roots or
 `bun.lock` select `waygent-closure`. Unknown paths escalate to `full-offline`.
 
-Live provider smoke and the Claude executor full eval stay outside
-`agent:verify`. Report them as `NOT RUN (opt-in)`.
+Live provider smoke stays outside `agent:verify`. Report it as
+`NOT RUN (opt-in)`.
 
 ```bash
-bun run agent:claude-offline
 WAYGENT_LIVE_PROVIDER=codex bun run waygent:live-smoke
 WAYGENT_LIVE_PROVIDER=claude bun run waygent:live-smoke
-(cd skills/_legacy/kws-claude-multi-agent-executor && ./evals/run.sh)
 ```
 
 CI uses the same entry points. Pins: Bun `1.3.10`, Rust `1.95.0`, Ubuntu

@@ -1,9 +1,8 @@
 # AGENTS.md - Archive
 
 Read this first. If you edit a subtree, also read that subtree's `AGENTS.md`.
-Claude Code then reads `CLAUDE.md`. Skill edits start from that skill's
-`SKILL.md`. Complex work uses [PLANS.md](PLANS.md). Reviews use
-[code_review.md](code_review.md).
+Claude Code then reads `CLAUDE.md`. Complex work uses [PLANS.md](PLANS.md).
+Reviews use [code_review.md](code_review.md).
 
 ## Layout
 
@@ -11,11 +10,10 @@ Claude Code then reads `CLAUDE.md`. Skill edits start from that skill's
 - `packages/orchestrator`, `packages/runway-control`,
   `packages/provider-adapters`, `native/kernel` — runtime
 - `packages/lens-store`, `packages/lens-projectors` — Lens
-- `skills/_legacy/` — frozen executors, not the default path
 
 Waygent owns scheduling, worktrees, providers, verification, recovery, apply,
 and event emission. Drive runs with the `waygent` CLI. Do not orchestrate
-workers from chat.
+workers from chat. Do not add a `skills/` tree.
 
 Lens is TypeScript. Do not recreate `components/agentlens`. JSON/JSONL is the
 source of truth; SQLite is a rebuildable cache. New events use `platform.*`,
@@ -25,9 +23,6 @@ Waygent model.
 
 Current docs live under `docs/`. `docs/superpowers/` is design scratch.
 `docs/history/` and `docs/migration/` are old records.
-
-If the user names a frozen Claude executor tree, follow
-`skills/_legacy/kws-claude-multi-agent-executor/AGENTS.md`.
 
 ## Preflight
 
