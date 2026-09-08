@@ -1,7 +1,7 @@
 # Getting started
 
-You need Bun. Rust is required for kernel checks. Live Codex or Claude checks
-also need that CLI installed and signed in.
+You need Bun. Kernel checks also need Rust. Live Codex or Claude checks
+need that CLI installed and signed in.
 
 ## Install
 
@@ -16,7 +16,7 @@ bun run check
 bun run platform:demo
 ```
 
-`platform:demo` is the first signal that the checkout actually runs.
+`platform:demo` is the first sign that this checkout actually runs.
 
 ## First commands
 
@@ -28,10 +28,10 @@ waygent explain --last
 ```
 
 Use `waygent resume --last` only after you have read the last run. Use
-`waygent apply --run <run_id>` only when the source checkout is clean and the
-apply projection is ready.
+`waygent apply --run <run_id>` only when your repo is clean and the run
+is ready to apply.
 
-If PATH has no `waygent` binary:
+If PATH has no `waygent` command:
 
 ```bash
 bun run waygent -- status --last
@@ -39,20 +39,20 @@ bun run waygent -- status --last
 
 ## Live providers
 
-These consume a local CLI and may hit auth or account limits:
+These use a local CLI and may hit auth or account limits:
 
 ```bash
 WAYGENT_LIVE_PROVIDER=codex bun run waygent:live-smoke
 WAYGENT_LIVE_PROVIDER=claude bun run waygent:live-smoke
 ```
 
-If the CLI is missing or unsigned-in, stay on fake-provider and scenario
-checks.
+If the CLI is missing or not signed in, stay on the fake provider and
+scenario checks.
 
 ## Stop
 
-Do not apply when the source checkout is dirty, the run pick is ambiguous,
-verification failed, checkpoints are missing, or `waygent explain` still
-reports blockers. Do not patch from chat instead of resume or apply.
+Do not apply when your repo is dirty, the run pick is unclear, a check
+failed, checkpoints are missing, or `waygent explain` still lists
+blockers. Do not patch from chat instead of resume or apply.
 
-Next: [operations](operations/waygent.md) and [recovery](operations/recovery.md).
+Next: [how to run it](operations/waygent.md) and [when it fails](operations/recovery.md).

@@ -1,8 +1,8 @@
 # Events
 
-Related: [run state](./run-state.md), [provider result](./provider-result.md).
+Related: [run file](./run-state.md), [provider result](./provider-result.md).
 
-Canonical envelope: `agentlens.event.v3`. The name is for compatibility. It
+Event wrapper: `agentlens.event.v3`. The name is for compatibility. It
 does not need the old Python runtime.
 
 Families:
@@ -12,9 +12,9 @@ Families:
 - `kernel.*`
 - `lens.*`
 
-JSONL on disk is source of truth. SQLite is a rebuildable cache. Consumers
-read `.event_type`, not a legacy `.type`. Treat the family prefix as the
-contract and discover specific types from the journal.
+JSONL on disk is the saved record. SQLite is a cache you can rebuild. Readers
+use `.event_type`, not a leftover `.type`. Treat the family prefix as the
+contract and discover specific types from the log.
 
 Examples from current runs:
 
@@ -26,5 +26,5 @@ Examples from current runs:
 - Kernel: `kernel.hook_denied`, `kernel.hook_bypassed`
 - Lens: `lens.evidence_apply_blocked`, `lens.model_attestation_mismatch`
 
-Waygent emits runtime events. Lens reads them through `packages/lens-store`
-and `packages/lens-projectors`. New runs must not emit KWS executor namespaces.
+Waygent writes runtime events. Lens reads them through `packages/lens-store`
+and `packages/lens-projectors`. New runs must not emit KWS executor names.

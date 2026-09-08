@@ -6,22 +6,22 @@ Reviews use [code_review.md](code_review.md).
 
 ## Layout
 
-- `apps/cli`, `apps/api`, `apps/console` — CLI, API, console
+- `apps/cli`, `apps/api`, `apps/console` — commands, API, console
 - `packages/orchestrator`, `packages/runway-control`,
   `packages/provider-adapters`, `native/kernel` — runtime
-- `packages/lens-store`, `packages/lens-projectors` — Lens
+- `packages/lens-store`, `packages/lens-projectors` — Lens records and views
 
-Waygent owns scheduling, worktrees, providers, verification, recovery, apply,
-and event emission. Drive runs with the `waygent` CLI. Do not orchestrate
+Waygent owns scheduling, isolated git copies, providers, checks, recovery,
+apply, and event writing. Drive runs with the `waygent` CLI. Do not run
 workers from chat. Do not add a `skills/` tree.
 
 Lens is TypeScript. Do not recreate `components/agentlens`. JSON/JSONL is the
-source of truth; SQLite is a rebuildable cache. New events use `platform.*`,
+saved record; SQLite is a cache you can rebuild. New events use `platform.*`,
 `runway.*`, `kernel.*`, and `lens.*` inside `agentlens.event.v3` records. Old
 `agentrunway.*`, `kws-cpe.*`, and `kws-cme.*` names are history, not the
 Waygent model.
 
-Current docs live under `docs/`. `docs/superpowers/` is design scratch.
+Current docs live under `docs/`. `docs/superpowers/` is draft work.
 `docs/history/` and `docs/migration/` are old records.
 
 ## Preflight
@@ -40,17 +40,17 @@ This checkout may not be `main`.
 
 ## Routing
 
-- Orchestration: `packages/orchestrator/`, `packages/runway-control/`
+- Schedule and recover: `packages/orchestrator/`, `packages/runway-control/`
 - Providers: `packages/provider-adapters/`, `native/kernel/`
 - Lens: `packages/lens-store/`, `packages/lens-projectors/`
 - Surfaces: `apps/cli/`, `apps/api/`, `apps/console/`
-- Workflow contract: `waygent` CLI in `apps/cli`
+- How you run work: `waygent` CLI in `apps/cli`
 
 ## Done
 
-Run `bun run agent:verify` plus any extra live evidence the task asked for.
+Run `bun run agent:verify` plus any extra live proof the task asked for.
 Review against `code_review.md`. Report changed files, exact command results,
-skipped opt-in checks, leftover risk, and local vs remote state.
+skipped optional checks, leftover risk, and local vs remote state.
 
 ## Prompts
 
@@ -61,7 +61,7 @@ When handing work off, include:
 - Constraints
 - Done when
 
-Plan first if the work is ambiguous or high-risk.
+Plan first if the work is unclear or high-risk.
 
 ## Safety
 
