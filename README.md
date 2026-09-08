@@ -1,16 +1,16 @@
 # Waygent
 
-Local runtime for multi-agent implementation work.
+Run a coding plan with several agents, then apply the result only when it is ready.
 
-It schedules tasks, isolates worktrees, talks to Codex, Claude, or a fake provider, verifies the result, and applies only when the run is ready. Lens stores and projects the evidence. You drive it with the `waygent` CLI.
+Waygent starts tasks, gives each one its own git copy, talks to Codex, Claude, or a fake provider, checks the result, and copies patches back only when the run is ready. Lens keeps the records and the views. You drive it with the `waygent` command.
 
 ## Layout
 
 ```text
-apps/            CLI, API, console
-packages/        TypeScript control plane
-native/kernel/   Rust execution kernel
-docs/            Current docs, plus history
+apps/            commands, API, console
+packages/        TypeScript scheduler, providers, Lens
+native/kernel/   Rust: processes, git copies, apply
+docs/            current docs, plus old history
 ```
 
 ## First run
@@ -31,13 +31,13 @@ waygent inspect --last --json
 waygent explain --last
 ```
 
-Apply only when the source checkout is clean and `explain` says the run is ready:
+Apply only when your repo is clean and `explain` says the run is ready:
 
 ```bash
 waygent apply --run <run_id>
 ```
 
-Live provider checks are opt-in:
+Live Codex or Claude checks are off by default:
 
 ```bash
 WAYGENT_LIVE_PROVIDER=codex bun run waygent:live-smoke
@@ -48,9 +48,9 @@ WAYGENT_LIVE_PROVIDER=claude bun run waygent:live-smoke
 
 - [Getting started](docs/getting-started.md)
 - [Doc index](docs/README.md)
-- [Architecture](docs/architecture/waygent.md)
-- [Operations](docs/operations/waygent.md)
-- [Events](docs/contracts/events.md) · [run state](docs/contracts/run-state.md) · [provider result](docs/contracts/provider-result.md)
+- [How it is built](docs/architecture/waygent.md)
+- [How to run it](docs/operations/waygent.md)
+- [Events](docs/contracts/events.md) · [run file](docs/contracts/run-state.md) · [provider result](docs/contracts/provider-result.md)
 
 Agent work starts at [AGENTS.md](AGENTS.md). Plans use [PLANS.md](PLANS.md). Reviews use [code_review.md](code_review.md).
 

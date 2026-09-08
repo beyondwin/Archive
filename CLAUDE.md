@@ -9,7 +9,7 @@ Read `AGENTS.md` first. This file only adds Claude-specific notes.
 
 ## Notes
 
-- Subagents do not write Lens events. Waygent owns drain and emission.
+- Subagents do not write Lens events. Waygent owns drain and writing.
 - Do not recreate `components/agentlens`.
 - Keep `.claude/` out of git.
 - For a Waygent run, use `apps/cli/src/index.ts` or the installed `waygent`

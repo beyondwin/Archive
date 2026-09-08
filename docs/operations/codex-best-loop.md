@@ -15,14 +15,14 @@ means:
 | Setting | Value |
 | --- | --- |
 | main model | `gpt-5.5` / `xhigh` |
-| implement / review / verify / repair | `gpt-5.5` / `high` |
+| implement / review / check / repair | `gpt-5.5` / `high` |
 | plan preflight | `full` |
 | spec slicing | `manifest` |
 | hooks | `builtin` |
-| method evidence | required |
+| extra proof | required |
 
-Waygent already owns the task graph, worktrees, file claims, preflight,
-packets, verify, checkpoints, completion audit, and apply. Import the
+Waygent already owns the task graph, isolated copies, file claims, preflight,
+packets, checks, checkpoints, the final check, and apply. Import the
 discipline from Superpowers / Spec Kit style workflows; do not replace the
 runtime with them.
 

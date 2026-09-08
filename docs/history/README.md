@@ -17,7 +17,7 @@ for that.
 
 Codex plan-runner and CPE notes from 2026-07 live in [incidents/](incidents/).
 
-## Migration and scratch
+## Move notes and drafts
 
 - [Migration records](../migration/)
 - [Migration index](../roadmap/migration-history.md)

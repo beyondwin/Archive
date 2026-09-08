@@ -1,19 +1,19 @@
 # Operations
 
-Related: [plan authoring](./plan-authoring.md), [recovery](./recovery.md),
-[verification](./verification.md), [state root](./state-root-migration.md).
+Related: [writing a plan](./plan-authoring.md), [when it fails](./recovery.md),
+[checks](./verification.md), [where runs are stored](./state-root-migration.md).
 
 ## Loop
 
 1. `waygent run` (or `bun run waygent -- run …`)
 2. `inspect` / `explain`
 3. `resume`, `repair`, or `review` if blocked
-4. `apply` only when readiness is `ready` and the source checkout is clean
+4. `apply` only when readiness is `ready` and your repo is clean
 
-`waygent.run_state.v2` decides resume and apply. Events, API, and console show
-that evidence. They do not override it.
+The saved run file decides resume and apply. Events, API, and console show
+those records. They do not override it.
 
-If PATH has no `waygent` binary, use `bun run waygent -- <command>`.
+If PATH has no `waygent` command, use `bun run waygent -- <command>`.
 
 ## Run root
 
@@ -33,11 +33,11 @@ Without `--root`:
 
 Source checkout preflight always runs:
 
-- `clean` — dispatch
-- `dirty_unrelated` — dispatch, warning recorded
+- `clean` — start
+- `dirty_unrelated` — start, warning recorded
 - `dirty_related` — block with `dirty_source_checkout`
 
-If `--run <id>` already has evidence, Waygent stops with `run_id_already_exists`
+If `--run <id>` already has records, Waygent stops with `run_id_already_exists`
 instead of wiping the old run. Pick another id, omit `--run`, or delete the
 directory after you inspect it.
 
@@ -55,7 +55,7 @@ Useful flags:
 
 | Flag | What it does |
 | --- | --- |
-| `--profile max-quality\|balanced\|cost-saver` | Packaged model + reasoning. Codex `max-quality` also turns on full preflight, spec slicing, builtin hooks, and method evidence. See [Codex best loop](./codex-best-loop.md). |
+| `--profile max-quality\|balanced\|cost-saver` | Packaged model + reasoning. Codex `max-quality` also turns on full preflight, spec slicing, builtin hooks, and extra proof. See [Codex best loop](./codex-best-loop.md). |
 | `--plan-preflight off\|deterministic\|full` | Plan/spec audit. Fake/demo defaults to deterministic; live defaults to off during burn-in. |
 | `--spec-slice off\|manifest` | Task packet spec context |
 | `--budget-cap <USD> --budget-action warn\|pause\|off` | Cost policy. Pauses only at parent-process boundaries. |
@@ -65,33 +65,33 @@ Useful flags:
 File claims: `owned`, `shared_append`, `read_only`. `mode: edit` is an alias
 for `owned`.
 
-Red context-budget packets do not dispatch. Waygent records `context_missing`
+Red context-budget packets do not start. Waygent records `context_missing`
 and the shrink actions.
 
 ## Apply
 
 `ready` means:
 
-- completion audit passed
-- each verified task has a checkpoint manifest
+- final check passed
+- each verified task has a checkpoint file
 - patch bytes match digest and length
 - dry-run passed
-- combined apply evidence exists and matches
-- no unrepaired drift
+- combined apply records exist and match
+- no unfixed unexpected changes
 
 Empty checkpoint patches are valid no-ops (`no_op: true`). A patch that fails
 `git apply --check` against current source is `needs_rebase`, not
 `missing_checkpoint`.
 
-`waygent apply --run <run_id>` is the only source mutation. It rechecks the
-same readiness as `resume`, API, and console.
+`waygent apply --run <run_id>` is the only write to your source repo. It
+rechecks the same readiness as `resume`, API, and console.
 
-`waygent apply --require-evidence --run <run_id>` adds the method-evidence
-overlay. Docs-only / config-only / generated-only tasks can use allowlisted
-waivers. Checkpoints, completion, reconciliation, and clean checkout still
-win.
+`waygent apply --require-evidence --run <run_id>` adds the extra-proof overlay.
+Docs-only / config-only / generated-only tasks can use allowlisted
+waivers. Checkpoints, the final check, the match check, and a clean checkout
+still win.
 
-If post-apply verification fails, `runway.apply_failed` includes
+If the after-apply check fails, `runway.apply_failed` includes
 `post_apply_verification`. Start there.
 
 Review-required recovered runs show `review_evidence_missing`:
@@ -110,8 +110,8 @@ Strict parse first. If the doc is clearly meant to run but is not a
 `artifacts/intake/normalized-plan.md` plus `recovery-report.json`, then
 continues through the normal gates.
 
-Destructive commands, path escapes, ambiguous plan/spec picks, and
-source-mutating work with no verify command still stop as
+Destructive commands, path escapes, unclear plan/spec picks, and
+source-changing work with no check command still stop as
 `intake_decision_required`.
 
 ## Extra commands
@@ -120,29 +120,29 @@ source-mutating work with no verify command still stop as
 | --- | --- |
 | `decisions --last` | Decision register |
 | `cost --last` | Usage ledger |
-| `verify --run <id> [--task <id>]` | Rerun task verify in the existing worktree |
-| `watch --last [--filter …]` | Filtered journal |
-| `events --last` | Raw journal |
-| `orphans [--stale]` | Invalid roots and stale worktrees. Delete one with `--delete <id> --yes`. |
+| `verify --run <id> [--task <id>]` | Rerun the task check in the existing isolated copy |
+| `watch --last [--filter …]` | Filtered log |
+| `events --last` | Raw log |
+| `orphans [--stale]` | Invalid roots and stale copies. Delete one with `--delete <id> --yes`. |
 | `run-chain --plan p1.md --plan p2.md` | Plan chain (still v2 state) |
-| `scaffold-plan` / `lint-plan` / `lint-design` | Authoring. No run-state mutation. |
+| `scaffold-plan` / `lint-plan` / `lint-design` | Authoring. No run-file write. |
 
 `waygent status` on a missing run dir (stale `latest` pointer) is
 `status="failed"`, `last_event_type="evidence_cleared"`. That is not an
 in-flight run.
 
-Inspect and the console also show diagnostic maturity
+Inspect and the console also show extra health signals
 (`dogfood_evidence`, `runtime_cost`, `provider_readiness`). Those views never
-mark a run apply-ready.
+mark a run ready to apply.
 
-Safe-wave parallelism never skips claims, dependencies, verify, or apply
+Safe task groups never skip claims, dependencies, checks, or apply
 gates. Raise `WAYGENT_WAVE_CONCURRENCY` only if the machine and account can
 take it.
 
 ## Stop
 
-- Ambiguous run selection
+- Unclear run selection
 - Dirty source on apply
 - Missing live provider CLI — use fake provider
-- Failed verification — `explain` before `resume`
+- Failed check — `explain` before `resume`
 - Apply reports no verified checkpoint
