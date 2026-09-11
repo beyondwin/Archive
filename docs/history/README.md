@@ -17,9 +17,11 @@ for that.
 
 Codex plan-runner and CPE notes from 2026-07 live in [incidents/](incidents/).
 
-## Move notes and drafts
+## Move notes
 
 - [Migration records](../migration/)
 - [Migration index](../roadmap/migration-history.md)
-- [Superpowers plans](../superpowers/plans/)
-- [Superpowers specs](../superpowers/specs/)
+
+`docs/superpowers/plans/` and `docs/superpowers/specs/` are the default
+`waygent --plan` / `--spec` locations. Older scratch files also live there:
+[plans](../superpowers/plans/), [specs](../superpowers/specs/).

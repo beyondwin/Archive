@@ -84,6 +84,7 @@ describe("tool guidance files", () => {
     expect(text).toContain("alwaysApply: true");
     expect(text).toContain("Read `AGENTS.md` first");
     expect(text).not.toContain("packages/orchestrator");
+    expect(text).not.toContain("Active code");
   });
 
   test("copilot instructions are a pointer", () => {
@@ -98,6 +99,7 @@ describe("tool guidance files", () => {
     expect(text).toContain("docs/operations/codex-local-setup.md");
     expect(text).toContain("AGENTS.md");
     expect(text).not.toContain("Product surfaces:");
+    expect(text).toContain("listed in `AGENTS.md`");
   });
 });
 
@@ -111,7 +113,19 @@ describe("current docs map", () => {
   });
 
   test("current docs do not link to architecture/agentlens.md", () => {
-    for (const path of ["docs/README.md", "docs/architecture/waygent.md"]) {
+    for (const path of [
+      "docs/README.md",
+      "docs/architecture/waygent.md",
+      "docs/architecture/runtime.md",
+      "docs/architecture/lens.md",
+      "docs/architecture/decisions.md",
+      "docs/operations/waygent.md",
+      "docs/operations/verification.md",
+      "docs/getting-started.md",
+      "docs/roadmap/README.md",
+      "README.md",
+      "AGENTS.md",
+    ]) {
       const text = readRepoFile(path);
       expect(text).not.toContain("architecture/agentlens.md");
       expect(text).not.toContain("./agentlens.md");
@@ -123,6 +137,7 @@ describe("current docs map", () => {
     expect(text).toContain("docs/superpowers/plans/");
     expect(text).toContain("docs/superpowers/specs/");
     expect(text).not.toMatch(/Design scratch/i);
+    expect(text).not.toContain("Draft plans");
   });
 
   test("runtime.md does not list default gate commands", () => {
@@ -136,6 +151,21 @@ describe("current docs map", () => {
     expect(readRepoFile("docs/roadmap/README.md")).not.toContain(
       "are proposals until",
     );
+  });
+
+  test("operations waygent labels executable plan/spec defaults", () => {
+    const text = readRepoFile("docs/operations/waygent.md");
+    expect(text).toContain("default executable plan/spec locations");
+    expect(text).toContain("docs/superpowers/plans/");
+    expect(text).toContain("docs/superpowers/specs/");
+  });
+
+  test("history index does not file superpowers under drafts", () => {
+    const text = readRepoFile("docs/history/README.md");
+    expect(text).not.toContain("Migration and scratch");
+    expect(text).not.toContain("## Move notes and drafts");
+    expect(text).toContain("../superpowers/plans/");
+    expect(text).toContain("waygent --plan");
   });
 
   test("root README does not restate apply or live-provider policy", () => {
