@@ -1,6 +1,4 @@
 # CLAUDE.md - Archive
 
-Read `AGENTS.md` first. This file only adds Claude-specific notes.
-
-- Subagents do not write Lens events. Waygent owns drain and writing.
-- Keep `.claude/` out of git.
+Read `AGENTS.md` first. This repository is a records vault. There is no
+product runtime here.

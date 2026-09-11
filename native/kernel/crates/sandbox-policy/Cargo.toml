@@ -1,8 +1,0 @@
-[package]
-name = "sandbox-policy"
-edition.workspace = true
-version.workspace = true
-license.workspace = true
-
-[dependencies]
-kernel-protocol.workspace = true

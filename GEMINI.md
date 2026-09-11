@@ -1,3 +1,4 @@
 # GEMINI.md - Archive
 
-Read `AGENTS.md` first. This file only adds Gemini-specific notes.
+Read `AGENTS.md` first. This repository is a records vault. There is no
+product runtime here.
