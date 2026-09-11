@@ -2,5 +2,5 @@
 
 Read `AGENTS.md` first. This file only adds Claude-specific notes.
 
-- Subagents do not write Lens events. Waygent owns drain and emission.
+- Subagents do not write Lens events. Waygent owns drain and writing.
 - Keep `.claude/` out of git.

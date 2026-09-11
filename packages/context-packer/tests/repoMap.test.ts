@@ -11,4 +11,17 @@ describe("repository map", () => {
     const map = buildRepoMap(root);
     expect(map[0]?.path).toBe("a.ts");
   });
+
+  test("discovers source files when ripgrep is missing", () => {
+    const root = mkdtempSync(join(tmpdir(), "waygent-map-norg-"));
+    writeFileSync(join(root, "a.ts"), "export const a = 1;");
+    const previousPath = process.env.PATH;
+    process.env.PATH = "";
+    try {
+      const map = buildRepoMap(root);
+      expect(map[0]?.path).toBe("a.ts");
+    } finally {
+      process.env.PATH = previousPath;
+    }
+  });
 });

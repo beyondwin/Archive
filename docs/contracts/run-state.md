@@ -1,44 +1,45 @@
-# Run state
+# Run file
 
-`waygent.run_state.v2` is the runtime source of truth: task status, provider
-attempts, verification, review, recovery, drift, completion audit, and apply
-readiness.
+`waygent.run_state.v2` is the saved run file: task status, provider
+attempts, checks, review, recovery, unexpected file changes, the final check,
+and ready-to-apply.
 
-Events, API, and console can replay that evidence. They do not replace it.
+Events, API, and console can replay those records. They do not replace the
+run file.
 
 ## Tasks
 
 Pending, running, verified, failed, blocked, completed. Each task keeps ids,
-file claims, provider attempts, verification evidence, and review records.
+file claims, provider attempts, check records, and review records.
 
-Additive fields you may also see:
+Extra fields you may also see:
 
-- `evidence_policy` — opt-in method-evidence result
+- `evidence_policy` — optional extra proof of how the work was done
 - `hook_retries` — hook denials
-- `model_used` — provider attestation when present
+- `model_used` — which model ran, when present
 
 ## Task packets
 
 - `plan_excerpt` — plan body for this task
-- `spec_excerpt` — spec slice or full-spec fallback
-- `allowed_exec_commands` — verify commands the sandbox should allow, or
+- `spec_excerpt` — spec slice, or the full spec if slicing misses
+- `allowed_exec_commands` — check commands the sandbox should allow, or
   `null` when the workspace is unknown
 
-## Waves and checkpoints
+## Groups and checkpoints
 
-Waves respect dependencies, file claims, risk, and checkpoints. Checkpoint
+Groups respect dependencies, file claims, risk, and checkpoints. Checkpoint
 refs point at manifests, patch bytes, digest/length, and dry-run results.
-Empty patches are valid only as explicit no-op evidence.
+Empty patches are valid only as explicit no-op records.
 
-## Completion, reconciliation, apply
+## Final check, match check, apply
 
-Completion audit checks that outcomes, evidence, checkpoints, and status
-agree. Reconciliation looks for missing artifacts, digest mismatches, and
-source drift.
+The final check confirms outcomes, records, checkpoints, and status agree.
+The match check looks for missing files, digest mismatches, and unexpected
+source changes.
 
 Apply is `ready`, `not_ready`, `blocked`, or `applied`. `ready` needs verified
-checkpoints, combined patch evidence, passed dry-run, clean source, no
-unrepaired drift, and a passed completion audit.
+checkpoints, combined patch records, a passed dry-run, a clean source repo, no
+unfixed unexpected changes, and a passed final check.
 
 ## Other v2 fields
 

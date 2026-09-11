@@ -1,40 +1,39 @@
 # Waygent architecture
 
-Bun/TypeScript control plane, Rust kernel, filesystem journals as replayable
-evidence. Runtime decisions come from durable state and Lens projections, not
-from chat.
+TypeScript apps and packages plus a Rust kernel. Saved files on disk are the
+records you can replay. Runtime choices come from the saved run file and Lens
+views, not from chat.
 
 ```text
 apps/cli, apps/api, apps/console
         │
-packages/orchestrator  ── schedules, recovers, apply-readiness
+packages/orchestrator  ── schedules, recovers, ready-to-apply
 packages/provider-adapters  ── fake / Codex / Claude
-packages/lens-store + lens-projectors  ── evidence and views
+packages/lens-store + lens-projectors  ── records and views
         │
-native/kernel  ── process, worktree, seal, policy, apply
+native/kernel  ── process, isolated git copy, lock, policy, apply
 ```
 
-Default execution is multi-agent. The scheduler still releases work through
-safe waves.
+Default runs use several agents. The scheduler still starts work in safe
+task groups.
 
 ## Who owns what
 
 | Piece | Owns |
 | --- | --- |
 | `waygent` CLI (`apps/cli`) | run, status, inspect, explain, resume, apply |
-| Orchestrator | durable runs, task dispatch, completion audit, recovery |
+| Scheduler | saved runs, task start, final check, recovery |
 | Provider adapters | worker processes and `runway.worker_result.v1` |
-| Lens | store and project evidence |
-| Kernel | process, worktree, artifact seal, policy, diff apply |
-| API / console | the same projections as CLI inspect/explain |
+| Lens | store records and build views |
+| Kernel | process, isolated git copy, lock saved files, policy, apply |
+| API / console | the same views as CLI inspect/explain |
 
 Providers never write Lens events. Waygent records attempts and accepted
-evidence. Active event families are `platform.*`, `runway.*`, `kernel.*`, and
+results. Active event families are `platform.*`, `runway.*`, `kernel.*`, and
 `lens.*`.
 
-`waygent.run_state.v2` is the runtime source of truth. `agentlens.event.v3` is
-append-only replay evidence. The schema name is a contract label, not a Python
-runtime.
+`waygent.run_state.v2` is the saved run file. `agentlens.event.v3` is the
+append-only event log. The schema name is a label, not a Python runtime.
 
 ## Pages
 

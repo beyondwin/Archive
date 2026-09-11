@@ -1,10 +1,10 @@
 # Waygent
 
-Local runtime for multi-agent implementation work.
+Run a coding plan with several agents, then apply the result only when it is ready.
 
-It schedules tasks, isolates worktrees, talks to Codex, Claude, or a fake
-provider, verifies the result, and applies only when the run is ready. Lens
-stores and projects the evidence. You drive it with the `waygent` CLI.
+Waygent starts tasks, gives each one its own git copy, talks to Codex, Claude, or a fake
+provider, checks the result, and copies patches back only when the run is ready. Lens
+keeps the records and the views. You drive it with the `waygent` command.
 
 ## First run
 

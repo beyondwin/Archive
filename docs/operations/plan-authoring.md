@@ -3,7 +3,7 @@
 Executable `waygent-task` plans. Runtime preflight rejects missing fields,
 escaping claims, and bad dependencies before any provider runs.
 
-See [operations](./waygent.md) and [verification](./verification.md).
+See [how to run it](./waygent.md) and [checks](./verification.md).
 
 ## Task block
 
@@ -46,9 +46,9 @@ verify_fail:
   - bun test tests/contract.test.ts
 ```
 
-## Verify must not rewrite tracked files
+## Checks must not rewrite tracked files
 
-Verify runs in the task worktree. Unclaimed writes trip
+Checks run in the task's isolated copy. Unclaimed writes trip
 `diff_scope_failed: changed_file_missing_provider_claim`.
 
 Do not put these in `verify`:
@@ -73,11 +73,11 @@ file_claims:
     mode: owned
 ```
 
-Waygent may warn before dispatch. It will not widen claims for you.
+Waygent may warn before start. It will not widen claims for you.
 
 ## Superpowers plans
 
-If a Superpowers-style plan has headings, file claims, and safe verify
+If a Superpowers-style plan has headings, file claims, and safe check
 commands, intake normalizes them into `yaml waygent-task` blocks. Install /
 format / generate / git-mutation commands stay as implementation notes and
 leave `verify`.
@@ -87,7 +87,7 @@ the passing commands as verify.
 
 Waygent asks for a decision only when the command is destructive, escapes the
 workspace, writes unclaimed files, or leaves source-changing work with no
-usable verify command.
+usable check command.
 
 ## TypeScript
 
