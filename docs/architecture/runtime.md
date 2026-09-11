@@ -36,10 +36,5 @@ checkpoint manifests, and completion audit decide whether work is usable.
 `waygent.run_state.v2` ready, checkpoint manifests, combined patch evidence,
 dry-run results, and a clean source checkout.
 
-## Default gates
-
-```bash
-bun run check
-bun run platform:demo
-bun run waygent:scenarios
-```
+Verification commands live in [verification](../operations/verification.md).
+Agent Done is `bun run agent:verify` in [AGENTS.md](../../AGENTS.md).

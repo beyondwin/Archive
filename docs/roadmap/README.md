@@ -9,8 +9,8 @@ Shipped:
 - Fake-provider scenarios, adapters, safe waves, recovery, apply, API, console,
   Lens projections
 
-`docs/superpowers/specs/` and `docs/superpowers/plans/` are proposals until
-the matching contracts, code, and checks ship.
+`docs/superpowers/specs/` and `docs/superpowers/plans/` are the default
+`waygent --plan` / `--spec` locations. Older scratch files also live there.
 
 Still in play: execution intelligence, operator UX, keeping Lens projections
 aligned with runtime state.

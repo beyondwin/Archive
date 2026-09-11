@@ -45,8 +45,10 @@ Without `--run`, the id is `<plan-slug>_YYYYMMDD_HHMMSS`, with up to 16 numeric
 suffix retries on collision.
 
 `--plan` and `--spec` accept full paths or basenames under
-`docs/superpowers/plans/` and `docs/superpowers/specs/`. Ambiguous basenames
-fail with candidates. Typos fail; they are not treated as inline spec text.
+`docs/superpowers/plans/` and `docs/superpowers/specs/`. Those directories are
+the default executable plan/spec locations. Older scratch files also live
+there. Ambiguous basenames fail with candidates. Typos fail; they are not
+treated as inline spec text.
 
 From Codex, `waygent run` defaults to the Codex provider and `multi-agent`.
 `waygent demo` is offline-only.
