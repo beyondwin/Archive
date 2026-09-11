@@ -1,6 +1,5 @@
 # Archive
 
-Old records. There is no runtime to install or run here.
+This repo no longer holds a product.
 
-- [History](docs/history/README.md)
-- [Migration notes](docs/migration/)
+There is nothing to install or run. Old files still live in git history if you need them.
