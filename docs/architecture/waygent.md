@@ -39,5 +39,5 @@ runtime.
 ## Pages
 
 - [Runtime](./runtime.md)
-- [Lens](./agentlens.md)
+- [Lens](./lens.md)
 - [Decisions](./decisions.md)

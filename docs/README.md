@@ -1,18 +1,24 @@
 # Docs
 
-Start with the root [README](../README.md), then pick a path.
+Start with the root [README](../README.md) or [AGENTS.md](../AGENTS.md), then
+pick a path.
 
 | If you want to | Read |
 | --- | --- |
-| Run it | [Getting started](getting-started.md), [Codex setup](operations/codex-local-setup.md), [operations](operations/waygent.md), [recovery](operations/recovery.md) |
-| Change it | [Architecture](architecture/waygent.md), [events](contracts/events.md), [run state](contracts/run-state.md), [provider result](contracts/provider-result.md) |
-| Agent work | [AGENTS.md](../AGENTS.md), nearest subtree `AGENTS.md`, [PLANS.md](../PLANS.md), [code_review.md](../code_review.md) |
+| Install and run | [Getting started](getting-started.md) |
+| See which code to change | [AGENTS.md](../AGENTS.md) |
+| Understand the runtime | [Architecture](architecture/waygent.md) |
+| Run, apply, recover | [Operations](operations/waygent.md) |
+| Event and state schemas | [Contracts](contracts/events.md) |
+| Author a plan or review | [PLANS.md](../PLANS.md), [code_review.md](../code_review.md) |
+| Old records | [history](history/README.md) — not current behavior |
+| Executable plan/spec | `docs/superpowers/plans/`, `docs/superpowers/specs/` — default `waygent --plan` / `--spec` paths. Older scratch files also live here |
 
 ## Architecture
 
 - [Waygent](architecture/waygent.md)
 - [Runtime](architecture/runtime.md)
-- [Lens](architecture/agentlens.md)
+- [Lens](architecture/lens.md)
 - [Decisions](architecture/decisions.md)
 
 ## Operations
@@ -34,4 +40,3 @@ Start with the root [README](../README.md), then pick a path.
 ## History
 
 Old designs, incidents, and migration notes: [history](history/README.md).
-Design scratch: [plans](superpowers/plans/), [specs](superpowers/specs/).

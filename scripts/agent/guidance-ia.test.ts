@@ -101,3 +101,50 @@ describe("tool guidance files", () => {
   });
 });
 
+describe("current docs map", () => {
+  test("Lens architecture page is lens.md", () => {
+    expect(existsSync(join(root, "docs/architecture/lens.md"))).toBe(true);
+    expect(readRepoFile("docs/architecture/lens.md")).toContain("# Lens");
+    expect(readRepoFile("docs/architecture/lens.md")).toContain(
+      "agentlens.event.v3",
+    );
+  });
+
+  test("current docs do not link to architecture/agentlens.md", () => {
+    for (const path of ["docs/README.md", "docs/architecture/waygent.md"]) {
+      const text = readRepoFile(path);
+      expect(text).not.toContain("architecture/agentlens.md");
+      expect(text).not.toContain("./agentlens.md");
+    }
+  });
+
+  test("docs/README.md labels superpowers as executable plan/spec paths", () => {
+    const text = readRepoFile("docs/README.md");
+    expect(text).toContain("docs/superpowers/plans/");
+    expect(text).toContain("docs/superpowers/specs/");
+    expect(text).not.toMatch(/Design scratch/i);
+  });
+
+  test("runtime.md does not list default gate commands", () => {
+    const text = readRepoFile("docs/architecture/runtime.md");
+    expect(text).not.toContain("## Default gates");
+    expect(text).not.toContain("bun run check");
+    expect(text).toContain("operations/verification.md");
+  });
+
+  test("roadmap does not call superpowers mere proposals", () => {
+    expect(readRepoFile("docs/roadmap/README.md")).not.toContain(
+      "are proposals until",
+    );
+  });
+
+  test("root README does not restate apply or live-provider policy", () => {
+    const text = readRepoFile("README.md");
+    expect(text).toContain("docs/getting-started.md");
+    expect(text).toContain("docs/README.md");
+    expect(text).not.toContain("WAYGENT_LIVE_PROVIDER");
+    expect(text).not.toContain("waygent apply");
+    expect(text).not.toContain("## Layout");
+  });
+});
+
