@@ -60,3 +60,44 @@ describe("AGENTS.md guidance IA", () => {
     );
   });
 });
+
+describe("tool guidance files", () => {
+  test("CLAUDE.md keeps only Claude deltas", () => {
+    const text = readRepoFile("CLAUDE.md");
+    expect(text).toContain("Read `AGENTS.md` first");
+    expect(text).toContain("Subagents do not write Lens events");
+    expect(text).toContain("Keep `.claude/` out of git");
+    expect(text).not.toContain("bun run check");
+    expect(text).not.toContain("bun run platform:demo");
+    expect(text).not.toContain("components/agentlens");
+  });
+
+  test("GEMINI.md is a pointer", () => {
+    const text = readRepoFile("GEMINI.md");
+    expect(text).toContain("Read `AGENTS.md` first");
+    expect(text).not.toContain("apps/cli");
+    expect(text).not.toContain("bun run");
+  });
+
+  test("cursor rules keep alwaysApply and point at AGENTS.md", () => {
+    const text = readRepoFile(".cursor/rules/archive.mdc");
+    expect(text).toContain("alwaysApply: true");
+    expect(text).toContain("Read `AGENTS.md` first");
+    expect(text).not.toContain("packages/orchestrator");
+  });
+
+  test("copilot instructions are a pointer", () => {
+    const text = readRepoFile(".github/copilot-instructions.md");
+    expect(text).toContain("Read `AGENTS.md`");
+    expect(text).not.toContain("packages/lens-store");
+  });
+
+  test("codex README keeps config facts and points at AGENTS.md", () => {
+    const text = readRepoFile(".codex/README.md");
+    expect(text).toContain("config.toml");
+    expect(text).toContain("docs/operations/codex-local-setup.md");
+    expect(text).toContain("AGENTS.md");
+    expect(text).not.toContain("Product surfaces:");
+  });
+});
+
