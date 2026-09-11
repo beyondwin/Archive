@@ -1,8 +1,7 @@
 # Codex project config
 
-Committed, project-scoped Codex config. Runtime state stays in ignored dirs:
-`.waygent/`, `.codex-orchestrator/`, `.orchestrator/`, `.agentlens/`,
-`.claude/`.
+Committed, project-scoped Codex config. Runtime state stays in ignored dirs
+listed in `AGENTS.md`.
 
 - `config.toml` — defaults for Codex sessions in this repo
 
