@@ -24,9 +24,18 @@ export function buildRepoMap(root: string, limit = 500): RepoMapEntry[] {
 }
 
 export function discoverFiles(root: string): string[] {
-  const rg = Bun.spawnSync(["rg", "--files"], { cwd: root, stdout: "pipe", stderr: "ignore" });
-  if (rg.success) {
-    return new TextDecoder().decode(rg.stdout).split("\n").filter(Boolean).sort();
+  try {
+    const rg = Bun.spawnSync(["rg", "--files"], {
+      cwd: root,
+      stdout: "pipe",
+      stderr: "ignore",
+      env: process.env,
+    });
+    if (rg.success) {
+      return new TextDecoder().decode(rg.stdout).split("\n").filter(Boolean).sort();
+    }
+  } catch {
+    // CI and some hosts have no ripgrep. Walk the tree instead.
   }
   const result: string[] = [];
   walk(root, root, result);

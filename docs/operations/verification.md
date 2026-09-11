@@ -12,7 +12,7 @@ bun run agent:verify -- --dry-run --path apps/console/src/App.tsx
 bun run agent:verify -- --base origin/main --head HEAD
 ```
 
-`agent:verify` picks deterministic commands from changed tracked and untracked
+`agent:verify` picks fixed commands from changed tracked and untracked
 paths, including deletions. It checks Markdown links only for files that still
 exist, and runs `git diff --check`. A clean path set still runs
 `agent:contract` and patch hygiene.
@@ -38,16 +38,16 @@ CI uses the same entry points. Pins: Bun `1.3.10`, Rust `1.95.0`, Ubuntu
 | Docs only | `git diff --check` plus link inspection |
 | Default runtime / fake provider | `bun run check && bun run platform:demo && bun run waygent:scenarios && bun run waygent:dogfood` |
 | Apply, review, recovery, budget, stale-run cleanup | add `waygent:fixture-lab`, console build |
-| Failure evidence / salvage / repair | orchestrator + projector tests, then scenarios / fixture-lab / dogfood |
+| Failure records / salvage / repair | scheduler + view tests, then scenarios / fixture-lab / dogfood |
 | Console UI | `bun run --cwd apps/console build` (and `bun test src` there) |
 | Native kernel | `cd native/kernel && cargo fmt --all -- --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace` |
 
-`waygent:dogfood` is an offline fake-provider run that asserts the maturity
-projection is complete. `waygent:scenarios` includes blocked replay fixtures;
+`waygent:dogfood` is an offline fake-provider run that asserts the health
+view is complete. `waygent:scenarios` includes blocked replay fixtures;
 checkpoint dry-run conflicts must be `needs_rebase`, not `missing_checkpoint`.
 `waygent:fixture-lab` replays recoverable and unsafe intake.
 
-## Verify env (SP-2)
+## Check env (SP-2)
 
 Waygent prepares an isolated dependency env per task.
 
@@ -60,7 +60,7 @@ Waygent prepares an isolated dependency env per task.
 verify_isolation: "isolated" | "fast" | "auto"   # default: auto
 ```
 
-If isolation cannot be prepared, verify fails with
+If isolation cannot be prepared, the check fails with
 `runway.verification_environment` and `isolation_status="unavailable"`. No
 automatic fallback.
 
@@ -81,7 +81,7 @@ Kill switches: `WAYGENT_DISABLE_VERIFICATION_ENV=1`,
 
 ## Intake commands
 
-Plan verify commands are classified before dispatch. Safe: known test runners,
+Plan check commands are classified before start. Safe: known test runners,
 declared package scripts, `node --test`, `git diff --check`, Android Gradle
 through `./gradlew` or `gradle`. `&&` chains are safe only when every segment
 is. A leading `cd` must stay inside the workspace. Destructive commands, path

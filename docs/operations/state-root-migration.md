@@ -1,4 +1,4 @@
-# State root
+# Where runs are stored
 
 Run state used to live under `$TMPDIR/waygent-runs/` (on macOS, often
 `/var/folders/.../T/waygent-runs/`). That directory can disappear on reboot or
