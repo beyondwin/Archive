@@ -1,9 +1,8 @@
 ---
-description: Archive repository instructions for Cursor agents
+description: Archive repo instructions
 alwaysApply: true
 ---
 
 # Archive
 
-Read `AGENTS.md` first. This repository is a records vault. There is no
-product runtime here.
+Read `AGENTS.md` first. This is an archive. There is nothing to install or run.

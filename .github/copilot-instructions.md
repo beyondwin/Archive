@@ -1,4 +1,3 @@
-# GitHub Copilot Instructions - Archive
+# Copilot
 
-Read `AGENTS.md` first. This repository is a records vault. There is no
-product runtime here.
+Read `AGENTS.md` first. This is an archive. There is nothing to install or run.

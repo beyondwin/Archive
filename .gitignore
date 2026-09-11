@@ -1,86 +1,37 @@
-# macOS metadata
+# Machine junk
 .DS_Store
 ._*
 .Spotlight-V100/
 .Trashes/
-
-# Editor and local machine state
 .idea/
 .vscode/
-/.chezmoiroot
-/.local/
 *.swp
 *.swo
 
-# Secrets and local environment overrides
+# Secrets
 .env
 .env.*
 !.env.example
-!.env.*.example
 
-# Logs and temporary files
+# Logs and caches
 *.log
 *.pid
-*.sock
-bun-error.log*
-bun-debug.log*
-logs/
 tmp/
 temp/
 .cache/
-.playwright-cli/
-
-# Accidental Python leftovers
-__pycache__/
-*.py[cod]
+node_modules/
 .venv/
 venv/
-
-# JavaScript tooling
-node_modules/
-.bun/
-.vite/
-.turbo/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
 dist/
 build/
 coverage/
-lcov.info
-playwright-report/
-blob-report/
-test-results/
-*.tsbuildinfo
-
-# Rust tooling
 /target/
-native/kernel/target/
-*.profraw
-*.profdata
 
-# Rebuildable local runtime caches
-index.db
-index.db-*
-*.sqlite
-*.sqlite3
-*.db-shm
-*.db-wal
-*.db-journal
-
-# Local AI agent state
-.codex/
+# Local agent state
 .claude/
-.waygent/
-.codex-orchestrator/
-.orchestrator/
-.parallel/
-.worktrees/
-.waygent-*.patch
-*.agentlens.bak
-.agentlens/
+.codex/
 .superpowers/
+.worktrees/
 .cursor/*
 !.cursor/
 !.cursor/rules/
