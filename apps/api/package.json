@@ -1,9 +1,0 @@
-{
-  "name": "@waygent/api",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "dev": "bun run src/server.ts",
-    "test": "bun test tests"
-  }
-}

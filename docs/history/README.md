@@ -1,9 +1,7 @@
 # History
 
-These files explain how the repo got here. They are not the first place to
-learn current behavior. Use [architecture](../architecture/waygent.md),
-[operations](../operations/waygent.md), and [contracts](../contracts/events.md)
-for that.
+These files explain how the repo got here. There is no current product
+runtime in this checkout.
 
 ## Designs
 
@@ -20,8 +18,4 @@ Codex plan-runner and CPE notes from 2026-07 live in [incidents/](incidents/).
 ## Move notes
 
 - [Migration records](../migration/)
-- [Migration index](../roadmap/migration-history.md)
-
-`docs/superpowers/plans/` and `docs/superpowers/specs/` are the default
-`waygent --plan` / `--spec` locations. Older scratch files also live there:
-[plans](../superpowers/plans/), [specs](../superpowers/specs/).
+- [Migration index](migration-history.md)

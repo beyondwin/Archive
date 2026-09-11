@@ -69,17 +69,8 @@ index.db-*
 *.db-wal
 *.db-journal
 
-# Generated navigation/search layers
-docs/wiki/*
-!docs/wiki/README.md
-docs/_graph/*
-!docs/_graph/README.md
-
 # Local AI agent state
-.codex/*
-!.codex/
-!.codex/config.toml
-!.codex/README.md
+.codex/
 .claude/
 .waygent/
 .codex-orchestrator/
@@ -89,9 +80,6 @@ docs/_graph/*
 .waygent-*.patch
 *.agentlens.bak
 .agentlens/
-
-# Superpowers brainstorming scratchpad (top-level dir; persisted
-# spec/plan files live under docs/superpowers/specs/ and docs/superpowers/plans/)
 .superpowers/
 .cursor/*
 !.cursor/
