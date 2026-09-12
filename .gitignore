@@ -13,7 +13,7 @@
 .env.*
 !.env.example
 
-# Logs and caches
+# Logs, caches, and leftover build output
 *.log
 *.pid
 tmp/
@@ -32,6 +32,8 @@ coverage/
 .codex/
 .superpowers/
 .worktrees/
+.waygent/
+.agentlens/
 .cursor/*
 !.cursor/
 !.cursor/rules/
