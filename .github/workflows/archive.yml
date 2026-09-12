@@ -1,0 +1,60 @@
+name: archive
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: Check archive shape
+        run: |
+          set -euo pipefail
+          for p in apps packages native skills tests node_modules bun.lock package.json; do
+            if [ -e "$p" ]; then
+              echo "product leftover: $p"
+              exit 1
+            fi
+          done
+          test -f README.md
+          test -f AGENTS.md
+          test -f docs/README.md
+          test -f docs/history.md
+          if [ -e docs/architecture.md ]; then
+            echo "do not restore product architecture docs"
+            exit 1
+          fi
+      - name: Check markdown links
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          import sys
+          files = [p for p in Path(".").rglob("*") if p.suffix in {".md", ".mdc"} and ".git" not in p.parts]
+          link_re = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
+          missing = []
+          checked = 0
+          for path in files:
+              text = path.read_text()
+              for match in link_re.finditer(text):
+                  href = match.group(2).split("#")[0]
+                  if not href or href.startswith(("http://", "https://", "mailto:")):
+                      continue
+                  checked += 1
+                  target = (path.parent / href).resolve()
+                  if not target.exists():
+                      missing.append(f"{path}: {href}")
+          print(f"files={len(files)} links={checked}")
+          if missing:
+              print("MISSING")
+              print("\n".join(missing))
+              sys.exit(1)
+          print("links_ok")
+          PY
