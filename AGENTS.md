@@ -1,26 +1,22 @@
 # AGENTS.md
 
-This is an archive, not a product.
+This repo is an archive, not a product. There is nothing to install or run.
 
-## Invariants
+## Rules
 
-- Do not add a `skills/` folder.
-- Do not add an app, CLI, or runtime.
-- Do not restore the old product tree in this checkout.
+- Do not add an app, CLI, runtime, or `skills/` folder.
+- Do not bring back the old product files. They stay in git history.
 - Keep secrets and local junk out of git.
-- If a documented fact changes, update the docs in the same change.
-- Reply in Korean when the user writes Korean, unless the file is usually in English.
+- When a fact in the docs changes, update the docs in the same change.
+- Keep README.md, this file, and `docs/` saying the same thing.
+- Reply in Korean when the user writes Korean. Keep files in English.
 
-## Map
+## Where to look
 
-| If you want | Read |
-| --- | --- |
-| Shared map | [docs/README.md](docs/README.md) |
-| Where old files went | [docs/history.md](docs/history.md) |
+- Docs: [docs/README.md](docs/README.md)
+- Old files: [docs/history.md](docs/history.md)
 
-This checkout has no `apps/`, `packages/`, or `native/` tree.
+## Check
 
-## Done
-
-Nothing to install or run. Keep README, this file, and `docs/` in agreement.
-Do not leave leftover build folders that look like a product.
+GitHub runs `.github/workflows/archive.yml` on every push and pull request.
+It fails if product folders come back or a Markdown link is broken.

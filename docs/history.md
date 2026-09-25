@@ -1,14 +1,15 @@
 # Where the old files went
 
-The product source, apps, packages, kernel, and the long design notes are not
-in this checkout. Git still has them. Do not copy that tree back here.
+The old product code and its design notes are not in this checkout. Git still
+has them. Do not copy them back here.
 
-| What | Find it |
+| What | Where in git |
 | --- | --- |
-| Last product tree | Parent of `44ec2256` — `chore: remove the Waygent runtime from Archive` |
-| History notes kept after the runtime left | `44ec2256`, later removed by `c3dc2af7` |
+| Old product code (`apps/`, `packages/`, `native/`, old docs) | `44ec2256^` — the commit before the product was removed |
+| Old design notes, plans, and incident reports | `c3dc2af7^:docs/history/` — the commit before they were removed |
 
 ```bash
-git show 44ec2256^:README.md
-git ls-tree -r --name-only 44ec2256^
+git ls-tree -r --name-only 44ec2256^          # list the old product files
+git show 44ec2256^:README.md                  # read one old file
+git ls-tree -r --name-only c3dc2af7^ docs/history/   # list the old notes
 ```
