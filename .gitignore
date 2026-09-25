@@ -1,40 +1,22 @@
 # Machine junk
 .DS_Store
 ._*
-.Spotlight-V100/
-.Trashes/
 .idea/
 .vscode/
 *.swp
-*.swo
 
 # Secrets
 .env
 .env.*
-!.env.example
 
-# Logs, caches, and leftover build output
+# Temp files
 *.log
-*.pid
 tmp/
-temp/
-.cache/
-node_modules/
-.venv/
-venv/
-dist/
-build/
-coverage/
-/target/
 
-# Local agent state
+# Local AI tool state
 .claude/
 .codex/
 .superpowers/
 .worktrees/
-.waygent/
-.agentlens/
 .cursor/*
-!.cursor/
 !.cursor/rules/
-!.cursor/rules/*.mdc
