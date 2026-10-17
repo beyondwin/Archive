@@ -17,6 +17,7 @@ tmp/
 .claude/
 .codex/
 .superpowers/
+docs/superpowers/
 .worktrees/
 .cursor/*
 !.cursor/rules/
