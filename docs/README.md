@@ -10,9 +10,12 @@ People start at [README.md](../README.md). AI agents start at
 | [README.md](../README.md) | Repository purpose and starting points |
 | [AGENTS.md](../AGENTS.md) | Shared rules for AI agents |
 | [history.md](history.md) | Read-only access to old code, skills, and notes |
-| [CLAUDE.md](../CLAUDE.md), [GEMINI.md](../GEMINI.md), [Copilot](../.github/copilot-instructions.md), [Cursor](../.cursor/rules/archive.mdc) | Tool entry points that link to the shared rules |
+| [CLAUDE.md](../CLAUDE.md), [GEMINI.md](../GEMINI.md), [Copilot](../.github/copilot-instructions.md) | Tool entry points that link to the shared rules |
 | [.gitignore](../.gitignore) | Excludes secrets and local tool state |
 | [archive.yml](../.github/workflows/archive.yml) | Checks the archive boundary and local file links |
+
+Cursor reads the root [AGENTS.md](../AGENTS.md) directly, so no separate
+`.cursor/rules/` file is needed. See the [Cursor rules documentation](https://cursor.com/docs/rules).
 
 Keep this layout small. Historical material belongs in Git history; use
 [history.md](history.md) to make it discoverable instead of restoring it here.

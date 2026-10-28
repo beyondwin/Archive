@@ -25,7 +25,6 @@ jobs:
 
           # Keep the archive explicit. New archive files require a list update.
           allowed = {
-              ".cursor/rules/archive.mdc",
               ".github/copilot-instructions.md",
               ".github/workflows/archive.yml",
               ".gitignore",

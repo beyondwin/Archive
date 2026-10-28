@@ -21,5 +21,4 @@ tmp/
 .superpowers/
 docs/superpowers/
 .worktrees/
-.cursor/*
-!.cursor/rules/
+.cursor/
