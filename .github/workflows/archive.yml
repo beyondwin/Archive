@@ -3,7 +3,6 @@ name: archive
 on:
   pull_request:
   push:
-    branches: [main]
 
 permissions:
   contents: read
@@ -14,47 +13,83 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-      - name: Check archive shape
-        run: |
-          set -euo pipefail
-          for p in apps packages native skills tests node_modules bun.lock package.json; do
-            if [ -e "$p" ]; then
-              echo "product leftover: $p"
-              exit 1
-            fi
-          done
-          test -f README.md
-          test -f AGENTS.md
-          test -f docs/README.md
-          test -f docs/history.md
-          if [ -e docs/architecture.md ]; then
-            echo "do not restore product architecture docs"
-            exit 1
-          fi
-      - name: Check markdown links
+      - name: Check archive files and local links
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          import os
           import re
+          import subprocess
           import sys
-          files = [p for p in Path(".").rglob("*") if p.suffix in {".md", ".mdc"} and ".git" not in p.parts]
-          link_re = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
-          missing = []
+          from urllib.parse import unquote, urlsplit
+
+          # Keep the archive explicit. New archive files require a list update.
+          allowed = {
+              ".cursor/rules/archive.mdc",
+              ".github/copilot-instructions.md",
+              ".github/workflows/archive.yml",
+              ".gitignore",
+              "AGENTS.md",
+              "CLAUDE.md",
+              "GEMINI.md",
+              "README.md",
+              "docs/README.md",
+              "docs/history.md",
+          }
+          root = Path.cwd().resolve()
+          entries = subprocess.check_output(
+              ["git", "ls-files", "--stage", "-z"], text=True
+          ).split("\0")
+          tracked = {}
+          errors = []
+          for entry in filter(None, entries):
+              metadata, name = entry.split("\t", 1)
+              mode, _, stage = metadata.split()
+              tracked[name] = mode
+              if mode != "100644" or stage != "0":
+                  errors.append(f"unsupported file mode or merge stage: {name}")
+
+          for name in sorted(allowed - tracked.keys()):
+              errors.append(f"required archive file is not tracked: {name}")
+          for name in sorted(tracked.keys() - allowed):
+              errors.append(f"unexpected tracked file: {name}")
+          for name in sorted(allowed & tracked.keys()):
+              path = root / name
+              if (not path.is_file() or path.is_symlink()
+                      or not path.resolve().is_relative_to(root)):
+                  errors.append(f"missing or unsafe archive file: {name}")
+          if errors:
+              sys.exit("\n".join(errors))
+
+          # The docs use inline file links; this is not a full Markdown parser.
+          link_re = re.compile(r"\[[^\]\n]*\]\(([^)\n]+)\)")
+          code_re = re.compile(r"```.*?```|~~~.*?~~~|`[^`\n]+`", re.DOTALL)
+          files = sorted(name for name in tracked
+                         if Path(name).suffix in {".md", ".mdc"})
           checked = 0
-          for path in files:
-              text = path.read_text()
-              for match in link_re.finditer(text):
-                  href = match.group(2).split("#")[0]
-                  if not href or href.startswith(("http://", "https://", "mailto:")):
+          for name in files:
+              path = root / name
+              content = code_re.sub("", path.read_text(encoding="utf-8"))
+              for match in link_re.finditer(content):
+                  href = match.group(1)
+                  url = urlsplit(href)
+                  if url.scheme in {"http", "https", "mailto"}:
+                      continue
+                  if not url.path and not url.netloc and not url.scheme:
                       continue
                   checked += 1
-                  target = (path.parent / href).resolve()
-                  if not target.exists():
-                      missing.append(f"{path}: {href}")
-          print(f"files={len(files)} links={checked}")
-          if missing:
-              print("MISSING")
-              print("\n".join(missing))
-              sys.exit(1)
-          print("links_ok")
+                  target_path = Path(unquote(url.path))
+                  # Preserve the linked filename: an untracked symlink must
+                  # not become a valid link by resolving to a tracked file.
+                  target = Path(os.path.abspath(path.parent / target_path))
+                  if (url.scheme or url.netloc or target_path.is_absolute()
+                          or not target.is_relative_to(root)
+                          or not target.resolve().is_relative_to(root)):
+                      errors.append(f"{name}: link must stay inside the repo: {href}")
+                  elif target.relative_to(root).as_posix() not in tracked:
+                      errors.append(f"{name}: link target is not tracked: {href}")
+          if errors:
+              sys.exit("\n".join(errors))
+          print(f"archive_ok: {len(tracked)} files, {len(files)} Markdown files, "
+                f"{checked} local file links")
           PY

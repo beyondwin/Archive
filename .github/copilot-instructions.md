@@ -1,3 +1,3 @@
 # Copilot
 
-Read `AGENTS.md` first. This is an archive. There is nothing to install or run.
+Read [AGENTS.md](../AGENTS.md) for this repository's instructions.

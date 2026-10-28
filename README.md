@@ -1,9 +1,10 @@
 # Archive
 
-This repo is an archive. It holds no product, and there is nothing to install
-or run.
+This repo preserves access to past work through Git history. The checkout
+contains only documentation, AI agent instructions, and an archive check.
+There is no product to install, build, or run.
 
 The old files are still in git history. See [docs/history.md](docs/history.md).
 
-- Docs: [docs/README.md](docs/README.md)
+- Repository guide and checks: [docs/README.md](docs/README.md)
 - Rules for AI agents: [AGENTS.md](AGENTS.md)

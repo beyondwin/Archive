@@ -16,6 +16,8 @@ tmp/
 # Local AI tool state
 .claude/
 .codex/
+.local/
+.remember/
 .superpowers/
 docs/superpowers/
 .worktrees/
